@@ -2,6 +2,13 @@ cmake_minimum_required(VERSION 3.20)
 
 project(opentec_firmware_simulator LANGUAGES C)
 
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE
+        Release
+        CACHE STRING "Build type" FORCE
+    )
+endif()
+
 add_executable(
     opentec_firmware_simulator
     src/device.c
