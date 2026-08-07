@@ -5,8 +5,11 @@
 #include <string.h>
 
 #ifdef _WIN32
-#include <wincrypt.h>
 #include <windows.h>
+#endif
+
+#ifdef _WIN32
+#include <wincrypt.h>
 #endif
 
 static void set_error(char* error, size_t error_size, const char* message) {
