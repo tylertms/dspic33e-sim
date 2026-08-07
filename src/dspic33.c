@@ -1424,6 +1424,7 @@ uint8_t dspic33_read_configuration_byte(const Dspic33* cpu, uint32_t address) {
 }
 
 void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
+    uint16_t previous;
     if (address >= DSPIC33_DATA_SIZE) {
         return;
     }
@@ -1479,13 +1480,16 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
             return;
         }
     }
+    previous = (uint16_t)(cpu->data[address & ~1u] |
+                          ((uint16_t)cpu->data[address | 1u] << 8u));
     cpu->data[address] = value;
     if (address < 0x10000u) {
-        dspic33_device_write_byte(cpu, (uint16_t)address);
+        dspic33_device_write_byte(cpu, (uint16_t)address, previous);
     }
 }
 
 void dspic33_write_word(Dspic33* cpu, uint32_t address, uint16_t value) {
+    uint16_t previous;
     if (address + 1u >= DSPIC33_DATA_SIZE) {
         return;
     }
@@ -1494,10 +1498,12 @@ void dspic33_write_word(Dspic33* cpu, uint32_t address, uint16_t value) {
         dspic33_write_byte(cpu, address + 1u, (uint8_t)(value >> 8u));
         return;
     }
+    previous =
+        (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[address + 1u] << 8u));
     cpu->data[address] = (uint8_t)value;
     cpu->data[address + 1u] = (uint8_t)(value >> 8u);
     if (address < 0xffffu) {
-        dspic33_device_write_byte(cpu, (uint16_t)(address + 1u));
+        dspic33_device_write_byte(cpu, (uint16_t)(address + 1u), previous);
     }
 }
 

@@ -554,9 +554,13 @@ static void update_oscillator(Dspic33* cpu, uint16_t address) {
     }
 }
 
-void dspic33_device_write_byte(Dspic33* cpu, uint16_t address) {
+void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous) {
     uint16_t base = (uint16_t)(address & 0xfffeu);
     uint8_t channel;
+    if (base == 0x0488u || base == 0x04c0u || base == 0x04c4u) {
+        uint16_t mask = base == 0x04c4u ? 0x00ffu : 0x00fdu;
+        raw_write_word(cpu, base, (uint16_t)(previous & ~(raw_word(cpu, base) & mask)));
+    }
     if (base == 0x0758u) {
         raw_write_word(cpu, base,
                        (uint16_t)((raw_word(cpu, base) & 0x40ffu) | 0xa400u));
