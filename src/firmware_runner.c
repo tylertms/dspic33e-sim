@@ -942,11 +942,19 @@ static void print_cpu_diagnostics(const Dspic33* cpu) {
            cpu->call_depth, cpu->interrupt_depth, cpu->instructions, cpu->cycles);
 }
 
+static uint32_t stopped_opcode(const Dspic33* cpu) {
+    if (cpu->unsupported_opcode != 0u) {
+        return cpu->unsupported_opcode;
+    }
+    return cpu->pc < DSPIC33_PROGRAM_LIMIT ? cpu->program[cpu->pc / 2u] : 0u;
+}
+
 static bool run_image(Runner* runner, Dspic33* cpu, bool candidate,
                       const JsonValue* call, const JsonValue* stop, char* error,
-                      size_t error_size) {
+                      size_t error_size, bool* execution_failure) {
     uint32_t address;
     Dspic33StopReason reason;
+    *execution_failure = false;
     if (call != NULL) {
         if (!mapped_address(runner, call, candidate, &address, error, error_size)) {
             return false;
@@ -960,12 +968,13 @@ static bool run_image(Runner* runner, Dspic33* cpu, bool candidate,
         }
         reason = dspic33_run_until(cpu, address, runner->instruction_limit);
         if (reason != DSPIC33_STOPPED) {
+            *execution_failure = true;
             snprintf(error, error_size,
                      "%s stopped with %s at 0x%06" PRIx32 " opcode=0x%06" PRIx32
                      " irq=%u irq-return=0x%06" PRIx32 " interrupts=%" PRIu64
                      " resets=%" PRIu64 " reset-irq=%u",
                      candidate ? "candidate" : "reference",
-                     dspic33_stop_reason_name(reason), cpu->pc, cpu->unsupported_opcode,
+                     dspic33_stop_reason_name(reason), cpu->pc, stopped_opcode(cpu),
                      cpu->last_interrupt, cpu->last_interrupt_return,
                      cpu->interrupt_count, cpu->software_reset_count,
                      cpu->reset_interrupt);
@@ -974,12 +983,13 @@ static bool run_image(Runner* runner, Dspic33* cpu, bool candidate,
     } else {
         reason = dspic33_run(cpu, runner->instruction_limit);
         if (reason != DSPIC33_RETURNED) {
+            *execution_failure = true;
             snprintf(error, error_size,
                      "%s stopped with %s at 0x%06" PRIx32 " opcode=0x%06" PRIx32
                      " irq=%u irq-return=0x%06" PRIx32 " interrupts=%" PRIu64
                      " resets=%" PRIu64 " reset-irq=%u",
                      candidate ? "candidate" : "reference",
-                     dspic33_stop_reason_name(reason), cpu->pc, cpu->unsupported_opcode,
+                     dspic33_stop_reason_name(reason), cpu->pc, stopped_opcode(cpu),
                      cpu->last_interrupt, cpu->last_interrupt_return,
                      cpu->interrupt_count, cpu->software_reset_count,
                      cpu->reset_interrupt);
@@ -996,6 +1006,7 @@ struct RunTask {
     const JsonValue* stop;
     bool candidate;
     bool succeeded;
+    bool execution_failure;
     uint64_t instructions;
     uint64_t cycles;
     char error[256];
@@ -1010,8 +1021,9 @@ struct RunTask {
 static void run_task(RunTask* task) {
     uint64_t instructions = task->cpu->instructions;
     uint64_t cycles = task->cpu->cycles;
-    task->succeeded = run_image(task->runner, task->cpu, task->candidate, task->call,
-                                task->stop, task->error, sizeof(task->error));
+    task->succeeded =
+        run_image(task->runner, task->cpu, task->candidate, task->call, task->stop,
+                  task->error, sizeof(task->error), &task->execution_failure);
     task->instructions = task->cpu->instructions - instructions;
     task->cycles = task->cpu->cycles - cycles;
 }
@@ -1093,7 +1105,7 @@ static bool start_run_tasks(Runner* runner) {
 #endif
 
 static bool run_pair(Runner* runner, const JsonValue* call, const JsonValue* stop,
-                     char* error, size_t error_size) {
+                     char* error, size_t error_size, bool* execution_failure) {
 #ifdef _WIN32
     RunTask* reference = &runner->run_tasks[0];
     RunTask* candidate = &runner->run_tasks[1];
@@ -1110,9 +1122,13 @@ static bool run_pair(Runner* runner, const JsonValue* call, const JsonValue* sto
     SetEvent(candidate->start_event);
     WaitForMultipleObjects(2u, done_events, TRUE, INFINITE);
 #else
-    RunTask reference_task = {runner, &runner->reference, call, stop, false, false,
-                              {0}};
-    RunTask candidate_task = {runner, &runner->candidate, call, stop, true, false, {0}};
+    RunTask reference_task = {
+        .runner = runner, .cpu = &runner->reference, .call = call, .stop = stop};
+    RunTask candidate_task = {.runner = runner,
+                              .cpu = &runner->candidate,
+                              .call = call,
+                              .stop = stop,
+                              .candidate = true};
     RunTask* reference = &reference_task;
     RunTask* candidate = &candidate_task;
     run_task(reference);
@@ -1122,12 +1138,15 @@ static bool run_pair(Runner* runner, const JsonValue* call, const JsonValue* sto
     runner->candidate_instructions += candidate->instructions;
     runner->reference_cycles += reference->cycles;
     runner->candidate_cycles += candidate->cycles;
+    *execution_failure = false;
     if (!reference->succeeded) {
+        *execution_failure = reference->execution_failure;
         snprintf(error, error_size, "%s", reference->error);
         print_cpu_diagnostics(&runner->reference);
         return false;
     }
     if (!candidate->succeeded) {
+        *execution_failure = candidate->execution_failure;
         snprintf(error, error_size, "%s", candidate->error);
         print_cpu_diagnostics(&runner->candidate);
         return false;
@@ -1478,6 +1497,7 @@ static bool execute_step(Runner* runner, const char* scenario_name,
     bool reset_value = false;
     size_t index;
     size_t failures = 0u;
+    bool execution_failure;
     if (step_name == NULL) {
         step_name = json_string(scalar_field(parts, "name"));
     }
@@ -1515,8 +1535,17 @@ static bool execute_step(Runner* runner, const char* scenario_name,
             return false;
         }
     }
-    if (!run_pair(runner, call, stop, error, error_size) ||
-        !compare_registers(runner, parts, &failures, error, error_size) ||
+    if (!run_pair(runner, call, stop, error, error_size, &execution_failure)) {
+        if (!execution_failure) {
+            return false;
+        }
+        runner->failed++;
+        printf("[failed] %zu/%zu %s (execution: %s)\n", runner->current_step,
+               runner->steps, step_name, error);
+        fflush(stdout);
+        return true;
+    }
+    if (!compare_registers(runner, parts, &failures, error, error_size) ||
         !compare_memory(runner, parts, &failures, error, error_size) ||
         !compare_pins(runner, parts, &failures, error, error_size)) {
         return false;

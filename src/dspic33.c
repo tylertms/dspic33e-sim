@@ -1594,8 +1594,10 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     cpu->instructions++;
     if (!execute(cpu, opcode)) {
         cpu->pc -= 2u;
-        cpu->unsupported_opcode = opcode;
-        cpu->stop_reason = DSPIC33_UNSUPPORTED_INSTRUCTION;
+        if (cpu->stop_reason == DSPIC33_RUNNING) {
+            cpu->unsupported_opcode = opcode;
+            cpu->stop_reason = DSPIC33_UNSUPPORTED_INSTRUCTION;
+        }
         return cpu->stop_reason;
     }
     if (cpu->repeat_active != 0u && instruction_pc == cpu->repeat_pc) {
