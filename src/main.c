@@ -20,6 +20,8 @@ typedef struct {
     uint16_t register_value[16];
     uint64_t instruction_limit;
     bool dump_registers;
+    bool trace_address_set;
+    uint32_t trace_address;
 } Arguments;
 
 static bool parse_u64(const char* text, uint64_t maximum, uint64_t* value);
@@ -63,6 +65,8 @@ static bool parse_arguments(int argc, char** argv, Arguments* arguments) {
     memset(arguments->register_value, 0, sizeof(arguments->register_value));
     arguments->instruction_limit = 1000000u;
     arguments->dump_registers = false;
+    arguments->trace_address_set = false;
+    arguments->trace_address = 0u;
     for (index = 3; index < argc; index++) {
         if (strcmp(argv[index], "--write8") == 0 && index + 2 < argc) {
             arguments->write_symbol = argv[++index];
@@ -99,6 +103,12 @@ static bool parse_arguments(int argc, char** argv, Arguments* arguments) {
             arguments->stop_symbol = argv[++index];
         } else if (strcmp(argv[index], "--dump-registers") == 0) {
             arguments->dump_registers = true;
+        } else if (strcmp(argv[index], "--trace-address") == 0 && index + 1 < argc) {
+            if (!parse_u64(argv[++index], UINT32_MAX, &value)) {
+                return false;
+            }
+            arguments->trace_address_set = true;
+            arguments->trace_address = (uint32_t)value;
         } else {
             return false;
         }
@@ -110,8 +120,41 @@ static void print_usage(const char* program) {
     fprintf(stderr,
             "Usage: %s IMAGE ENTRY [--write8 SYMBOL VALUE] [--write16 SYMBOL VALUE] "
             "[--write-offset BYTES] [--register Wn VALUE] "
-            "[--stop ADDRESS] [--max-instructions COUNT] [--dump-registers]\n",
+            "[--stop ADDRESS] [--max-instructions COUNT] [--dump-registers] "
+            "[--trace-address ADDRESS]\n",
             program);
+}
+
+static Dspic33StopReason run_with_trace(Dspic33* cpu, uint32_t stop_address,
+                                        bool stop_enabled, uint64_t limit,
+                                        uint32_t trace_address) {
+    uint64_t start = cpu->instructions;
+    cpu->stop_reason = DSPIC33_RUNNING;
+    while (limit == 0u || cpu->instructions - start < limit) {
+        if (stop_enabled && cpu->pc == stop_address) {
+            cpu->stop_reason = DSPIC33_STOPPED;
+            return cpu->stop_reason;
+        }
+        if (cpu->pc == trace_address) {
+            uint16_t stack_low =
+                cpu->w[15] >= 4u ? dspic33_read_word(cpu, cpu->w[15] - 4u) : 0u;
+            uint16_t stack_high =
+                cpu->w[15] >= 2u ? dspic33_read_word(cpu, cpu->w[15] - 2u) : 0u;
+            printf("[trace] instruction=%" PRIu64 " cycles=%" PRIu64 " PC=0x%06" PRIx32
+                   " W9=0x%04x W10=0x%04x W11=0x%04x "
+                   "W12=0x%04x W14=0x%04x W15=0x%04x SR=0x%04x "
+                   "TBLPAG=0x%04x DSRPAG=0x%04x DSWPAG=0x%04x "
+                   "return=0x%02x%04x\n",
+                   cpu->instructions, cpu->cycles, cpu->pc, cpu->w[9], cpu->w[10],
+                   cpu->w[11], cpu->w[12], cpu->w[14], cpu->w[15], cpu->sr, cpu->tblpag,
+                   cpu->dsrpag, cpu->dswpag, stack_high & 0x007fu, stack_low & 0xfffeu);
+        }
+        if (dspic33_step(cpu) != DSPIC33_RUNNING) {
+            return cpu->stop_reason;
+        }
+    }
+    cpu->stop_reason = DSPIC33_INSTRUCTION_LIMIT;
+    return cpu->stop_reason;
 }
 
 static bool resolve_location(const FirmwareImage* image, const char* text,
@@ -189,9 +232,16 @@ int main(int argc, char** argv) {
             firmware_image_close(&image);
             return 1;
         }
-        reason = dspic33_run_until(&cpu, stop_address, arguments.instruction_limit);
+        reason =
+            arguments.trace_address_set
+                ? run_with_trace(&cpu, stop_address, true, arguments.instruction_limit,
+                                 arguments.trace_address)
+                : dspic33_run_until(&cpu, stop_address, arguments.instruction_limit);
     } else {
-        reason = dspic33_run(&cpu, arguments.instruction_limit);
+        reason = arguments.trace_address_set
+                     ? run_with_trace(&cpu, 0u, false, arguments.instruction_limit,
+                                      arguments.trace_address)
+                     : dspic33_run(&cpu, arguments.instruction_limit);
     }
     printf("[%s] pc=0x%06" PRIx32 " instructions=%" PRIu64 " W0=0x%04x SR=0x%04x\n",
            reason == DSPIC33_RETURNED || reason == DSPIC33_STOPPED ? "passed"

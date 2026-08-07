@@ -145,8 +145,7 @@ bool elf_image_load_program(const ElfImage* image, Dspic33* cpu, char* error,
         Section section = read_section(image, table, index);
         uint32_t position;
         if (section.type != ELF_SECTION_PROGBITS ||
-            (section.flags & (ELF_FLAG_PROGRAM | ELF_FLAG_PSV)) == 0u ||
-            section.address >= DSPIC33_PROGRAM_LIMIT) {
+            (section.flags & (ELF_FLAG_PROGRAM | ELF_FLAG_PSV)) == 0u) {
             continue;
         }
         if ((section.size & 3u) != 0u ||
@@ -157,7 +156,15 @@ bool elf_image_load_program(const ElfImage* image, Dspic33* cpu, char* error,
         for (position = 0u; position < section.size; position += 4u) {
             uint32_t address = section.address + position / 2u;
             uint32_t word = read_u32(image->bytes + section.offset + position);
-            if (!dspic33_load_program_word(cpu, address, word)) {
+            if (address >= DSPIC33_CONFIGURATION_BASE &&
+                address < DSPIC33_CONFIGURATION_BASE + DSPIC33_CONFIGURATION_SIZE) {
+                if (!dspic33_load_configuration_word(cpu, address, word)) {
+                    set_error(error, error_size,
+                              "ELF configuration exceeds device memory");
+                    return false;
+                }
+            } else if (address < DSPIC33_PROGRAM_LIMIT &&
+                       !dspic33_load_program_word(cpu, address, word)) {
                 set_error(error, error_size, "ELF program exceeds device memory");
                 return false;
             }

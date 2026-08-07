@@ -8,6 +8,8 @@
 #define DSPIC33_DATA_SIZE 0x100000u
 #define DSPIC33_PROGRAM_LIMIT 0x55800u
 #define DSPIC33_PROGRAM_WORDS (DSPIC33_PROGRAM_LIMIT / 2u)
+#define DSPIC33_CONFIGURATION_BASE 0xf80000u
+#define DSPIC33_CONFIGURATION_SIZE 0x20u
 #define DSPIC33_IRQ_COUNT 133u
 #define DSPIC33_UART_COUNT 4u
 #define DSPIC33_SPI_COUNT 4u
@@ -25,7 +27,9 @@ typedef enum {
     DSPIC33_EVENT_UART,
     DSPIC33_EVENT_SPI,
     DSPIC33_EVENT_CAN,
-    DSPIC33_EVENT_USB
+    DSPIC33_EVENT_USB,
+    DSPIC33_EVENT_NVM,
+    DSPIC33_EVENT_AUX_PLL
 } Dspic33EventType;
 
 typedef struct {
@@ -96,6 +100,7 @@ typedef enum {
 typedef struct {
     uint32_t* program;
     uint8_t* data;
+    uint8_t configuration[DSPIC33_CONFIGURATION_SIZE];
     uint16_t w[16];
     int64_t accumulator[2];
     uint32_t pc;
@@ -121,6 +126,14 @@ typedef struct {
     uint64_t instructions;
     uint64_t cycles;
     uint32_t unsupported_opcode;
+    uint16_t last_interrupt;
+    uint32_t last_interrupt_return;
+    uint64_t interrupt_count;
+    uint64_t software_reset_count;
+    uint16_t reset_interrupt;
+    uint16_t interrupt_log_irq[16];
+    uint32_t interrupt_log_entry[16];
+    uint32_t interrupt_log_return[16];
     Dspic33EventQueue events;
     Dspic33Io io;
     Dspic33StopReason stop_reason;
@@ -130,6 +143,9 @@ bool dspic33_initialize(Dspic33* cpu);
 void dspic33_destroy(Dspic33* cpu);
 void dspic33_reset(Dspic33* cpu, uint32_t entry);
 bool dspic33_load_program_word(Dspic33* cpu, uint32_t address, uint32_t word);
+bool dspic33_load_configuration_word(Dspic33* cpu, uint32_t address, uint32_t word);
+uint8_t dspic33_read_program_byte(const Dspic33* cpu, uint32_t address);
+uint8_t dspic33_read_configuration_byte(const Dspic33* cpu, uint32_t address);
 void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value);
 void dspic33_write_word(Dspic33* cpu, uint32_t address, uint16_t value);
 uint8_t dspic33_read_byte(Dspic33* cpu, uint32_t address);
@@ -141,8 +157,11 @@ bool dspic33_uart_receive(Dspic33* cpu, uint8_t channel, uint8_t value, uint64_t
 bool dspic33_spi_receive(Dspic33* cpu, uint8_t channel, uint16_t value, uint64_t delay);
 bool dspic33_can_receive(Dspic33* cpu, uint8_t channel, const Dspic33CanFrame* frame,
                          uint64_t delay);
+bool dspic33_usb_receive(Dspic33* cpu, uint8_t endpoint, const uint8_t* data,
+                         uint16_t size, uint64_t delay);
 void dspic33_adc_input(Dspic33* cpu, uint8_t channel, uint16_t value);
 void dspic33_gpio_input(Dspic33* cpu, uint8_t port, uint16_t value);
+Dspic33StopReason dspic33_step(Dspic33* cpu);
 Dspic33StopReason dspic33_run(Dspic33* cpu, uint64_t instruction_limit);
 Dspic33StopReason dspic33_run_until(Dspic33* cpu, uint32_t stop_address,
                                     uint64_t instruction_limit);

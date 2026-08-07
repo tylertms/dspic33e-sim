@@ -21,6 +21,38 @@ static const uint16_t uart_bases[DSPIC33_UART_COUNT] = {0x0220u, 0x0230u, 0x0250
 static const uint16_t spi_bases[DSPIC33_SPI_COUNT] = {0x0240u, 0x0260u, 0x02a0u,
                                                       0x02c0u};
 
+typedef struct {
+    uint16_t address;
+    uint16_t value;
+} Dspic33ResetValue;
+
+static const Dspic33ResetValue reset_values[] = {
+    {0x004au, 0x0001u}, {0x004eu, 0x0001u}, {0x0102u, 0xffffu}, {0x010cu, 0xffffu},
+    {0x010eu, 0xffffu}, {0x011au, 0xffffu}, {0x011cu, 0xffffu}, {0x0128u, 0xffffu},
+    {0x012au, 0xffffu}, {0x0136u, 0xffffu}, {0x0138u, 0xffffu}, {0x0142u, 0x000du},
+    {0x014au, 0x000du}, {0x0152u, 0x000du}, {0x015au, 0x000du}, {0x0162u, 0x000du},
+    {0x016au, 0x000du}, {0x0172u, 0x000du}, {0x017au, 0x000du}, {0x0182u, 0x000du},
+    {0x018au, 0x000du}, {0x0192u, 0x000du}, {0x019au, 0x000du}, {0x01a2u, 0x000du},
+    {0x01aau, 0x000du}, {0x01b2u, 0x000du}, {0x01bau, 0x000du}, {0x0202u, 0x00ffu},
+    {0x0206u, 0x1000u}, {0x0212u, 0x00ffu}, {0x0216u, 0x1000u}, {0x0222u, 0x0110u},
+    {0x0232u, 0x0110u}, {0x0252u, 0x0110u}, {0x02b2u, 0x0110u}, {0x0400u, 0x0480u},
+    {0x0404u, 0x0040u}, {0x0414u, 0x003fu}, {0x0500u, 0x0480u}, {0x0504u, 0x0040u},
+    {0x0514u, 0x003fu}, {0x060eu, 0x008fu}, {0x0640u, 0x0040u}, {0x0740u, 0x0080u},
+    {0x0744u, 0x3040u}, {0x0746u, 0x0030u}, {0x0840u, 0x4444u}, {0x0842u, 0x4444u},
+    {0x0844u, 0x4444u}, {0x0846u, 0x0444u}, {0x0848u, 0x4444u}, {0x084au, 0x0004u},
+    {0x084cu, 0x4444u}, {0x084eu, 0x4444u}, {0x0850u, 0x4444u}, {0x0852u, 0x0444u},
+    {0x0858u, 0x4444u}, {0x085au, 0x4444u}, {0x085cu, 0x4004u}, {0x085eu, 0x0044u},
+    {0x0860u, 0x0440u}, {0x0862u, 0x4444u}, {0x0864u, 0x4040u}, {0x0868u, 0x4440u},
+    {0x086eu, 0x4400u}, {0x0870u, 0x4444u}, {0x0902u, 0x000cu}, {0x090cu, 0x000cu},
+    {0x0916u, 0x000cu}, {0x0920u, 0x000cu}, {0x092au, 0x000cu}, {0x0934u, 0x000cu},
+    {0x093eu, 0x000cu}, {0x0948u, 0x000cu}, {0x0952u, 0x000cu}, {0x095cu, 0x000cu},
+    {0x0966u, 0x000cu}, {0x0970u, 0x000cu}, {0x097au, 0x000cu}, {0x0984u, 0x000cu},
+    {0x098eu, 0x000cu}, {0x0998u, 0x000cu}, {0x0c04u, 0xffffu}, {0x0c12u, 0xffffu},
+    {0x0e00u, 0xc6ffu}, {0x0e0eu, 0x06c0u}, {0x0e10u, 0xffffu}, {0x0e1eu, 0xffffu},
+    {0x0e20u, 0xf01eu}, {0x0e2eu, 0x601eu}, {0x0e30u, 0xffffu}, {0x0e3eu, 0x00c0u},
+    {0x0e40u, 0x03ffu}, {0x0e4eu, 0x03ffu}, {0x0e50u, 0x313fu}, {0x0e60u, 0xf3c3u},
+    {0x0e6eu, 0x03c0u}};
+
 static uint16_t raw_word(const Dspic33* cpu, uint16_t address) {
     return (uint16_t)(cpu->data[address] |
                       ((uint16_t)cpu->data[(uint16_t)(address + 1u)] << 8u));
@@ -170,10 +202,12 @@ static bool interrupt_enabled(const Dspic33* cpu, uint16_t irq) {
 bool dspic33_device_service_interrupt(Dspic33* cpu) {
     uint8_t current = (uint8_t)((cpu->sr >> 5u) & 0x07u);
     uint8_t best_priority = current;
+    uint16_t next_priority;
     uint16_t best_irq = DSPIC33_IRQ_COUNT;
+    size_t log_index;
     uint16_t irq;
     uint16_t stacked_high;
-    if (cpu->disicnt != 0u || (cpu->corcon & 0x0008u) != 0u) {
+    if ((raw_word(cpu, 0x08c2u) & 0x8000u) == 0u || (cpu->corcon & 0x0008u) != 0u) {
         return false;
     }
     for (irq = 0u; irq < DSPIC33_IRQ_COUNT; irq++) {
@@ -182,6 +216,9 @@ bool dspic33_device_service_interrupt(Dspic33* cpu) {
             continue;
         }
         priority = interrupt_priority(cpu, irq);
+        if (cpu->disicnt != 0u && priority < 7u) {
+            continue;
+        }
         if (priority > best_priority) {
             best_priority = priority;
             best_irq = irq;
@@ -190,15 +227,26 @@ bool dspic33_device_service_interrupt(Dspic33* cpu) {
     if (best_irq == DSPIC33_IRQ_COUNT) {
         return false;
     }
-    dspic33_write_word(cpu, cpu->w[15], (uint16_t)cpu->pc);
+    dspic33_write_word(cpu, cpu->w[15],
+                       (uint16_t)((cpu->pc & 0xfffeu) | ((cpu->corcon >> 2u) & 1u)));
     cpu->w[15] += 2u;
     stacked_high = (uint16_t)(((cpu->sr & 0x00ffu) << 8u) |
                               ((cpu->corcon & 0x0008u) != 0u ? 0x0080u : 0u) |
                               ((cpu->pc >> 16u) & 0x007fu));
     dspic33_write_word(cpu, cpu->w[15], stacked_high);
     cpu->w[15] += 2u;
-    cpu->sr = (uint16_t)((cpu->sr & ~0x00e0u) | ((uint16_t)best_priority << 5u));
-    cpu->pc = 0x0014u + best_irq * 2u;
+    cpu->corcon &= (uint16_t)~0x0004u;
+    next_priority = (raw_word(cpu, 0x08c0u) & 0x8000u) != 0u
+                        ? UINT16_C(0x00e0)
+                        : (uint16_t)((uint16_t)best_priority << 5u);
+    cpu->sr = (uint16_t)((cpu->sr & ~0x00e0u) | next_priority);
+    log_index = (size_t)(cpu->interrupt_count % 16u);
+    cpu->interrupt_log_irq[log_index] = best_irq;
+    cpu->interrupt_log_entry[log_index] = cpu->pc;
+    cpu->interrupt_log_return[log_index] = 0u;
+    cpu->pc = cpu->program[(0x0014u + best_irq * 2u) / 2u] & 0x007ffffeu;
+    cpu->last_interrupt = best_irq;
+    cpu->interrupt_count++;
     cpu->interrupt_depth++;
     return true;
 }
@@ -210,13 +258,18 @@ void dspic33_device_return_interrupt(Dspic33* cpu) {
     high = dspic33_read_word(cpu, cpu->w[15]);
     cpu->w[15] -= 2u;
     low = dspic33_read_word(cpu, cpu->w[15]);
-    cpu->pc = ((uint32_t)(high & 0x007fu) << 16u) | low;
+    cpu->pc = ((uint32_t)(high & 0x007fu) << 16u) | (low & 0xfffeu);
+    cpu->last_interrupt_return = cpu->pc;
+    if (cpu->interrupt_count != 0u) {
+        cpu->interrupt_log_return[(cpu->interrupt_count - 1u) % 16u] = cpu->pc;
+    }
     cpu->sr = (uint16_t)((cpu->sr & 0xff00u) | (high >> 8u));
     if ((high & 0x0080u) != 0u) {
         cpu->corcon |= 0x0008u;
     } else {
         cpu->corcon &= (uint16_t)~0x0008u;
     }
+    cpu->corcon = (uint16_t)((cpu->corcon & ~0x0004u) | ((low & 1u) << 2u));
     if (cpu->interrupt_depth != 0u) {
         cpu->interrupt_depth--;
     }
@@ -370,7 +423,14 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
         run_can(cpu, (uint8_t)event->source);
         break;
     case DSPIC33_EVENT_USB:
+        raw_write_word(cpu, 0x04c0u, (uint16_t)(raw_word(cpu, 0x04c0u) | 0x0008u));
         dspic33_raise_interrupt(cpu, 86u);
+        break;
+    case DSPIC33_EVENT_NVM:
+        raw_write_word(cpu, 0x0728u, (uint16_t)(raw_word(cpu, 0x0728u) & ~0x8000u));
+        break;
+    case DSPIC33_EVENT_AUX_PLL:
+        raw_write_word(cpu, 0x0758u, (uint16_t)(raw_word(cpu, 0x0758u) | 0x4000u));
         break;
     }
 }
@@ -486,10 +546,21 @@ static void update_oscillator(Dspic33* cpu, uint16_t address) {
 void dspic33_device_write_byte(Dspic33* cpu, uint16_t address) {
     uint16_t base = (uint16_t)(address & 0xfffeu);
     uint8_t channel;
+    if (base == 0x0758u) {
+        raw_write_word(cpu, base,
+                       (uint16_t)((raw_word(cpu, base) & 0x40ffu) | 0xa400u));
+        if ((raw_word(cpu, base) & 0x8000u) != 0u &&
+            (raw_word(cpu, base) & 0x4000u) == 0u) {
+            dspic33_schedule(cpu, DSPIC33_EVENT_AUX_PLL, 0u, 0u, 32u);
+        }
+    }
     update_timer_control(cpu, base);
     update_oscillator(cpu, base);
     write_uart(cpu, base);
     write_spi(cpu, base);
+    if (base == 0x0728u && (raw_word(cpu, base) & 0x8000u) != 0u) {
+        dspic33_schedule(cpu, DSPIC33_EVENT_NVM, 0u, 0u, 2u);
+    }
     if (base == 0x0320u && (raw_word(cpu, base) & 0x8002u) == 0x8002u) {
         dspic33_schedule(cpu, DSPIC33_EVENT_ADC, 0u, 0u, 1u);
     }
@@ -562,6 +633,19 @@ bool dspic33_can_receive(Dspic33* cpu, uint8_t channel, const Dspic33CanFrame* f
            dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, 0u, delay);
 }
 
+bool dspic33_usb_receive(Dspic33* cpu, uint8_t endpoint, const uint8_t* data,
+                         uint16_t size, uint64_t delay) {
+    uint16_t offset = (uint16_t)endpoint * 64u;
+    if (endpoint >= 16u || size > 64u || offset + size > sizeof(cpu->io.usb)) {
+        return false;
+    }
+    memcpy(cpu->io.usb + offset, data, size);
+    if (offset + size > cpu->io.usb_size) {
+        cpu->io.usb_size = (uint16_t)(offset + size);
+    }
+    return dspic33_schedule(cpu, DSPIC33_EVENT_USB, endpoint, size, delay);
+}
+
 void dspic33_adc_input(Dspic33* cpu, uint8_t channel, uint16_t value) {
     if (channel < DSPIC33_ADC_CHANNEL_COUNT) {
         cpu->io.adc[channel] = value;
@@ -576,18 +660,13 @@ void dspic33_gpio_input(Dspic33* cpu, uint8_t port, uint16_t value) {
 }
 
 void dspic33_device_reset(Dspic33* cpu) {
+    size_t index;
     memset(&cpu->io, 0, sizeof(cpu->io));
     cpu->io.usb_size = sizeof(cpu->io.usb);
+    for (index = 0u; index < sizeof(reset_values) / sizeof(reset_values[0]); index++) {
+        raw_write_word(cpu, reset_values[index].address, reset_values[index].value);
+    }
     raw_write_word(cpu, 0x0742u, 0x3020u);
-    raw_write_word(cpu, 0x0222u, 0x0100u);
-    raw_write_word(cpu, 0x0232u, 0x0100u);
-    raw_write_word(cpu, 0x0252u, 0x0100u);
-    raw_write_word(cpu, 0x02b2u, 0x0100u);
-    raw_write_word(cpu, 0x0e00u, 0xffffu);
-    raw_write_word(cpu, 0x0e10u, 0xffffu);
-    raw_write_word(cpu, 0x0e20u, 0xffffu);
-    raw_write_word(cpu, 0x0e30u, 0xffffu);
-    raw_write_word(cpu, 0x0e40u, 0xffffu);
-    raw_write_word(cpu, 0x0e50u, 0xffffu);
-    raw_write_word(cpu, 0x0e60u, 0xffffu);
+    raw_write_word(cpu, 0x0758u, 0xa400u);
+    raw_write_word(cpu, 0x08c2u, 0x8000u);
 }

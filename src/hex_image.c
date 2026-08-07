@@ -236,6 +236,14 @@ bool hex_image_load_program(const HexImage* image, Dspic33* cpu, char* error,
                     set_error(error, error_size, "Intel HEX program data is invalid");
                     return false;
                 }
+                if (program_address >= DSPIC33_CONFIGURATION_BASE &&
+                    program_address <
+                        DSPIC33_CONFIGURATION_BASE + DSPIC33_CONFIGURATION_SIZE &&
+                    !dspic33_load_configuration_word(cpu, program_address, word)) {
+                    set_error(error, error_size,
+                              "Intel HEX configuration data is invalid");
+                    return false;
+                }
             }
         } else if (end != position && type == 1u) {
             eof = true;

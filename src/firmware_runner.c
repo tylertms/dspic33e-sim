@@ -5,6 +5,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include "dspic33.h"
 #include "firmware_image.h"
 #include "json.h"
@@ -24,6 +28,7 @@ typedef struct {
     size_t passed;
     size_t failed;
     size_t comparisons;
+    uint64_t instruction_limit;
     FirmwareImage reference_image;
     FirmwareImage candidate_image;
     Dspic33 reference;
@@ -164,7 +169,8 @@ static bool mapped_address(const Runner* runner, const JsonValue* specification,
     const JsonValue* value;
     const char* symbol;
     int64_t address;
-    int64_t offset = 0;
+    int64_t common_offset = 0;
+    int64_t image_offset = 0;
     if (candidate) {
         value = entry_field(runner, specification, "candidate_symbol");
         symbol = json_string(value);
@@ -200,11 +206,16 @@ static bool mapped_address(const Runner* runner, const JsonValue* specification,
         *result = (uint32_t)address;
         value = entry_field(runner, specification, "reference_offset");
     }
-    if (value != NULL && !parse_number(value, &offset)) {
+    if (value != NULL && !parse_number(value, &image_offset)) {
         snprintf(error, error_size, "location offset is invalid");
         return false;
     }
-    *result = (uint32_t)(*result + offset);
+    value = entry_field(runner, specification, "offset");
+    if (value != NULL && !parse_number(value, &common_offset)) {
+        snprintf(error, error_size, "location offset is invalid");
+        return false;
+    }
+    *result = (uint32_t)(*result + image_offset + common_offset);
     return true;
 }
 
@@ -504,6 +515,16 @@ static bool field_number(const Runner* runner, const JsonValue* specification,
     return parse_number(value, result);
 }
 
+static uint8_t read_memory_byte(Dspic33* cpu, const char* space, uint32_t address) {
+    if (space != NULL && strcmp(space, "program") == 0) {
+        return dspic33_read_program_byte(cpu, address);
+    }
+    if (space != NULL && strcmp(space, "configuration") == 0) {
+        return dspic33_read_configuration_byte(cpu, address);
+    }
+    return dspic33_read_byte(cpu, address);
+}
+
 static bool write_memory_value(Runner* runner, Dspic33* cpu, const FirmwareImage* image,
                                const JsonValue* specification, bool candidate,
                                char* error, size_t error_size) {
@@ -549,6 +570,16 @@ static bool write_memory_value(Runner* runner, Dspic33* cpu, const FirmwareImage
                     snprintf(error, error_size, "invalid byte stimulus");
                     return false;
                 }
+                if (space != NULL && strcmp(space, "program") == 0) {
+                    snprintf(error, error_size,
+                             "program byte stimuli must use 24-bit words");
+                    return false;
+                }
+                if (space != NULL && strcmp(space, "configuration") == 0) {
+                    snprintf(error, error_size,
+                             "configuration stimuli must use 24-bit words");
+                    return false;
+                }
                 dspic33_write_byte(
                     cpu, address + (uint32_t)(index * bytes->as.array.count + item),
                     (uint8_t)value);
@@ -574,6 +605,12 @@ static bool write_memory_value(Runner* runner, Dspic33* cpu, const FirmwareImage
                 snprintf(error, error_size, "program stimulus is out of range");
                 return false;
             }
+        } else if (space != NULL && strcmp(space, "configuration") == 0) {
+            if (!dspic33_load_configuration_word(cpu, address + (uint32_t)index * 2u,
+                                                 (uint32_t)value)) {
+                snprintf(error, error_size, "configuration stimulus is out of range");
+                return false;
+            }
         } else {
             dspic33_write_word(cpu, address + (uint32_t)index * 2u, (uint16_t)value);
         }
@@ -587,7 +624,6 @@ static bool apply_register(Runner* runner, Dspic33* cpu, const FirmwareImage* im
                            size_t error_size) {
     const char* name = json_string(json_get(specification, "name"));
     const JsonValue* value_entry = json_get(specification, "value");
-    const JsonValue* location = json_get(specification, "location");
     int64_t value;
     uint8_t reg;
     uint32_t address;
@@ -601,8 +637,8 @@ static bool apply_register(Runner* runner, Dspic33* cpu, const FirmwareImage* im
             snprintf(error, error_size, "invalid register stimulus");
             return false;
         }
-    } else if (location != NULL && mapped_address(runner, location, candidate, &address,
-                                                  error, error_size)) {
+    } else if (mapped_address(runner, specification, candidate, &address, error,
+                              error_size)) {
         int64_t offset = 0;
         if (json_get(specification, "register_offset") != NULL &&
             !parse_number(json_get(specification, "register_offset"), &offset)) {
@@ -637,6 +673,134 @@ static bool apply_pin(Dspic33* cpu, const JsonValue* specification, char* error,
         pins &= (uint16_t)~(1u << bit);
     }
     dspic33_gpio_input(cpu, port, pins);
+    return true;
+}
+
+static bool event_number(const JsonValue* specification, const char* name,
+                         uint64_t maximum, uint64_t default_value, bool required,
+                         uint64_t* result) {
+    const JsonValue* value = json_get(specification, name);
+    int64_t parsed;
+    if (value == NULL) {
+        if (required) {
+            return false;
+        }
+        *result = default_value;
+        return true;
+    }
+    if (!parse_number(value, &parsed) || parsed < 0 || (uint64_t)parsed > maximum) {
+        return false;
+    }
+    *result = (uint64_t)parsed;
+    return true;
+}
+
+static bool apply_device_stimulus(Dspic33* cpu, const char* type,
+                                  const JsonValue* specification, char* error,
+                                  size_t error_size) {
+    uint64_t channel = 0u;
+    uint64_t value = 0u;
+    uint64_t delay = 0u;
+    bool succeeded = false;
+    if (!event_number(specification, "delay", UINT64_MAX, 0u, false, &delay)) {
+        snprintf(error, error_size, "invalid %s stimulus delay", type);
+        return false;
+    }
+    if (strcmp(type, "interrupts") == 0) {
+        succeeded = event_number(specification, "irq", DSPIC33_IRQ_COUNT - 1u, 0u, true,
+                                 &channel) &&
+                    dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, (uint16_t)channel,
+                                     0u, delay);
+    } else if (strcmp(type, "uart_rx") == 0) {
+        succeeded = event_number(specification, "channel", DSPIC33_UART_COUNT - 1u, 0u,
+                                 true, &channel) &&
+                    event_number(specification, "value", UINT8_MAX, 0u, true, &value) &&
+                    dspic33_uart_receive(cpu, (uint8_t)channel, (uint8_t)value, delay);
+    } else if (strcmp(type, "spi_rx") == 0) {
+        succeeded =
+            event_number(specification, "channel", DSPIC33_SPI_COUNT - 1u, 0u, true,
+                         &channel) &&
+            event_number(specification, "value", UINT16_MAX, 0u, true, &value) &&
+            dspic33_spi_receive(cpu, (uint8_t)channel, (uint16_t)value, delay);
+    } else if (strcmp(type, "adc") == 0) {
+        succeeded = event_number(specification, "channel",
+                                 DSPIC33_ADC_CHANNEL_COUNT - 1u, 0u, true, &channel) &&
+                    event_number(specification, "value", 0x0fffu, 0u, true, &value);
+        if (succeeded) {
+            dspic33_adc_input(cpu, (uint8_t)channel, (uint16_t)value);
+        }
+    } else if (strcmp(type, "can_rx") == 0) {
+        const JsonValue* data = json_get(specification, "data");
+        const JsonValue* extended_value = json_get(specification, "extended");
+        const JsonValue* remote_value = json_get(specification, "remote");
+        Dspic33CanFrame frame;
+        size_t index;
+        memset(&frame, 0, sizeof(frame));
+        succeeded =
+            event_number(specification, "channel", DSPIC33_CAN_COUNT - 1u, 0u, true,
+                         &channel) &&
+            event_number(specification, "identifier", 0x1fffffffu, 0u, true, &value) &&
+            data != NULL && data->type == JSON_ARRAY &&
+            data->as.array.count <= sizeof(frame.data);
+        frame.identifier = (uint32_t)value;
+        frame.length = succeeded ? (uint8_t)data->as.array.count : 0u;
+        if (extended_value != NULL && !json_boolean(extended_value, &frame.extended)) {
+            succeeded = false;
+        }
+        if (remote_value != NULL && !json_boolean(remote_value, &frame.remote)) {
+            succeeded = false;
+        }
+        for (index = 0u; succeeded && index < frame.length; index++) {
+            int64_t byte;
+            succeeded = parse_number(data->as.array.items[index], &byte) && byte >= 0 &&
+                        byte <= UINT8_MAX;
+            frame.data[index] = (uint8_t)byte;
+        }
+        succeeded =
+            succeeded && dspic33_can_receive(cpu, (uint8_t)channel, &frame, delay);
+    } else if (strcmp(type, "usb_rx") == 0) {
+        const JsonValue* data = json_get(specification, "data");
+        uint8_t bytes[64];
+        size_t index;
+        succeeded = event_number(specification, "endpoint", 15u, 0u, true, &channel) &&
+                    data != NULL && data->type == JSON_ARRAY &&
+                    data->as.array.count <= sizeof(bytes);
+        for (index = 0u; succeeded && index < data->as.array.count; index++) {
+            int64_t byte;
+            succeeded = parse_number(data->as.array.items[index], &byte) && byte >= 0 &&
+                        byte <= UINT8_MAX;
+            bytes[index] = (uint8_t)byte;
+        }
+        succeeded =
+            succeeded && dspic33_usb_receive(cpu, (uint8_t)channel, bytes,
+                                             (uint16_t)data->as.array.count, delay);
+    }
+    if (!succeeded) {
+        snprintf(error, error_size, "invalid %s stimulus", type);
+    }
+    return succeeded;
+}
+
+static bool apply_device_stimuli_pair(Runner* runner, const JsonValue* stimuli,
+                                      const char* type, char* error,
+                                      size_t error_size) {
+    const JsonValue* values = json_get(stimuli, type);
+    size_t index;
+    if (values == NULL) {
+        return true;
+    }
+    if (values->type != JSON_ARRAY) {
+        snprintf(error, error_size, "%s stimuli must be an array", type);
+        return false;
+    }
+    for (index = 0u; index < values->as.array.count; index++) {
+        if (!apply_device_stimulus(&runner->reference, type,
+                                   values->as.array.items[index], error, error_size) ||
+            !apply_device_stimulus(&runner->candidate, type,
+                                   values->as.array.items[index], error, error_size)) {
+            return false;
+        }
+    }
     return true;
 }
 
@@ -685,7 +849,13 @@ static bool apply_stimuli_part(Runner* runner, const JsonValue* part, char* erro
             }
         }
     }
-    return true;
+    return apply_device_stimuli_pair(runner, stimuli, "interrupts", error,
+                                     error_size) &&
+           apply_device_stimuli_pair(runner, stimuli, "uart_rx", error, error_size) &&
+           apply_device_stimuli_pair(runner, stimuli, "spi_rx", error, error_size) &&
+           apply_device_stimuli_pair(runner, stimuli, "adc", error, error_size) &&
+           apply_device_stimuli_pair(runner, stimuli, "can_rx", error, error_size) &&
+           apply_device_stimuli_pair(runner, stimuli, "usb_rx", error, error_size);
 }
 
 static void reset_pair(Runner* runner) {
@@ -693,6 +863,28 @@ static void reset_pair(Runner* runner) {
     dspic33_reset(&runner->candidate, 0u);
     dspic33_gpio_input(&runner->reference, 1u, 1u);
     dspic33_gpio_input(&runner->candidate, 1u, 1u);
+}
+
+static void print_cpu_diagnostics(const Dspic33* cpu) {
+    uint64_t start = cpu->interrupt_count > 4u ? cpu->interrupt_count - 4u : 0u;
+    uint64_t item;
+    for (item = start; item < cpu->interrupt_count; item++) {
+        size_t index = (size_t)(item % 16u);
+        printf("  interrupt #%-6" PRIu64 " irq=%u interrupted=0x%06" PRIx32
+               " return=0x%06" PRIx32 "\n",
+               item + 1u, cpu->interrupt_log_irq[index],
+               cpu->interrupt_log_entry[index], cpu->interrupt_log_return[index]);
+    }
+    printf("  state PC=0x%06" PRIx32 " W0=0x%04x W1=0x%04x W6=0x%04x "
+           "W7=0x%04x W9=0x%04x W10=0x%04x W11=0x%04x W12=0x%04x "
+           "W15=0x%04x SR=0x%04x TBLPAG=0x%04x DSRPAG=0x%04x "
+           "DSWPAG=0x%04x\n",
+           cpu->pc, cpu->w[0], cpu->w[1], cpu->w[6], cpu->w[7], cpu->w[9], cpu->w[10],
+           cpu->w[11], cpu->w[12], cpu->w[15], cpu->sr, cpu->tblpag, cpu->dsrpag,
+           cpu->dswpag);
+    printf("  control call-depth=%u interrupt-depth=%u instructions=%" PRIu64
+           " cycles=%" PRIu64 "\n",
+           cpu->call_depth, cpu->interrupt_depth, cpu->instructions, cpu->cycles);
 }
 
 static bool run_image(Runner* runner, Dspic33* cpu, bool candidate,
@@ -711,23 +903,93 @@ static bool run_image(Runner* runner, Dspic33* cpu, bool candidate,
         if (!mapped_address(runner, stop, candidate, &address, error, error_size)) {
             return false;
         }
-        reason = dspic33_run_until(cpu, address, 0u);
+        reason = dspic33_run_until(cpu, address, runner->instruction_limit);
         if (reason != DSPIC33_STOPPED) {
-            snprintf(error, error_size, "%s stopped with %s at 0x%06" PRIx32,
+            snprintf(error, error_size,
+                     "%s stopped with %s at 0x%06" PRIx32 " opcode=0x%06" PRIx32
+                     " irq=%u irq-return=0x%06" PRIx32 " interrupts=%" PRIu64
+                     " resets=%" PRIu64 " reset-irq=%u",
                      candidate ? "candidate" : "reference",
-                     dspic33_stop_reason_name(reason), cpu->pc);
+                     dspic33_stop_reason_name(reason), cpu->pc, cpu->unsupported_opcode,
+                     cpu->last_interrupt, cpu->last_interrupt_return,
+                     cpu->interrupt_count, cpu->software_reset_count,
+                     cpu->reset_interrupt);
             return false;
         }
     } else {
-        reason = dspic33_run(cpu, 0u);
+        reason = dspic33_run(cpu, runner->instruction_limit);
         if (reason != DSPIC33_RETURNED) {
             snprintf(error, error_size,
-                     "%s stopped with %s at 0x%06" PRIx32 " opcode=0x%06" PRIx32,
+                     "%s stopped with %s at 0x%06" PRIx32 " opcode=0x%06" PRIx32
+                     " irq=%u irq-return=0x%06" PRIx32 " interrupts=%" PRIu64
+                     " resets=%" PRIu64 " reset-irq=%u",
                      candidate ? "candidate" : "reference",
-                     dspic33_stop_reason_name(reason), cpu->pc,
-                     cpu->unsupported_opcode);
+                     dspic33_stop_reason_name(reason), cpu->pc, cpu->unsupported_opcode,
+                     cpu->last_interrupt, cpu->last_interrupt_return,
+                     cpu->interrupt_count, cpu->software_reset_count,
+                     cpu->reset_interrupt);
             return false;
         }
+    }
+    return true;
+}
+
+typedef struct {
+    Runner* runner;
+    Dspic33* cpu;
+    const JsonValue* call;
+    const JsonValue* stop;
+    bool candidate;
+    bool succeeded;
+    char error[256];
+} RunTask;
+
+static void run_task(RunTask* task) {
+    task->succeeded = run_image(task->runner, task->cpu, task->candidate, task->call,
+                                task->stop, task->error, sizeof(task->error));
+}
+
+#ifdef _WIN32
+static DWORD WINAPI run_task_thread(LPVOID context) {
+    run_task(context);
+    return 0u;
+}
+#endif
+
+static bool run_pair(Runner* runner, const JsonValue* call, const JsonValue* stop,
+                     char* error, size_t error_size) {
+    RunTask reference = {runner, &runner->reference, call, stop, false, false, {0}};
+    RunTask candidate = {runner, &runner->candidate, call, stop, true, false, {0}};
+#ifdef _WIN32
+    HANDLE reference_thread =
+        CreateThread(NULL, 0u, run_task_thread, &reference, 0u, NULL);
+    HANDLE candidate_thread =
+        CreateThread(NULL, 0u, run_task_thread, &candidate, 0u, NULL);
+    if (reference_thread != NULL) {
+        WaitForSingleObject(reference_thread, INFINITE);
+        CloseHandle(reference_thread);
+    } else {
+        run_task(&reference);
+    }
+    if (candidate_thread != NULL) {
+        WaitForSingleObject(candidate_thread, INFINITE);
+        CloseHandle(candidate_thread);
+    } else {
+        run_task(&candidate);
+    }
+#else
+    run_task(&reference);
+    run_task(&candidate);
+#endif
+    if (!reference.succeeded) {
+        snprintf(error, error_size, "%s", reference.error);
+        print_cpu_diagnostics(&runner->reference);
+        return false;
+    }
+    if (!candidate.succeeded) {
+        snprintf(error, error_size, "%s", candidate.error);
+        print_cpu_diagnostics(&runner->candidate);
+        return false;
     }
     return true;
 }
@@ -791,6 +1053,11 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item, size_t* f
     int64_t expected;
     bool has_expected = parse_number(entry_field(runner, item, "expected"), &expected);
     const char* expected_text = json_string(entry_field(runner, item, "expected"));
+    const char* space = json_string(entry_field(runner, item, "space"));
+    const JsonValue* expected_location = entry_field(runner, item, "expected_location");
+    uint32_t reference_expected_address = 0u;
+    uint32_t candidate_expected_address = 0u;
+    int64_t expected_location_offset = 0;
     const char* name = json_string(entry_field(runner, item, "name"));
     size_t size;
     size_t index;
@@ -807,10 +1074,10 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item, size_t* f
         return false;
     }
     for (index = 0u; index < size; index++) {
-        if (dspic33_read_byte(&runner->reference,
-                              reference_address + (uint32_t)index) !=
-            dspic33_read_byte(&runner->candidate,
-                              candidate_address + (uint32_t)index)) {
+        if (read_memory_byte(&runner->reference, space,
+                             reference_address + (uint32_t)index) !=
+            read_memory_byte(&runner->candidate, space,
+                             candidate_address + (uint32_t)index)) {
             matched = false;
             break;
         }
@@ -828,26 +1095,56 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item, size_t* f
         }
         for (index = 0u; index < size; index++) {
             matched = matched &&
-                      dspic33_read_byte(&runner->reference,
-                                        reference_address + (uint32_t)index) ==
+                      read_memory_byte(&runner->reference, space,
+                                       reference_address + (uint32_t)index) ==
                           expected_bytes[index] &&
-                      dspic33_read_byte(&runner->candidate,
-                                        candidate_address + (uint32_t)index) ==
+                      read_memory_byte(&runner->candidate, space,
+                                       candidate_address + (uint32_t)index) ==
                           expected_bytes[index];
         }
         free(expected_bytes);
     }
-    if (has_expected && size <= 4u) {
+    if (expected_location != NULL && size <= 4u) {
+        uint32_t reference_value = 0u;
+        uint32_t candidate_value = 0u;
+        if (!mapped_address(runner, expected_location, false,
+                            &reference_expected_address, error, error_size) ||
+            !mapped_address(runner, expected_location, true,
+                            &candidate_expected_address, error, error_size) ||
+            (entry_field(runner, item, "expected_location_offset") != NULL &&
+             !parse_number(entry_field(runner, item, "expected_location_offset"),
+                           &expected_location_offset))) {
+            return false;
+        }
+        reference_expected_address =
+            (uint32_t)(reference_expected_address + expected_location_offset);
+        candidate_expected_address =
+            (uint32_t)(candidate_expected_address + expected_location_offset);
+        for (index = 0u; index < size; index++) {
+            reference_value |=
+                (uint32_t)read_memory_byte(&runner->reference, space,
+                                           reference_address + (uint32_t)index)
+                << (index * 8u);
+            candidate_value |=
+                (uint32_t)read_memory_byte(&runner->candidate, space,
+                                           candidate_address + (uint32_t)index)
+                << (index * 8u);
+        }
+        matched = (reference_value & (uint32_t)mask) ==
+                      (reference_expected_address & (uint32_t)mask) &&
+                  (candidate_value & (uint32_t)mask) ==
+                      (candidate_expected_address & (uint32_t)mask);
+    } else if (has_expected && size <= 4u) {
         uint32_t reference_value = 0u;
         uint32_t candidate_value = 0u;
         for (index = 0u; index < size; index++) {
             reference_value |=
-                (uint32_t)dspic33_read_byte(&runner->reference,
-                                            reference_address + (uint32_t)index)
+                (uint32_t)read_memory_byte(&runner->reference, space,
+                                           reference_address + (uint32_t)index)
                 << (index * 8u);
             candidate_value |=
-                (uint32_t)dspic33_read_byte(&runner->candidate,
-                                            candidate_address + (uint32_t)index)
+                (uint32_t)read_memory_byte(&runner->candidate, space,
+                                           candidate_address + (uint32_t)index)
                 << (index * 8u);
         }
         matched =
@@ -863,13 +1160,13 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item, size_t* f
         printf("  memory %s: reference@0x%05" PRIx32 "=", name == NULL ? "state" : name,
                reference_address);
         for (index = 0u; index < shown; index++) {
-            printf("%02x", dspic33_read_byte(&runner->reference,
-                                             reference_address + (uint32_t)index));
+            printf("%02x", read_memory_byte(&runner->reference, space,
+                                            reference_address + (uint32_t)index));
         }
         printf(" candidate@0x%05" PRIx32 "=", candidate_address);
         for (index = 0u; index < shown; index++) {
-            printf("%02x", dspic33_read_byte(&runner->candidate,
-                                             candidate_address + (uint32_t)index));
+            printf("%02x", read_memory_byte(&runner->candidate, space,
+                                            candidate_address + (uint32_t)index));
         }
         if (shown != size) {
             printf("...");
@@ -878,6 +1175,9 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item, size_t* f
             printf(" expected=0x%0*" PRIx64, (int)(size * 2u), (uint64_t)expected);
         } else if (expected_text != NULL) {
             printf(" expected=%s", expected_text);
+        } else if (expected_location != NULL) {
+            printf(" expected=reference:0x%08" PRIx32 ",candidate:0x%08" PRIx32,
+                   reference_expected_address, candidate_expected_address);
         }
         printf("\n");
     }
@@ -905,6 +1205,21 @@ static bool compare_memory(Runner* runner, const StepParts* parts, size_t* failu
             if (!compare_memory_item(runner, values->as.array.items[index], failures,
                                      error, error_size)) {
                 return false;
+            }
+        }
+    }
+    {
+        bool exact = false;
+        const JsonValue* enabled = scalar_field(parts, "compare_exact_program_data");
+        const JsonValue* values = suite_section(runner, "exact_program_data");
+        json_boolean(enabled, &exact);
+        if (exact && values != NULL && values->type == JSON_ARRAY) {
+            size_t index;
+            for (index = 0u; index < values->as.array.count; index++) {
+                if (!compare_memory_item(runner, values->as.array.items[index],
+                                         failures, error, error_size)) {
+                    return false;
+                }
             }
         }
     }
@@ -1057,8 +1372,7 @@ static bool execute_step(Runner* runner, const char* scenario_name,
             return false;
         }
     }
-    if (!run_image(runner, &runner->reference, false, call, stop, error, error_size) ||
-        !run_image(runner, &runner->candidate, true, call, stop, error, error_size) ||
+    if (!run_pair(runner, call, stop, error, error_size) ||
         !compare_registers(runner, parts, &failures, error, error_size) ||
         !compare_memory(runner, parts, &failures, error, error_size) ||
         !compare_pins(runner, parts, &failures, error, error_size)) {
@@ -1409,7 +1723,10 @@ static bool execute_scenario(const char* path, const JsonValue* scenario, void* 
 }
 
 static void print_usage(const char* program) {
-    fprintf(stderr, "Usage: %s --suite FILE [--scenario PATTERN]\n", program);
+    fprintf(stderr,
+            "Usage: %s --suite FILE [--scenario PATTERN] "
+            "[--max-instructions COUNT]\n",
+            program);
 }
 
 int firmware_runner_main(int argc, char** argv) {
@@ -1422,6 +1739,13 @@ int firmware_runner_main(int argc, char** argv) {
             suite_path = argv[++index];
         } else if (strcmp(argv[index], "--scenario") == 0 && index + 1 < argc) {
             runner.scenario_filter = argv[++index];
+        } else if (strcmp(argv[index], "--max-instructions") == 0 && index + 1 < argc) {
+            char* end;
+            runner.instruction_limit = strtoull(argv[++index], &end, 0);
+            if (*end != '\0' || runner.instruction_limit == 0u) {
+                print_usage(argv[0]);
+                return 2;
+            }
         } else {
             print_usage(argv[0]);
             return 2;

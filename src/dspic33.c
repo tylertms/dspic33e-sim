@@ -142,6 +142,19 @@ static uint32_t indirect_literal_address(Dspic33* cpu, uint8_t reg, int16_t offs
     return address;
 }
 
+static uint32_t direct_move_address(const Dspic33* cpu, uint16_t address, bool write) {
+    uint16_t page;
+    if (address < 0x8000u) {
+        return address;
+    }
+    page = write ? cpu->dswpag : cpu->dsrpag;
+    if (!write && page >= 0x0200u) {
+        return PSV_ADDRESS | ((page & 0x0100u) != 0u ? PSV_HIGH_BYTE : 0u) |
+               ((uint32_t)(page & 0x00ffu) << 15u) | (address & 0x7fffu);
+    }
+    return ((uint32_t)page << 15u) | (address & 0x7fffu);
+}
+
 static bool execute_move_offset(Dspic33* cpu, uint32_t opcode) {
     uint16_t encoded =
         (uint16_t)((((opcode >> 15u) & 0x0fu) << 6u) |
@@ -370,6 +383,13 @@ static bool execute_compare(Dspic33* cpu, uint32_t opcode) {
                         : read_operand_word(cpu, mode, (uint8_t)(opcode & 0x0fu), 0u);
         }
         borrow = (opcode & 0x008000u) != 0u;
+    } else if ((opcode & 0xff8000u) == 0xe20000u) {
+        uint16_t address = (uint16_t)(opcode & 0x1fffu);
+        byte_mode = (opcode & 0x004000u) != 0u;
+        left = byte_mode ? dspic33_read_byte(cpu, address)
+                         : dspic33_read_word(cpu, address);
+        right = 0u;
+        borrow = false;
     } else {
         return false;
     }
@@ -464,7 +484,7 @@ static bool execute_table(Dspic33* cpu, uint32_t opcode) {
                                              byte_mode ? 1u : 2u);
         value = 0u;
     }
-    address = (((uint32_t)cpu->tblpag & 0x00ffu) << 16u) | table_offset;
+    address = (((uint32_t)cpu->tblpag & 0x01ffu) << 16u) | table_offset;
     address &= 0x00fffffeu;
     if (address >= DSPIC33_PROGRAM_LIMIT) {
         word = 0x00ffffffu;
@@ -612,9 +632,9 @@ static bool execute_bit(Dspic33* cpu, uint32_t opcode) {
     uint8_t reg = 0u;
     bool byte_mode = false;
     if (file) {
-        bit = (uint8_t)(((opcode >> 13u) & 0x07u) | ((opcode & 1u) << 3u));
-        address = (uint16_t)((opcode >> 1u) & 0x1fffu);
-        value = dspic33_read_word(cpu, address);
+        bit = (uint8_t)((opcode >> 13u) & 0x07u);
+        address = (uint16_t)(opcode & 0x1fffu);
+        value = dspic33_read_byte(cpu, address);
     } else {
         mode = (uint8_t)((opcode >> 4u) & 0x07u);
         reg = (uint8_t)(opcode & 0x0fu);
@@ -662,7 +682,7 @@ static bool execute_bit(Dspic33* cpu, uint32_t opcode) {
         return true;
     }
     if (file) {
-        dspic33_write_word(cpu, address, value);
+        dspic33_write_byte(cpu, address, (uint8_t)value);
     } else if (byte_mode) {
         return write_operand_byte(cpu, mode, reg, 0u, (uint8_t)value);
     } else {
@@ -772,10 +792,13 @@ static bool branch_condition(const Dspic33* cpu, uint8_t condition, bool* take) 
 }
 
 static void push_program_counter(Dspic33* cpu, uint32_t address) {
-    write_word(cpu, cpu->w[15], (uint16_t)address);
+    uint16_t low = (uint16_t)(address & 0xfffeu);
+    low |= (uint16_t)((cpu->corcon >> 2u) & 1u);
+    write_word(cpu, cpu->w[15], low);
     cpu->w[15] += 2u;
     write_word(cpu, cpu->w[15], (uint16_t)(address >> 16u));
     cpu->w[15] += 2u;
+    cpu->corcon &= (uint16_t)~0x0004u;
     cpu->call_depth++;
 }
 
@@ -786,22 +809,28 @@ static uint32_t pop_program_counter(Dspic33* cpu) {
     high = read_word(cpu, cpu->w[15]) & 0x007fu;
     cpu->w[15] -= 2u;
     low = read_word(cpu, cpu->w[15]);
+    cpu->corcon = (uint16_t)((cpu->corcon & ~0x0004u) | ((low & 1u) << 2u));
     cpu->call_depth--;
-    return (high << 16u) | low;
+    return (high << 16u) | (low & 0xfffeu);
 }
 
-static bool execute_shift(Dspic33* cpu, uint32_t opcode, bool left) {
+static bool execute_shift(Dspic33* cpu, uint32_t opcode, uint8_t operation) {
     uint8_t source = (uint8_t)((opcode >> 11u) & 0x0fu);
     uint8_t destination = (uint8_t)((opcode >> 7u) & 0x0fu);
-    uint8_t amount;
+    uint16_t amount;
     uint16_t value;
 
-    if ((opcode & 0x0040u) == 0u) {
-        return false;
+    amount =
+        (opcode & 0x0040u) != 0u ? (uint16_t)(opcode & 0x0fu) : cpu->w[opcode & 0x0fu];
+    if (amount >= 16u) {
+        value = operation == 2u && (cpu->w[source] & 0x8000u) != 0u ? 0xffffu : 0u;
+    } else if (operation == 0u) {
+        value = (uint16_t)(cpu->w[source] << amount);
+    } else if (operation == 1u) {
+        value = (uint16_t)(cpu->w[source] >> amount);
+    } else {
+        value = (uint16_t)((int16_t)cpu->w[source] >> amount);
     }
-    amount = (uint8_t)(opcode & 0x0fu);
-    value = left ? (uint16_t)(cpu->w[source] << amount)
-                 : (uint16_t)(cpu->w[source] >> amount);
     cpu->w[destination] = value;
     update_logic_flags(cpu, value, false);
     return true;
@@ -980,6 +1009,16 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         cpu->w[14] = read_word(cpu, cpu->w[15]);
         return true;
     }
+    if ((opcode & 0xffe000u) == 0xf80000u) {
+        write_word(cpu, cpu->w[15], read_word(cpu, opcode & 0x1fffu));
+        cpu->w[15] += 2u;
+        return true;
+    }
+    if ((opcode & 0xffe000u) == 0xf90000u) {
+        cpu->w[15] -= 2u;
+        write_word(cpu, opcode & 0x1fffu, read_word(cpu, cpu->w[15]));
+        return true;
+    }
     if ((opcode & 0xff8001u) == 0xfa0000u) {
         write_word(cpu, cpu->w[15], cpu->w[14]);
         cpu->w[15] += 2u;
@@ -1017,7 +1056,11 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         cpu->pc = cpu->w[opcode & 0x0fu] & 0xfffeu;
         return true;
     }
-    if ((opcode & 0xff8ff0u) == 0x018000u || (opcode & 0xff8ff0u) == 0x018400u) {
+    if ((opcode & 0xfffff0u) == 0x010600u) {
+        cpu->pc = (uint32_t)(cpu->pc + (int32_t)(int16_t)cpu->w[opcode & 0x0fu] * 2);
+        return true;
+    }
+    if ((opcode & 0xff87f0u) == 0x018000u || (opcode & 0xff87f0u) == 0x018400u) {
         uint8_t source = (uint8_t)(opcode & 0x0eu);
         uint32_t target =
             ((uint32_t)(cpu->w[source + 1u] & 0x007fu) << 16u) | cpu->w[source];
@@ -1027,12 +1070,74 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         cpu->pc = target & 0x007ffffeu;
         return true;
     }
+    if ((opcode & 0xfffff0u) == 0x088000u || (opcode & 0xff8000u) == 0x080000u) {
+        uint16_t count;
+        int16_t displacement;
+        uint8_t depth;
+        if (cpu->pc >= DSPIC33_PROGRAM_LIMIT || cpu->do_depth == 4u) {
+            return false;
+        }
+        count = (opcode & 0xfffff0u) == 0x088000u
+                    ? (uint16_t)(cpu->w[opcode & 0x0fu] & 0x3fffu)
+                    : (uint16_t)(opcode & 0x7fffu);
+        displacement = (int16_t)(cpu->program[cpu->pc / 2u] & 0xffffu);
+        cpu->pc += 2u;
+        depth = cpu->do_depth++;
+        cpu->do_start[depth] = cpu->pc;
+        cpu->do_end[depth] = (uint32_t)(cpu->pc + (int32_t)displacement * 2);
+        cpu->do_count[depth] = count;
+        cpu->dostart = cpu->do_start[depth];
+        cpu->doend = cpu->do_end[depth];
+        cpu->dcount = count;
+        cpu->corcon =
+            (uint16_t)((cpu->corcon & ~0x0700u) | ((uint16_t)cpu->do_depth << 8u));
+        cpu->sr |= 0x0200u;
+        return true;
+    }
     if ((opcode & 0xff8000u) == 0x090000u) {
         cpu->rcount = (uint16_t)(opcode & 0x007fffu);
         if (cpu->rcount != 0u) {
             cpu->repeat_active = 1u;
             cpu->repeat_pc = cpu->pc;
             cpu->sr |= 0x0010u;
+        }
+        return true;
+    }
+    if ((opcode & 0xffc000u) == 0xfc0000u) {
+        cpu->disicnt = (uint16_t)((opcode & 0x003fffu) + 1u);
+        return true;
+    }
+    if ((opcode & 0xfff000u) == 0xfec000u) {
+        uint16_t value = (uint16_t)(opcode & 0x03ffu);
+        switch ((opcode >> 10u) & 3u) {
+        case 0u:
+            cpu->dsrpag = value;
+            break;
+        case 1u:
+            cpu->dswpag = value & 0x01ffu;
+            break;
+        case 3u:
+            cpu->tblpag = value & 0x01ffu;
+            break;
+        default:
+            return false;
+        }
+        return true;
+    }
+    if ((opcode & 0xfff3f0u) == 0xfed000u) {
+        uint16_t value = cpu->w[opcode & 0x0fu];
+        switch ((opcode >> 10u) & 3u) {
+        case 0u:
+            cpu->dsrpag = value & 0x03ffu;
+            break;
+        case 1u:
+            cpu->dswpag = value & 0x01ffu;
+            break;
+        case 3u:
+            cpu->tblpag = value & 0x01ffu;
+            break;
+        default:
+            return false;
         }
         return true;
     }
@@ -1074,12 +1179,14 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     }
     if ((opcode & 0xf80000u) == 0x800000u) {
         uint16_t address = (uint16_t)(((opcode >> 4u) & 0x7fffu) << 1u);
-        cpu->w[opcode & 0x0fu] = read_word(cpu, address);
+        cpu->w[opcode & 0x0fu] =
+            read_word(cpu, direct_move_address(cpu, address, false));
         return true;
     }
     if ((opcode & 0xf80000u) == 0x880000u) {
         uint16_t address = (uint16_t)(((opcode >> 4u) & 0x7fffu) << 1u);
-        dspic33_write_word(cpu, address, cpu->w[opcode & 0x0fu]);
+        dspic33_write_word(cpu, direct_move_address(cpu, address, true),
+                           cpu->w[opcode & 0x0fu]);
         return true;
     }
     if ((opcode & 0xffa000u) == 0xb7a000u) {
@@ -1109,9 +1216,13 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         update_logic_flags(cpu, value, byte_mode);
         return true;
     }
-    if ((opcode & 0xfff800u) == 0xfb8000u) {
+    if ((opcode & 0xff0000u) == 0xfb0000u) {
+        bool zero_extend = (opcode & 0x008000u) != 0u;
+        uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
+        uint8_t source_register = (uint8_t)(opcode & 0x0fu);
         uint8_t destination = (uint8_t)((opcode >> 7u) & 0x0fu);
-        cpu->w[destination] = (uint8_t)cpu->w[opcode & 0x0fu];
+        uint8_t source = read_operand_byte(cpu, source_mode, source_register, 0u);
+        cpu->w[destination] = zero_extend ? source : (uint16_t)(int16_t)(int8_t)source;
         update_logic_flags(cpu, cpu->w[destination], false);
         return true;
     }
@@ -1121,6 +1232,18 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     if ((opcode & 0xfe0000u) == 0xb80000u) {
         return execute_multiply(cpu, opcode);
     }
+    if ((opcode & 0xffa000u) == 0xbc0000u) {
+        uint16_t address = (uint16_t)(opcode & 0x1fffu);
+        if ((opcode & 0x004000u) != 0u) {
+            cpu->w[2] =
+                (uint16_t)((uint8_t)cpu->w[0] * dspic33_read_byte(cpu, address));
+        } else {
+            uint32_t product = (uint32_t)cpu->w[0] * dspic33_read_word(cpu, address);
+            cpu->w[2] = (uint16_t)product;
+            cpu->w[3] = (uint16_t)(product >> 16u);
+        }
+        return true;
+    }
     if ((opcode & 0xff0000u) == 0xcf0000u) {
         return execute_find_first(cpu, opcode);
     }
@@ -1128,10 +1251,13 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         return execute_divide(cpu, opcode);
     }
     if ((opcode & 0xff0000u) == 0xdd0000u) {
-        return execute_shift(cpu, opcode, true);
+        return execute_shift(cpu, opcode, 0u);
     }
     if ((opcode & 0xff0000u) == 0xde0000u) {
-        return execute_shift(cpu, opcode, false);
+        return execute_shift(cpu, opcode, 1u);
+    }
+    if ((opcode & 0xff0000u) == 0xdf0000u) {
+        return execute_shift(cpu, opcode, 2u);
     }
     if ((opcode & 0xf80000u) == 0x100000u || (opcode & 0xf80000u) == 0x180000u ||
         (opcode & 0xf80000u) == 0x400000u || (opcode & 0xf80000u) == 0x480000u ||
@@ -1140,7 +1266,7 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         (opcode & 0xf80000u) == 0x700000u) {
         return execute_binary(cpu, opcode, opcode & 0xf80000u);
     }
-    if ((opcode & 0xfe0000u) == 0xe00000u) {
+    if ((opcode & 0xfc0000u) == 0xe00000u) {
         return execute_compare(cpu, opcode);
     }
     if ((opcode & 0xfc0000u) == 0xe80000u) {
@@ -1151,8 +1277,9 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     }
     if ((opcode & 0xff0000u) == 0x070000u) {
         int32_t displacement = (int16_t)(opcode & 0xffffu);
+        uint32_t target = (uint32_t)(cpu->pc + displacement * 2);
         push_program_counter(cpu, cpu->pc);
-        cpu->pc = (uint32_t)(cpu->pc + displacement * 2);
+        cpu->pc = target;
         return true;
     }
     if ((opcode & 0xf00000u) == 0x300000u) {
@@ -1179,7 +1306,11 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         return true;
     }
     if (opcode == 0xfe0000u) {
+        uint64_t software_reset_count = cpu->software_reset_count + 1u;
+        uint16_t reset_interrupt = cpu->last_interrupt;
         dspic33_reset(cpu, 0u);
+        cpu->software_reset_count = software_reset_count;
+        cpu->reset_interrupt = reset_interrupt;
         return true;
     }
     if (opcode == 0x000000u || opcode == 0x00075au) {
@@ -1197,6 +1328,7 @@ bool dspic33_initialize(Dspic33* cpu) {
         return false;
     }
     memset(cpu->program, 0xff, DSPIC33_PROGRAM_WORDS * sizeof(*cpu->program));
+    memset(cpu->configuration, 0xff, sizeof(cpu->configuration));
     return true;
 }
 
@@ -1225,8 +1357,8 @@ void dspic33_reset(Dspic33* cpu, uint32_t entry) {
     cpu->dostart = 0u;
     cpu->doend = 0u;
     cpu->tblpag = 0u;
-    cpu->dsrpag = 0u;
-    cpu->dswpag = 0u;
+    cpu->dsrpag = 1u;
+    cpu->dswpag = 1u;
     cpu->disicnt = 0u;
     cpu->call_depth = 0u;
     cpu->interrupt_depth = 0u;
@@ -1239,6 +1371,14 @@ void dspic33_reset(Dspic33* cpu, uint32_t entry) {
     cpu->instructions = 0u;
     cpu->cycles = 0u;
     cpu->unsupported_opcode = 0u;
+    cpu->last_interrupt = UINT16_MAX;
+    cpu->last_interrupt_return = 0u;
+    cpu->interrupt_count = 0u;
+    cpu->software_reset_count = 0u;
+    cpu->reset_interrupt = UINT16_MAX;
+    memset(cpu->interrupt_log_irq, 0xff, sizeof(cpu->interrupt_log_irq));
+    memset(cpu->interrupt_log_entry, 0, sizeof(cpu->interrupt_log_entry));
+    memset(cpu->interrupt_log_return, 0, sizeof(cpu->interrupt_log_return));
     cpu->events.count = 0u;
     cpu->events.sequence = 0u;
     cpu->stop_reason = DSPIC33_RUNNING;
@@ -1251,6 +1391,36 @@ bool dspic33_load_program_word(Dspic33* cpu, uint32_t address, uint32_t word) {
     }
     cpu->program[address / 2u] = word & 0x00ffffffu;
     return true;
+}
+
+bool dspic33_load_configuration_word(Dspic33* cpu, uint32_t address, uint32_t word) {
+    uint32_t offset;
+    if (address < DSPIC33_CONFIGURATION_BASE ||
+        address + 1u >= DSPIC33_CONFIGURATION_BASE + DSPIC33_CONFIGURATION_SIZE) {
+        return false;
+    }
+    offset = address - DSPIC33_CONFIGURATION_BASE;
+    cpu->configuration[offset] = (uint8_t)word;
+    cpu->configuration[offset + 1u] = (uint8_t)(word >> 8u);
+    return true;
+}
+
+uint8_t dspic33_read_program_byte(const Dspic33* cpu, uint32_t address) {
+    uint32_t word_address = address & ~1u;
+    uint32_t word;
+    if (word_address >= DSPIC33_PROGRAM_LIMIT) {
+        return 0xffu;
+    }
+    word = cpu->program[word_address / 2u];
+    return (uint8_t)(word >> ((address & 1u) * 8u));
+}
+
+uint8_t dspic33_read_configuration_byte(const Dspic33* cpu, uint32_t address) {
+    if (address < DSPIC33_CONFIGURATION_BASE ||
+        address >= DSPIC33_CONFIGURATION_BASE + DSPIC33_CONFIGURATION_SIZE) {
+        return 0xffu;
+    }
+    return cpu->configuration[address - DSPIC33_CONFIGURATION_BASE];
 }
 
 void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
@@ -1394,61 +1564,86 @@ uint16_t dspic33_read_word(Dspic33* cpu, uint32_t address) {
                       ((uint16_t)dspic33_read_byte(cpu, address + 1u) << 8u));
 }
 
+Dspic33StopReason dspic33_step(Dspic33* cpu) {
+    uint32_t opcode;
+    uint32_t instruction_pc;
+    dspic33_device_service_interrupt(cpu);
+    if ((cpu->pc & 1u) != 0u || cpu->pc >= DSPIC33_PROGRAM_LIMIT) {
+        cpu->stop_reason = DSPIC33_PROGRAM_BOUNDS;
+        return cpu->stop_reason;
+    }
+    instruction_pc = cpu->pc;
+    opcode = cpu->program[cpu->pc / 2u];
+    if (opcode == 0x064000u) {
+        dspic33_device_return_interrupt(cpu);
+        cpu->instructions++;
+        dspic33_device_advance(cpu, 3u);
+        return cpu->stop_reason;
+    }
+    if (opcode == 0x060000u) {
+        if (cpu->call_depth == 0u) {
+            cpu->stop_reason = DSPIC33_RETURNED;
+            return cpu->stop_reason;
+        }
+        cpu->pc = pop_program_counter(cpu);
+        cpu->instructions++;
+        dspic33_device_advance(cpu, 3u);
+        return cpu->stop_reason;
+    }
+    cpu->pc += 2u;
+    cpu->instructions++;
+    if (!execute(cpu, opcode)) {
+        cpu->pc -= 2u;
+        cpu->unsupported_opcode = opcode;
+        cpu->stop_reason = DSPIC33_UNSUPPORTED_INSTRUCTION;
+        return cpu->stop_reason;
+    }
+    if (cpu->repeat_active != 0u && instruction_pc == cpu->repeat_pc) {
+        if (cpu->rcount != 0u) {
+            cpu->rcount--;
+            cpu->pc = cpu->repeat_pc;
+        } else {
+            cpu->repeat_active = 0u;
+            cpu->sr &= (uint16_t)~0x0010u;
+        }
+    }
+    if (cpu->do_depth != 0u && instruction_pc == cpu->do_end[cpu->do_depth - 1u]) {
+        uint8_t depth = (uint8_t)(cpu->do_depth - 1u);
+        if (cpu->do_count[depth] != 0u) {
+            cpu->do_count[depth]--;
+            cpu->dcount = cpu->do_count[depth];
+            cpu->pc = cpu->do_start[depth];
+        } else {
+            cpu->do_depth--;
+            cpu->corcon =
+                (uint16_t)((cpu->corcon & ~0x0700u) | ((uint16_t)cpu->do_depth << 8u));
+            if (cpu->do_depth == 0u) {
+                cpu->dostart = 0u;
+                cpu->doend = 0u;
+                cpu->dcount = 0u;
+                cpu->sr &= (uint16_t)~0x0200u;
+            } else {
+                depth = (uint8_t)(cpu->do_depth - 1u);
+                cpu->dostart = cpu->do_start[depth];
+                cpu->doend = cpu->do_end[depth];
+                cpu->dcount = cpu->do_count[depth];
+            }
+        }
+    }
+    dspic33_device_advance(cpu, 1u);
+    return cpu->stop_reason;
+}
+
 static Dspic33StopReason run(Dspic33* cpu, uint64_t instruction_limit,
                              uint32_t stop_address, bool stop_enabled) {
     uint64_t start = cpu->instructions;
+    cpu->stop_reason = DSPIC33_RUNNING;
     while (instruction_limit == 0u || cpu->instructions - start < instruction_limit) {
-        uint32_t opcode;
-        uint32_t instruction_pc;
-        dspic33_device_service_interrupt(cpu);
         if (stop_enabled && cpu->pc == stop_address) {
             cpu->stop_reason = DSPIC33_STOPPED;
             return cpu->stop_reason;
         }
-        if ((cpu->pc & 1u) != 0u || cpu->pc >= DSPIC33_PROGRAM_LIMIT) {
-            cpu->stop_reason = DSPIC33_PROGRAM_BOUNDS;
-            return cpu->stop_reason;
-        }
-        instruction_pc = cpu->pc;
-        opcode = cpu->program[cpu->pc / 2u];
-        if (opcode == 0x064000u) {
-            dspic33_device_return_interrupt(cpu);
-            cpu->instructions++;
-            if (!dspic33_device_advance(cpu, 3u)) {
-                return cpu->stop_reason;
-            }
-            continue;
-        }
-        if (opcode == 0x060000u) {
-            if (cpu->call_depth == 0u) {
-                cpu->stop_reason = DSPIC33_RETURNED;
-                return cpu->stop_reason;
-            }
-            cpu->pc = pop_program_counter(cpu);
-            cpu->instructions++;
-            if (!dspic33_device_advance(cpu, 3u)) {
-                return cpu->stop_reason;
-            }
-            continue;
-        }
-        cpu->pc += 2u;
-        cpu->instructions++;
-        if (!execute(cpu, opcode)) {
-            cpu->pc -= 2u;
-            cpu->unsupported_opcode = opcode;
-            cpu->stop_reason = DSPIC33_UNSUPPORTED_INSTRUCTION;
-            return cpu->stop_reason;
-        }
-        if (cpu->repeat_active != 0u && instruction_pc == cpu->repeat_pc) {
-            if (cpu->rcount != 0u) {
-                cpu->rcount--;
-                cpu->pc = cpu->repeat_pc;
-            } else {
-                cpu->repeat_active = 0u;
-                cpu->sr &= (uint16_t)~0x0010u;
-            }
-        }
-        if (!dspic33_device_advance(cpu, 1u)) {
+        if (dspic33_step(cpu) != DSPIC33_RUNNING) {
             return cpu->stop_reason;
         }
     }
