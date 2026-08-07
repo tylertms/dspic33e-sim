@@ -16,6 +16,8 @@
 
 enum { MAX_STEP_PARTS = 32, MAX_MATRIX_DIMENSIONS = 16 };
 
+typedef struct RunTask RunTask;
+
 typedef struct {
     const JsonValue* suite;
     const char* suite_path;
@@ -30,11 +32,18 @@ typedef struct {
     size_t passed;
     size_t failed;
     size_t comparisons;
+    uint64_t reference_instructions;
+    uint64_t candidate_instructions;
+    uint64_t reference_cycles;
+    uint64_t candidate_cycles;
     uint64_t instruction_limit;
     FirmwareImage reference_image;
     FirmwareImage candidate_image;
     Dspic33 reference;
     Dspic33 candidate;
+#ifdef _WIN32
+    RunTask* run_tasks;
+#endif
 } Runner;
 
 typedef struct {
@@ -133,6 +142,27 @@ static bool step_selected(const Runner* runner, const JsonValue* step) {
     return runner->step_filter == NULL ||
            (id != NULL && wildcard_matches(runner->step_filter, id)) ||
            (name != NULL && wildcard_matches(runner->step_filter, name));
+}
+
+static bool generated_step_selected(const Runner* runner, const char* name) {
+    return runner->step_filter == NULL || wildcard_matches(runner->step_filter, name);
+}
+
+static size_t generated_step_count(const Runner* runner, const char* scenario_name,
+                                   const char* kind, size_t count) {
+    size_t selected = 0u;
+    size_t index;
+    char name[512];
+    if (runner->step_filter == NULL) {
+        return count;
+    }
+    for (index = 0u; index < count; index++) {
+        snprintf(name, sizeof(name), "%s %s %zu", scenario_name, kind, index + 1u);
+        if (generated_step_selected(runner, name)) {
+            selected++;
+        }
+    }
+    return selected;
 }
 
 static const JsonValue* named_entry(const JsonValue* object, const char* name) {
@@ -345,12 +375,13 @@ static size_t matrix_count(const Runner* runner, const JsonValue* matrix) {
         }
         return result;
     }
-    return 0u;
+    return true;
 }
 
 static size_t scenario_step_count(const Runner* runner, const JsonValue* scenario) {
     const JsonValue* fixtures = json_get(scenario, "fixtures");
     const JsonValue* mode;
+    const char* scenario_name = json_string(json_get(scenario, "name"));
     size_t count = 0u;
     size_t index;
     if (fixtures != NULL && fixtures->type == JSON_ARRAY) {
@@ -374,15 +405,17 @@ static size_t scenario_step_count(const Runner* runner, const JsonValue* scenari
         }
         return selected == 0u ? 0u : count + selected;
     }
-    if (runner->step_filter != NULL) {
-        return 0u;
-    }
     mode = json_get(scenario, "range");
     if (mode != NULL) {
-        return count + values_count(runner, mode);
+        return runner->step_filter == NULL ? count + values_count(runner, mode) : 0u;
     }
     mode = json_get(scenario, "matrix");
-    return mode != NULL ? count + matrix_count(runner, mode) : count;
+    if (mode != NULL) {
+        size_t selected = generated_step_count(runner, scenario_name, "matrix case",
+                                               matrix_count(runner, mode));
+        return selected == 0u ? 0u : count + selected;
+    }
+    return count;
 }
 
 static bool count_scenario(const char* path, const JsonValue* scenario, void* context,
@@ -956,60 +989,146 @@ static bool run_image(Runner* runner, Dspic33* cpu, bool candidate,
     return true;
 }
 
-typedef struct {
+struct RunTask {
     Runner* runner;
     Dspic33* cpu;
     const JsonValue* call;
     const JsonValue* stop;
     bool candidate;
     bool succeeded;
+    uint64_t instructions;
+    uint64_t cycles;
     char error[256];
-} RunTask;
+#ifdef _WIN32
+    bool terminate;
+    HANDLE thread;
+    HANDLE start_event;
+    HANDLE done_event;
+#endif
+};
 
 static void run_task(RunTask* task) {
+    uint64_t instructions = task->cpu->instructions;
+    uint64_t cycles = task->cpu->cycles;
     task->succeeded = run_image(task->runner, task->cpu, task->candidate, task->call,
                                 task->stop, task->error, sizeof(task->error));
+    task->instructions = task->cpu->instructions - instructions;
+    task->cycles = task->cpu->cycles - cycles;
 }
 
 #ifdef _WIN32
 static DWORD WINAPI run_task_thread(LPVOID context) {
-    run_task(context);
-    return 0u;
+    RunTask* task = context;
+    for (;;) {
+        WaitForSingleObject(task->start_event, INFINITE);
+        if (task->terminate) {
+            return 0u;
+        }
+        run_task(task);
+        SetEvent(task->done_event);
+    }
+}
+
+static void stop_run_tasks(Runner* runner) {
+    size_t index;
+    if (runner->run_tasks == NULL) {
+        return;
+    }
+    for (index = 0u; index < 2u; index++) {
+        RunTask* task = &runner->run_tasks[index];
+        if (task->thread != NULL) {
+            task->terminate = true;
+            SetEvent(task->start_event);
+        }
+    }
+    for (index = 0u; index < 2u; index++) {
+        RunTask* task = &runner->run_tasks[index];
+        if (task->thread != NULL) {
+            WaitForSingleObject(task->thread, INFINITE);
+            CloseHandle(task->thread);
+        }
+        if (task->start_event != NULL) {
+            CloseHandle(task->start_event);
+        }
+        if (task->done_event != NULL) {
+            CloseHandle(task->done_event);
+        }
+    }
+    free(runner->run_tasks);
+    runner->run_tasks = NULL;
+}
+
+static bool start_run_tasks(Runner* runner) {
+    size_t index;
+    runner->run_tasks = calloc(2u, sizeof(*runner->run_tasks));
+    if (runner->run_tasks == NULL) {
+        return false;
+    }
+    for (index = 0u; index < 2u; index++) {
+        RunTask* task = &runner->run_tasks[index];
+        task->runner = runner;
+        task->cpu = index == 0u ? &runner->reference : &runner->candidate;
+        task->candidate = index != 0u;
+        task->start_event = CreateEventA(NULL, FALSE, FALSE, NULL);
+        task->done_event = CreateEventA(NULL, FALSE, FALSE, NULL);
+        if (task->start_event == NULL || task->done_event == NULL) {
+            stop_run_tasks(runner);
+            return false;
+        }
+        task->thread = CreateThread(NULL, 0u, run_task_thread, task, 0u, NULL);
+        if (task->thread == NULL) {
+            stop_run_tasks(runner);
+            return false;
+        }
+    }
+    return true;
+}
+#else
+static void stop_run_tasks(Runner* runner) { (void)runner; }
+
+static bool start_run_tasks(Runner* runner) {
+    (void)runner;
+    return true;
 }
 #endif
 
 static bool run_pair(Runner* runner, const JsonValue* call, const JsonValue* stop,
                      char* error, size_t error_size) {
-    RunTask reference = {runner, &runner->reference, call, stop, false, false, {0}};
-    RunTask candidate = {runner, &runner->candidate, call, stop, true, false, {0}};
 #ifdef _WIN32
-    HANDLE reference_thread =
-        CreateThread(NULL, 0u, run_task_thread, &reference, 0u, NULL);
-    HANDLE candidate_thread =
-        CreateThread(NULL, 0u, run_task_thread, &candidate, 0u, NULL);
-    if (reference_thread != NULL) {
-        WaitForSingleObject(reference_thread, INFINITE);
-        CloseHandle(reference_thread);
-    } else {
-        run_task(&reference);
-    }
-    if (candidate_thread != NULL) {
-        WaitForSingleObject(candidate_thread, INFINITE);
-        CloseHandle(candidate_thread);
-    } else {
-        run_task(&candidate);
-    }
+    RunTask* reference = &runner->run_tasks[0];
+    RunTask* candidate = &runner->run_tasks[1];
+    HANDLE done_events[2] = {reference->done_event, candidate->done_event};
+    reference->call = call;
+    reference->stop = stop;
+    reference->succeeded = false;
+    reference->error[0] = '\0';
+    candidate->call = call;
+    candidate->stop = stop;
+    candidate->succeeded = false;
+    candidate->error[0] = '\0';
+    SetEvent(reference->start_event);
+    SetEvent(candidate->start_event);
+    WaitForMultipleObjects(2u, done_events, TRUE, INFINITE);
 #else
-    run_task(&reference);
-    run_task(&candidate);
+    RunTask reference_task = {runner, &runner->reference, call, stop, false, false,
+                              {0}};
+    RunTask candidate_task = {runner, &runner->candidate, call, stop, true, false, {0}};
+    RunTask* reference = &reference_task;
+    RunTask* candidate = &candidate_task;
+    run_task(reference);
+    run_task(candidate);
 #endif
-    if (!reference.succeeded) {
-        snprintf(error, error_size, "%s", reference.error);
+    runner->reference_instructions += reference->instructions;
+    runner->candidate_instructions += candidate->instructions;
+    runner->reference_cycles += reference->cycles;
+    runner->candidate_cycles += candidate->cycles;
+    if (!reference->succeeded) {
+        snprintf(error, error_size, "%s", reference->error);
         print_cpu_diagnostics(&runner->reference);
         return false;
     }
-    if (!candidate.succeeded) {
-        snprintf(error, error_size, "%s", candidate.error);
+    if (!candidate->succeeded) {
+        snprintf(error, error_size, "%s", candidate->error);
         print_cpu_diagnostics(&runner->candidate);
         return false;
     }
@@ -1533,6 +1652,9 @@ static bool execute_range(Runner* runner, const JsonValue* scenario,
         }
         snprintf(name, sizeof(name), "%s at %s=0x%" PRIx64, scenario_name,
                  reg == NULL ? "value" : reg, (uint64_t)value);
+        if (!generated_step_selected(runner, name)) {
+            continue;
+        }
         if (!add_common_parts(runner, scenario, &parts, error, error_size) ||
             !add_part(&parts, base, error, error_size) ||
             !execute_step(runner, scenario_name, name, &parts, scenario_call, range,
@@ -1568,6 +1690,9 @@ static bool execute_matrix_selection(Runner* runner, const JsonValue* scenario,
     char name[512];
     size_t index;
     snprintf(name, sizeof(name), "%s matrix case %zu", scenario_name, ordinal + 1u);
+    if (!generated_step_selected(runner, name)) {
+        return true;
+    }
     if (!add_common_parts(runner, scenario, &parts, error, error_size) ||
         !add_part(&parts, json_get(matrix, "step"), error, error_size)) {
         return false;
@@ -1822,10 +1947,17 @@ int firmware_runner_main(int argc, char** argv) {
         json_free((JsonValue*)runner.suite);
         return 1;
     }
+    if (!start_run_tasks(&runner)) {
+        fprintf(stderr, "[error] cannot start native simulator workers\n");
+        close_images(&runner);
+        json_free((JsonValue*)runner.suite);
+        return 1;
+    }
     printf("[ready] Starting native differential execution\n");
     fflush(stdout);
     if (!stream_patterns(&runner, execute_scenario, error, sizeof(error))) {
         fprintf(stderr, "[error] %s\n", error);
+        stop_run_tasks(&runner);
         close_images(&runner);
         json_free((JsonValue*)runner.suite);
         return 1;
@@ -1833,6 +1965,11 @@ int firmware_runner_main(int argc, char** argv) {
     printf("[summary] scenarios=%zu steps=%zu passed=%zu failed=%zu comparisons=%zu\n",
            runner.current_scenario, runner.current_step, runner.passed, runner.failed,
            runner.comparisons);
+    printf("[work] reference-instructions=%" PRIu64 " candidate-instructions=%" PRIu64
+           " reference-cycles=%" PRIu64 " candidate-cycles=%" PRIu64 "\n",
+           runner.reference_instructions, runner.candidate_instructions,
+           runner.reference_cycles, runner.candidate_cycles);
+    stop_run_tasks(&runner);
     close_images(&runner);
     json_free((JsonValue*)runner.suite);
     return runner.failed == 0u ? 0 : 1;

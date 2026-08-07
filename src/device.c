@@ -207,7 +207,18 @@ bool dspic33_device_service_interrupt(Dspic33* cpu) {
     size_t log_index;
     uint16_t irq;
     uint16_t stacked_high;
+    uint16_t group;
     if ((raw_word(cpu, 0x08c2u) & 0x8000u) == 0u || (cpu->corcon & 0x0008u) != 0u) {
+        return false;
+    }
+    for (group = 0u; group < (DSPIC33_IRQ_COUNT + 15u) / 16u; group++) {
+        uint16_t offset = (uint16_t)(group * 2u);
+        if ((raw_word(cpu, (uint16_t)(0x0800u + offset)) &
+             raw_word(cpu, (uint16_t)(0x0820u + offset))) != 0u) {
+            break;
+        }
+    }
+    if (group == (DSPIC33_IRQ_COUNT + 15u) / 16u) {
         return false;
     }
     for (irq = 0u; irq < DSPIC33_IRQ_COUNT; irq++) {
