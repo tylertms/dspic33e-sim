@@ -21,6 +21,8 @@ typedef struct {
     const char* suite_path;
     char suite_directory[1024];
     const char* scenario_filter;
+    const char* step_filter;
+    bool failures_only;
     size_t scenarios;
     size_t steps;
     size_t current_scenario;
@@ -123,6 +125,14 @@ static bool scenario_selected(const Runner* runner, const JsonValue* scenario) {
     return runner->scenario_filter == NULL ||
            (id != NULL && wildcard_matches(runner->scenario_filter, id)) ||
            (name != NULL && wildcard_matches(runner->scenario_filter, name));
+}
+
+static bool step_selected(const Runner* runner, const JsonValue* step) {
+    const char* id = json_string(json_get(step, "id"));
+    const char* name = json_string(json_get(step, "name"));
+    return runner->step_filter == NULL ||
+           (id != NULL && wildcard_matches(runner->step_filter, id)) ||
+           (name != NULL && wildcard_matches(runner->step_filter, name));
 }
 
 static const JsonValue* named_entry(const JsonValue* object, const char* name) {
@@ -356,7 +366,16 @@ static size_t scenario_step_count(const Runner* runner, const JsonValue* scenari
         mode = json_get(scenario, "vectors");
     }
     if (mode != NULL && mode->type == JSON_ARRAY) {
-        return count + mode->as.array.count;
+        size_t selected = 0u;
+        for (index = 0u; index < mode->as.array.count; index++) {
+            if (step_selected(runner, mode->as.array.items[index])) {
+                selected++;
+            }
+        }
+        return selected == 0u ? 0u : count + selected;
+    }
+    if (runner->step_filter != NULL) {
+        return 0u;
     }
     mode = json_get(scenario, "range");
     if (mode != NULL) {
@@ -375,6 +394,9 @@ static bool count_scenario(const char* path, const JsonValue* scenario, void* co
         return true;
     }
     count = scenario_step_count(runner, scenario);
+    if (count == 0u && runner->step_filter != NULL) {
+        return true;
+    }
     if (count == 0u) {
         snprintf(error, error_size, "scenario has no executable steps: %s",
                  json_string(json_get(scenario, "id")));
@@ -1351,9 +1373,11 @@ static bool execute_step(Runner* runner, const char* scenario_name,
         reset_pair(runner);
     }
     runner->current_step++;
-    printf("[running] %zu/%zu %s: %s\n", runner->current_step, runner->steps,
-           scenario_name, step_name);
-    fflush(stdout);
+    if (!runner->failures_only) {
+        printf("[running] %zu/%zu %s: %s\n", runner->current_step, runner->steps,
+               scenario_name, step_name);
+        fflush(stdout);
+    }
     for (index = 0u; index < parts->count; index++) {
         if (!apply_stimuli_part(runner, parts->items[index], error, error_size)) {
             return false;
@@ -1380,7 +1404,10 @@ static bool execute_step(Runner* runner, const char* scenario_name,
     }
     if (failures == 0u) {
         runner->passed++;
-        printf("[passed] %zu/%zu %s\n", runner->current_step, runner->steps, step_name);
+        if (!runner->failures_only) {
+            printf("[passed] %zu/%zu %s\n", runner->current_step, runner->steps,
+                   step_name);
+        }
     } else {
         runner->failed++;
         printf("[failed] %zu/%zu %s (%zu differences)\n", runner->current_step,
@@ -1476,6 +1503,9 @@ static bool execute_regular_steps(Runner* runner, const JsonValue* scenario,
     size_t index;
     for (index = 0u; index < steps->as.array.count; index++) {
         StepParts parts = {0};
+        if (!step_selected(runner, steps->as.array.items[index])) {
+            continue;
+        }
         if (!add_common_parts(runner, scenario, &parts, error, error_size) ||
             !add_part(&parts, steps->as.array.items[index], error, error_size) ||
             !execute_step(runner, scenario_name, NULL, &parts, scenario_call, NULL, 0,
@@ -1691,6 +1721,9 @@ static bool execute_scenario(const char* path, const JsonValue* scenario, void* 
     if (!scenario_selected(runner, scenario)) {
         return true;
     }
+    if (scenario_step_count(runner, scenario) == 0u) {
+        return true;
+    }
     runner->current_scenario++;
     reset_pair(runner);
     printf("[scenario] %zu/%zu %s\n", runner->current_scenario, runner->scenarios,
@@ -1724,8 +1757,8 @@ static bool execute_scenario(const char* path, const JsonValue* scenario, void* 
 
 static void print_usage(const char* program) {
     fprintf(stderr,
-            "Usage: %s --suite FILE [--scenario PATTERN] "
-            "[--max-instructions COUNT]\n",
+            "Usage: %s --suite FILE [--scenario PATTERN] [--step PATTERN] "
+            "[--failures-only] [--max-instructions COUNT]\n",
             program);
 }
 
@@ -1739,6 +1772,10 @@ int firmware_runner_main(int argc, char** argv) {
             suite_path = argv[++index];
         } else if (strcmp(argv[index], "--scenario") == 0 && index + 1 < argc) {
             runner.scenario_filter = argv[++index];
+        } else if (strcmp(argv[index], "--step") == 0 && index + 1 < argc) {
+            runner.step_filter = argv[++index];
+        } else if (strcmp(argv[index], "--failures-only") == 0) {
+            runner.failures_only = true;
         } else if (strcmp(argv[index], "--max-instructions") == 0 && index + 1 < argc) {
             char* end;
             runner.instruction_limit = strtoull(argv[++index], &end, 0);
@@ -1768,6 +1805,10 @@ int firmware_runner_main(int argc, char** argv) {
     fflush(stdout);
     if (!stream_patterns(&runner, count_scenario, error, sizeof(error)) ||
         runner.scenarios == 0u) {
+        if (runner.scenarios == 0u) {
+            snprintf(error, sizeof(error),
+                     "no scenarios matched the requested filters");
+        }
         fprintf(stderr, "[error] %s\n", error);
         json_free((JsonValue*)runner.suite);
         return 1;
