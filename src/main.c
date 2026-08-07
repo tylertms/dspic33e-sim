@@ -105,6 +105,16 @@ static void print_usage(const char* program) {
             program);
 }
 
+static bool resolve_location(const ElfImage* image, const char* text, uint32_t* address,
+                             char* error, size_t error_size) {
+    uint64_t numeric;
+    if (parse_u64(text, UINT32_MAX, &numeric)) {
+        *address = (uint32_t)numeric;
+        return true;
+    }
+    return elf_image_symbol(image, text, address, error, error_size);
+}
+
 int main(int argc, char** argv) {
     Arguments arguments;
     ElfImage image;
@@ -129,7 +139,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!elf_image_load_program(&image, &cpu, error, sizeof(error)) ||
-        !elf_image_symbol(&image, arguments.entry_symbol, &entry, error,
+        !resolve_location(&image, arguments.entry_symbol, &entry, error,
                           sizeof(error))) {
         fprintf(stderr, "[error] %s\n", error);
         dspic33_destroy(&cpu);
@@ -143,7 +153,7 @@ int main(int argc, char** argv) {
         }
     }
     if (arguments.write_symbol != NULL) {
-        if (!elf_image_symbol(&image, arguments.write_symbol, &write_address, error,
+        if (!resolve_location(&image, arguments.write_symbol, &write_address, error,
                               sizeof(error)) ||
             write_address + arguments.write_offset >= DSPIC33_DATA_SIZE) {
             fprintf(stderr, "[error] %s\n", error);

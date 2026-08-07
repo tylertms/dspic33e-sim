@@ -23,6 +23,7 @@ typedef struct {
     uint16_t w[16];
     uint32_t pc;
     uint16_t sr;
+    uint16_t call_depth;
     uint64_t instructions;
     uint32_t unsupported_opcode;
     Dspic33StopReason stop_reason;
