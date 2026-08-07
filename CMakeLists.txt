@@ -3,8 +3,16 @@ cmake_minimum_required(VERSION 3.20)
 project(opentec_firmware_simulator LANGUAGES C)
 
 add_executable(
-    opentec_firmware_simulator src/device.c src/dspic33.c src/elf_image.c
-                               src/firmware_image.c src/hex_image.c src/main.c
+    opentec_firmware_simulator
+    src/device.c
+    src/dspic33.c
+    src/elf_image.c
+    src/firmware_image.c
+    src/firmware_runner.c
+    src/hex_image.c
+    src/json.c
+    src/main.c
+    src/scenario_stream.c
 )
 
 target_compile_features(opentec_firmware_simulator PRIVATE c_std_11)

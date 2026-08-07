@@ -6,10 +6,12 @@
 
 #include "dspic33.h"
 #include "firmware_image.h"
+#include "firmware_runner.h"
 
 typedef struct {
     const char* image_path;
     const char* entry_symbol;
+    const char* stop_symbol;
     const char* write_symbol;
     uint16_t write_value;
     uint8_t write_width;
@@ -17,6 +19,7 @@ typedef struct {
     bool register_set[16];
     uint16_t register_value[16];
     uint64_t instruction_limit;
+    bool dump_registers;
 } Arguments;
 
 static bool parse_u64(const char* text, uint64_t maximum, uint64_t* value);
@@ -51,6 +54,7 @@ static bool parse_arguments(int argc, char** argv, Arguments* arguments) {
     }
     arguments->image_path = argv[1];
     arguments->entry_symbol = argv[2];
+    arguments->stop_symbol = NULL;
     arguments->write_symbol = NULL;
     arguments->write_value = 0u;
     arguments->write_width = 0u;
@@ -58,6 +62,7 @@ static bool parse_arguments(int argc, char** argv, Arguments* arguments) {
     memset(arguments->register_set, 0, sizeof(arguments->register_set));
     memset(arguments->register_value, 0, sizeof(arguments->register_value));
     arguments->instruction_limit = 1000000u;
+    arguments->dump_registers = false;
     for (index = 3; index < argc; index++) {
         if (strcmp(argv[index], "--write8") == 0 && index + 2 < argc) {
             arguments->write_symbol = argv[++index];
@@ -90,6 +95,10 @@ static bool parse_arguments(int argc, char** argv, Arguments* arguments) {
                 return false;
             }
             arguments->instruction_limit = value;
+        } else if (strcmp(argv[index], "--stop") == 0 && index + 1 < argc) {
+            arguments->stop_symbol = argv[++index];
+        } else if (strcmp(argv[index], "--dump-registers") == 0) {
+            arguments->dump_registers = true;
         } else {
             return false;
         }
@@ -101,7 +110,7 @@ static void print_usage(const char* program) {
     fprintf(stderr,
             "Usage: %s IMAGE ENTRY [--write8 SYMBOL VALUE] [--write16 SYMBOL VALUE] "
             "[--write-offset BYTES] [--register Wn VALUE] "
-            "[--max-instructions COUNT]\n",
+            "[--stop ADDRESS] [--max-instructions COUNT] [--dump-registers]\n",
             program);
 }
 
@@ -121,10 +130,14 @@ int main(int argc, char** argv) {
     Dspic33 cpu;
     uint32_t entry;
     uint32_t write_address;
+    uint32_t stop_address;
     Dspic33StopReason reason;
     uint8_t reg;
     char error[160];
 
+    if (argc >= 2 && strcmp(argv[1], "--suite") == 0) {
+        return firmware_runner_main(argc, argv);
+    }
     if (!parse_arguments(argc, argv, &arguments)) {
         print_usage(argv[0]);
         return 2;
@@ -168,16 +181,33 @@ int main(int argc, char** argv) {
             dspic33_write_word(&cpu, write_address, arguments.write_value);
         }
     }
-    reason = dspic33_run(&cpu, arguments.instruction_limit);
+    if (arguments.stop_symbol != NULL) {
+        if (!resolve_location(&image, arguments.stop_symbol, &stop_address, error,
+                              sizeof(error))) {
+            fprintf(stderr, "[error] %s\n", error);
+            dspic33_destroy(&cpu);
+            firmware_image_close(&image);
+            return 1;
+        }
+        reason = dspic33_run_until(&cpu, stop_address, arguments.instruction_limit);
+    } else {
+        reason = dspic33_run(&cpu, arguments.instruction_limit);
+    }
     printf("[%s] pc=0x%06" PRIx32 " instructions=%" PRIu64 " W0=0x%04x SR=0x%04x\n",
-           reason == DSPIC33_RETURNED ? "passed" : "failed", cpu.pc, cpu.instructions,
-           cpu.w[0], cpu.sr);
+           reason == DSPIC33_RETURNED || reason == DSPIC33_STOPPED ? "passed"
+                                                                   : "failed",
+           cpu.pc, cpu.instructions, cpu.w[0], cpu.sr);
     if (reason == DSPIC33_UNSUPPORTED_INSTRUCTION) {
         printf("[detail] unsupported opcode=0x%06" PRIx32 "\n", cpu.unsupported_opcode);
     } else if (reason != DSPIC33_RETURNED) {
         printf("[detail] stop reason=%s\n", dspic33_stop_reason_name(reason));
     }
+    if (arguments.dump_registers) {
+        for (reg = 0u; reg < 16u; reg++) {
+            printf("W%u=0x%04x%s", reg, cpu.w[reg], reg == 15u ? "\n" : " ");
+        }
+    }
     dspic33_destroy(&cpu);
     firmware_image_close(&image);
-    return reason == DSPIC33_RETURNED ? 0 : 1;
+    return reason == DSPIC33_RETURNED || reason == DSPIC33_STOPPED ? 0 : 1;
 }

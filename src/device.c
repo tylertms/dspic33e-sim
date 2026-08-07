@@ -469,10 +469,25 @@ static void write_spi(Dspic33* cpu, uint16_t address) {
     }
 }
 
+static void update_oscillator(Dspic33* cpu, uint16_t address) {
+    uint16_t control;
+    if (address != 0x0742u) {
+        return;
+    }
+    control = raw_word(cpu, 0x0742u);
+    if ((control & 0x0001u) != 0u) {
+        control =
+            (uint16_t)((control & 0x8fffu) | ((control & 0x0700u) << 4u) | 0x0020u);
+        control &= (uint16_t)~0x0001u;
+        raw_write_word(cpu, 0x0742u, control);
+    }
+}
+
 void dspic33_device_write_byte(Dspic33* cpu, uint16_t address) {
     uint16_t base = (uint16_t)(address & 0xfffeu);
     uint8_t channel;
     update_timer_control(cpu, base);
+    update_oscillator(cpu, base);
     write_uart(cpu, base);
     write_spi(cpu, base);
     if (base == 0x0320u && (raw_word(cpu, base) & 0x8002u) == 0x8002u) {
@@ -563,6 +578,7 @@ void dspic33_gpio_input(Dspic33* cpu, uint8_t port, uint16_t value) {
 void dspic33_device_reset(Dspic33* cpu) {
     memset(&cpu->io, 0, sizeof(cpu->io));
     cpu->io.usb_size = sizeof(cpu->io.usb);
+    raw_write_word(cpu, 0x0742u, 0x3020u);
     raw_write_word(cpu, 0x0222u, 0x0100u);
     raw_write_word(cpu, 0x0232u, 0x0100u);
     raw_write_word(cpu, 0x0252u, 0x0100u);

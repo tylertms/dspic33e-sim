@@ -12,7 +12,9 @@ enum {
     ELF_SECTION_SYMTAB = 2,
     ELF_EXECUTABLE = 2,
     ELF_MACHINE_DSPIC = 118,
-    ELF_FLAG_EXECUTE = 4
+    ELF_FLAG_EXECUTE = 4,
+    ELF_FLAG_PROGRAM = 0x40000000,
+    ELF_FLAG_PSV = 0x10000000
 };
 
 typedef struct {
@@ -143,7 +145,7 @@ bool elf_image_load_program(const ElfImage* image, Dspic33* cpu, char* error,
         Section section = read_section(image, table, index);
         uint32_t position;
         if (section.type != ELF_SECTION_PROGBITS ||
-            (section.flags & ELF_FLAG_EXECUTE) == 0u ||
+            (section.flags & (ELF_FLAG_PROGRAM | ELF_FLAG_PSV)) == 0u ||
             section.address >= DSPIC33_PROGRAM_LIMIT) {
             continue;
         }

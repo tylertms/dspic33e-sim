@@ -85,6 +85,7 @@ typedef struct {
 typedef enum {
     DSPIC33_RUNNING,
     DSPIC33_RETURNED,
+    DSPIC33_STOPPED,
     DSPIC33_HALTED,
     DSPIC33_UNSUPPORTED_INSTRUCTION,
     DSPIC33_PROGRAM_BOUNDS,
@@ -143,6 +144,8 @@ bool dspic33_can_receive(Dspic33* cpu, uint8_t channel, const Dspic33CanFrame* f
 void dspic33_adc_input(Dspic33* cpu, uint8_t channel, uint16_t value);
 void dspic33_gpio_input(Dspic33* cpu, uint8_t port, uint16_t value);
 Dspic33StopReason dspic33_run(Dspic33* cpu, uint64_t instruction_limit);
+Dspic33StopReason dspic33_run_until(Dspic33* cpu, uint32_t stop_address,
+                                    uint64_t instruction_limit);
 const char* dspic33_stop_reason_name(Dspic33StopReason reason);
 
 #endif

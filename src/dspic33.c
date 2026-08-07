@@ -5,11 +5,14 @@
 
 #include "device.h"
 
+enum {
+    PSV_ADDRESS = 0x01000000u,
+    PSV_HIGH_BYTE = 0x02000000u,
+    PSV_ADDRESS_MASK = 0x007fffffu
+};
+
 static uint16_t read_word(Dspic33* cpu, uint32_t address) {
-    if (address < 32u) {
-        return cpu->w[address / 2u];
-    }
-    return (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[address + 1u] << 8u));
+    return dspic33_read_word(cpu, address);
 }
 
 static void write_word(Dspic33* cpu, uint32_t address, uint16_t value) {
@@ -35,7 +38,12 @@ static bool operand_address(Dspic33* cpu, uint8_t mode, uint8_t reg, uint8_t off
     if (*address >= 0x8000u &&
         !((reg == 14u || reg == 15u) && (cpu->corcon & 0x0004u) != 0u)) {
         uint16_t page = write ? cpu->dswpag : cpu->dsrpag;
-        *address = (((uint32_t)page << 15u) | (*address & 0x7fffu)) % DSPIC33_DATA_SIZE;
+        if (!write && page >= 0x0200u) {
+            *address = PSV_ADDRESS | ((page & 0x0100u) != 0u ? PSV_HIGH_BYTE : 0u) |
+                       ((uint32_t)(page & 0x00ffu) << 15u) | (*address & 0x7fffu);
+        } else {
+            *address = ((uint32_t)page << 15u) | (*address & 0x7fffu);
+        }
     }
     return true;
 }
@@ -124,7 +132,12 @@ static uint32_t indirect_literal_address(Dspic33* cpu, uint8_t reg, int16_t offs
     if (address >= 0x8000u &&
         !((reg == 14u || reg == 15u) && (cpu->corcon & 0x0004u) != 0u)) {
         uint16_t page = write ? cpu->dswpag : cpu->dsrpag;
-        address = (((uint32_t)page << 15u) | (address & 0x7fffu)) % DSPIC33_DATA_SIZE;
+        if (!write && page >= 0x0200u) {
+            address = PSV_ADDRESS | ((page & 0x0100u) != 0u ? PSV_HIGH_BYTE : 0u) |
+                      ((uint32_t)(page & 0x00ffu) << 15u) | (address & 0x7fffu);
+        } else {
+            address = ((uint32_t)page << 15u) | (address & 0x7fffu);
+        }
     }
     return address;
 }
@@ -162,30 +175,38 @@ static bool execute_move_offset(Dspic33* cpu, uint32_t opcode) {
 }
 
 static bool execute_move_double(Dspic33* cpu, uint32_t opcode) {
-    if ((opcode & 0xfffff0u) == 0xbe9f80u) {
-        uint8_t source = (uint8_t)(opcode & 0x0eu);
-        write_word(cpu, cpu->w[15], cpu->w[source]);
-        cpu->w[15] += 2u;
-        write_word(cpu, cpu->w[15], cpu->w[source + 1u]);
-        cpu->w[15] += 2u;
+    uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
+    uint8_t source_register = (uint8_t)(opcode & 0x0fu);
+    uint8_t destination_mode = (uint8_t)((opcode >> 11u) & 0x07u);
+    uint8_t destination_register = (uint8_t)((opcode >> 7u) & 0x0fu);
+    uint16_t low;
+    uint16_t high;
+    uint32_t address;
+    if (source_mode == 0u) {
+        source_register &= 0x0eu;
+        low = cpu->w[source_register];
+        high = cpu->w[source_register + 1u];
+    } else {
+        if (!operand_address(cpu, source_mode, source_register, 0u, 4u, false,
+                             &address)) {
+            return false;
+        }
+        low = read_word(cpu, address);
+        high = read_word(cpu, address + 2u);
+    }
+    if (destination_mode == 0u) {
+        destination_register &= 0x0eu;
+        cpu->w[destination_register] = low;
+        cpu->w[destination_register + 1u] = high;
         return true;
     }
-    if ((opcode & 0xfff87fu) == 0xbe004fu) {
-        uint8_t destination = (uint8_t)((opcode >> 7u) & 0x0eu);
-        cpu->w[15] -= 2u;
-        cpu->w[destination + 1u] = read_word(cpu, cpu->w[15]);
-        cpu->w[15] -= 2u;
-        cpu->w[destination] = read_word(cpu, cpu->w[15]);
-        return true;
+    if (!operand_address(cpu, destination_mode, destination_register, 0u, 4u, true,
+                         &address)) {
+        return false;
     }
-    if ((opcode & 0xffc070u) == 0xbe0000u) {
-        uint8_t source = (uint8_t)(opcode & 0x0eu);
-        uint8_t destination = (uint8_t)((opcode >> 7u) & 0x0eu);
-        cpu->w[destination] = cpu->w[source];
-        cpu->w[destination + 1u] = cpu->w[source + 1u];
-        return true;
-    }
-    return false;
+    write_word(cpu, address, low);
+    write_word(cpu, address + 2u, high);
+    return true;
 }
 
 static void update_logic_flags(Dspic33* cpu, uint16_t value, bool byte_mode) {
@@ -264,6 +285,7 @@ static bool execute_binary(Dspic33* cpu, uint32_t opcode, uint32_t operation) {
     bool with_carry =
         operation == 0x480000u || operation == 0x580000u || operation == 0x180000u;
     uint16_t carry = (cpu->sr & 1u) != 0u ? 1u : 0u;
+    uint16_t subtraction_right;
 
     left = byte_mode ? (uint8_t)left : left;
     if ((opcode & 0x0060u) == 0x0060u) {
@@ -276,19 +298,22 @@ static bool execute_binary(Dspic33* cpu, uint32_t opcode, uint32_t operation) {
         return false;
     }
     right = byte_mode ? (uint8_t)right : right;
+    subtraction_right = right;
     if (operation == 0x400000u) {
         result = (uint32_t)left + right;
     } else if (operation == 0x480000u) {
         result = (uint32_t)left + right + carry;
     } else if (operation == 0x500000u || operation == 0x580000u) {
         uint16_t borrow = with_carry && carry == 0u ? 1u : 0u;
-        result = (uint16_t)(left - right - borrow);
+        subtraction_right = (uint16_t)(right + borrow);
+        result = (uint16_t)(left - subtraction_right);
     } else if (operation == 0x100000u || operation == 0x180000u) {
         uint16_t borrow = with_carry && carry == 0u ? 1u : 0u;
         uint16_t swap = left;
         left = right;
         right = swap;
-        result = (uint16_t)(left - right - borrow);
+        subtraction_right = (uint16_t)(right + borrow);
+        result = (uint16_t)(left - subtraction_right);
     } else if (operation == 0x600000u) {
         result = left & right;
     } else if (operation == 0x680000u) {
@@ -311,7 +336,8 @@ static bool execute_binary(Dspic33* cpu, uint32_t opcode, uint32_t operation) {
                          result, byte_mode, operation == 0x480000u);
     } else if (operation == 0x500000u || operation == 0x580000u ||
                operation == 0x100000u || operation == 0x180000u) {
-        update_subtract_flags(cpu, left, right, value, byte_mode, with_carry);
+        update_subtract_flags(cpu, left, subtraction_right, value, byte_mode,
+                              with_carry);
     } else {
         update_logic_flags(cpu, value, byte_mode);
     }
@@ -586,8 +612,8 @@ static bool execute_bit(Dspic33* cpu, uint32_t opcode) {
     uint8_t reg = 0u;
     bool byte_mode = false;
     if (file) {
-        bit = (uint8_t)((((opcode >> 13u) & 0x07u) << 1u) | (opcode & 1u));
-        address = (uint16_t)(((opcode >> 1u) & 0x0fffu) << 1u);
+        bit = (uint8_t)(((opcode >> 13u) & 0x07u) | ((opcode & 1u) << 3u));
+        address = (uint16_t)((opcode >> 1u) & 0x1fffu);
         value = dspic33_read_word(cpu, address);
     } else {
         mode = (uint8_t)((opcode >> 4u) & 0x07u);
@@ -781,7 +807,186 @@ static bool execute_shift(Dspic33* cpu, uint32_t opcode, bool left) {
     return true;
 }
 
+static bool execute_single_shift(Dspic33* cpu, uint32_t opcode) {
+    uint8_t family = (uint8_t)((opcode >> 16u) & 0x03u);
+    bool alternate = (opcode & 0x008000u) != 0u;
+    bool byte_mode = (opcode & 0x004000u) != 0u;
+    uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
+    uint8_t source_register = (uint8_t)(opcode & 0x0fu);
+    uint8_t destination_mode = (uint8_t)((opcode >> 11u) & 0x07u);
+    uint8_t destination_register = (uint8_t)((opcode >> 7u) & 0x0fu);
+    uint16_t source = byte_mode
+                          ? read_operand_byte(cpu, source_mode, source_register, 0u)
+                          : read_operand_word(cpu, source_mode, source_register, 0u);
+    uint16_t width_mask = byte_mode ? 0x00ffu : 0xffffu;
+    uint16_t sign_mask = byte_mode ? 0x0080u : 0x8000u;
+    uint16_t carry = (cpu->sr & 1u) != 0u ? 1u : 0u;
+    uint16_t next_carry;
+    uint16_t value;
+    if (family == 0u) {
+        next_carry = (source & sign_mask) != 0u;
+        value = (uint16_t)((source << 1u) & width_mask);
+    } else if (family == 1u) {
+        next_carry = source & 1u;
+        value = (uint16_t)(source >> 1u);
+        if (alternate && (source & sign_mask) != 0u) {
+            value |= sign_mask;
+        }
+    } else if (family == 2u) {
+        next_carry = (source & sign_mask) != 0u;
+        value = (uint16_t)((source << 1u) & width_mask);
+        value |= alternate ? carry : next_carry;
+    } else {
+        next_carry = source & 1u;
+        value = (uint16_t)(source >> 1u);
+        if (alternate ? carry != 0u : next_carry != 0u) {
+            value |= sign_mask;
+        }
+    }
+    update_logic_flags(cpu, value, byte_mode);
+    cpu->sr = (uint16_t)((cpu->sr & ~1u) | next_carry);
+    if (byte_mode) {
+        return write_operand_byte(cpu, destination_mode, destination_register, 0u,
+                                  (uint8_t)value);
+    }
+    return write_operand_word(cpu, destination_mode, destination_register, 0u, value);
+}
+
+static bool execute_multiply(Dspic33* cpu, uint32_t opcode) {
+    bool base_signed = (opcode & 0x010000u) != 0u;
+    bool source_signed = (opcode & 0x008000u) != 0u;
+    uint8_t base_register = (uint8_t)((opcode >> 11u) & 0x0fu);
+    uint8_t destination = (uint8_t)((opcode >> 7u) & 0x0fu);
+    uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
+    uint8_t source_register = (uint8_t)(opcode & 0x0fu);
+    uint16_t source;
+    int32_t left;
+    int32_t right;
+    int32_t product;
+    if ((opcode & 0x000060u) == 0x000060u) {
+        source = (uint16_t)(opcode & 0x001fu);
+    } else {
+        source = read_operand_word(cpu, source_mode, source_register, 0u);
+    }
+    left = base_signed ? (int16_t)cpu->w[base_register] : cpu->w[base_register];
+    right = source_signed ? (int16_t)source : source;
+    product = left * right;
+    if (destination == 15u) {
+        uint8_t accumulator = (uint8_t)((opcode >> 7u) & 1u);
+        cpu->accumulator[accumulator] = product;
+        return true;
+    }
+    destination &= 0x0eu;
+    cpu->w[destination] = (uint16_t)product;
+    cpu->w[destination + 1u] = (uint16_t)((uint32_t)product >> 16u);
+    return true;
+}
+
+static bool execute_find_first(Dspic33* cpu, uint32_t opcode) {
+    bool left = (opcode & 0x008000u) != 0u;
+    uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
+    uint8_t source_register = (uint8_t)(opcode & 0x0fu);
+    uint8_t destination = (uint8_t)((opcode >> 7u) & 0x0fu);
+    uint16_t source = read_operand_word(cpu, source_mode, source_register, 0u);
+    uint16_t result = 0u;
+    uint8_t bit;
+    if (left) {
+        for (bit = 0u; bit < 16u; bit++) {
+            if ((source & (uint16_t)(0x8000u >> bit)) != 0u) {
+                result = (uint16_t)(bit + 1u);
+                break;
+            }
+        }
+    } else {
+        for (bit = 0u; bit < 16u; bit++) {
+            if ((source & (uint16_t)(1u << bit)) != 0u) {
+                result = (uint16_t)(bit + 1u);
+                break;
+            }
+        }
+    }
+    cpu->w[destination] = result;
+    cpu->sr = (uint16_t)((cpu->sr & ~1u) | (result == 0u ? 1u : 0u));
+    return true;
+}
+
+static bool execute_divide(Dspic33* cpu, uint32_t opcode) {
+    bool unsigned_divide = (opcode & 0x008000u) != 0u;
+    bool double_word = (opcode & 0x000040u) != 0u;
+    uint8_t high_register = (uint8_t)((opcode >> 11u) & 0x0fu);
+    uint8_t low_register = (uint8_t)((opcode >> 7u) & 0x0fu);
+    uint8_t divisor_register = (uint8_t)(opcode & 0x0fu);
+    uint16_t divisor = cpu->w[divisor_register];
+    bool overflow = false;
+    int32_t remainder;
+    int32_t quotient;
+    if (cpu->repeat_active != 0u && cpu->rcount != 0u) {
+        return true;
+    }
+    if (divisor == 0u) {
+        cpu->stop_reason = DSPIC33_HALTED;
+        return false;
+    }
+    if (unsigned_divide) {
+        uint32_t dividend = double_word ? ((uint32_t)cpu->w[high_register] << 16u) |
+                                              cpu->w[low_register]
+                                        : cpu->w[low_register];
+        uint32_t unsigned_quotient = dividend / divisor;
+        uint32_t unsigned_remainder = dividend % divisor;
+        overflow = unsigned_quotient > UINT16_MAX;
+        quotient = (int32_t)unsigned_quotient;
+        remainder = (int32_t)unsigned_remainder;
+    } else {
+        int32_t dividend = double_word
+                               ? (int32_t)(((uint32_t)cpu->w[high_register] << 16u) |
+                                           cpu->w[low_register])
+                               : (int16_t)cpu->w[low_register];
+        int16_t signed_divisor = (int16_t)divisor;
+        if (signed_divisor == 0) {
+            cpu->stop_reason = DSPIC33_HALTED;
+            return false;
+        }
+        quotient = dividend / signed_divisor;
+        remainder = dividend % signed_divisor;
+        overflow = quotient < INT16_MIN || quotient > INT16_MAX;
+    }
+    cpu->w[0] = (uint16_t)quotient;
+    cpu->w[1] = (uint16_t)remainder;
+    cpu->sr &= (uint16_t)~0x000fu;
+    if (remainder == 0) {
+        cpu->sr |= 0x0002u;
+    }
+    if (remainder < 0) {
+        cpu->sr |= 0x0008u;
+    }
+    if (overflow) {
+        cpu->sr |= 0x0004u;
+    }
+    return true;
+}
+
 static bool execute(Dspic33* cpu, uint32_t opcode) {
+    if ((opcode & 0xfff870u) == 0xfd0000u) {
+        uint8_t source = (uint8_t)(opcode & 0x0fu);
+        uint8_t destination = (uint8_t)((opcode >> 7u) & 0x0fu);
+        uint16_t value = cpu->w[source];
+        cpu->w[source] = cpu->w[destination];
+        cpu->w[destination] = value;
+        return true;
+    }
+    if (opcode == 0xfa8000u) {
+        cpu->w[15] = cpu->w[14];
+        cpu->w[15] -= 2u;
+        cpu->w[14] = read_word(cpu, cpu->w[15]);
+        return true;
+    }
+    if ((opcode & 0xff8001u) == 0xfa0000u) {
+        write_word(cpu, cpu->w[15], cpu->w[14]);
+        cpu->w[15] += 2u;
+        cpu->w[14] = cpu->w[15];
+        cpu->w[15] = (uint16_t)(cpu->w[15] + (opcode & 0x007ffeu));
+        return true;
+    }
     if ((opcode & 0xff0000u) == 0x020000u || (opcode & 0xff0000u) == 0x040000u) {
         uint32_t second;
         uint32_t target;
@@ -852,7 +1057,7 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     if ((opcode & 0xfc0000u) == 0xb00000u) {
         return execute_literal_binary(cpu, opcode);
     }
-    if ((opcode & 0xff0000u) == 0x780000u) {
+    if ((opcode & 0xf80000u) == 0x780000u) {
         return execute_move(cpu, opcode);
     }
     if ((opcode & 0xf00000u) == 0x900000u) {
@@ -909,6 +1114,18 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         cpu->w[destination] = (uint8_t)cpu->w[opcode & 0x0fu];
         update_logic_flags(cpu, cpu->w[destination], false);
         return true;
+    }
+    if ((opcode & 0xfc0000u) == 0xd00000u) {
+        return execute_single_shift(cpu, opcode);
+    }
+    if ((opcode & 0xfe0000u) == 0xb80000u) {
+        return execute_multiply(cpu, opcode);
+    }
+    if ((opcode & 0xff0000u) == 0xcf0000u) {
+        return execute_find_first(cpu, opcode);
+    }
+    if ((opcode & 0xff0000u) == 0xd80000u) {
+        return execute_divide(cpu, opcode);
     }
     if ((opcode & 0xff0000u) == 0xdd0000u) {
         return execute_shift(cpu, opcode, true);
@@ -1116,6 +1333,18 @@ void dspic33_write_word(Dspic33* cpu, uint32_t address, uint16_t value) {
 
 uint8_t dspic33_read_byte(Dspic33* cpu, uint32_t address) {
     uint16_t value;
+    if ((address & PSV_ADDRESS) != 0u) {
+        uint32_t program_address = address & PSV_ADDRESS_MASK;
+        uint32_t word;
+        if (program_address >= DSPIC33_PROGRAM_LIMIT) {
+            return 0u;
+        }
+        word = cpu->program[(program_address & ~1u) / 2u];
+        if ((address & PSV_HIGH_BYTE) != 0u) {
+            return (program_address & 1u) == 0u ? (uint8_t)(word >> 16u) : 0u;
+        }
+        return (uint8_t)(word >> ((program_address & 1u) * 8u));
+    }
     if (address >= DSPIC33_DATA_SIZE) {
         return 0u;
     }
@@ -1165,11 +1394,17 @@ uint16_t dspic33_read_word(Dspic33* cpu, uint32_t address) {
                       ((uint16_t)dspic33_read_byte(cpu, address + 1u) << 8u));
 }
 
-Dspic33StopReason dspic33_run(Dspic33* cpu, uint64_t instruction_limit) {
-    while (cpu->instructions < instruction_limit) {
+static Dspic33StopReason run(Dspic33* cpu, uint64_t instruction_limit,
+                             uint32_t stop_address, bool stop_enabled) {
+    uint64_t start = cpu->instructions;
+    while (instruction_limit == 0u || cpu->instructions - start < instruction_limit) {
         uint32_t opcode;
         uint32_t instruction_pc;
         dspic33_device_service_interrupt(cpu);
+        if (stop_enabled && cpu->pc == stop_address) {
+            cpu->stop_reason = DSPIC33_STOPPED;
+            return cpu->stop_reason;
+        }
         if ((cpu->pc & 1u) != 0u || cpu->pc >= DSPIC33_PROGRAM_LIMIT) {
             cpu->stop_reason = DSPIC33_PROGRAM_BOUNDS;
             return cpu->stop_reason;
@@ -1221,12 +1456,23 @@ Dspic33StopReason dspic33_run(Dspic33* cpu, uint64_t instruction_limit) {
     return cpu->stop_reason;
 }
 
+Dspic33StopReason dspic33_run(Dspic33* cpu, uint64_t instruction_limit) {
+    return run(cpu, instruction_limit, 0u, false);
+}
+
+Dspic33StopReason dspic33_run_until(Dspic33* cpu, uint32_t stop_address,
+                                    uint64_t instruction_limit) {
+    return run(cpu, instruction_limit, stop_address, true);
+}
+
 const char* dspic33_stop_reason_name(Dspic33StopReason reason) {
     switch (reason) {
     case DSPIC33_RUNNING:
         return "running";
     case DSPIC33_RETURNED:
         return "returned";
+    case DSPIC33_STOPPED:
+        return "stop point";
     case DSPIC33_HALTED:
         return "halted";
     case DSPIC33_UNSUPPORTED_INSTRUCTION:
