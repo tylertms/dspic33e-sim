@@ -5,7 +5,7 @@
 #include <string.h>
 
 #include "dspic33.h"
-#include "elf_image.h"
+#include "firmware_image.h"
 
 typedef struct {
     const char* image_path;
@@ -105,19 +105,19 @@ static void print_usage(const char* program) {
             program);
 }
 
-static bool resolve_location(const ElfImage* image, const char* text, uint32_t* address,
-                             char* error, size_t error_size) {
+static bool resolve_location(const FirmwareImage* image, const char* text,
+                             uint32_t* address, char* error, size_t error_size) {
     uint64_t numeric;
     if (parse_u64(text, UINT32_MAX, &numeric)) {
         *address = (uint32_t)numeric;
         return true;
     }
-    return elf_image_symbol(image, text, address, error, error_size);
+    return firmware_image_symbol(image, text, address, error, error_size);
 }
 
 int main(int argc, char** argv) {
     Arguments arguments;
-    ElfImage image;
+    FirmwareImage image;
     Dspic33 cpu;
     uint32_t entry;
     uint32_t write_address;
@@ -129,21 +129,21 @@ int main(int argc, char** argv) {
         print_usage(argv[0]);
         return 2;
     }
-    if (!elf_image_open(&image, arguments.image_path, error, sizeof(error))) {
+    if (!firmware_image_open(&image, arguments.image_path, error, sizeof(error))) {
         fprintf(stderr, "[error] %s\n", error);
         return 1;
     }
     if (!dspic33_initialize(&cpu)) {
-        elf_image_close(&image);
+        firmware_image_close(&image);
         fprintf(stderr, "[error] cannot allocate simulator memory\n");
         return 1;
     }
-    if (!elf_image_load_program(&image, &cpu, error, sizeof(error)) ||
+    if (!firmware_image_load_program(&image, &cpu, error, sizeof(error)) ||
         !resolve_location(&image, arguments.entry_symbol, &entry, error,
                           sizeof(error))) {
         fprintf(stderr, "[error] %s\n", error);
         dspic33_destroy(&cpu);
-        elf_image_close(&image);
+        firmware_image_close(&image);
         return 1;
     }
     dspic33_reset(&cpu, entry);
@@ -158,15 +158,14 @@ int main(int argc, char** argv) {
             write_address + arguments.write_offset >= DSPIC33_DATA_SIZE) {
             fprintf(stderr, "[error] %s\n", error);
             dspic33_destroy(&cpu);
-            elf_image_close(&image);
+            firmware_image_close(&image);
             return 1;
         }
         write_address += arguments.write_offset;
         if (arguments.write_width == 1u) {
-            dspic33_write_byte(&cpu, (uint16_t)write_address,
-                               (uint8_t)arguments.write_value);
+            dspic33_write_byte(&cpu, write_address, (uint8_t)arguments.write_value);
         } else {
-            dspic33_write_word(&cpu, (uint16_t)write_address, arguments.write_value);
+            dspic33_write_word(&cpu, write_address, arguments.write_value);
         }
     }
     reason = dspic33_run(&cpu, arguments.instruction_limit);
@@ -179,6 +178,6 @@ int main(int argc, char** argv) {
         printf("[detail] stop reason=%s\n", dspic33_stop_reason_name(reason));
     }
     dspic33_destroy(&cpu);
-    elf_image_close(&image);
+    firmware_image_close(&image);
     return reason == DSPIC33_RETURNED ? 0 : 1;
 }
