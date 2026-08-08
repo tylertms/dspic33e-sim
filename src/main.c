@@ -275,8 +275,10 @@ int main(int argc, char** argv) {
         }
     }
     printf("[%s] pc=0x%06" PRIx32 " instructions=%" PRIu64 " W0=0x%04x SR=0x%04x\n",
-           reason == DSPIC33_RETURNED || reason == DSPIC33_STOPPED ? "passed"
-                                                                   : "failed",
+           reason == DSPIC33_RETURNED || reason == DSPIC33_STOPPED ||
+                   reason == DSPIC33_SLEEPING || reason == DSPIC33_IDLING
+               ? "passed"
+               : "failed",
            cpu.pc, cpu.instructions, cpu.w[0], cpu.sr);
     if (reason == DSPIC33_UNSUPPORTED_INSTRUCTION) {
         printf("[detail] unsupported opcode=0x%06" PRIx32 "\n", cpu.unsupported_opcode);
@@ -300,5 +302,8 @@ int main(int argc, char** argv) {
     }
     dspic33_destroy(&cpu);
     firmware_image_close(&image);
-    return reason == DSPIC33_RETURNED || reason == DSPIC33_STOPPED ? 0 : 1;
+    return reason == DSPIC33_RETURNED || reason == DSPIC33_STOPPED ||
+                   reason == DSPIC33_SLEEPING || reason == DSPIC33_IDLING
+               ? 0
+               : 1;
 }

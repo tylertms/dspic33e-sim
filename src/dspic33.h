@@ -98,12 +98,20 @@ typedef enum {
     DSPIC33_RUNNING,
     DSPIC33_RETURNED,
     DSPIC33_STOPPED,
+    DSPIC33_SLEEPING,
+    DSPIC33_IDLING,
     DSPIC33_HALTED,
     DSPIC33_UNSUPPORTED_INSTRUCTION,
     DSPIC33_PROGRAM_BOUNDS,
     DSPIC33_INSTRUCTION_LIMIT,
     DSPIC33_EVENT_QUEUE_ERROR
 } Dspic33StopReason;
+
+typedef enum {
+    DSPIC33_POWER_ACTIVE,
+    DSPIC33_POWER_SLEEP,
+    DSPIC33_POWER_IDLE
+} Dspic33PowerState;
 
 typedef struct {
     uint32_t* program;
@@ -143,12 +151,15 @@ typedef struct {
     uint32_t last_interrupt_return;
     uint64_t interrupt_count;
     uint64_t software_reset_count;
+    uint64_t trap_count;
     uint16_t reset_interrupt;
+    uint16_t last_trap;
     uint16_t interrupt_log_irq[16];
     uint32_t interrupt_log_entry[16];
     uint32_t interrupt_log_return[16];
     Dspic33EventQueue events;
     Dspic33Io io;
+    Dspic33PowerState power_state;
     Dspic33StopReason stop_reason;
 } Dspic33;
 

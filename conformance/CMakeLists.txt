@@ -24,6 +24,7 @@ add_executable(
     source/multiplies.s
     source/shifts.s
     source/stacks.s
+    source/system.s
     source/tables.s
 )
 

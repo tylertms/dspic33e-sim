@@ -13,6 +13,8 @@ enum {
 
 static const uint64_t ACCUMULATOR_MASK = 0xffffffffffu;
 
+static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory);
+
 static bool accumulator_byte_location(uint32_t address, uint8_t* accumulator,
                                       uint8_t* byte) {
     if (address >= 0x0022u && address <= 0x0027u) {
@@ -1453,6 +1455,32 @@ static void update_divide_flags(Dspic33* cpu, int64_t remainder, bool overflow) 
     }
 }
 
+static void enter_trap(Dspic33* cpu, uint16_t trap, uint32_t vector, uint8_t priority,
+                       uint16_t status, uint32_t return_pc) {
+    uint16_t stacked_high;
+    write_word(cpu, cpu->w[15],
+               (uint16_t)((return_pc & 0xfffeu) | ((cpu->corcon >> 2u) & 1u)));
+    cpu->w[15] += 2u;
+    stacked_high = (uint16_t)(((cpu->sr & 0x00ffu) << 8u) |
+                              ((cpu->corcon & 0x0008u) != 0u ? 0x0080u : 0u) |
+                              ((return_pc >> 16u) & 0x007fu));
+    write_word(cpu, cpu->w[15], stacked_high);
+    cpu->w[15] += 2u;
+    cpu->corcon &= (uint16_t)~0x0004u;
+    cpu->corcon = priority > 7u ? (uint16_t)(cpu->corcon | 0x0008u)
+                                : (uint16_t)(cpu->corcon & ~0x0008u);
+    cpu->sr = (uint16_t)((cpu->sr & ~0x00e0u) | ((priority & 7u) << 5u));
+    dspic33_write_word(cpu, 0x08c0u,
+                       (uint16_t)(dspic33_read_word(cpu, 0x08c0u) | status));
+    cpu->pc = cpu->program[vector / 2u] & 0x007ffffeu;
+    cpu->last_trap = trap;
+    cpu->trap_count++;
+    cpu->interrupt_depth++;
+    cpu->repeat_active = 0u;
+    cpu->rcount = 0u;
+    cpu->sr &= (uint16_t)~0x0010u;
+}
+
 static bool execute_divide(Dspic33* cpu, uint32_t opcode) {
     bool unsigned_divide = (opcode & 0x008000u) != 0u;
     bool double_word = (opcode & 0x000040u) != 0u;
@@ -1463,12 +1491,12 @@ static bool execute_divide(Dspic33* cpu, uint32_t opcode) {
     bool overflow = false;
     int64_t remainder;
     int64_t quotient;
-    if (cpu->repeat_active != 0u && cpu->rcount != 0u) {
+    if (divisor == 0u) {
+        enter_trap(cpu, 4u, 0x00000cu, 11u, 0x0050u, cpu->pc - 2u);
         return true;
     }
-    if (divisor == 0u) {
-        cpu->stop_reason = DSPIC33_HALTED;
-        return false;
+    if (cpu->repeat_active != 0u && cpu->rcount != 0u) {
+        return true;
     }
     if (unsigned_divide) {
         uint32_t dividend = double_word ? ((uint32_t)cpu->w[high_register] << 16u) |
@@ -1485,10 +1513,6 @@ static bool execute_divide(Dspic33* cpu, uint32_t opcode) {
                                            cpu->w[low_register])
                                : (int16_t)cpu->w[low_register];
         int16_t signed_divisor = (int16_t)divisor;
-        if (signed_divisor == 0) {
-            cpu->stop_reason = DSPIC33_HALTED;
-            return false;
-        }
         quotient = (int64_t)dividend / signed_divisor;
         remainder = (int64_t)dividend % signed_divisor;
         overflow = quotient < INT16_MIN || quotient > INT16_MAX;
@@ -1507,12 +1531,12 @@ static bool execute_fractional_divide(Dspic33* cpu, uint32_t opcode) {
     int32_t quotient;
     int32_t remainder;
     bool overflow;
-    if (cpu->repeat_active != 0u && cpu->rcount != 0u) {
+    if (divisor == 0) {
+        enter_trap(cpu, 4u, 0x00000cu, 11u, 0x0050u, cpu->pc - 2u);
         return true;
     }
-    if (divisor == 0) {
-        cpu->stop_reason = DSPIC33_HALTED;
-        return false;
+    if (cpu->repeat_active != 0u && cpu->rcount != 0u) {
+        return true;
     }
     dividend = (int32_t)(int16_t)cpu->w[dividend_register] * 32768;
     quotient = dividend / divisor;
@@ -1881,14 +1905,42 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         return true;
     }
     if (opcode == 0xfe0000u) {
+        uint64_t instructions = cpu->instructions;
+        uint64_t cycles = cpu->cycles;
         uint64_t software_reset_count = cpu->software_reset_count + 1u;
+        uint64_t trap_count = cpu->trap_count;
         uint16_t reset_interrupt = cpu->last_interrupt;
-        dspic33_reset(cpu, 0u);
+        uint16_t rcon = dspic33_read_word(cpu, 0x0740u);
+        reset_processor(cpu, 0u, false);
+        cpu->instructions = instructions;
+        cpu->cycles = cycles;
         cpu->software_reset_count = software_reset_count;
+        cpu->trap_count = trap_count;
         cpu->reset_interrupt = reset_interrupt;
+        dspic33_write_word(cpu, 0x0740u, (uint16_t)(rcon | 0x0040u));
         return true;
     }
-    if (opcode == 0x000000u || opcode == 0x00075au) {
+    if ((opcode & 0xfffffeu) == 0xfe4000u) {
+        uint16_t rcon = (uint16_t)(dspic33_read_word(cpu, 0x0740u) & ~0x001cu);
+        if ((opcode & 1u) == 0u) {
+            rcon |= 0x0008u;
+            cpu->power_state = DSPIC33_POWER_SLEEP;
+            cpu->stop_reason = DSPIC33_SLEEPING;
+        } else {
+            rcon |= 0x0004u;
+            cpu->power_state = DSPIC33_POWER_IDLE;
+            cpu->stop_reason = DSPIC33_IDLING;
+        }
+        dspic33_write_word(cpu, 0x0740u, rcon);
+        return true;
+    }
+    if (opcode == 0xfe6000u) {
+        dspic33_write_word(cpu, 0x0740u,
+                           (uint16_t)(dspic33_read_word(cpu, 0x0740u) & ~0x0010u));
+        return true;
+    }
+    if (opcode == 0x000000u || opcode == 0x00075au ||
+        (opcode & 0xff0000u) == 0xff0000u) {
         return true;
     }
     return false;
@@ -1957,8 +2009,8 @@ bool dspic33_copy(Dspic33* destination, const Dspic33* source) {
     return true;
 }
 
-void dspic33_reset(Dspic33* cpu, uint32_t entry) {
-    memset(cpu->data, 0, DSPIC33_DATA_SIZE);
+static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
+    memset(cpu->data, 0, clear_memory ? DSPIC33_DATA_SIZE : 0x1000u);
     memset(cpu->w, 0, sizeof(cpu->w));
     memset(cpu->shadow_w, 0, sizeof(cpu->shadow_w));
     cpu->shadow_status = 0u;
@@ -1992,16 +2044,21 @@ void dspic33_reset(Dspic33* cpu, uint32_t entry) {
     cpu->last_interrupt_return = 0u;
     cpu->interrupt_count = 0u;
     cpu->software_reset_count = 0u;
+    cpu->trap_count = 0u;
     cpu->reset_interrupt = UINT16_MAX;
+    cpu->last_trap = UINT16_MAX;
     memset(cpu->interrupt_log_irq, 0xff, sizeof(cpu->interrupt_log_irq));
     memset(cpu->interrupt_log_entry, 0, sizeof(cpu->interrupt_log_entry));
     memset(cpu->interrupt_log_return, 0, sizeof(cpu->interrupt_log_return));
     cpu->events.count = 0u;
     cpu->events.sequence = 0u;
     memset(cpu->write_latches, 0xff, sizeof(cpu->write_latches));
+    cpu->power_state = DSPIC33_POWER_ACTIVE;
     cpu->stop_reason = DSPIC33_RUNNING;
     dspic33_device_reset(cpu);
 }
+
+void dspic33_reset(Dspic33* cpu, uint32_t entry) { reset_processor(cpu, entry, true); }
 
 bool dspic33_load_program_word(Dspic33* cpu, uint32_t address, uint32_t word) {
     uint32_t* destination;
@@ -2265,7 +2322,18 @@ uint16_t dspic33_read_word(Dspic33* cpu, uint32_t address) {
 Dspic33StopReason dspic33_step(Dspic33* cpu) {
     uint32_t opcode;
     uint32_t instruction_pc;
-    dspic33_device_service_interrupt(cpu);
+    if (cpu->power_state != DSPIC33_POWER_ACTIVE) {
+        if (!dspic33_device_service_interrupt(cpu)) {
+            cpu->stop_reason = cpu->power_state == DSPIC33_POWER_SLEEP
+                                   ? DSPIC33_SLEEPING
+                                   : DSPIC33_IDLING;
+            return cpu->stop_reason;
+        }
+        cpu->power_state = DSPIC33_POWER_ACTIVE;
+        cpu->stop_reason = DSPIC33_RUNNING;
+    } else {
+        dspic33_device_service_interrupt(cpu);
+    }
     if ((cpu->pc & 1u) != 0u || cpu->pc >= DSPIC33_PROGRAM_LIMIT) {
         cpu->stop_reason = DSPIC33_PROGRAM_BOUNDS;
         return cpu->stop_reason;
@@ -2369,6 +2437,10 @@ const char* dspic33_stop_reason_name(Dspic33StopReason reason) {
         return "returned";
     case DSPIC33_STOPPED:
         return "stop point";
+    case DSPIC33_SLEEPING:
+        return "sleeping";
+    case DSPIC33_IDLING:
+        return "idling";
     case DSPIC33_HALTED:
         return "halted";
     case DSPIC33_UNSUPPORTED_INSTRUCTION:

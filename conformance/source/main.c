@@ -9,6 +9,9 @@ typedef struct {
 
 volatile ConformanceOutput conformance_output;
 volatile uint16_t conformance_scratch[16] __attribute__((near));
+volatile uint16_t system_probe_selector __attribute__((near));
+volatile uint16_t system_reset_state __attribute__((near));
+volatile uint16_t system_trap_state[3] __attribute__((near));
 
 extern uint16_t run_arithmetic_conformance(volatile uint16_t* results);
 extern uint16_t run_bit_conformance(volatile uint16_t* results);
@@ -20,11 +23,16 @@ extern uint16_t run_move_conformance(volatile uint16_t* results);
 extern uint16_t run_multiply_conformance(volatile uint16_t* results);
 extern uint16_t run_shift_conformance(volatile uint16_t* results);
 extern uint16_t run_stack_conformance(volatile uint16_t* results);
+extern uint16_t run_system_conformance(volatile uint16_t* results);
 extern uint16_t run_table_conformance(volatile uint16_t* results);
+extern void run_system_probe(uint16_t selector);
 extern uint16_t run_branch_conformance(volatile uint16_t* results);
 extern void conformance_complete(void);
 
 int main(void) {
+    if (system_probe_selector != 0u) {
+        run_system_probe(system_probe_selector);
+    }
     conformance_output.result_words = run_shift_conformance(conformance_output.results);
     conformance_output.result_words += run_branch_conformance(
         conformance_output.results + conformance_output.result_words);
@@ -45,6 +53,8 @@ int main(void) {
     conformance_output.result_words += run_multiply_conformance(
         conformance_output.results + conformance_output.result_words);
     conformance_output.result_words += run_stack_conformance(
+        conformance_output.results + conformance_output.result_words);
+    conformance_output.result_words += run_system_conformance(
         conformance_output.results + conformance_output.result_words);
     conformance_output.result_words += run_table_conformance(
         conformance_output.results + conformance_output.result_words);
