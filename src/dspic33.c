@@ -1153,16 +1153,6 @@ static bool execute_accumulator_arithmetic(Dspic33* cpu, uint32_t opcode) {
     return true;
 }
 
-static bool execute_accumulator_clear(Dspic33* cpu, uint32_t opcode) {
-    uint8_t accumulator = (uint8_t)((opcode >> 15u) & 1u);
-    if ((opcode & 0xff7fffu) != 0xc30112u) {
-        return false;
-    }
-    cpu->accumulator[accumulator] = 0;
-    clear_accumulator_status(cpu, accumulator);
-    return true;
-}
-
 static int64_t shift_accumulator_value(int64_t value, int8_t amount) {
     if (amount < 0) {
         return value * ((int64_t)1 << -amount);
@@ -1275,23 +1265,32 @@ static int64_t dsp_multiply_operand(const Dspic33* cpu, uint8_t register_index,
     return unsigned_operand ? cpu->w[register_index] : (int16_t)cpu->w[register_index];
 }
 
-static void execute_dsp_prefetch(Dspic33* cpu, uint8_t operation, uint8_t destination,
-                                 bool y_space) {
+static bool dsp_prefetch_value(Dspic33* cpu, uint8_t operation, bool y_space,
+                               uint16_t* value) {
     static const int8_t updates[16] = {
         0, 2, 4, 6, 0, -6, -4, -2, 0, 2, 4, 6, 0, -6, -4, -2,
     };
     uint8_t base_register;
     uint16_t address;
     if (operation == 4u) {
-        return;
+        return false;
     }
     base_register = (uint8_t)((y_space ? 10u : 8u) + (operation >= 8u ? 1u : 0u));
     address = cpu->w[base_register];
     if (operation == 12u) {
         address = (uint16_t)(address + cpu->w[12]);
     }
-    cpu->w[destination] = dspic33_read_word(cpu, address);
+    *value = dspic33_read_word(cpu, address);
     cpu->w[base_register] = (uint16_t)(cpu->w[base_register] + updates[operation]);
+    return true;
+}
+
+static void execute_dsp_prefetch(Dspic33* cpu, uint8_t operation, uint8_t destination,
+                                 bool y_space) {
+    uint16_t value;
+    if (dsp_prefetch_value(cpu, operation, y_space, &value)) {
+        cpu->w[destination] = value;
+    }
 }
 
 static void execute_dsp_write_back(Dspic33* cpu, uint8_t accumulator, uint8_t mode) {
@@ -1303,6 +1302,58 @@ static void execute_dsp_write_back(Dspic33* cpu, uint8_t accumulator, uint8_t mo
         dspic33_write_word(cpu, cpu->w[13], value);
         cpu->w[13] = (uint16_t)(cpu->w[13] + 2u);
     }
+}
+
+static bool execute_dsp_clear_or_move(Dspic33* cpu, uint32_t opcode) {
+    bool clear = (opcode & 0xff0000u) == 0xc30000u;
+    uint8_t accumulator = (uint8_t)((opcode >> 15u) & 1u);
+    uint8_t write_back = (uint8_t)(opcode & 3u);
+    if (write_back == 3u) {
+        return false;
+    }
+    if (clear) {
+        cpu->accumulator[accumulator] = 0;
+        clear_accumulator_status(cpu, accumulator);
+    }
+    execute_dsp_prefetch(cpu, (uint8_t)((opcode >> 6u) & 0x0fu),
+                         (uint8_t)(4u + ((opcode >> 12u) & 3u)), false);
+    execute_dsp_prefetch(cpu, (uint8_t)((opcode >> 2u) & 0x0fu),
+                         (uint8_t)(4u + ((opcode >> 10u) & 3u)), true);
+    if (write_back < 2u) {
+        execute_dsp_write_back(cpu, accumulator, write_back);
+    }
+    return true;
+}
+
+static bool execute_euclidean_distance(Dspic33* cpu, uint32_t opcode) {
+    uint8_t operation = (uint8_t)(opcode & 3u);
+    uint8_t x_operation = (uint8_t)((opcode >> 6u) & 0x0fu);
+    uint8_t y_operation = (uint8_t)((opcode >> 2u) & 0x0fu);
+    uint8_t source_register = (uint8_t)(4u + ((opcode >> 16u) & 3u));
+    uint8_t destination = (uint8_t)(4u + ((opcode >> 12u) & 3u));
+    uint8_t accumulator = (uint8_t)((opcode >> 15u) & 1u);
+    uint8_t sign_mode = (uint8_t)((cpu->corcon >> 12u) & 3u);
+    uint16_t x_value;
+    uint16_t y_value;
+    int64_t operand;
+    int64_t product;
+    if (operation < 2u || x_operation == 4u || y_operation == 4u || sign_mode == 3u) {
+        return false;
+    }
+    operand = dsp_multiply_operand(cpu, source_register, sign_mode);
+    product = operand * operand;
+    if ((cpu->corcon & 1u) == 0u) {
+        product *= 2;
+    }
+    if (!dsp_prefetch_value(cpu, x_operation, false, &x_value) ||
+        !dsp_prefetch_value(cpu, y_operation, true, &y_value)) {
+        return false;
+    }
+    apply_accumulator_result(cpu, accumulator,
+                             operation == 2u ? cpu->accumulator[accumulator] + product
+                                             : product);
+    cpu->w[destination] = (uint16_t)(x_value - y_value);
+    return true;
 }
 
 static bool execute_dsp_multiply(Dspic33* cpu, uint32_t opcode) {
@@ -1735,8 +1786,11 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         (opcode & 0xff7fffu) == 0xcb3000u) {
         return execute_accumulator_arithmetic(cpu, opcode);
     }
-    if ((opcode & 0xff7fffu) == 0xc30112u) {
-        return execute_accumulator_clear(cpu, opcode);
+    if ((opcode & 0xff4000u) == 0xc30000u || (opcode & 0xff4000u) == 0xc70000u) {
+        return execute_dsp_clear_or_move(cpu, opcode);
+    }
+    if ((opcode & 0xfc4c00u) == 0xf04000u && (opcode & 3u) >= 2u) {
+        return execute_euclidean_distance(cpu, opcode);
     }
     if ((opcode & 0xf80000u) == 0xc00000u || (opcode & 0xfc0000u) == 0xf00000u) {
         return execute_dsp_multiply(cpu, opcode);
