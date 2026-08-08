@@ -22,6 +22,7 @@ _table_conformance_group_complete = 1
 _run_table_conformance:
     begin_results
 
+    set_status 0x0000
     mov #0x01ff, w0
     mov w0, TBLPAG
     mov TBLPAG, w2
