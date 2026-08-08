@@ -53,6 +53,8 @@ __MathError:
     mov w0, _system_trap_state+2
     mov INTCON1, w0
     mov w0, _system_trap_state+4
+    mov INTTREG, w0
+    mov w0, _system_trap_state+6
 .global _system_math_trap_complete
 _system_math_trap_complete:
     bra _system_math_trap_complete

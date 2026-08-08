@@ -199,7 +199,15 @@ static bool interrupt_enabled(const Dspic33* cpu, uint16_t irq) {
            (raw_word(cpu, (uint16_t)(0x0820u + offset)) & mask) != 0u;
 }
 
-bool dspic33_device_service_interrupt(Dspic33* cpu) {
+static bool interrupt_deferred(const Dspic33* cpu, uint16_t irq) {
+    return (cpu->interrupt_deferred[irq / 16u] & (uint16_t)(1u << (irq % 16u))) != 0u;
+}
+
+void dspic33_device_latch_interrupt(Dspic33* cpu, uint8_t vector, uint8_t priority) {
+    raw_write_word(cpu, 0x08c8u, (uint16_t)(((uint16_t)priority << 8u) | vector));
+}
+
+static bool service_interrupt(Dspic33* cpu, bool waking) {
     uint8_t current = (uint8_t)((cpu->sr >> 5u) & 0x07u);
     uint8_t best_priority = current;
     uint16_t next_priority;
@@ -208,7 +216,8 @@ bool dspic33_device_service_interrupt(Dspic33* cpu) {
     uint16_t irq;
     uint16_t stacked_high;
     uint16_t group;
-    if ((raw_word(cpu, 0x08c2u) & 0x8000u) == 0u || (cpu->corcon & 0x0008u) != 0u) {
+    if (((raw_word(cpu, 0x08c2u) & 0x8000u) == 0u && cpu->gie_disable_deferred == 0u) ||
+        (cpu->corcon & 0x0008u) != 0u) {
         return false;
     }
     for (group = 0u; group < (DSPIC33_IRQ_COUNT + 15u) / 16u; group++) {
@@ -223,11 +232,11 @@ bool dspic33_device_service_interrupt(Dspic33* cpu) {
     }
     for (irq = 0u; irq < DSPIC33_IRQ_COUNT; irq++) {
         uint8_t priority;
-        if (!interrupt_enabled(cpu, irq)) {
+        if (!interrupt_enabled(cpu, irq) || interrupt_deferred(cpu, irq)) {
             continue;
         }
         priority = interrupt_priority(cpu, irq);
-        if (cpu->disicnt != 0u && priority < 7u) {
+        if (!waking && cpu->disicnt != 0u && priority < 7u) {
             continue;
         }
         if (priority > best_priority) {
@@ -259,7 +268,24 @@ bool dspic33_device_service_interrupt(Dspic33* cpu) {
     cpu->last_interrupt = best_irq;
     cpu->interrupt_count++;
     cpu->interrupt_depth++;
+    dspic33_device_latch_interrupt(cpu, (uint8_t)(best_irq + 8u), best_priority);
     return true;
+}
+
+bool dspic33_device_service_interrupt(Dspic33* cpu) {
+    return service_interrupt(cpu, false);
+}
+
+bool dspic33_device_wake(Dspic33* cpu) {
+    uint16_t irq;
+    for (irq = 0u; irq < DSPIC33_IRQ_COUNT; irq++) {
+        if (interrupt_enabled(cpu, irq) && !interrupt_deferred(cpu, irq) &&
+            interrupt_priority(cpu, irq) != 0u) {
+            service_interrupt(cpu, true);
+            return true;
+        }
+    }
+    return false;
 }
 
 void dspic33_device_return_interrupt(Dspic33* cpu) {
@@ -477,6 +503,7 @@ static void advance_timers(Dspic33* cpu, uint64_t cycles) {
 }
 
 bool dspic33_device_advance(Dspic33* cpu, uint64_t cycles) {
+    size_t group;
     cpu->cycles += cycles;
     if (cpu->disicnt > cycles) {
         cpu->disicnt = (uint16_t)(cpu->disicnt - cycles);
@@ -491,6 +518,12 @@ bool dspic33_device_advance(Dspic33* cpu, uint64_t cycles) {
             return false;
         }
     }
+    for (group = 0u; group < DSPIC33_IRQ_GROUP_COUNT; group++) {
+        cpu->interrupt_deferred[group] = cpu->interrupt_deferred_next[group];
+        cpu->interrupt_deferred_next[group] = 0u;
+    }
+    cpu->gie_disable_deferred = cpu->gie_disable_deferred_next;
+    cpu->gie_disable_deferred_next = 0u;
     return true;
 }
 
@@ -558,6 +591,27 @@ static void update_oscillator(Dspic33* cpu, uint16_t address) {
 void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous) {
     uint16_t base = (uint16_t)(address & 0xfffeu);
     uint8_t channel;
+    if (base >= 0x0800u && base < 0x0800u + DSPIC33_IRQ_GROUP_COUNT * 2u) {
+        uint16_t group = (uint16_t)((base - 0x0800u) / 2u);
+        uint16_t current = raw_word(cpu, base);
+        uint16_t cleared = (uint16_t)(previous & ~current);
+        cpu->interrupt_deferred[group] &= (uint16_t)~cleared;
+        cpu->interrupt_deferred_next[group] =
+            (uint16_t)((cpu->interrupt_deferred_next[group] & ~cleared) |
+                       (current & ~previous));
+    }
+    if (base == 0x08c8u) {
+        raw_write_word(cpu, base, previous);
+    }
+    if (base == 0x08c2u) {
+        uint16_t current = raw_word(cpu, base);
+        if ((current & 0x8000u) != 0u) {
+            cpu->gie_disable_deferred = 0u;
+            cpu->gie_disable_deferred_next = 0u;
+        } else if ((previous & 0x8000u) != 0u) {
+            cpu->gie_disable_deferred_next = 1u;
+        }
+    }
     if (base == 0x0488u || base == 0x04c0u || base == 0x04c4u) {
         uint16_t mask = base == 0x04c4u ? 0x00ffu : 0x00fdu;
         raw_write_word(cpu, base, (uint16_t)(previous & ~(raw_word(cpu, base) & mask)));
@@ -603,6 +657,10 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
         0x0e04u, 0x0e14u, 0x0e24u, 0x0e34u, 0x0e44u, 0x0e54u, 0x0e64u};
     uint8_t port;
     uint8_t channel;
+    if (address == 0x08c3u) {
+        return cpu->disicnt != 0u ? (uint8_t)(value | 0x40u)
+                                  : (uint8_t)(value & ~0x40u);
+    }
     for (port = 0u; port < DSPIC33_GPIO_PORT_COUNT; port++) {
         if ((address & 0xfffeu) == port_addresses[port]) {
             uint16_t tris = raw_word(cpu, tris_addresses[port]);
@@ -678,6 +736,10 @@ void dspic33_gpio_input(Dspic33* cpu, uint8_t port, uint16_t value) {
 void dspic33_device_reset(Dspic33* cpu) {
     size_t index;
     memset(&cpu->io, 0, sizeof(cpu->io));
+    memset(cpu->interrupt_deferred, 0, sizeof(cpu->interrupt_deferred));
+    memset(cpu->interrupt_deferred_next, 0, sizeof(cpu->interrupt_deferred_next));
+    cpu->gie_disable_deferred = 0u;
+    cpu->gie_disable_deferred_next = 0u;
     cpu->io.usb_size = sizeof(cpu->io.usb);
     for (index = 0u; index < sizeof(reset_values) / sizeof(reset_values[0]); index++) {
         raw_write_word(cpu, reset_values[index].address, reset_values[index].value);
@@ -685,4 +747,5 @@ void dspic33_device_reset(Dspic33* cpu) {
     raw_write_word(cpu, 0x0742u, 0x3020u);
     raw_write_word(cpu, 0x0758u, 0xa400u);
     raw_write_word(cpu, 0x08c2u, 0x8000u);
+    raw_write_word(cpu, 0x08c8u, 0u);
 }

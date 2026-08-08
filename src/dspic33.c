@@ -1476,6 +1476,7 @@ static void enter_trap(Dspic33* cpu, uint16_t trap, uint32_t vector, uint8_t pri
     cpu->last_trap = trap;
     cpu->trap_count++;
     cpu->interrupt_depth++;
+    dspic33_device_latch_interrupt(cpu, (uint8_t)trap, priority);
     cpu->repeat_active = 0u;
     cpu->rcount = 0u;
     cpu->sr &= (uint16_t)~0x0010u;
@@ -2204,10 +2205,14 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
             break;
         }
         if (reg != NULL) {
+            uint16_t preserved_priority = (uint16_t)(*reg & 0x00e0u);
             if ((address & 1u) == 0u) {
                 *reg = (uint16_t)((*reg & 0xff00u) | value);
             } else {
                 *reg = (uint16_t)((*reg & 0x00ffu) | ((uint16_t)value << 8u));
+            }
+            if (word_address == 0x0042u && (cpu->data[0x08c1u] & 0x80u) != 0u) {
+                *reg = (uint16_t)((*reg & ~0x00e0u) | preserved_priority);
             }
             return;
         }
@@ -2323,7 +2328,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     uint32_t opcode;
     uint32_t instruction_pc;
     if (cpu->power_state != DSPIC33_POWER_ACTIVE) {
-        if (!dspic33_device_service_interrupt(cpu)) {
+        if (!dspic33_device_wake(cpu)) {
             cpu->stop_reason = cpu->power_state == DSPIC33_POWER_SLEEP
                                    ? DSPIC33_SLEEPING
                                    : DSPIC33_IDLING;
@@ -2400,6 +2405,10 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         }
     }
     dspic33_device_advance(cpu, 1u);
+    if (cpu->power_state != DSPIC33_POWER_ACTIVE && dspic33_device_wake(cpu)) {
+        cpu->power_state = DSPIC33_POWER_ACTIVE;
+        cpu->stop_reason = DSPIC33_RUNNING;
+    }
     return cpu->stop_reason;
 }
 

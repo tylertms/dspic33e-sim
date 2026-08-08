@@ -19,6 +19,7 @@
 #define DSPIC33_CONFIGURATION_BASE 0xf80000u
 #define DSPIC33_CONFIGURATION_SIZE 0x20u
 #define DSPIC33_IRQ_COUNT 133u
+#define DSPIC33_IRQ_GROUP_COUNT ((DSPIC33_IRQ_COUNT + 15u) / 16u)
 #define DSPIC33_UART_COUNT 4u
 #define DSPIC33_SPI_COUNT 4u
 #define DSPIC33_CAN_COUNT 2u
@@ -157,6 +158,10 @@ typedef struct {
     uint16_t interrupt_log_irq[16];
     uint32_t interrupt_log_entry[16];
     uint32_t interrupt_log_return[16];
+    uint16_t interrupt_deferred[DSPIC33_IRQ_GROUP_COUNT];
+    uint16_t interrupt_deferred_next[DSPIC33_IRQ_GROUP_COUNT];
+    uint8_t gie_disable_deferred;
+    uint8_t gie_disable_deferred_next;
     Dspic33EventQueue events;
     Dspic33Io io;
     Dspic33PowerState power_state;

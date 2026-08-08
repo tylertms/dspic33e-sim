@@ -19,6 +19,7 @@ add_executable(
     source/divides.s
     source/main.c
     source/extensions.s
+    source/interrupts.s
     source/loops.s
     source/moves.s
     source/multiplies.s
