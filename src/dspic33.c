@@ -33,6 +33,52 @@ static int64_t accumulator_value(uint64_t bits) {
     return (int64_t)bits - ((bits & 0x8000000000u) != 0u ? 0x10000000000ll : 0ll);
 }
 
+static void update_accumulator_combined_status(Dspic33* cpu) {
+    cpu->sr &= (uint16_t)~0x0c00u;
+    if ((cpu->sr & 0xc000u) != 0u) {
+        cpu->sr |= 0x0800u;
+    }
+    if ((cpu->sr & 0x3000u) != 0u) {
+        cpu->sr |= 0x0400u;
+    }
+}
+
+static void apply_accumulator_result(Dspic33* cpu, uint8_t accumulator,
+                                     int64_t result) {
+    uint16_t overflow_flag = accumulator == 0u ? 0x8000u : 0x4000u;
+    uint16_t saturation_flag = accumulator == 0u ? 0x2000u : 0x1000u;
+    uint16_t saturation_enable = accumulator == 0u ? 0x0080u : 0x0040u;
+    int64_t minimum = (cpu->corcon & 0x0010u) != 0u ? -0x8000000000ll : INT32_MIN;
+    int64_t maximum = (cpu->corcon & 0x0010u) != 0u ? 0x7fffffffffll : INT32_MAX;
+    bool overflow = result < INT32_MIN || result > INT32_MAX;
+    bool saturated = false;
+
+    if ((cpu->corcon & saturation_enable) != 0u) {
+        if (result < minimum) {
+            result = minimum;
+            saturated = true;
+        } else if (result > maximum) {
+            result = maximum;
+            saturated = true;
+        }
+    }
+
+    cpu->accumulator[accumulator] = accumulator_value((uint64_t)result);
+    cpu->sr &= (uint16_t)~overflow_flag;
+    if (overflow) {
+        cpu->sr |= overflow_flag;
+    }
+    if (saturated) {
+        cpu->sr |= saturation_flag;
+    }
+    update_accumulator_combined_status(cpu);
+}
+
+static void clear_accumulator_status(Dspic33* cpu, uint8_t accumulator) {
+    cpu->sr &= accumulator == 0u ? (uint16_t)~0xa000u : (uint16_t)~0x5000u;
+    update_accumulator_combined_status(cpu);
+}
+
 static uint8_t read_accumulator_byte(const Dspic33* cpu, uint8_t accumulator,
                                      uint8_t byte) {
     if (byte == 5u) {
@@ -1086,6 +1132,35 @@ static bool execute_multiply(Dspic33* cpu, uint32_t opcode) {
     return true;
 }
 
+static bool execute_accumulator_arithmetic(Dspic33* cpu, uint32_t opcode) {
+    uint8_t accumulator = (uint8_t)((opcode >> 15u) & 1u);
+    uint32_t operation = opcode & 0xff7fffu;
+    int64_t result;
+
+    if (operation == 0xcb0000u) {
+        result = cpu->accumulator[0] + cpu->accumulator[1];
+    } else if (operation == 0xcb1000u) {
+        result = -cpu->accumulator[accumulator];
+    } else if (operation == 0xcb3000u) {
+        result = cpu->accumulator[accumulator] - cpu->accumulator[accumulator ^ 1u];
+    } else {
+        return false;
+    }
+
+    apply_accumulator_result(cpu, accumulator, result);
+    return true;
+}
+
+static bool execute_accumulator_clear(Dspic33* cpu, uint32_t opcode) {
+    uint8_t accumulator = (uint8_t)((opcode >> 15u) & 1u);
+    if ((opcode & 0xff7fffu) != 0xc30112u) {
+        return false;
+    }
+    cpu->accumulator[accumulator] = 0;
+    clear_accumulator_status(cpu, accumulator);
+    return true;
+}
+
 static bool execute_find_first(Dspic33* cpu, uint32_t opcode) {
     bool left = (opcode & 0x008000u) != 0u;
     uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
@@ -1472,6 +1547,13 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     }
     if ((opcode & 0xfe0000u) == 0xb80000u) {
         return execute_multiply(cpu, opcode);
+    }
+    if ((opcode & 0xff7fffu) == 0xcb0000u || (opcode & 0xff7fffu) == 0xcb1000u ||
+        (opcode & 0xff7fffu) == 0xcb3000u) {
+        return execute_accumulator_arithmetic(cpu, opcode);
+    }
+    if ((opcode & 0xff7fffu) == 0xc30112u) {
+        return execute_accumulator_clear(cpu, opcode);
     }
     if ((opcode & 0xffa000u) == 0xbc0000u) {
         uint16_t address = (uint16_t)(opcode & 0x1fffu);
