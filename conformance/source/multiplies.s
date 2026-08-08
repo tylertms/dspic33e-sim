@@ -1,8 +1,9 @@
 .section .text,code
 .include "conformance.inc"
+.equ _conformance_y_scratch, 0x9000
 
 .global _multiply_conformance_cases
-_multiply_conformance_cases = 90
+_multiply_conformance_cases = 102
 .global _multiply_conformance_group_complete
 _multiply_conformance_group_complete = 0
 
@@ -31,6 +32,12 @@ _multiply_conformance_group_complete = 0
 .global _run_multiply_conformance
 _run_multiply_conformance:
     begin_results
+    push w8
+    push w9
+    push w10
+    push w11
+    push w12
+    push w13
 
     mov #0x8000, w2
     mov #0xffff, w3
@@ -595,5 +602,72 @@ _run_multiply_conformance:
     mov SR, w1
     record_case 0x0759, w1, w1
 
+    mov #1, w0
+    mov w0, CORCON
     prepare_dsp_case 0x0000
+    mov #0x1111, w0
+    mov w0, _conformance_scratch
+    mov #0x2222, w0
+    mov #_conformance_y_scratch, w1
+    mov w0, [w1]
+    mov #_conformance_scratch, w8
+    mov #_conformance_y_scratch, w10
+    mov #3, w4
+    mov #4, w5
+    mpy w4*w5, A, [w8]+=2, w4, [w10]-=2, w5
+    record_accumulator 0x0760, ACCAL, ACCAH, ACCAU
+    record_case 0x0761, w4, w8
+    record_case 0x0762, w5, w10
+
+    prepare_dsp_case 0x0000
+    mov #0x3333, w0
+    mov w0, _conformance_scratch+4
+    mov #0x4444, w0
+    mov #_conformance_y_scratch+6, w1
+    mov w0, [w1]
+    mov #_conformance_scratch, w9
+    mov #_conformance_y_scratch+2, w11
+    mov #4, w12
+    mov #2, w4
+    mov #5, w5
+    mac w4*w5, A, [w9+w12], w4, [w11+w12], w5
+    record_accumulator 0x0763, ACCAL, ACCAH, ACCAU
+    record_case 0x0764, w4, w9
+    record_case 0x0765, w5, w11
+
+    prepare_dsp_case 0x0000
+    mov #_conformance_scratch+6, w8
+    mov #2, w4
+    mov #3, w5
+    mpy w4*w5, B, [w8]-=6, w4
+    record_accumulator 0x0766, ACCBL, ACCBH, ACCBU
+    record_case 0x0767, w4, w8
+
+    prepare_dsp_case 0x0000
+    load_accumulator 0x9000, 0x1234, 0x0000, ACCBL, ACCBH, ACCBU
+    mov #1, w4
+    mov #1, w5
+    mov #0xa5a5, w13
+    mac w4*w5, A, w13
+    record_case 0x0768, w13, w13
+    record_accumulator 0x0769, ACCAL, ACCAH, ACCAU
+
+    prepare_dsp_case 0x0000
+    load_accumulator 0x7000, 0x5678, 0x0000, ACCAL, ACCAH, ACCAU
+    load_accumulator 0x000a, 0x0000, 0x0000, ACCBL, ACCBH, ACCBU
+    mov #3, w4
+    mov #2, w5
+    mov #_conformance_scratch+20, w13
+    msc w4*w5, B, [w13]+=2
+    mov _conformance_scratch+20, w1
+    record_case 0x076a, w1, w13
+    record_accumulator 0x076b, ACCBL, ACCBH, ACCBU
+
+    prepare_dsp_case 0x0000
+    pop w13
+    pop w12
+    pop w11
+    pop w10
+    pop w9
+    pop w8
     end_results

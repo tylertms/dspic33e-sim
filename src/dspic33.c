@@ -1189,13 +1189,13 @@ static bool execute_accumulator_shift(Dspic33* cpu, uint32_t opcode) {
     return true;
 }
 
-static uint16_t accumulator_store_value(const Dspic33* cpu, int64_t value,
-                                        bool rounded) {
+static uint16_t accumulator_store_value_with_rounding(const Dspic33* cpu, int64_t value,
+                                                      bool rounded, bool conventional) {
     uint64_t bits = (uint64_t)value & ACCUMULATOR_MASK;
     uint16_t high = (uint16_t)(bits >> 16u);
     uint16_t low = (uint16_t)bits;
-    if (rounded && ((cpu->corcon & 0x0002u) != 0u || low > 0x8000u ||
-                    (low == 0x8000u && (high & 1u) != 0u))) {
+    if (rounded &&
+        (conventional || low > 0x8000u || (low == 0x8000u && (high & 1u) != 0u))) {
         value += 0x8000;
     }
     if ((cpu->corcon & 0x0020u) != 0u) {
@@ -1207,6 +1207,12 @@ static uint16_t accumulator_store_value(const Dspic33* cpu, int64_t value,
         }
     }
     return (uint16_t)((uint64_t)value >> 16u);
+}
+
+static uint16_t accumulator_store_value(const Dspic33* cpu, int64_t value,
+                                        bool rounded) {
+    return accumulator_store_value_with_rounding(cpu, value, rounded,
+                                                 (cpu->corcon & 0x0002u) != 0u);
 }
 
 static bool execute_accumulator_store(Dspic33* cpu, uint32_t opcode) {
@@ -1227,17 +1233,16 @@ static bool dsp_multiply_registers(uint32_t opcode, uint8_t* left, uint8_t* righ
         {4u, 5u}, {4u, 6u}, {4u, 7u}, {0u, 0u}, {5u, 6u}, {5u, 7u}, {6u, 7u}, {0u, 0u},
     };
     if ((opcode & 0xfc0000u) == 0xf00000u) {
+        uint8_t write_back = (uint8_t)(opcode & 3u);
         *left = (uint8_t)(4u + ((opcode >> 16u) & 3u));
         *right = *left;
-        return (opcode & 0x0fffu) == 0x0111u;
+        return (opcode & 0x004000u) == 0u && write_back <= 1u;
     }
     if ((opcode & 0xf80000u) != 0xc00000u) {
         return false;
     }
     uint8_t pair = (uint8_t)((opcode >> 16u) & 7u);
-    if (pair == 3u || pair == 7u ||
-        ((opcode & 1u) != 0u ? (opcode & 0x0fffu) != 0x0113u
-                             : (opcode & 0x0fffu) != 0x0112u)) {
+    if (pair == 3u || pair == 7u) {
         return false;
     }
     *left = pairs[pair][0];
@@ -1252,6 +1257,36 @@ static int64_t dsp_multiply_operand(const Dspic33* cpu, uint8_t register_index,
     return unsigned_operand ? cpu->w[register_index] : (int16_t)cpu->w[register_index];
 }
 
+static void execute_dsp_prefetch(Dspic33* cpu, uint8_t operation, uint8_t destination,
+                                 bool y_space) {
+    static const int8_t updates[16] = {
+        0, 2, 4, 6, 0, -6, -4, -2, 0, 2, 4, 6, 0, -6, -4, -2,
+    };
+    uint8_t base_register;
+    uint16_t address;
+    if (operation == 4u) {
+        return;
+    }
+    base_register = (uint8_t)((y_space ? 10u : 8u) + (operation >= 8u ? 1u : 0u));
+    address = cpu->w[base_register];
+    if (operation == 12u) {
+        address = (uint16_t)(address + cpu->w[12]);
+    }
+    cpu->w[destination] = dspic33_read_word(cpu, address);
+    cpu->w[base_register] = (uint16_t)(cpu->w[base_register] + updates[operation]);
+}
+
+static void execute_dsp_write_back(Dspic33* cpu, uint8_t accumulator, uint8_t mode) {
+    uint16_t value = accumulator_store_value_with_rounding(
+        cpu, cpu->accumulator[accumulator ^ 1u], true, false);
+    if (mode == 0u) {
+        cpu->w[13] = value;
+    } else if (mode == 1u) {
+        dspic33_write_word(cpu, cpu->w[13], value);
+        cpu->w[13] = (uint16_t)(cpu->w[13] + 2u);
+    }
+}
+
 static bool execute_dsp_multiply(Dspic33* cpu, uint32_t opcode) {
     uint8_t left_register;
     uint8_t right_register;
@@ -1261,7 +1296,9 @@ static bool execute_dsp_multiply(Dspic33* cpu, uint32_t opcode) {
     int64_t right;
     int64_t product;
     int64_t result;
-    bool replace = (opcode & 1u) != 0u;
+    bool square = (opcode & 0xfc0000u) == 0xf00000u;
+    uint8_t write_back = (uint8_t)(opcode & 3u);
+    bool replace = square ? write_back == 1u : write_back == 3u;
     bool subtract = (opcode & 0x004000u) != 0u;
     if (!dsp_multiply_registers(opcode, &left_register, &right_register) ||
         sign_mode == 3u) {
@@ -1279,6 +1316,13 @@ static bool execute_dsp_multiply(Dspic33* cpu, uint32_t opcode) {
         result = cpu->accumulator[accumulator] + (subtract ? -product : product);
     }
     apply_accumulator_result(cpu, accumulator, result);
+    execute_dsp_prefetch(cpu, (uint8_t)((opcode >> 6u) & 0x0fu),
+                         (uint8_t)(4u + ((opcode >> 12u) & 3u)), false);
+    execute_dsp_prefetch(cpu, (uint8_t)((opcode >> 2u) & 0x0fu),
+                         (uint8_t)(4u + ((opcode >> 10u) & 3u)), true);
+    if (!square && !replace && write_back < 2u) {
+        execute_dsp_write_back(cpu, accumulator, write_back);
+    }
     return true;
 }
 
