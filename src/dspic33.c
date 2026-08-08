@@ -1253,15 +1253,15 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         if (cpu->pc >= DSPIC33_PROGRAM_LIMIT || cpu->do_depth == 4u) {
             return false;
         }
-        count = (opcode & 0xfffff0u) == 0x088000u
-                    ? (uint16_t)(cpu->w[opcode & 0x0fu] & 0x3fffu)
-                    : (uint16_t)(opcode & 0x7fffu);
+        count = (opcode & 0xfffff0u) == 0x088000u ? cpu->w[opcode & 0x0fu]
+                                                  : (uint16_t)(opcode & 0x7fffu);
         displacement = (int16_t)(cpu->program[cpu->pc / 2u] & 0xffffu);
         cpu->pc += 2u;
         depth = cpu->do_depth++;
         cpu->do_start[depth] = cpu->pc;
         cpu->do_end[depth] = (uint32_t)(cpu->pc + (int32_t)displacement * 2);
         cpu->do_count[depth] = count;
+        cpu->do_terminate[depth] = 0u;
         cpu->dostart = cpu->do_start[depth];
         cpu->doend = cpu->do_end[depth];
         cpu->dcount = count;
@@ -1591,6 +1591,7 @@ void dspic33_reset(Dspic33* cpu, uint32_t entry) {
     memset(cpu->do_start, 0, sizeof(cpu->do_start));
     memset(cpu->do_end, 0, sizeof(cpu->do_end));
     memset(cpu->do_count, 0, sizeof(cpu->do_count));
+    memset(cpu->do_terminate, 0, sizeof(cpu->do_terminate));
     cpu->instructions = 0u;
     cpu->cycles = 0u;
     cpu->unsupported_opcode = 0u;
@@ -1704,6 +1705,23 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
     if (address >= 0x0020u && address <= 0x0055u) {
         uint16_t* reg = NULL;
         uint16_t word_address = (uint16_t)(address & 0xfffeu);
+        if (word_address == 0x0044u) {
+            if ((address & 1u) == 0u) {
+                uint8_t low = (uint8_t)cpu->corcon;
+                low =
+                    (uint8_t)((low & 0x04u) | (value & 0xf3u) | (low & value & 0x08u));
+                cpu->corcon = (uint16_t)((cpu->corcon & 0xff00u) | low);
+            } else {
+                uint8_t high = (uint8_t)(cpu->corcon >> 8u);
+                if ((value & 0x08u) != 0u && cpu->do_depth != 0u) {
+                    cpu->do_terminate[cpu->do_depth - 1u] = 1u;
+                }
+                high = (uint8_t)((high & 0x07u) | (value & 0xb0u));
+                cpu->corcon =
+                    (uint16_t)((cpu->corcon & 0x00ffu) | ((uint16_t)high << 8u));
+            }
+            return;
+        }
         switch (word_address) {
         case 0x0020u:
             reg = &cpu->splim;
@@ -1722,9 +1740,6 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
             break;
         case 0x0042u:
             reg = &cpu->sr;
-            break;
-        case 0x0044u:
-            reg = &cpu->corcon;
             break;
         case 0x0052u:
             reg = &cpu->disicnt;
@@ -1813,11 +1828,23 @@ uint8_t dspic33_read_byte(Dspic33* cpu, uint32_t address) {
     case 0x0038u:
         value = cpu->dcount;
         break;
+    case 0x003au:
+        value = (uint16_t)cpu->dostart;
+        break;
+    case 0x003cu:
+        value = (uint16_t)(cpu->dostart >> 16u);
+        break;
+    case 0x003eu:
+        value = (uint16_t)cpu->doend;
+        break;
+    case 0x0040u:
+        value = (uint16_t)(cpu->doend >> 16u);
+        break;
     case 0x0042u:
         value = cpu->sr;
         break;
     case 0x0044u:
-        value = cpu->corcon;
+        value = (uint16_t)(cpu->corcon & ~0x0800u);
         break;
     case 0x0052u:
         value = cpu->disicnt;
@@ -1886,11 +1913,12 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     }
     if (cpu->do_depth != 0u && instruction_pc == cpu->do_end[cpu->do_depth - 1u]) {
         uint8_t depth = (uint8_t)(cpu->do_depth - 1u);
-        if (cpu->do_count[depth] != 0u) {
+        if (cpu->do_count[depth] != 0u && cpu->do_terminate[depth] == 0u) {
             cpu->do_count[depth]--;
             cpu->dcount = cpu->do_count[depth];
             cpu->pc = cpu->do_start[depth];
         } else {
+            cpu->do_terminate[depth] = 0u;
             cpu->do_depth--;
             cpu->corcon =
                 (uint16_t)((cpu->corcon & ~0x0700u) | ((uint16_t)cpu->do_depth << 8u));

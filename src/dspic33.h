@@ -133,6 +133,7 @@ typedef struct {
     uint32_t do_start[4];
     uint32_t do_end[4];
     uint16_t do_count[4];
+    uint8_t do_terminate[4];
     uint64_t instructions;
     uint64_t cycles;
     uint32_t unsupported_opcode;
