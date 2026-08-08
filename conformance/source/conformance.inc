@@ -35,3 +35,11 @@
     mov SR, w0
     mov w0, [w7++]
 .endm
+
+.macro record_accumulator_case id, low, high, upper
+    mov #\id, w0
+    mov w0, [w7++]
+    mov \low, [w7++]
+    mov \high, [w7++]
+    mov \upper, [w7++]
+.endm

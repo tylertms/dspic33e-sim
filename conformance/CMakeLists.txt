@@ -19,6 +19,7 @@ add_executable(
     source/main.c
     source/extensions.s
     source/moves.s
+    source/multiplies.s
     source/shifts.s
 )
 

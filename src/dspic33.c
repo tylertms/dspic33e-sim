@@ -11,6 +11,50 @@ enum {
     PSV_ADDRESS_MASK = 0x007fffffu
 };
 
+static const uint64_t ACCUMULATOR_MASK = 0xffffffffffu;
+
+static bool accumulator_byte_location(uint32_t address, uint8_t* accumulator,
+                                      uint8_t* byte) {
+    if (address >= 0x0022u && address <= 0x0027u) {
+        *accumulator = 0u;
+        *byte = (uint8_t)(address - 0x0022u);
+        return true;
+    }
+    if (address >= 0x0028u && address <= 0x002du) {
+        *accumulator = 1u;
+        *byte = (uint8_t)(address - 0x0028u);
+        return true;
+    }
+    return false;
+}
+
+static int64_t accumulator_value(uint64_t bits) {
+    bits &= ACCUMULATOR_MASK;
+    return (int64_t)bits - ((bits & 0x8000000000u) != 0u ? 0x10000000000ll : 0ll);
+}
+
+static uint8_t read_accumulator_byte(const Dspic33* cpu, uint8_t accumulator,
+                                     uint8_t byte) {
+    if (byte == 5u) {
+        return ((uint64_t)cpu->accumulator[accumulator] & 0x8000000000u) != 0u ? 0xffu
+                                                                               : 0u;
+    }
+    return (uint8_t)((uint64_t)cpu->accumulator[accumulator] >> (byte * 8u));
+}
+
+static void write_accumulator_byte(Dspic33* cpu, uint8_t accumulator, uint8_t byte,
+                                   uint8_t value) {
+    uint64_t bits;
+    uint64_t mask;
+    if (byte >= 5u) {
+        return;
+    }
+    bits = (uint64_t)cpu->accumulator[accumulator] & ACCUMULATOR_MASK;
+    mask = (uint64_t)0xffu << (byte * 8u);
+    bits = (bits & ~mask) | ((uint64_t)value << (byte * 8u));
+    cpu->accumulator[accumulator] = accumulator_value(bits);
+}
+
 static uint32_t read_program_word(const Dspic33* cpu, uint32_t address) {
     if (address < DSPIC33_PROGRAM_LIMIT) {
         return cpu->program[address / 2u];
@@ -989,9 +1033,9 @@ static bool execute_multiply(Dspic33* cpu, uint32_t opcode) {
     uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
     uint8_t source_register = (uint8_t)(opcode & 0x0fu);
     uint16_t source;
-    int32_t left;
-    int32_t right;
-    int32_t product;
+    int64_t left;
+    int64_t right;
+    int64_t product;
     if ((opcode & 0x000060u) == 0x000060u) {
         source = (uint16_t)(opcode & 0x001fu);
     } else {
@@ -1000,9 +1044,12 @@ static bool execute_multiply(Dspic33* cpu, uint32_t opcode) {
     left = base_signed ? (int16_t)cpu->w[base_register] : cpu->w[base_register];
     right = source_signed ? (int16_t)source : source;
     product = left * right;
-    if (destination == 15u) {
-        uint8_t accumulator = (uint8_t)((opcode >> 7u) & 1u);
-        cpu->accumulator[accumulator] = product;
+    if (destination >= 14u) {
+        uint8_t accumulator = (uint8_t)(destination & 1u);
+        if ((cpu->corcon & 1u) == 0u) {
+            product *= 2;
+        }
+        cpu->accumulator[accumulator] = accumulator_value((uint64_t)product);
         return true;
     }
     destination &= 0x0eu;
@@ -1604,6 +1651,8 @@ uint8_t dspic33_read_configuration_byte(const Dspic33* cpu, uint32_t address) {
 
 void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
     uint16_t previous;
+    uint8_t accumulator;
+    uint8_t accumulator_byte;
     if (address >= DSPIC33_DATA_SIZE) {
         return;
     }
@@ -1614,6 +1663,10 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
         } else {
             cpu->w[reg] = (uint16_t)((cpu->w[reg] & 0x00ffu) | ((uint16_t)value << 8u));
         }
+        return;
+    }
+    if (accumulator_byte_location(address, &accumulator, &accumulator_byte)) {
+        write_accumulator_byte(cpu, accumulator, accumulator_byte, value);
         return;
     }
     if (address >= 0x0020u && address <= 0x0055u) {
@@ -1688,6 +1741,8 @@ void dspic33_write_word(Dspic33* cpu, uint32_t address, uint16_t value) {
 
 uint8_t dspic33_read_byte(Dspic33* cpu, uint32_t address) {
     uint16_t value;
+    uint8_t accumulator;
+    uint8_t accumulator_byte;
     if ((address & PSV_ADDRESS) != 0u) {
         uint32_t program_address = address & PSV_ADDRESS_MASK;
         uint32_t word;
@@ -1706,6 +1761,9 @@ uint8_t dspic33_read_byte(Dspic33* cpu, uint32_t address) {
     if (address < 32u) {
         value = cpu->w[address / 2u];
         return (uint8_t)(value >> ((address & 1u) * 8u));
+    }
+    if (accumulator_byte_location(address, &accumulator, &accumulator_byte)) {
+        return read_accumulator_byte(cpu, accumulator, accumulator_byte);
     }
     switch (address & 0xfffeu) {
     case 0x0020u:
