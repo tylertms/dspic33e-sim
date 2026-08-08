@@ -12,6 +12,7 @@ volatile uint16_t conformance_scratch[16] __attribute__((near));
 
 extern uint16_t run_arithmetic_conformance(volatile uint16_t* results);
 extern uint16_t run_bit_conformance(volatile uint16_t* results);
+extern uint16_t run_divide_conformance(volatile uint16_t* results);
 extern uint16_t run_extension_conformance(volatile uint16_t* results);
 extern uint16_t run_move_conformance(volatile uint16_t* results);
 extern uint16_t run_multiply_conformance(volatile uint16_t* results);
@@ -26,6 +27,8 @@ int main(void) {
     conformance_output.result_words += run_arithmetic_conformance(
         conformance_output.results + conformance_output.result_words);
     conformance_output.result_words += run_bit_conformance(
+        conformance_output.results + conformance_output.result_words);
+    conformance_output.result_words += run_divide_conformance(
         conformance_output.results + conformance_output.result_words);
     conformance_output.result_words += run_extension_conformance(
         conformance_output.results + conformance_output.result_words);

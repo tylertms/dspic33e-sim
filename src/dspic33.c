@@ -1086,6 +1086,19 @@ static bool execute_find_first(Dspic33* cpu, uint32_t opcode) {
     return true;
 }
 
+static void update_divide_flags(Dspic33* cpu, int64_t remainder, bool overflow) {
+    cpu->sr &= (uint16_t)~0x000fu;
+    if (remainder == 0) {
+        cpu->sr |= 0x0002u;
+    }
+    if (remainder < 0) {
+        cpu->sr |= 0x0008u;
+    }
+    if (overflow) {
+        cpu->sr |= 0x0004u;
+    }
+}
+
 static bool execute_divide(Dspic33* cpu, uint32_t opcode) {
     bool unsigned_divide = (opcode & 0x008000u) != 0u;
     bool double_word = (opcode & 0x000040u) != 0u;
@@ -1094,8 +1107,8 @@ static bool execute_divide(Dspic33* cpu, uint32_t opcode) {
     uint8_t divisor_register = (uint8_t)(opcode & 0x0fu);
     uint16_t divisor = cpu->w[divisor_register];
     bool overflow = false;
-    int32_t remainder;
-    int32_t quotient;
+    int64_t remainder;
+    int64_t quotient;
     if (cpu->repeat_active != 0u && cpu->rcount != 0u) {
         return true;
     }
@@ -1110,8 +1123,8 @@ static bool execute_divide(Dspic33* cpu, uint32_t opcode) {
         uint32_t unsigned_quotient = dividend / divisor;
         uint32_t unsigned_remainder = dividend % divisor;
         overflow = unsigned_quotient > UINT16_MAX;
-        quotient = (int32_t)unsigned_quotient;
-        remainder = (int32_t)unsigned_remainder;
+        quotient = unsigned_quotient;
+        remainder = unsigned_remainder;
     } else {
         int32_t dividend = double_word
                                ? (int32_t)(((uint32_t)cpu->w[high_register] << 16u) |
@@ -1122,22 +1135,38 @@ static bool execute_divide(Dspic33* cpu, uint32_t opcode) {
             cpu->stop_reason = DSPIC33_HALTED;
             return false;
         }
-        quotient = dividend / signed_divisor;
-        remainder = dividend % signed_divisor;
+        quotient = (int64_t)dividend / signed_divisor;
+        remainder = (int64_t)dividend % signed_divisor;
         overflow = quotient < INT16_MIN || quotient > INT16_MAX;
     }
     cpu->w[0] = (uint16_t)quotient;
     cpu->w[1] = (uint16_t)remainder;
-    cpu->sr &= (uint16_t)~0x000fu;
-    if (remainder == 0) {
-        cpu->sr |= 0x0002u;
+    update_divide_flags(cpu, remainder, overflow);
+    return true;
+}
+
+static bool execute_fractional_divide(Dspic33* cpu, uint32_t opcode) {
+    uint8_t dividend_register = (uint8_t)((opcode >> 11u) & 0x0fu);
+    uint8_t divisor_register = (uint8_t)(opcode & 0x0fu);
+    int16_t divisor = (int16_t)cpu->w[divisor_register];
+    int32_t dividend;
+    int32_t quotient;
+    int32_t remainder;
+    bool overflow;
+    if (cpu->repeat_active != 0u && cpu->rcount != 0u) {
+        return true;
     }
-    if (remainder < 0) {
-        cpu->sr |= 0x0008u;
+    if (divisor == 0) {
+        cpu->stop_reason = DSPIC33_HALTED;
+        return false;
     }
-    if (overflow) {
-        cpu->sr |= 0x0004u;
-    }
+    dividend = (int32_t)(int16_t)cpu->w[dividend_register] * 32768;
+    quotient = dividend / divisor;
+    remainder = dividend % divisor;
+    overflow = quotient < INT16_MIN || quotient > INT16_MAX;
+    cpu->w[0] = (uint16_t)quotient;
+    cpu->w[1] = (uint16_t)remainder;
+    update_divide_flags(cpu, remainder, overflow);
     return true;
 }
 
@@ -1401,6 +1430,9 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     }
     if ((opcode & 0xff0000u) == 0xd80000u) {
         return execute_divide(cpu, opcode);
+    }
+    if ((opcode & 0xff0000u) == 0xd90000u) {
+        return execute_fractional_divide(cpu, opcode);
     }
     if ((opcode & 0xff0000u) == 0xdd0000u) {
         return execute_shift(cpu, opcode, true);
