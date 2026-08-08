@@ -8,6 +8,14 @@
 #define DSPIC33_DATA_SIZE 0x100000u
 #define DSPIC33_PROGRAM_LIMIT 0x55800u
 #define DSPIC33_PROGRAM_WORDS (DSPIC33_PROGRAM_LIMIT / 2u)
+#define DSPIC33_PERSISTENT_PROGRAM_BASE 0x1000000u
+#define DSPIC33_PERSISTENT_PROGRAM_LIMIT 0x1010000u
+#define DSPIC33_PERSISTENT_PROGRAM_WORDS                                               \
+    ((DSPIC33_PERSISTENT_PROGRAM_LIMIT - DSPIC33_PERSISTENT_PROGRAM_BASE) / 2u)
+#define DSPIC33_WRITE_LATCH_BASE 0xfa0000u
+#define DSPIC33_WRITE_LATCH_LIMIT 0xfa0100u
+#define DSPIC33_WRITE_LATCH_WORDS                                                      \
+    ((DSPIC33_WRITE_LATCH_LIMIT - DSPIC33_WRITE_LATCH_BASE) / 2u)
 #define DSPIC33_CONFIGURATION_BASE 0xf80000u
 #define DSPIC33_CONFIGURATION_SIZE 0x20u
 #define DSPIC33_IRQ_COUNT 133u
@@ -99,6 +107,8 @@ typedef enum {
 
 typedef struct {
     uint32_t* program;
+    uint32_t* persistent_program;
+    uint32_t write_latches[DSPIC33_WRITE_LATCH_WORDS];
     uint8_t* data;
     uint8_t configuration[DSPIC33_CONFIGURATION_SIZE];
     uint16_t w[16];
@@ -143,6 +153,7 @@ bool dspic33_initialize(Dspic33* cpu);
 void dspic33_destroy(Dspic33* cpu);
 void dspic33_reset(Dspic33* cpu, uint32_t entry);
 bool dspic33_load_program_word(Dspic33* cpu, uint32_t address, uint32_t word);
+void dspic33_complete_nvm(Dspic33* cpu);
 bool dspic33_load_configuration_word(Dspic33* cpu, uint32_t address, uint32_t word);
 uint8_t dspic33_read_program_byte(const Dspic33* cpu, uint32_t address);
 uint8_t dspic33_read_configuration_byte(const Dspic33* cpu, uint32_t address);

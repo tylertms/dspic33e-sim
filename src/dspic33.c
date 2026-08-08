@@ -11,6 +11,33 @@ enum {
     PSV_ADDRESS_MASK = 0x007fffffu
 };
 
+static uint32_t read_program_word(const Dspic33* cpu, uint32_t address) {
+    if (address < DSPIC33_PROGRAM_LIMIT) {
+        return cpu->program[address / 2u];
+    }
+    if (address >= DSPIC33_PERSISTENT_PROGRAM_BASE &&
+        address < DSPIC33_PERSISTENT_PROGRAM_LIMIT) {
+        return cpu
+            ->persistent_program[(address - DSPIC33_PERSISTENT_PROGRAM_BASE) / 2u];
+    }
+    if (address >= DSPIC33_WRITE_LATCH_BASE && address < DSPIC33_WRITE_LATCH_LIMIT) {
+        return cpu->write_latches[(address - DSPIC33_WRITE_LATCH_BASE) / 2u];
+    }
+    return 0x00ffffffu;
+}
+
+static uint32_t* writable_program_word(Dspic33* cpu, uint32_t address) {
+    if (address < DSPIC33_PROGRAM_LIMIT) {
+        return &cpu->program[address / 2u];
+    }
+    if (address >= DSPIC33_PERSISTENT_PROGRAM_BASE &&
+        address < DSPIC33_PERSISTENT_PROGRAM_LIMIT) {
+        return &cpu->persistent_program[(address - DSPIC33_PERSISTENT_PROGRAM_BASE) /
+                                        2u];
+    }
+    return NULL;
+}
+
 static uint16_t read_word(Dspic33* cpu, uint32_t address) {
     return dspic33_read_word(cpu, address);
 }
@@ -484,13 +511,8 @@ static bool execute_table(Dspic33* cpu, uint32_t opcode) {
                                              byte_mode ? 1u : 2u);
         value = 0u;
     }
-    address = (((uint32_t)cpu->tblpag & 0x01ffu) << 16u) | table_offset;
-    address &= 0x00fffffeu;
-    if (address >= DSPIC33_PROGRAM_LIMIT) {
-        word = 0x00ffffffu;
-    } else {
-        word = cpu->program[address / 2u];
-    }
+    address = ((((uint32_t)cpu->tblpag & 0x01ffu) << 16u) | table_offset) & 0x01fffffeu;
+    word = read_program_word(cpu, address);
     if (write) {
         if (high) {
             if (!byte_mode || (table_offset & 1u) == 0u) {
@@ -502,8 +524,10 @@ static bool execute_table(Dspic33* cpu, uint32_t opcode) {
         } else {
             word = (word & 0x00ff0000u) | value;
         }
-        if (address < DSPIC33_PROGRAM_LIMIT) {
-            cpu->program[address / 2u] = word & 0x00ffffffu;
+        if (address >= DSPIC33_WRITE_LATCH_BASE &&
+            address < DSPIC33_WRITE_LATCH_LIMIT) {
+            cpu->write_latches[(address - DSPIC33_WRITE_LATCH_BASE) / 2u] =
+                word & 0x00ffffffu;
         }
         return true;
     }
@@ -1322,21 +1346,28 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
 bool dspic33_initialize(Dspic33* cpu) {
     memset(cpu, 0, sizeof(*cpu));
     cpu->program = calloc(DSPIC33_PROGRAM_WORDS, sizeof(*cpu->program));
+    cpu->persistent_program =
+        calloc(DSPIC33_PERSISTENT_PROGRAM_WORDS, sizeof(*cpu->persistent_program));
     cpu->data = calloc(DSPIC33_DATA_SIZE, sizeof(*cpu->data));
-    if (cpu->program == NULL || cpu->data == NULL) {
+    if (cpu->program == NULL || cpu->persistent_program == NULL || cpu->data == NULL) {
         dspic33_destroy(cpu);
         return false;
     }
     memset(cpu->program, 0xff, DSPIC33_PROGRAM_WORDS * sizeof(*cpu->program));
+    memset(cpu->persistent_program, 0xff,
+           DSPIC33_PERSISTENT_PROGRAM_WORDS * sizeof(*cpu->persistent_program));
+    memset(cpu->write_latches, 0xff, sizeof(cpu->write_latches));
     memset(cpu->configuration, 0xff, sizeof(cpu->configuration));
     return true;
 }
 
 void dspic33_destroy(Dspic33* cpu) {
     free(cpu->program);
+    free(cpu->persistent_program);
     free(cpu->data);
     free(cpu->events.items);
     cpu->program = NULL;
+    cpu->persistent_program = NULL;
     cpu->data = NULL;
     cpu->events.items = NULL;
     cpu->events.count = 0u;
@@ -1381,16 +1412,54 @@ void dspic33_reset(Dspic33* cpu, uint32_t entry) {
     memset(cpu->interrupt_log_return, 0, sizeof(cpu->interrupt_log_return));
     cpu->events.count = 0u;
     cpu->events.sequence = 0u;
+    memset(cpu->write_latches, 0xff, sizeof(cpu->write_latches));
     cpu->stop_reason = DSPIC33_RUNNING;
     dspic33_device_reset(cpu);
 }
 
 bool dspic33_load_program_word(Dspic33* cpu, uint32_t address, uint32_t word) {
-    if ((address & 1u) != 0u || address >= DSPIC33_PROGRAM_LIMIT) {
+    uint32_t* destination;
+    if ((address & 1u) != 0u) {
         return false;
     }
-    cpu->program[address / 2u] = word & 0x00ffffffu;
+    destination = writable_program_word(cpu, address);
+    if (destination == NULL) {
+        return false;
+    }
+    *destination = word & 0x00ffffffu;
     return true;
+}
+
+void dspic33_complete_nvm(Dspic33* cpu) {
+    uint16_t control = dspic33_read_word(cpu, 0x0728u);
+    uint32_t target = (((uint32_t)dspic33_read_word(cpu, 0x072cu) & 0x01ffu) << 16u) |
+                      dspic33_read_word(cpu, 0x072au);
+    uint32_t count;
+    uint32_t index;
+    if ((control & 0x000fu) == 1u) {
+        target &= 0x01fffffcu;
+        count = 2u;
+    } else if ((control & 0x000fu) == 2u) {
+        target &= 0x01ffff00u;
+        count = DSPIC33_WRITE_LATCH_WORDS;
+    } else if ((control & 0x000fu) == 3u) {
+        target &= 0x01fff800u;
+        for (index = 0u; index < 0x400u; index++) {
+            uint32_t* destination = writable_program_word(cpu, target + index * 2u);
+            if (destination != NULL) {
+                *destination = 0x00ffffffu;
+            }
+        }
+        return;
+    } else {
+        return;
+    }
+    for (index = 0u; index < count; index++) {
+        uint32_t* destination = writable_program_word(cpu, target + index * 2u);
+        if (destination != NULL) {
+            *destination &= cpu->write_latches[index];
+        }
+    }
 }
 
 bool dspic33_load_configuration_word(Dspic33* cpu, uint32_t address, uint32_t word) {
@@ -1408,10 +1477,7 @@ bool dspic33_load_configuration_word(Dspic33* cpu, uint32_t address, uint32_t wo
 uint8_t dspic33_read_program_byte(const Dspic33* cpu, uint32_t address) {
     uint32_t word_address = address & ~1u;
     uint32_t word;
-    if (word_address >= DSPIC33_PROGRAM_LIMIT) {
-        return 0xffu;
-    }
-    word = cpu->program[word_address / 2u];
+    word = read_program_word(cpu, word_address);
     return (uint8_t)(word >> ((address & 1u) * 8u));
 }
 

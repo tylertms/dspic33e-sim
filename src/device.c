@@ -438,6 +438,7 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
         dspic33_raise_interrupt(cpu, 86u);
         break;
     case DSPIC33_EVENT_NVM:
+        dspic33_complete_nvm(cpu);
         raw_write_word(cpu, 0x0728u, (uint16_t)(raw_word(cpu, 0x0728u) & ~0x8000u));
         break;
     case DSPIC33_EVENT_AUX_PLL:
