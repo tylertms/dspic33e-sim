@@ -14,7 +14,7 @@
 #include "json.h"
 #include "scenario_stream.h"
 
-enum { MAX_STEP_PARTS = 32, MAX_MATRIX_DIMENSIONS = 16 };
+enum { MAX_STEP_PARTS = 32, MAX_MATRIX_DIMENSIONS = 16, MAX_MAPPED_FIELDS = 64 };
 
 typedef struct RunTask RunTask;
 
@@ -60,6 +60,19 @@ typedef struct {
     int64_t value;
     bool generated;
 } MatrixSelection;
+
+typedef struct {
+    size_t offset;
+    size_t size;
+    uint32_t reference_expected;
+    uint32_t candidate_expected;
+    uint32_t mask;
+} MappedField;
+
+typedef struct {
+    MappedField items[MAX_MAPPED_FIELDS];
+    size_t count;
+} MappedFields;
 
 static bool parse_number(const JsonValue* value, int64_t* result) {
     const char* string;
@@ -1494,6 +1507,92 @@ static bool compare_registers(Runner* runner, const StepParts* parts, size_t* fa
     return true;
 }
 
+static bool mapped_fields_overlap(const MappedFields* fields, size_t offset,
+                                  size_t size) {
+    size_t index;
+    for (index = 0u; index < fields->count; index++) {
+        const MappedField* field = &fields->items[index];
+        if (offset < field->offset + field->size && field->offset < offset + size) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool load_mapped_fields(Runner* runner, const JsonValue* item,
+                               size_t observation_size, MappedFields* result,
+                               char* error, size_t error_size) {
+    const JsonValue* values = entry_field(runner, item, "mapped_fields");
+    size_t index;
+    result->count = 0u;
+    if (values == NULL) {
+        return true;
+    }
+    if (values->type != JSON_ARRAY || values->as.array.count > MAX_MAPPED_FIELDS) {
+        snprintf(error, error_size, "invalid mapped memory fields");
+        return false;
+    }
+    for (index = 0u; index < values->as.array.count; index++) {
+        const JsonValue* specification = values->as.array.items[index];
+        const JsonValue* expected_location =
+            json_get(specification, "expected_location");
+        int64_t offset;
+        int64_t size;
+        int64_t expected_offset = 0;
+        int64_t mask = UINT32_MAX;
+        MappedField* field = &result->items[result->count];
+        if (specification->type != JSON_OBJECT ||
+            !parse_number(json_get(specification, "offset"), &offset) || offset < 0 ||
+            !parse_number(json_get(specification, "size"), &size) || size < 1 ||
+            size > 4 || (uint64_t)offset + (uint64_t)size > observation_size ||
+            expected_location == NULL ||
+            !mapped_address(runner, expected_location, false,
+                            &field->reference_expected, error, error_size) ||
+            !mapped_address(runner, expected_location, true, &field->candidate_expected,
+                            error, error_size) ||
+            (json_get(specification, "expected_location_offset") != NULL &&
+             !parse_number(json_get(specification, "expected_location_offset"),
+                           &expected_offset)) ||
+            (json_get(specification, "mask") != NULL &&
+             !parse_number(json_get(specification, "mask"), &mask)) ||
+            mapped_fields_overlap(result, (size_t)offset, (size_t)size)) {
+            snprintf(error, error_size, "invalid mapped memory field");
+            return false;
+        }
+        field->offset = (size_t)offset;
+        field->size = (size_t)size;
+        field->reference_expected =
+            (uint32_t)(field->reference_expected + expected_offset);
+        field->candidate_expected =
+            (uint32_t)(field->candidate_expected + expected_offset);
+        field->mask = (uint32_t)mask;
+        result->count++;
+    }
+    return true;
+}
+
+static const MappedField* mapped_field_at(const MappedFields* fields, size_t offset) {
+    size_t index;
+    for (index = 0u; index < fields->count; index++) {
+        const MappedField* field = &fields->items[index];
+        if (offset >= field->offset && offset < field->offset + field->size) {
+            return field;
+        }
+    }
+    return NULL;
+}
+
+static uint32_t read_memory_value(Dspic33* cpu, const char* space, uint32_t address,
+                                  size_t size) {
+    uint32_t value = 0u;
+    size_t index;
+    for (index = 0u; index < size; index++) {
+        value |= (uint32_t)read_memory_byte(cpu, space, address + (uint32_t)index)
+                 << (index * 8u);
+    }
+    return value;
+}
+
 static bool compare_memory_item(Runner* runner, const JsonValue* item, size_t* failures,
                                 char* error, size_t error_size) {
     uint32_t reference_address;
@@ -1512,6 +1611,8 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item, size_t* f
     size_t size;
     size_t index;
     size_t first_difference;
+    MappedFields mapped_fields;
+    const MappedField* failed_mapped_field = NULL;
     bool matched = true;
     if (!mapped_address(runner, item, false, &reference_address, error, error_size) ||
         !mapped_address(runner, item, true, &candidate_address, error, error_size) ||
@@ -1521,11 +1622,17 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item, size_t* f
     }
     size = (size_t)size_value;
     first_difference = size;
+    if (!load_mapped_fields(runner, item, size, &mapped_fields, error, error_size)) {
+        return false;
+    }
     if (entry_field(runner, item, "mask") != NULL &&
         !parse_number(entry_field(runner, item, "mask"), &mask)) {
         return false;
     }
     for (index = 0u; index < size; index++) {
+        if (mapped_field_at(&mapped_fields, index) != NULL) {
+            continue;
+        }
         if (read_memory_byte(&runner->reference, space,
                              reference_address + (uint32_t)index) !=
             read_memory_byte(&runner->candidate, space,
@@ -1533,6 +1640,27 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item, size_t* f
             matched = false;
             first_difference = index;
             break;
+        }
+    }
+    for (index = 0u; index < mapped_fields.count; index++) {
+        const MappedField* field = &mapped_fields.items[index];
+        uint32_t reference_value =
+            read_memory_value(&runner->reference, space,
+                              reference_address + (uint32_t)field->offset, field->size);
+        uint32_t candidate_value =
+            read_memory_value(&runner->candidate, space,
+                              candidate_address + (uint32_t)field->offset, field->size);
+        if ((reference_value & field->mask) !=
+                (field->reference_expected & field->mask) ||
+            (candidate_value & field->mask) !=
+                (field->candidate_expected & field->mask)) {
+            matched = false;
+            if (failed_mapped_field == NULL) {
+                failed_mapped_field = field;
+                if (field->offset < first_difference) {
+                    first_difference = field->offset;
+                }
+            }
         }
     }
     if (!has_expected && expected_text != NULL) {
@@ -1646,6 +1774,10 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item, size_t* f
         } else if (expected_location != NULL) {
             printf(" expected=reference:0x%08" PRIx32 ",candidate:0x%08" PRIx32,
                    reference_expected_address, candidate_expected_address);
+        } else if (failed_mapped_field != NULL) {
+            printf(" expected-field=reference:0x%08" PRIx32 ",candidate:0x%08" PRIx32,
+                   failed_mapped_field->reference_expected,
+                   failed_mapped_field->candidate_expected);
         }
         printf("\n");
     }
