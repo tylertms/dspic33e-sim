@@ -27,6 +27,9 @@
 #define DSPIC33_DMA_COUNT 15u
 #define DSPIC33_ADC_COUNT 2u
 #define DSPIC33_ADC_CHANNEL_COUNT 32u
+#define DSPIC33_PWM_COUNT 6u
+#define DSPIC33_PWM_OUTPUT_COUNT (DSPIC33_PWM_COUNT * 2u)
+#define DSPIC33_PWM_INPUT_COUNT 32u
 #define DSPIC33_GPIO_PORT_COUNT 7u
 
 typedef enum {
@@ -35,6 +38,10 @@ typedef enum {
     DSPIC33_EVENT_TIMER_GATE,
     DSPIC33_EVENT_DMA,
     DSPIC33_EVENT_ADC,
+    DSPIC33_EVENT_PWM_FAULT,
+    DSPIC33_EVENT_PWM_CURRENT_LIMIT,
+    DSPIC33_EVENT_PWM_DEAD_TIME,
+    DSPIC33_EVENT_PWM_SYNC,
     DSPIC33_EVENT_UART,
     DSPIC33_EVENT_SPI,
     DSPIC33_EVENT_CAN,
@@ -96,7 +103,32 @@ typedef struct {
     uint8_t adc_dma_sample[DSPIC33_ADC_COUNT][DSPIC33_ADC_CHANNEL_COUNT];
     uint8_t adc_mux_b;
     uint16_t gpio[DSPIC33_GPIO_PORT_COUNT];
-    uint16_t pwm[12];
+    uint16_t pwm[DSPIC33_PWM_OUTPUT_COUNT];
+    uint16_t pwm_master_counter[2];
+    uint16_t pwm_counter[DSPIC33_PWM_COUNT][2];
+    uint16_t pwm_active_period[2];
+    uint16_t pwm_active_duty[DSPIC33_PWM_COUNT][2];
+    uint16_t pwm_active_phase[DSPIC33_PWM_COUNT][2];
+    uint16_t pwm_active_dead_time[DSPIC33_PWM_COUNT][2];
+    uint16_t pwm_active_io[DSPIC33_PWM_COUNT];
+    uint16_t pwm_leb_ticks[DSPIC33_PWM_COUNT];
+    uint16_t pwm_chop_counter;
+    uint8_t pwm_cycle_count[DSPIC33_PWM_COUNT];
+    uint8_t pwm_trigger_count[DSPIC33_PWM_COUNT];
+    uint8_t pwm_special_count[2];
+    uint8_t pwm_direction[2];
+    uint8_t pwm_push_pull;
+    uint8_t pwm_fault_latched;
+    uint8_t pwm_fault_cycle;
+    uint8_t pwm_current_cycle;
+    uint8_t pwm_fault_release;
+    uint8_t pwm_dead_time_inputs;
+    uint8_t pwm_dead_time_sampled;
+    uint8_t pwm_sync_inputs;
+    uint32_t pwm_fault_inputs;
+    uint32_t pwm_current_limit_inputs;
+    uint32_t pwm_fraction[2];
+    uint64_t pwm_sync_until[2];
     uint32_t timer_fraction[DSPIC33_TIMER_COUNT];
     uint16_t timer_enabled;
     uint16_t timer_gate;
@@ -219,6 +251,12 @@ bool dspic33_dma_request(Dspic33* cpu, uint8_t request, uint16_t indirect_addres
 bool dspic33_timer_pulse(Dspic33* cpu, uint8_t timer, uint32_t pulses, uint64_t delay);
 bool dspic33_timer_gate(Dspic33* cpu, uint8_t timer, bool high, uint64_t delay);
 bool dspic33_adc_trigger(Dspic33* cpu, uint8_t module, uint8_t source, uint64_t delay);
+bool dspic33_pwm_fault(Dspic33* cpu, uint8_t source, bool high, uint64_t delay);
+bool dspic33_pwm_current_limit(Dspic33* cpu, uint8_t source, bool high, uint64_t delay);
+bool dspic33_pwm_dead_time(Dspic33* cpu, uint8_t generator, bool high, uint64_t delay);
+bool dspic33_pwm_sync(Dspic33* cpu, uint8_t input, bool high, uint64_t delay);
+bool dspic33_pwm_sync_output(const Dspic33* cpu, uint8_t time_base);
+bool dspic33_pwm_output(const Dspic33* cpu, uint8_t generator, bool high);
 bool dspic33_can_receive(Dspic33* cpu, uint8_t channel, const Dspic33CanFrame* frame,
                          uint64_t delay);
 bool dspic33_usb_receive(Dspic33* cpu, uint8_t endpoint, const uint8_t* data,

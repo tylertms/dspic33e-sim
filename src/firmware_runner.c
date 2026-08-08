@@ -820,6 +820,32 @@ static bool apply_device_stimulus(Dspic33* cpu, const char* type,
             channel != 0u &&
             event_number(specification, "source", 14u, 0u, true, &value) &&
             dspic33_adc_trigger(cpu, (uint8_t)(channel - 1u), (uint8_t)value, delay);
+    } else if (strcmp(type, "pwm_faults") == 0 ||
+               strcmp(type, "pwm_current_limits") == 0) {
+        const JsonValue* high_value = json_get(specification, "high");
+        bool high = false;
+        succeeded =
+            event_number(specification, "source", DSPIC33_PWM_INPUT_COUNT - 1u, 0u,
+                         true, &channel) &&
+            high_value != NULL && json_boolean(high_value, &high) &&
+            (strcmp(type, "pwm_faults") == 0
+                 ? dspic33_pwm_fault(cpu, (uint8_t)channel, high, delay)
+                 : dspic33_pwm_current_limit(cpu, (uint8_t)channel, high, delay));
+    } else if (strcmp(type, "pwm_sync") == 0) {
+        const JsonValue* high_value = json_get(specification, "high");
+        bool high = false;
+        succeeded = event_number(specification, "input", 2u, 0u, true, &channel) &&
+                    channel != 0u && high_value != NULL &&
+                    json_boolean(high_value, &high) &&
+                    dspic33_pwm_sync(cpu, (uint8_t)(channel - 1u), high, delay);
+    } else if (strcmp(type, "pwm_dead_time") == 0) {
+        const JsonValue* high_value = json_get(specification, "high");
+        bool high = false;
+        succeeded = event_number(specification, "generator", DSPIC33_PWM_COUNT, 0u,
+                                 true, &channel) &&
+                    channel != 0u && high_value != NULL &&
+                    json_boolean(high_value, &high) &&
+                    dspic33_pwm_dead_time(cpu, (uint8_t)(channel - 1u), high, delay);
     } else if (strcmp(type, "can_rx") == 0) {
         const JsonValue* data = json_get(specification, "data");
         const JsonValue* extended_value = json_get(specification, "extended");
@@ -953,6 +979,13 @@ static bool apply_stimuli_part(Runner* runner, const JsonValue* part, char* erro
            apply_device_stimuli_pair(runner, stimuli, "adc", error, error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "adc_triggers", error,
                                      error_size) &&
+           apply_device_stimuli_pair(runner, stimuli, "pwm_faults", error,
+                                     error_size) &&
+           apply_device_stimuli_pair(runner, stimuli, "pwm_current_limits", error,
+                                     error_size) &&
+           apply_device_stimuli_pair(runner, stimuli, "pwm_dead_time", error,
+                                     error_size) &&
+           apply_device_stimuli_pair(runner, stimuli, "pwm_sync", error, error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "can_rx", error, error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "usb_rx", error, error_size);
 }

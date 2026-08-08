@@ -15,6 +15,7 @@ add_executable(
     dspic33-conformance
     source/arithmetic.s
     source/adc.s
+    source/pwm.s
     source/bits.s
     source/branches.s
     source/dma.s
