@@ -2,7 +2,7 @@
 .include "conformance.inc"
 
 .global _multiply_conformance_cases
-_multiply_conformance_cases = 67
+_multiply_conformance_cases = 77
 .global _multiply_conformance_group_complete
 _multiply_conformance_group_complete = 0
 
@@ -449,6 +449,74 @@ _run_multiply_conformance:
     load_accumulator 0xffff, 0x7fff, 0xffff, ACCBL, ACCBH, ACCBU
     sac B, w2
     record_case 0x0742, w2, w2
+
+    mov #1, w0
+    mov w0, CORCON
+    prepare_dsp_case 0x0000
+    mov #3, w4
+    mov #4, w5
+    mpy w4*w5, A
+    record_accumulator 0x0743, ACCAL, ACCAH, ACCAU
+
+    prepare_dsp_case 0x0000
+    mov #0xfffe, w4
+    mov #5, w5
+    mpy w4*w5, B
+    record_accumulator 0x0744, ACCBL, ACCBH, ACCBU
+
+    prepare_dsp_case 0x0000
+    mov #0xfffd, w4
+    mpy w4*w4, A
+    record_accumulator 0x0745, ACCAL, ACCAH, ACCAU
+
+    prepare_dsp_case 0x0000
+    mov #3, w4
+    mov #4, w5
+    mpy.n w4*w5, A
+    record_accumulator 0x0746, ACCAL, ACCAH, ACCAU
+
+    clr w0
+    mov w0, CORCON
+    prepare_dsp_case 0x0000
+    mov #0x4000, w4
+    mov #0x4000, w5
+    mpy w4*w5, B
+    record_accumulator 0x0747, ACCBL, ACCBH, ACCBU
+
+    mov #1, w0
+    mov w0, CORCON
+    prepare_dsp_case 0x0000
+    load_accumulator 0x000a, 0x0000, 0x0000, ACCAL, ACCAH, ACCAU
+    mov #3, w4
+    mov #4, w5
+    mac w4*w5, A
+    record_accumulator 0x0748, ACCAL, ACCAH, ACCAU
+
+    prepare_dsp_case 0x0000
+    load_accumulator 0x000a, 0x0000, 0x0000, ACCBL, ACCBH, ACCBU
+    mov #3, w4
+    mov #4, w5
+    msc w4*w5, B
+    record_accumulator 0x0749, ACCBL, ACCBH, ACCBU
+
+    mov #0x1001, w0
+    mov w0, CORCON
+    prepare_dsp_case 0x0000
+    mov #0xffff, w4
+    mov #2, w5
+    mpy w4*w5, A
+    record_accumulator 0x074a, ACCAL, ACCAH, ACCAU
+
+    mov #1, w0
+    mov w0, CORCON
+    prepare_dsp_case 0x0000
+    load_accumulator 0xffff, 0x7fff, 0x0000, ACCAL, ACCAH, ACCAU
+    mov #1, w4
+    mov #1, w5
+    mac w4*w5, A
+    record_accumulator 0x074b, ACCAL, ACCAH, ACCAU
+    mov SR, w1
+    record_case 0x074c, w1, w1
 
     prepare_dsp_case 0x0000
     end_results

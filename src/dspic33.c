@@ -1220,6 +1220,59 @@ static bool execute_accumulator_store(Dspic33* cpu, uint32_t opcode) {
         accumulator_store_value(cpu, value, (opcode & 0x010000u) != 0u));
 }
 
+static bool dsp_multiply_registers(uint32_t opcode, uint8_t* left, uint8_t* right) {
+    static const uint8_t pairs[8][2] = {
+        {4u, 5u}, {4u, 6u}, {4u, 7u}, {0u, 0u}, {5u, 6u}, {5u, 7u}, {6u, 7u}, {0u, 0u},
+    };
+    if ((opcode & 0xfc0000u) == 0xf00000u) {
+        *left = (uint8_t)(4u + ((opcode >> 16u) & 3u));
+        *right = *left;
+        return (opcode & 0x0fffu) == 0x0111u;
+    }
+    if ((opcode & 0xf80000u) != 0xc00000u) {
+        return false;
+    }
+    uint8_t pair = (uint8_t)((opcode >> 16u) & 7u);
+    if (pair == 3u || pair == 7u ||
+        ((opcode & 1u) != 0u ? (opcode & 0x0fffu) != 0x0113u
+                             : (opcode & 0x0fffu) != 0x0112u)) {
+        return false;
+    }
+    *left = pairs[pair][0];
+    *right = pairs[pair][1];
+    return true;
+}
+
+static bool execute_dsp_multiply(Dspic33* cpu, uint32_t opcode) {
+    uint8_t left_register;
+    uint8_t right_register;
+    uint8_t accumulator = (uint8_t)((opcode >> 15u) & 1u);
+    uint8_t sign_mode = (uint8_t)((cpu->corcon >> 12u) & 3u);
+    int64_t left;
+    int64_t right;
+    int64_t product;
+    int64_t result;
+    bool replace = (opcode & 1u) != 0u;
+    bool subtract = (opcode & 0x004000u) != 0u;
+    if (!dsp_multiply_registers(opcode, &left_register, &right_register) ||
+        sign_mode == 3u) {
+        return false;
+    }
+    left = sign_mode == 1u ? cpu->w[left_register] : (int16_t)cpu->w[left_register];
+    right = sign_mode == 0u ? (int16_t)cpu->w[right_register] : cpu->w[right_register];
+    product = left * right;
+    if ((cpu->corcon & 1u) == 0u) {
+        product *= 2;
+    }
+    if (replace) {
+        result = subtract ? -product : product;
+    } else {
+        result = cpu->accumulator[accumulator] + (subtract ? -product : product);
+    }
+    apply_accumulator_result(cpu, accumulator, result);
+    return true;
+}
+
 static bool execute_find_first(Dspic33* cpu, uint32_t opcode) {
     bool left = (opcode & 0x008000u) != 0u;
     uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
@@ -1613,6 +1666,9 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     }
     if ((opcode & 0xff7fffu) == 0xc30112u) {
         return execute_accumulator_clear(cpu, opcode);
+    }
+    if ((opcode & 0xf80000u) == 0xc00000u || (opcode & 0xfc0000u) == 0xf00000u) {
+        return execute_dsp_multiply(cpu, opcode);
     }
     if ((opcode & 0xff7f00u) == 0xc80000u) {
         return execute_accumulator_shift(cpu, opcode);
