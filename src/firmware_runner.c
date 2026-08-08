@@ -1246,6 +1246,7 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item, size_t* f
     const char* name = json_string(entry_field(runner, item, "name"));
     size_t size;
     size_t index;
+    size_t first_difference;
     bool matched = true;
     if (!mapped_address(runner, item, false, &reference_address, error, error_size) ||
         !mapped_address(runner, item, true, &candidate_address, error, error_size) ||
@@ -1254,6 +1255,7 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item, size_t* f
         return false;
     }
     size = (size_t)size_value;
+    first_difference = size;
     if (entry_field(runner, item, "mask") != NULL &&
         !parse_number(entry_field(runner, item, "mask"), &mask)) {
         return false;
@@ -1264,6 +1266,7 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item, size_t* f
             read_memory_byte(&runner->candidate, space,
                              candidate_address + (uint32_t)index)) {
             matched = false;
+            first_difference = index;
             break;
         }
     }
@@ -1279,13 +1282,19 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item, size_t* f
             return false;
         }
         for (index = 0u; index < size; index++) {
-            matched = matched &&
-                      read_memory_byte(&runner->reference, space,
-                                       reference_address + (uint32_t)index) ==
-                          expected_bytes[index] &&
-                      read_memory_byte(&runner->candidate, space,
-                                       candidate_address + (uint32_t)index) ==
-                          expected_bytes[index];
+            bool reference_matches =
+                read_memory_byte(&runner->reference, space,
+                                 reference_address + (uint32_t)index) ==
+                expected_bytes[index];
+            bool candidate_matches =
+                read_memory_byte(&runner->candidate, space,
+                                 candidate_address + (uint32_t)index) ==
+                expected_bytes[index];
+            if ((!reference_matches || !candidate_matches) &&
+                first_difference == size) {
+                first_difference = index;
+            }
+            matched = matched && reference_matches && candidate_matches;
         }
         free(expected_bytes);
     }
@@ -1341,19 +1350,28 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item, size_t* f
     runner->comparisons++;
     if (!matched) {
         size_t shown = size > 16u ? 16u : size;
+        size_t start = first_difference > 4u ? first_difference - 4u : 0u;
+        if (start + shown > size) {
+            start = size - shown;
+        }
         (*failures)++;
-        printf("  memory %s: reference@0x%05" PRIx32 "=", name == NULL ? "state" : name,
-               reference_address);
-        for (index = 0u; index < shown; index++) {
-            printf("%02x", read_memory_byte(&runner->reference, space,
-                                            reference_address + (uint32_t)index));
+        printf("  memory %s", name == NULL ? "state" : name);
+        if (first_difference != size) {
+            printf(" difference=+0x%zx", first_difference);
         }
-        printf(" candidate@0x%05" PRIx32 "=", candidate_address);
+        printf(": reference@0x%05" PRIx32 "=", reference_address + (uint32_t)start);
         for (index = 0u; index < shown; index++) {
-            printf("%02x", read_memory_byte(&runner->candidate, space,
-                                            candidate_address + (uint32_t)index));
+            printf("%02x",
+                   read_memory_byte(&runner->reference, space,
+                                    reference_address + (uint32_t)(start + index)));
         }
-        if (shown != size) {
+        printf(" candidate@0x%05" PRIx32 "=", candidate_address + (uint32_t)start);
+        for (index = 0u; index < shown; index++) {
+            printf("%02x",
+                   read_memory_byte(&runner->candidate, space,
+                                    candidate_address + (uint32_t)(start + index)));
+        }
+        if (start + shown != size) {
             printf("...");
         }
         if (has_expected) {
