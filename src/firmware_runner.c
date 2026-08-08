@@ -526,6 +526,8 @@ static bool open_images(Runner* runner, char* error, size_t error_size) {
                                      error, error_size)) {
         return false;
     }
+    runner->reference.stop_on_trap = true;
+    runner->candidate.stop_on_trap = true;
     return true;
 }
 
@@ -1127,6 +1129,38 @@ static bool apply_stimuli_part(Runner* runner, const JsonValue* part, char* erro
            apply_device_stimuli_pair(runner, stimuli, "usb_bus", error, error_size);
 }
 
+static bool part_has_async_stimuli(const JsonValue* part) {
+    static const char* const names[] = {
+        "interrupts",    "dma_requests", "timer_pulses", "timer_gates",
+        "uart_cts",      "uart_rx",      "spi_select",   "spi_rx",
+        "adc",           "adc_triggers", "pwm_faults",   "pwm_current_limits",
+        "pwm_dead_time", "pwm_sync",     "can_errors",   "can_rx",
+        "usb_rx",        "usb_setup",    "usb_in",       "usb_host_responses",
+        "usb_bus",
+    };
+    const JsonValue* stimuli = json_get(part, "stimuli");
+    size_t index;
+    if (stimuli == NULL) {
+        return false;
+    }
+    for (index = 0u; index < sizeof(names) / sizeof(names[0]); index++) {
+        if (json_get(stimuli, names[index]) != NULL) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool parts_have_async_stimuli(const StepParts* parts) {
+    size_t index;
+    for (index = 0u; index < parts->count; index++) {
+        if (part_has_async_stimuli(parts->items[index])) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void reset_pair(Runner* runner) {
     dspic33_reset(&runner->reference, 0u);
     dspic33_reset(&runner->candidate, 0u);
@@ -1155,6 +1189,7 @@ static bool restore_baseline(Runner* runner, char* error, size_t error_size) {
 static void print_cpu_diagnostics(const Dspic33* cpu) {
     uint64_t start = cpu->interrupt_count > 4u ? cpu->interrupt_count - 4u : 0u;
     uint64_t item;
+    uint16_t stack_start = cpu->w[15] > 32u ? (uint16_t)(cpu->w[15] - 32u) : 0u;
     for (item = start; item < cpu->interrupt_count; item++) {
         size_t index = (size_t)(item % 16u);
         printf("  interrupt #%-6" PRIu64 " irq=%u interrupted=0x%06" PRIx32
@@ -1172,8 +1207,18 @@ static void print_cpu_diagnostics(const Dspic33* cpu) {
            cpu->w[12], cpu->w[13], cpu->w[14], cpu->w[15], cpu->sr, cpu->tblpag,
            cpu->dsrpag, cpu->dswpag);
     printf("  control call-depth=%u interrupt-depth=%u instructions=%" PRIu64
-           " cycles=%" PRIu64 "\n",
-           cpu->call_depth, cpu->interrupt_depth, cpu->instructions, cpu->cycles);
+           " cycles=%" PRIu64 " traps=%" PRIu64 " last-trap=%u "
+           "trap-return=0x%06" PRIx32 "\n",
+           cpu->call_depth, cpu->interrupt_depth, cpu->instructions, cpu->cycles,
+           cpu->trap_count, cpu->last_trap, cpu->last_trap_return);
+    printf("  stack 0x%04x:", stack_start);
+    for (item = 0u; item < 32u; item += 2u) {
+        uint16_t address = (uint16_t)(stack_start + item);
+        uint16_t value =
+            (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[address + 1u] << 8u));
+        printf(" %04x", value);
+    }
+    printf("\n");
 }
 
 static uint32_t stopped_opcode(const Dspic33* cpu) {
@@ -1206,12 +1251,14 @@ static bool run_image(Runner* runner, Dspic33* cpu, bool candidate,
             snprintf(error, error_size,
                      "%s stopped with %s at 0x%06" PRIx32 " opcode=0x%06" PRIx32
                      " irq=%u irq-return=0x%06" PRIx32 " interrupts=%" PRIu64
-                     " resets=%" PRIu64 " reset-irq=%u",
+                     " resets=%" PRIu64 " reset-irq=%u trap=%u "
+                     "trap-return=0x%06" PRIx32 " traps=%" PRIu64,
                      candidate ? "candidate" : "reference",
                      dspic33_stop_reason_name(reason), cpu->pc, stopped_opcode(cpu),
                      cpu->last_interrupt, cpu->last_interrupt_return,
                      cpu->interrupt_count, cpu->software_reset_count,
-                     cpu->reset_interrupt);
+                     cpu->reset_interrupt, cpu->last_trap, cpu->last_trap_return,
+                     cpu->trap_count);
             return false;
         }
     } else {
@@ -1221,12 +1268,14 @@ static bool run_image(Runner* runner, Dspic33* cpu, bool candidate,
             snprintf(error, error_size,
                      "%s stopped with %s at 0x%06" PRIx32 " opcode=0x%06" PRIx32
                      " irq=%u irq-return=0x%06" PRIx32 " interrupts=%" PRIu64
-                     " resets=%" PRIu64 " reset-irq=%u",
+                     " resets=%" PRIu64 " reset-irq=%u trap=%u "
+                     "trap-return=0x%06" PRIx32 " traps=%" PRIu64,
                      candidate ? "candidate" : "reference",
                      dspic33_stop_reason_name(reason), cpu->pc, stopped_opcode(cpu),
                      cpu->last_interrupt, cpu->last_interrupt_return,
                      cpu->interrupt_count, cpu->software_reset_count,
-                     cpu->reset_interrupt);
+                     cpu->reset_interrupt, cpu->last_trap, cpu->last_trap_return,
+                     cpu->trap_count);
             return false;
         }
     }
@@ -1339,7 +1388,8 @@ static bool start_run_tasks(Runner* runner) {
 #endif
 
 static bool run_pair(Runner* runner, const JsonValue* call, const JsonValue* stop,
-                     char* error, size_t error_size, bool* execution_failure) {
+                     bool async_events_enabled, char* error, size_t error_size,
+                     bool* execution_failure) {
 #ifdef _WIN32
     RunTask* reference = &runner->run_tasks[0];
     RunTask* candidate = &runner->run_tasks[1];
@@ -1352,6 +1402,8 @@ static bool run_pair(Runner* runner, const JsonValue* call, const JsonValue* sto
     candidate->stop = stop;
     candidate->succeeded = false;
     candidate->error[0] = '\0';
+    dspic33_set_async_events(&runner->reference, async_events_enabled);
+    dspic33_set_async_events(&runner->candidate, async_events_enabled);
     SetEvent(reference->start_event);
     SetEvent(candidate->start_event);
     WaitForMultipleObjects(2u, done_events, TRUE, INFINITE);
@@ -1365,9 +1417,13 @@ static bool run_pair(Runner* runner, const JsonValue* call, const JsonValue* sto
                               .candidate = true};
     RunTask* reference = &reference_task;
     RunTask* candidate = &candidate_task;
+    dspic33_set_async_events(&runner->reference, async_events_enabled);
+    dspic33_set_async_events(&runner->candidate, async_events_enabled);
     run_task(reference);
     run_task(candidate);
 #endif
+    dspic33_set_async_events(&runner->reference, true);
+    dspic33_set_async_events(&runner->candidate, true);
     runner->reference_instructions += reference->instructions;
     runner->candidate_instructions += candidate->instructions;
     runner->reference_cycles += reference->cycles;
@@ -1997,6 +2053,7 @@ static bool execute_step(Runner* runner, const char* scenario_name,
     const JsonValue* stop = scalar_field(parts, "stop");
     const char* step_name = generated_name;
     bool reset_value = false;
+    bool async_events_enabled;
     size_t index;
     size_t failures = 0u;
     bool execution_failure;
@@ -2040,7 +2097,10 @@ static bool execute_step(Runner* runner, const char* scenario_name,
             return false;
         }
     }
-    if (!run_pair(runner, call, stop, error, error_size, &execution_failure)) {
+    async_events_enabled =
+        call == NULL || stop != NULL || parts_have_async_stimuli(parts);
+    if (!run_pair(runner, call, stop, async_events_enabled, error, error_size,
+                  &execution_failure)) {
         if (!execution_failure) {
             return false;
         }
@@ -2224,11 +2284,41 @@ static bool execute_matrix_selection(Runner* runner, const JsonValue* scenario,
                                      size_t ordinal, char* error, size_t error_size) {
     StepParts parts = {0};
     const JsonValue* scenario_call = json_get(scenario, "call");
+    char filter_name[512];
     char name[512];
     size_t index;
-    snprintf(name, sizeof(name), "%s matrix case %zu", scenario_name, ordinal + 1u);
-    if (!generated_step_selected(runner, name)) {
+    size_t used;
+    snprintf(filter_name, sizeof(filter_name), "%s matrix case %zu", scenario_name,
+             ordinal + 1u);
+    if (!generated_step_selected(runner, filter_name)) {
         return true;
+    }
+    used = (size_t)snprintf(name, sizeof(name), "%s [", filter_name);
+    for (index = 0u; index < selection_count && used < sizeof(name); index++) {
+        const char* id =
+            selections[index].explicit_case == NULL
+                ? json_string(json_get(selections[index].specification, "id"))
+                : json_string(json_get(selections[index].explicit_case, "id"));
+        int written;
+        if (id == NULL) {
+            id = "value";
+        }
+        written = selections[index].generated
+                      ? snprintf(name + used, sizeof(name) - used, "%s%s=%" PRId64,
+                                 index == 0u ? "" : ",", id, selections[index].value)
+                      : snprintf(name + used, sizeof(name) - used, "%s%s",
+                                 index == 0u ? "" : ",", id);
+        if (written < 0 || (size_t)written >= sizeof(name) - used) {
+            used = sizeof(name);
+        } else {
+            used += (size_t)written;
+        }
+    }
+    if (used < sizeof(name) - 1u) {
+        name[used++] = ']';
+        name[used] = '\0';
+    } else {
+        name[sizeof(name) - 1u] = '\0';
     }
     if (!add_common_parts(runner, scenario, &parts, error, error_size) ||
         !add_part(&parts, json_get(matrix, "step"), error, error_size)) {

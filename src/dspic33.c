@@ -1474,12 +1474,16 @@ static void enter_trap(Dspic33* cpu, uint16_t trap, uint32_t vector, uint8_t pri
                        (uint16_t)(dspic33_read_word(cpu, 0x08c0u) | status));
     cpu->pc = cpu->program[vector / 2u] & 0x007ffffeu;
     cpu->last_trap = trap;
+    cpu->last_trap_return = return_pc;
     cpu->trap_count++;
     cpu->interrupt_depth++;
     dspic33_device_latch_interrupt(cpu, (uint8_t)trap, priority);
     cpu->repeat_active = 0u;
     cpu->rcount = 0u;
     cpu->sr &= (uint16_t)~0x0010u;
+    if (cpu->stop_on_trap) {
+        cpu->stop_reason = DSPIC33_TRAPPED;
+    }
 }
 
 void dspic33_raise_dma_address_trap(Dspic33* cpu) {
@@ -1918,16 +1922,20 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     if (opcode == 0xfe0000u) {
         uint64_t instructions = cpu->instructions;
         uint64_t cycles = cpu->cycles;
+        uint64_t device_cycles = cpu->device_cycles;
         uint64_t software_reset_count = cpu->software_reset_count + 1u;
         uint64_t trap_count = cpu->trap_count;
         uint16_t reset_interrupt = cpu->last_interrupt;
+        bool async_events_enabled = cpu->async_events_enabled;
         uint16_t rcon = dspic33_read_word(cpu, 0x0740u);
         reset_processor(cpu, 0u, false);
         cpu->instructions = instructions;
         cpu->cycles = cycles;
+        cpu->device_cycles = device_cycles;
         cpu->software_reset_count = software_reset_count;
         cpu->trap_count = trap_count;
         cpu->reset_interrupt = reset_interrupt;
+        cpu->async_events_enabled = async_events_enabled;
         dspic33_write_word(cpu, 0x0740u, (uint16_t)(rcon | 0x0040u));
         return true;
     }
@@ -2050,14 +2058,17 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
     memset(cpu->do_terminate, 0, sizeof(cpu->do_terminate));
     cpu->instructions = 0u;
     cpu->cycles = 0u;
+    cpu->device_cycles = 0u;
     cpu->unsupported_opcode = 0u;
     cpu->last_interrupt = UINT16_MAX;
     cpu->last_interrupt_return = 0u;
     cpu->interrupt_count = 0u;
     cpu->software_reset_count = 0u;
     cpu->trap_count = 0u;
+    cpu->last_trap_return = 0u;
     cpu->reset_interrupt = UINT16_MAX;
     cpu->last_trap = UINT16_MAX;
+    cpu->async_events_enabled = true;
     memset(cpu->interrupt_log_irq, 0xff, sizeof(cpu->interrupt_log_irq));
     memset(cpu->interrupt_log_entry, 0, sizeof(cpu->interrupt_log_entry));
     memset(cpu->interrupt_log_return, 0, sizeof(cpu->interrupt_log_return));
@@ -2070,6 +2081,10 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
 }
 
 void dspic33_reset(Dspic33* cpu, uint32_t entry) { reset_processor(cpu, entry, true); }
+
+void dspic33_set_async_events(Dspic33* cpu, bool enabled) {
+    cpu->async_events_enabled = enabled;
+}
 
 bool dspic33_load_program_word(Dspic33* cpu, uint32_t address, uint32_t word) {
     uint32_t* destination;
@@ -2503,6 +2518,8 @@ const char* dspic33_stop_reason_name(Dspic33StopReason reason) {
         return "idling";
     case DSPIC33_HALTED:
         return "halted";
+    case DSPIC33_TRAPPED:
+        return "trap";
     case DSPIC33_UNSUPPORTED_INSTRUCTION:
         return "unsupported instruction";
     case DSPIC33_PROGRAM_BOUNDS:

@@ -764,14 +764,14 @@ bool dspic33_schedule(Dspic33* cpu, Dspic33EventType type, uint16_t source,
     Dspic33Event event;
     size_t index;
     size_t parent;
-    if (delay > UINT64_MAX - cpu->cycles) {
+    if (delay > UINT64_MAX - cpu->device_cycles) {
         return false;
     }
     if (!event_reserve(&cpu->events)) {
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
         return false;
     }
-    event.cycle = cpu->cycles + delay;
+    event.cycle = cpu->device_cycles + delay;
     event.sequence = cpu->events.sequence++;
     event.value = value;
     event.source = source;
@@ -852,7 +852,8 @@ static bool service_interrupt(Dspic33* cpu, bool waking) {
     uint16_t irq;
     uint16_t stacked_high;
     uint16_t group;
-    if (((raw_word(cpu, 0x08c2u) & 0x8000u) == 0u && cpu->gie_disable_deferred == 0u) ||
+    if (!cpu->async_events_enabled ||
+        ((raw_word(cpu, 0x08c2u) & 0x8000u) == 0u && cpu->gie_disable_deferred == 0u) ||
         (cpu->corcon & 0x0008u) != 0u) {
         return false;
     }
@@ -914,6 +915,9 @@ bool dspic33_device_service_interrupt(Dspic33* cpu) {
 
 bool dspic33_device_wake(Dspic33* cpu) {
     uint16_t irq;
+    if (!cpu->async_events_enabled) {
+        return false;
+    }
     for (irq = 0u; irq < DSPIC33_IRQ_COUNT; irq++) {
         if (interrupt_enabled(cpu, irq) && !interrupt_deferred(cpu, irq) &&
             interrupt_priority(cpu, irq) != 0u) {
@@ -2622,7 +2626,8 @@ static void advance_pwm(Dspic33* cpu, uint64_t cycles) {
         uint64_t elapsed_subcycles = divider - previous_fraction;
         cpu->io.pwm_fraction[time_base] = (uint32_t)(accumulated % divider);
         while (ticks-- != 0u) {
-            uint64_t cycle = cpu->cycles - cycles + (elapsed_subcycles + 1u) / 2u;
+            uint64_t cycle =
+                cpu->device_cycles - cycles + (elapsed_subcycles + 1u) / 2u;
             pwm_tick(cpu, time_base, cycle);
             elapsed_subcycles += divider;
         }
@@ -4171,12 +4176,7 @@ static void advance_timers(Dspic33* cpu, uint64_t cycles) {
 }
 
 static void advance_device_cycles(Dspic33* cpu, uint64_t cycles) {
-    cpu->cycles += cycles;
-    if (cpu->disicnt > cycles) {
-        cpu->disicnt = (uint16_t)(cpu->disicnt - cycles);
-    } else {
-        cpu->disicnt = 0u;
-    }
+    cpu->device_cycles += cycles;
     advance_timers(cpu, cycles);
     advance_pwm(cpu, cycles);
 }
@@ -4184,26 +4184,36 @@ static void advance_device_cycles(Dspic33* cpu, uint64_t cycles) {
 bool dspic33_device_advance(Dspic33* cpu, uint64_t cycles) {
     uint64_t target;
     size_t group;
-    if (cycles > UINT64_MAX - cpu->cycles) {
+    if (cycles > UINT64_MAX - cpu->cycles ||
+        (cpu->async_events_enabled && cycles > UINT64_MAX - cpu->device_cycles)) {
         return false;
     }
-    target = cpu->cycles + cycles;
-    for (;;) {
-        if (cpu->events.count == 0u || cpu->events.items[0].cycle > target) {
-            if (cpu->cycles == target) {
-                break;
+    cpu->cycles += cycles;
+    if (cpu->disicnt > cycles) {
+        cpu->disicnt = (uint16_t)(cpu->disicnt - cycles);
+    } else {
+        cpu->disicnt = 0u;
+    }
+    if (cpu->async_events_enabled) {
+        target = cpu->device_cycles + cycles;
+        for (;;) {
+            if (cpu->events.count == 0u || cpu->events.items[0].cycle > target) {
+                if (cpu->device_cycles == target) {
+                    break;
+                }
+                advance_device_cycles(cpu, target - cpu->device_cycles);
+                continue;
             }
-            advance_device_cycles(cpu, target - cpu->cycles);
-            continue;
-        }
-        if (cpu->events.items[0].cycle > cpu->cycles) {
-            advance_device_cycles(cpu, cpu->events.items[0].cycle - cpu->cycles);
-        }
-        {
-            Dspic33Event event = event_pop(&cpu->events);
-            process_event(cpu, &event);
-            if (cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR) {
-                return false;
+            if (cpu->events.items[0].cycle > cpu->device_cycles) {
+                advance_device_cycles(cpu,
+                                      cpu->events.items[0].cycle - cpu->device_cycles);
+            }
+            {
+                Dspic33Event event = event_pop(&cpu->events);
+                process_event(cpu, &event);
+                if (cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR) {
+                    return false;
+                }
             }
         }
     }
@@ -5300,7 +5310,7 @@ bool dspic33_pwm_sync_output(const Dspic33* cpu, uint8_t time_base) {
     if ((control & 0x0100u) == 0u) {
         return false;
     }
-    active = cpu->cycles < cpu->io.pwm_sync_until[time_base];
+    active = cpu->device_cycles < cpu->io.pwm_sync_until[time_base];
     return (control & 0x0200u) != 0u ? !active : active;
 }
 

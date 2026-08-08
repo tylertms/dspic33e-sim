@@ -115,6 +115,7 @@ static void growth_and_overflow_cases(EventConformance* state, Dspic33* cpu) {
 
     dspic33_reset(cpu, 0u);
     cpu->cycles = UINT64_MAX - 1u;
+    cpu->device_cycles = UINT64_MAX - 1u;
     expect(state, !dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 0u, 0u, 2u),
            "reject event cycle overflow");
     expect(state, cpu->events.count == 0u, "overflow event not queued");
@@ -124,6 +125,25 @@ static void growth_and_overflow_cases(EventConformance* state, Dspic33* cpu) {
            "maximum event cycle retained");
     expect(state, dspic33_device_advance(cpu, 1u), "dispatch maximum event cycle");
     expect(state, interrupt_flag(cpu, 0u), "maximum event cycle dispatched");
+}
+
+static void paused_device_clock_cases(EventConformance* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 6u, 0u, 3u),
+           "schedule event before device clock pause");
+    dspic33_set_async_events(cpu, false);
+    expect(state, dspic33_device_advance(cpu, 5u), "advance paused device clock");
+    expect(state, cpu->cycles == 5u, "paused device clock retains CPU time");
+    expect(state, cpu->device_cycles == 0u, "paused device clock retains epoch");
+    expect(state, !interrupt_flag(cpu, 6u), "paused event remains pending");
+    expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 7u, 0u, 2u),
+           "schedule event during device clock pause");
+    dspic33_set_async_events(cpu, true);
+    expect(state, dspic33_device_advance(cpu, 2u), "resume device clock");
+    expect(state, interrupt_flag(cpu, 7u), "paused epoch event dispatched");
+    expect(state, !interrupt_flag(cpu, 6u), "later paused event remains pending");
+    expect(state, dspic33_device_advance(cpu, 1u), "reach retained event");
+    expect(state, interrupt_flag(cpu, 6u), "retained event dispatched");
 }
 
 static void copy_and_reset_cases(EventConformance* state, Dspic33* cpu, Dspic33* copy) {
@@ -159,6 +179,7 @@ int main(void) {
         relative_and_zero_delay_cases(&state, &cpu);
         ordering_cases(&state, &cpu);
         growth_and_overflow_cases(&state, &cpu);
+        paused_device_clock_cases(&state, &cpu);
         copy_and_reset_cases(&state, &cpu, &copy);
     }
     if (copy_initialized) {

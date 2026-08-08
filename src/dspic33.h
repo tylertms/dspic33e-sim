@@ -294,6 +294,7 @@ typedef enum {
     DSPIC33_SLEEPING,
     DSPIC33_IDLING,
     DSPIC33_HALTED,
+    DSPIC33_TRAPPED,
     DSPIC33_UNSUPPORTED_INSTRUCTION,
     DSPIC33_PROGRAM_BOUNDS,
     DSPIC33_INSTRUCTION_LIMIT,
@@ -339,14 +340,18 @@ typedef struct {
     uint8_t do_terminate[4];
     uint64_t instructions;
     uint64_t cycles;
+    uint64_t device_cycles;
     uint32_t unsupported_opcode;
     uint16_t last_interrupt;
     uint32_t last_interrupt_return;
     uint64_t interrupt_count;
     uint64_t software_reset_count;
     uint64_t trap_count;
+    uint32_t last_trap_return;
     uint16_t reset_interrupt;
     uint16_t last_trap;
+    bool stop_on_trap;
+    bool async_events_enabled;
     uint16_t interrupt_log_irq[16];
     uint32_t interrupt_log_entry[16];
     uint32_t interrupt_log_return[16];
@@ -417,6 +422,7 @@ bool dspic33_usb_bus(Dspic33* cpu, Dspic33UsbBusEvent event, uint16_t value,
 bool dspic33_usb_transmit(Dspic33* cpu, Dspic33UsbPacket* packet);
 void dspic33_adc_input(Dspic33* cpu, uint8_t channel, uint16_t value);
 void dspic33_gpio_input(Dspic33* cpu, uint8_t port, uint16_t value);
+void dspic33_set_async_events(Dspic33* cpu, bool enabled);
 Dspic33StopReason dspic33_step(Dspic33* cpu);
 Dspic33StopReason dspic33_run(Dspic33* cpu, uint64_t instruction_limit);
 Dspic33StopReason dspic33_run_until(Dspic33* cpu, uint32_t stop_address,
