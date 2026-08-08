@@ -1189,6 +1189,24 @@ static bool execute_accumulator_shift(Dspic33* cpu, uint32_t opcode) {
     return true;
 }
 
+static bool execute_accumulator_word(Dspic33* cpu, uint32_t opcode, bool add) {
+    uint8_t accumulator = (uint8_t)((opcode >> 15u) & 1u);
+    uint8_t offset_register = (uint8_t)((opcode >> 11u) & 0x0fu);
+    uint8_t encoded_shift = (uint8_t)((opcode >> 7u) & 0x0fu);
+    int8_t shift = (int8_t)(encoded_shift >= 8u ? encoded_shift - 16u : encoded_shift);
+    uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
+    uint8_t source_register = (uint8_t)(opcode & 0x0fu);
+    int64_t value = (int64_t)(int16_t)read_operand_word(
+                        cpu, source_mode, source_register, offset_register)
+                    << 16u;
+    value = shift_accumulator_value(value, shift);
+    if (add) {
+        value += cpu->accumulator[accumulator];
+    }
+    apply_accumulator_result(cpu, accumulator, value);
+    return true;
+}
+
 static uint16_t accumulator_store_value_with_rounding(const Dspic33* cpu, int64_t value,
                                                       bool rounded, bool conventional) {
     uint64_t bits = (uint64_t)value & ACCUMULATOR_MASK;
@@ -1725,6 +1743,9 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     }
     if ((opcode & 0xff7f00u) == 0xc80000u) {
         return execute_accumulator_shift(cpu, opcode);
+    }
+    if ((opcode & 0xff0000u) == 0xc90000u || (opcode & 0xff0000u) == 0xca0000u) {
+        return execute_accumulator_word(cpu, opcode, (opcode & 0xff0000u) == 0xc90000u);
     }
     if ((opcode & 0xfe0000u) == 0xcc0000u) {
         return execute_accumulator_store(cpu, opcode);
