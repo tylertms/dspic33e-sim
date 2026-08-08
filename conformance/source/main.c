@@ -43,6 +43,7 @@ extern void run_system_probe(uint16_t selector);
 extern uint16_t run_branch_conformance(volatile uint16_t* results);
 extern uint16_t run_can_conformance(volatile uint16_t* results);
 extern uint16_t run_usb_conformance(volatile uint16_t* results);
+extern uint16_t run_uart_conformance(volatile uint16_t* results);
 extern void conformance_complete(void);
 
 int main(void) {
@@ -63,6 +64,8 @@ int main(void) {
     conformance_output.result_words += run_can_conformance(
         conformance_output.results + conformance_output.result_words);
     conformance_output.result_words += run_usb_conformance(
+        conformance_output.results + conformance_output.result_words);
+    conformance_output.result_words += run_uart_conformance(
         conformance_output.results + conformance_output.result_words);
     conformance_output.result_words += run_shift_conformance(
         conformance_output.results + conformance_output.result_words);

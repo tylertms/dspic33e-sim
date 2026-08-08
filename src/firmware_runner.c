@@ -846,10 +846,31 @@ static bool apply_device_stimulus(Dspic33* cpu, const char* type,
                     json_boolean(high_value, &high) &&
                     dspic33_timer_gate(cpu, (uint8_t)(channel - 1u), high, delay);
     } else if (strcmp(type, "uart_rx") == 0) {
+        const JsonValue* parity_error_value = json_get(specification, "parity_error");
+        const JsonValue* framing_error_value = json_get(specification, "framing_error");
+        Dspic33UartFrame frame;
+        uint64_t baud_period = 0u;
+        memset(&frame, 0, sizeof(frame));
         succeeded = event_number(specification, "channel", DSPIC33_UART_COUNT - 1u, 0u,
                                  true, &channel) &&
-                    event_number(specification, "value", UINT8_MAX, 0u, true, &value) &&
-                    dspic33_uart_receive(cpu, (uint8_t)channel, (uint8_t)value, delay);
+                    event_number(specification, "value", 0x01ffu, 0u, true, &value) &&
+                    event_number(specification, "baud_period", UINT16_MAX, 0u, false,
+                                 &baud_period) &&
+                    (parity_error_value == NULL ||
+                     json_boolean(parity_error_value, &frame.parity_error)) &&
+                    (framing_error_value == NULL ||
+                     json_boolean(framing_error_value, &frame.framing_error));
+        frame.value = (uint16_t)value;
+        frame.baud_period = (uint16_t)baud_period;
+        succeeded = succeeded &&
+                    dspic33_uart_receive_frame(cpu, (uint8_t)channel, &frame, delay);
+    } else if (strcmp(type, "uart_cts") == 0) {
+        const JsonValue* clear_value = json_get(specification, "clear_to_send");
+        bool clear_to_send = false;
+        succeeded = event_number(specification, "channel", DSPIC33_UART_COUNT - 1u, 0u,
+                                 true, &channel) &&
+                    clear_value != NULL && json_boolean(clear_value, &clear_to_send) &&
+                    dspic33_uart_set_cts(cpu, (uint8_t)channel, clear_to_send, delay);
     } else if (strcmp(type, "spi_rx") == 0) {
         succeeded =
             event_number(specification, "channel", DSPIC33_SPI_COUNT - 1u, 0u, true,
@@ -1080,6 +1101,7 @@ static bool apply_stimuli_part(Runner* runner, const JsonValue* part, char* erro
                                      error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "timer_gates", error,
                                      error_size) &&
+           apply_device_stimuli_pair(runner, stimuli, "uart_cts", error, error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "uart_rx", error, error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "spi_select", error,
                                      error_size) &&
@@ -1672,6 +1694,92 @@ static bool can_frames_match(const Dspic33CanFrame* reference,
            memcmp(reference->data, candidate->data, reference->length) == 0;
 }
 
+static bool uart_frames_match(const Dspic33UartFrame* reference,
+                              const Dspic33UartFrame* candidate) {
+    return reference->value == candidate->value &&
+           reference->baud_period == candidate->baud_period &&
+           reference->data_bits == candidate->data_bits &&
+           reference->stop_bits == candidate->stop_bits &&
+           reference->parity == candidate->parity &&
+           reference->parity_error == candidate->parity_error &&
+           reference->framing_error == candidate->framing_error &&
+           reference->break_signal == candidate->break_signal &&
+           reference->inverted == candidate->inverted &&
+           reference->irda == candidate->irda;
+}
+
+static void print_uart_frame(bool present, const Dspic33UartFrame* frame) {
+    if (!present) {
+        printf("none");
+        return;
+    }
+    printf("value=0x%03x baud=%u data=%u stop=%u parity=%u parity-error=%u "
+           "framing-error=%u break=%u inverted=%u irda=%u",
+           frame->value, frame->baud_period, frame->data_bits, frame->stop_bits,
+           frame->parity, frame->parity_error ? 1u : 0u, frame->framing_error ? 1u : 0u,
+           frame->break_signal ? 1u : 0u, frame->inverted ? 1u : 0u,
+           frame->irda ? 1u : 0u);
+}
+
+static bool compare_uart_transmit(Runner* runner, const StepParts* parts,
+                                  size_t* failures, char* error, size_t error_size) {
+    const JsonValue* values = scalar_field(parts, "uart_tx");
+    size_t index;
+    if (values == NULL) {
+        return true;
+    }
+    if (values->type != JSON_ARRAY) {
+        snprintf(error, error_size, "UART transmit observations must be an array");
+        return false;
+    }
+    for (index = 0u; index < values->as.array.count; index++) {
+        const JsonValue* item = values->as.array.items[index];
+        uint64_t channel;
+        size_t reference_count;
+        size_t candidate_count;
+        size_t frame_index = 0u;
+        if (item->type != JSON_OBJECT ||
+            !event_number(item, "channel", DSPIC33_UART_COUNT - 1u, 0u, true,
+                          &channel)) {
+            snprintf(error, error_size, "invalid UART transmit observation");
+            return false;
+        }
+        reference_count = runner->reference.io.uart_tx[channel].count;
+        candidate_count = runner->candidate.io.uart_tx[channel].count;
+        runner->comparisons++;
+        if (reference_count != candidate_count) {
+            (*failures)++;
+            printf("  UART%" PRIu64 " transmit count: reference=%zu candidate=%zu\n",
+                   channel + 1u, reference_count, candidate_count);
+        }
+        while (runner->reference.io.uart_tx[channel].count != 0u ||
+               runner->candidate.io.uart_tx[channel].count != 0u) {
+            Dspic33UartFrame reference_frame;
+            Dspic33UartFrame candidate_frame;
+            bool reference_present = dspic33_uart_transmit(
+                &runner->reference, (uint8_t)channel, &reference_frame);
+            bool candidate_present = dspic33_uart_transmit(
+                &runner->candidate, (uint8_t)channel, &candidate_frame);
+            bool matched = reference_present == candidate_present;
+            if (reference_present && candidate_present) {
+                matched = uart_frames_match(&reference_frame, &candidate_frame);
+            }
+            runner->comparisons++;
+            if (!matched) {
+                (*failures)++;
+                printf("  UART%" PRIu64 " transmit frame %zu: reference=", channel + 1u,
+                       frame_index);
+                print_uart_frame(reference_present, &reference_frame);
+                printf(" candidate=");
+                print_uart_frame(candidate_present, &candidate_frame);
+                printf("\n");
+            }
+            frame_index++;
+        }
+    }
+    return true;
+}
+
 static void print_can_frame(bool present, const Dspic33CanFrame* frame) {
     uint8_t index;
     if (!present) {
@@ -1945,6 +2053,7 @@ static bool execute_step(Runner* runner, const char* scenario_name,
     if (!compare_registers(runner, parts, &failures, error, error_size) ||
         !compare_memory(runner, parts, &failures, error, error_size) ||
         !compare_pins(runner, parts, &failures, error, error_size) ||
+        !compare_uart_transmit(runner, parts, &failures, error, error_size) ||
         !compare_can_transmit(runner, parts, &failures, error, error_size) ||
         !compare_usb_transmit(runner, parts, &failures, error, error_size)) {
         return false;

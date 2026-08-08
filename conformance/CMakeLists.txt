@@ -21,6 +21,7 @@ add_executable(
     source/branches.s
     source/can.s
     source/usb.s
+    source/uart.s
     source/dma.s
     source/divides.s
     source/main.c

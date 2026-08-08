@@ -16,6 +16,7 @@ static const uint8_t dma_irqs[DSPIC33_DMA_COUNT] = {
     4u, 14u, 24u, 36u, 46u, 61u, 68u, 69u, 118u, 119u, 120u, 121u, 130u, 131u, 132u};
 static const uint8_t uart_rx_irqs[DSPIC33_UART_COUNT] = {11u, 30u, 82u, 88u};
 static const uint8_t uart_tx_irqs[DSPIC33_UART_COUNT] = {12u, 31u, 83u, 89u};
+static const uint8_t uart_error_irqs[DSPIC33_UART_COUNT] = {65u, 66u, 81u, 87u};
 static const uint8_t spi_error_irqs[DSPIC33_SPI_COUNT] = {9u, 32u, 90u, 122u};
 static const uint8_t spi_irqs[DSPIC33_SPI_COUNT] = {10u, 33u, 91u, 123u};
 static const uint8_t spi_dma_requests[DSPIC33_SPI_COUNT] = {10u, 33u, 91u, 123u};
@@ -77,6 +78,39 @@ enum {
     DMA_LCA = 0x0bf6u,
     DMA_SADRL = 0x0bf8u,
     DMA_SADRH = 0x0bfau,
+    UART_MODE_ENABLE = 0x8000u,
+    UART_MODE_IREN = 0x1000u,
+    UART_MODE_UEN_MASK = 0x0300u,
+    UART_MODE_WAKE = 0x0080u,
+    UART_MODE_LOOPBACK = 0x0040u,
+    UART_MODE_AUTO_BAUD = 0x0020u,
+    UART_MODE_HIGH_SPEED = 0x0008u,
+    UART_MODE_DATA_MASK = 0x0006u,
+    UART_MODE_NINE_BIT = 0x0006u,
+    UART_MODE_TWO_STOP_BITS = 0x0001u,
+    UART_STATUS_TX_INTERRUPT_HIGH = 0x8000u,
+    UART_STATUS_TX_INVERT = 0x4000u,
+    UART_STATUS_TX_INTERRUPT_LOW = 0x2000u,
+    UART_STATUS_BREAK = 0x0800u,
+    UART_STATUS_TX_ENABLE = 0x0400u,
+    UART_STATUS_TX_FULL = 0x0200u,
+    UART_STATUS_TX_EMPTY = 0x0100u,
+    UART_STATUS_RX_INTERRUPT_MASK = 0x00c0u,
+    UART_STATUS_ADDRESS_DETECT = 0x0020u,
+    UART_STATUS_RX_IDLE = 0x0010u,
+    UART_STATUS_PARITY_ERROR = 0x0008u,
+    UART_STATUS_FRAMING_ERROR = 0x0004u,
+    UART_STATUS_OVERRUN = 0x0002u,
+    UART_STATUS_RX_AVAILABLE = 0x0001u,
+    UART_EVENT_KIND_SHIFT = 30u,
+    UART_EVENT_KIND_MASK = 0xc0000000u,
+    UART_EVENT_RECEIVE = 0x00000000u,
+    UART_EVENT_TRANSMIT = 0x40000000u,
+    UART_EVENT_CTS = 0x80000000u,
+    UART_EVENT_PARITY_ERROR = 0x00000200u,
+    UART_EVENT_FRAMING_ERROR = 0x00000400u,
+    UART_EVENT_BAUD_SHIFT = 11u,
+    UART_EVENT_BAUD_MASK = 0x07fff800u,
     SPI_ENABLE = 0x8000u,
     SPI_STOP_IDLE = 0x2000u,
     SPI_BUFFER_COUNT_MASK = 0x0700u,
@@ -416,6 +450,41 @@ static bool adc_register_write_mask(uint16_t address, uint16_t* writable) {
     return false;
 }
 
+static bool uart_module_disabled(const Dspic33* cpu, uint8_t channel) {
+    static const uint16_t pmd_addresses[DSPIC33_UART_COUNT] = {0x0760u, 0x0760u,
+                                                               0x0764u, 0x0766u};
+    static const uint16_t pmd_masks[DSPIC33_UART_COUNT] = {0x0020u, 0x0040u, 0x0008u,
+                                                           0x0020u};
+    return channel >= DSPIC33_UART_COUNT ||
+           (raw_word(cpu, pmd_addresses[channel]) & pmd_masks[channel]) != 0u;
+}
+
+static bool uart_register_write_mask(const Dspic33* cpu, uint16_t address,
+                                     uint16_t* writable) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_UART_COUNT; channel++) {
+        uint16_t offset = (uint16_t)(address - uart_bases[channel]);
+        if (offset > 8u || (offset & 1u) != 0u) {
+            continue;
+        }
+        if (uart_module_disabled(cpu, channel)) {
+            *writable = 0u;
+        } else if (offset == 0u) {
+            *writable = 0xbbffu;
+        } else if (offset == 2u) {
+            *writable = 0xece2u;
+        } else if (offset == 4u) {
+            *writable = 0x01ffu;
+        } else if (offset == 6u) {
+            *writable = 0u;
+        } else {
+            *writable = 0xffffu;
+        }
+        return true;
+    }
+    return false;
+}
+
 static bool spi_register_write_mask(uint16_t address, uint16_t* writable) {
     uint8_t channel;
     for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
@@ -562,12 +631,51 @@ static bool byte_queue_push(Dspic33ByteQueue* queue, uint8_t value) {
     return true;
 }
 
-static bool byte_queue_pop(Dspic33ByteQueue* queue, uint8_t* value) {
+static bool uart_fifo_push(Dspic33UartFifo* fifo, const Dspic33UartFrame* frame) {
+    uint8_t index;
+    if (fifo->count == DSPIC33_UART_FIFO_SIZE) {
+        return false;
+    }
+    index = (uint8_t)((fifo->head + fifo->count) % DSPIC33_UART_FIFO_SIZE);
+    fifo->frames[index] = *frame;
+    fifo->count++;
+    return true;
+}
+
+static bool uart_fifo_front(const Dspic33UartFifo* fifo, Dspic33UartFrame* frame) {
+    if (fifo->count == 0u) {
+        return false;
+    }
+    *frame = fifo->frames[fifo->head];
+    return true;
+}
+
+static bool uart_fifo_pop(Dspic33UartFifo* fifo, Dspic33UartFrame* frame) {
+    if (!uart_fifo_front(fifo, frame)) {
+        return false;
+    }
+    fifo->head = (uint8_t)((fifo->head + 1u) % DSPIC33_UART_FIFO_SIZE);
+    fifo->count--;
+    return true;
+}
+
+static bool uart_queue_push(Dspic33UartQueue* queue, const Dspic33UartFrame* frame) {
+    uint16_t index;
+    if (queue->count == DSPIC33_UART_QUEUE_SIZE) {
+        return false;
+    }
+    index = (uint16_t)((queue->head + queue->count) % DSPIC33_UART_QUEUE_SIZE);
+    queue->frames[index] = *frame;
+    queue->count++;
+    return true;
+}
+
+static bool uart_queue_pop(Dspic33UartQueue* queue, Dspic33UartFrame* frame) {
     if (queue->count == 0u) {
         return false;
     }
-    *value = queue->bytes[queue->head];
-    queue->head = (uint16_t)((queue->head + 1u) % sizeof(queue->bytes));
+    *frame = queue->frames[queue->head];
+    queue->head = (uint16_t)((queue->head + 1u) % DSPIC33_UART_QUEUE_SIZE);
     queue->count--;
     return true;
 }
@@ -952,6 +1060,19 @@ static void dma_peripheral_write_collision(Dspic33* cpu, uint8_t channel) {
     }
 }
 
+static uint16_t uart_dma_error_bits(const Dspic33* cpu, uint16_t address) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_UART_COUNT; channel++) {
+        if (address == uart_bases[channel] + 6u) {
+            uint16_t status = raw_word(cpu, (uint16_t)(uart_bases[channel] + 2u));
+            return (
+                uint16_t)(((status & UART_STATUS_PARITY_ERROR) != 0u ? 0x0800u : 0u) |
+                          ((status & UART_STATUS_FRAMING_ERROR) != 0u ? 0x0400u : 0u));
+        }
+    }
+    return 0u;
+}
+
 static void dma_disable_channel(Dspic33* cpu, uint8_t channel, uint16_t control) {
     uint16_t base = dma_channel_base(channel);
     uint16_t bit = dma_channel_bit(channel);
@@ -994,6 +1115,7 @@ static void run_dma(Dspic33* cpu, uint8_t channel, uint32_t event_value) {
     uint16_t transferred;
     uint16_t half;
     uint16_t value;
+    uint16_t uart_errors;
     uint16_t generation;
     uint32_t address;
     uint8_t width;
@@ -1049,7 +1171,9 @@ static void run_dma(Dspic33* cpu, uint8_t channel, uint32_t event_value) {
             dspic33_write_word(cpu, pad, value);
         }
     } else {
+        uart_errors = width == 2u ? uart_dma_error_bits(cpu, pad) : 0u;
         value = width == 1u ? dspic33_read_byte(cpu, pad) : dspic33_read_word(cpu, pad);
+        value |= uart_errors;
         dma_write_memory(cpu, address, width, value);
         if ((control & DMA_CON_NULL_WRITE) != 0u) {
             if (dma_write_collision(cpu, pad, width)) {
@@ -1119,19 +1243,304 @@ static void dma_request_collision(Dspic33* cpu, uint8_t channel) {
     }
 }
 
-static void run_uart(Dspic33* cpu, uint8_t channel) {
-    uint16_t base;
+static uint8_t uart_transmit_interrupt_mode(const Dspic33* cpu, uint8_t channel) {
+    uint16_t status = raw_word(cpu, (uint16_t)(uart_bases[channel] + 2u));
+    return (uint8_t)(((status & UART_STATUS_TX_INTERRUPT_LOW) != 0u ? 1u : 0u) |
+                     ((status & UART_STATUS_TX_INTERRUPT_HIGH) != 0u ? 2u : 0u));
+}
+
+static uint8_t uart_receive_interrupt_threshold(const Dspic33* cpu, uint8_t channel) {
+    uint16_t mode = raw_word(cpu, (uint16_t)(uart_bases[channel] + 2u)) &
+                    UART_STATUS_RX_INTERRUPT_MASK;
+    if (mode == 0x0080u) {
+        return 3u;
+    }
+    if (mode == 0x00c0u) {
+        return 4u;
+    }
+    return 1u;
+}
+
+static Dspic33UartParity uart_parity(uint16_t mode) {
+    uint16_t selection = mode & UART_MODE_DATA_MASK;
+    if (selection == 0x0002u) {
+        return DSPIC33_UART_PARITY_EVEN;
+    }
+    if (selection == 0x0004u) {
+        return DSPIC33_UART_PARITY_ODD;
+    }
+    return DSPIC33_UART_PARITY_NONE;
+}
+
+static void uart_refresh_status(Dspic33* cpu, uint8_t channel) {
+    uint16_t base = uart_bases[channel];
+    uint16_t status = raw_word(cpu, (uint16_t)(base + 2u));
+    uint8_t bit = (uint8_t)(1u << channel);
+    Dspic33UartFrame frame;
+    status &= (uint16_t)~(UART_STATUS_TX_FULL | UART_STATUS_TX_EMPTY |
+                          UART_STATUS_RX_IDLE | UART_STATUS_PARITY_ERROR |
+                          UART_STATUS_FRAMING_ERROR | UART_STATUS_RX_AVAILABLE);
+    if (cpu->io.uart_tx_fifo[channel].count == DSPIC33_UART_FIFO_SIZE) {
+        status |= UART_STATUS_TX_FULL;
+    }
+    if ((cpu->io.uart_tx_active & bit) == 0u &&
+        cpu->io.uart_tx_fifo[channel].count == 0u) {
+        status |= UART_STATUS_TX_EMPTY;
+    }
+    status |= UART_STATUS_RX_IDLE;
+    if (uart_fifo_front(&cpu->io.uart_rx_fifo[channel], &frame)) {
+        status |= UART_STATUS_RX_AVAILABLE;
+        if (frame.parity_error) {
+            status |= UART_STATUS_PARITY_ERROR;
+        }
+        if (frame.framing_error) {
+            status |= UART_STATUS_FRAMING_ERROR;
+        }
+        raw_write_word(cpu, (uint16_t)(base + 6u), frame.value & 0x01ffu);
+    } else {
+        raw_write_word(cpu, (uint16_t)(base + 6u), 0u);
+    }
+    raw_write_word(cpu, (uint16_t)(base + 2u), status);
+}
+
+static void uart_clear_receive(Dspic33* cpu, uint8_t channel) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    memset(&cpu->io.uart_rx_fifo[channel], 0, sizeof(cpu->io.uart_rx_fifo[channel]));
+    memset(&cpu->io.uart_rx_hold[channel], 0, sizeof(cpu->io.uart_rx_hold[channel]));
+    cpu->io.uart_rx_hold_valid &= (uint8_t)~bit;
+    raw_write_word(cpu, (uint16_t)(uart_bases[channel] + 2u),
+                   (uint16_t)(raw_word(cpu, (uint16_t)(uart_bases[channel] + 2u)) &
+                              ~UART_STATUS_OVERRUN));
+    uart_refresh_status(cpu, channel);
+}
+
+static void uart_clear_transmit(Dspic33* cpu, uint8_t channel) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    memset(&cpu->io.uart_tx_fifo[channel], 0, sizeof(cpu->io.uart_tx_fifo[channel]));
+    memset(&cpu->io.uart_tx_shift[channel], 0, sizeof(cpu->io.uart_tx_shift[channel]));
+    cpu->io.uart_tx_active &= (uint8_t)~bit;
+    cpu->io.uart_tx_scheduled &= (uint8_t)~bit;
+    cpu->io.uart_generation[channel]++;
+    uart_refresh_status(cpu, channel);
+}
+
+static void uart_reset_runtime(Dspic33* cpu, uint8_t channel) {
+    uint16_t base = uart_bases[channel];
+    uint16_t status = raw_word(cpu, (uint16_t)(base + 2u));
+    uint16_t controls =
+        status & (UART_STATUS_TX_INTERRUPT_HIGH | UART_STATUS_TX_INVERT |
+                  UART_STATUS_TX_INTERRUPT_LOW | UART_STATUS_RX_INTERRUPT_MASK |
+                  UART_STATUS_ADDRESS_DETECT);
+    uart_clear_transmit(cpu, channel);
+    uart_clear_receive(cpu, channel);
+    raw_write_word(cpu, (uint16_t)(base + 2u),
+                   (uint16_t)(controls | UART_STATUS_TX_EMPTY | UART_STATUS_RX_IDLE));
+}
+
+static bool uart_transmitter_enabled(const Dspic33* cpu, uint8_t channel) {
+    uint16_t base = uart_bases[channel];
+    return !uart_module_disabled(cpu, channel) &&
+           (raw_word(cpu, base) & UART_MODE_ENABLE) != 0u &&
+           (raw_word(cpu, (uint16_t)(base + 2u)) & UART_STATUS_TX_ENABLE) != 0u;
+}
+
+static bool uart_cts_allows(const Dspic33* cpu, uint8_t channel) {
+    uint16_t mode = raw_word(cpu, uart_bases[channel]);
+    return (mode & UART_MODE_UEN_MASK) != 0x0200u ||
+           (cpu->io.uart_cts & (uint8_t)(1u << channel)) != 0u;
+}
+
+static uint64_t uart_frame_cycles(const Dspic33* cpu, uint8_t channel,
+                                  const Dspic33UartFrame* frame) {
+    uint16_t mode = raw_word(cpu, uart_bases[channel]);
+    uint64_t clocks = (mode & UART_MODE_HIGH_SPEED) != 0u ? 4u : 16u;
+    uint64_t bits =
+        frame->break_signal
+            ? 14u
+            : (uint64_t)(1u + frame->data_bits + frame->stop_bits +
+                         (frame->parity == DSPIC33_UART_PARITY_NONE ? 0u : 1u));
+    return ((uint64_t)raw_word(cpu, (uint16_t)(uart_bases[channel] + 8u)) + 1u) *
+           clocks * bits;
+}
+
+static void uart_raise_transmit(Dspic33* cpu, uint8_t channel, bool dma) {
+    dspic33_raise_interrupt(cpu, uart_tx_irqs[channel]);
+    if (dma) {
+        dspic33_dma_request(cpu, uart_tx_irqs[channel],
+                            (uint16_t)(uart_bases[channel] + 4u), 0u);
+    }
+}
+
+static void uart_schedule_transmit(Dspic33* cpu, uint8_t channel) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    if ((cpu->io.uart_tx_active & bit) == 0u ||
+        (cpu->io.uart_tx_scheduled & bit) != 0u || !uart_cts_allows(cpu, channel)) {
+        return;
+    }
+    if (dspic33_schedule(
+            cpu, DSPIC33_EVENT_UART, channel,
+            UART_EVENT_TRANSMIT | cpu->io.uart_generation[channel],
+            uart_frame_cycles(cpu, channel, &cpu->io.uart_tx_shift[channel]))) {
+        cpu->io.uart_tx_scheduled |= bit;
+    }
+}
+
+static void uart_start_transmit(Dspic33* cpu, uint8_t channel) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    uint8_t interrupt_mode;
+    Dspic33UartFrame* frame;
+    uint16_t mode;
     uint16_t status;
-    uint8_t value;
+    if (!uart_transmitter_enabled(cpu, channel) ||
+        (cpu->io.uart_tx_active & bit) != 0u ||
+        !uart_fifo_pop(&cpu->io.uart_tx_fifo[channel],
+                       &cpu->io.uart_tx_shift[channel])) {
+        uart_refresh_status(cpu, channel);
+        return;
+    }
+    frame = &cpu->io.uart_tx_shift[channel];
+    mode = raw_word(cpu, uart_bases[channel]);
+    status = raw_word(cpu, (uint16_t)(uart_bases[channel] + 2u));
+    frame->break_signal = (status & UART_STATUS_BREAK) != 0u;
+    frame->data_bits = (mode & UART_MODE_NINE_BIT) == UART_MODE_NINE_BIT ? 9u : 8u;
+    frame->value &= frame->data_bits == 9u ? 0x01ffu : 0x00ffu;
+    frame->stop_bits = (mode & UART_MODE_TWO_STOP_BITS) != 0u ? 2u : 1u;
+    frame->parity = uart_parity(mode);
+    frame->inverted = (status & UART_STATUS_TX_INVERT) != 0u;
+    frame->irda = (mode & UART_MODE_IREN) != 0u;
+    frame->baud_period = raw_word(cpu, (uint16_t)(uart_bases[channel] + 8u));
+    if (frame->break_signal) {
+        frame->value = 0u;
+        frame->data_bits = 12u;
+        frame->stop_bits = 1u;
+        frame->parity = DSPIC33_UART_PARITY_NONE;
+    }
+    cpu->io.uart_tx_active |= bit;
+    interrupt_mode = uart_transmit_interrupt_mode(cpu, channel);
+    if (!frame->break_signal && interrupt_mode == 0u) {
+        uart_raise_transmit(cpu, channel, true);
+    } else if (!frame->break_signal && interrupt_mode == 2u &&
+               cpu->io.uart_tx_fifo[channel].count == 0u) {
+        uart_raise_transmit(cpu, channel, false);
+    }
+    uart_refresh_status(cpu, channel);
+    uart_schedule_transmit(cpu, channel);
+}
+
+static void uart_receive_complete(Dspic33* cpu, uint8_t channel,
+                                  const Dspic33UartFrame* incoming) {
+    uint16_t base = uart_bases[channel];
+    uint16_t mode = raw_word(cpu, base);
+    uint16_t status = raw_word(cpu, (uint16_t)(base + 2u));
+    uint8_t bit = (uint8_t)(1u << channel);
+    Dspic33UartFrame frame = *incoming;
+    if (uart_module_disabled(cpu, channel) || (mode & UART_MODE_ENABLE) == 0u) {
+        return;
+    }
+    if ((mode & UART_MODE_WAKE) != 0u) {
+        raw_write_word(cpu, base, (uint16_t)(mode & ~UART_MODE_WAKE));
+        dspic33_raise_interrupt(cpu, uart_rx_irqs[channel]);
+        return;
+    }
+    if ((mode & UART_MODE_AUTO_BAUD) != 0u) {
+        if (frame.baud_period != 0u) {
+            raw_write_word(cpu, (uint16_t)(base + 8u), frame.baud_period);
+        }
+        raw_write_word(cpu, base, (uint16_t)(mode & ~UART_MODE_AUTO_BAUD));
+        dspic33_raise_interrupt(cpu, uart_rx_irqs[channel]);
+        return;
+    }
+    frame.data_bits = (mode & UART_MODE_NINE_BIT) == UART_MODE_NINE_BIT ? 9u : 8u;
+    frame.value &= frame.data_bits == 9u ? 0x01ffu : 0x00ffu;
+    frame.parity = uart_parity(mode);
+    if (frame.data_bits == 9u) {
+        frame.parity_error = false;
+    }
+    if ((status & UART_STATUS_ADDRESS_DETECT) != 0u && frame.data_bits == 9u &&
+        (frame.value & 0x0100u) == 0u) {
+        return;
+    }
+    if ((status & UART_STATUS_OVERRUN) != 0u) {
+        return;
+    }
+    if (!uart_fifo_push(&cpu->io.uart_rx_fifo[channel], &frame)) {
+        cpu->io.uart_rx_hold[channel] = frame;
+        cpu->io.uart_rx_hold_valid |= bit;
+        raw_write_word(cpu, (uint16_t)(base + 2u),
+                       (uint16_t)(status | UART_STATUS_OVERRUN));
+        uart_refresh_status(cpu, channel);
+        dspic33_raise_interrupt(cpu, uart_error_irqs[channel]);
+        return;
+    }
+    uart_refresh_status(cpu, channel);
+    if (cpu->io.uart_rx_fifo[channel].count >=
+        uart_receive_interrupt_threshold(cpu, channel)) {
+        dspic33_raise_interrupt(cpu, uart_rx_irqs[channel]);
+    }
+    if (uart_receive_interrupt_threshold(cpu, channel) == 1u) {
+        dspic33_dma_request(cpu, uart_rx_irqs[channel], (uint16_t)(base + 6u), 0u);
+    }
+    if (frame.parity_error || frame.framing_error) {
+        dspic33_raise_interrupt(cpu, uart_error_irqs[channel]);
+    }
+}
+
+static void uart_transmit_complete(Dspic33* cpu, uint8_t channel, uint16_t generation) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    Dspic33UartFrame frame;
+    if (generation != cpu->io.uart_generation[channel] ||
+        (cpu->io.uart_tx_active & bit) == 0u ||
+        (cpu->io.uart_tx_scheduled & bit) == 0u) {
+        return;
+    }
+    frame = cpu->io.uart_tx_shift[channel];
+    cpu->io.uart_tx_active &= (uint8_t)~bit;
+    cpu->io.uart_tx_scheduled &= (uint8_t)~bit;
+    uart_queue_push(&cpu->io.uart_tx[channel], &frame);
+    if ((raw_word(cpu, uart_bases[channel]) & UART_MODE_LOOPBACK) != 0u) {
+        Dspic33UartFrame received = frame;
+        received.framing_error = frame.break_signal;
+        received.parity_error = false;
+        received.break_signal = false;
+        uart_receive_complete(cpu, channel, &received);
+    }
+    if (frame.break_signal) {
+        raw_write_word(cpu, (uint16_t)(uart_bases[channel] + 2u),
+                       (uint16_t)(raw_word(cpu, (uint16_t)(uart_bases[channel] + 2u)) &
+                                  ~UART_STATUS_BREAK));
+    }
+    uart_start_transmit(cpu, channel);
+    if ((cpu->io.uart_tx_active & bit) == 0u &&
+        uart_transmit_interrupt_mode(cpu, channel) == 1u) {
+        uart_raise_transmit(cpu, channel, false);
+    }
+    uart_refresh_status(cpu, channel);
+}
+
+static void run_uart(Dspic33* cpu, uint8_t channel, uint32_t event_value) {
+    uint32_t kind = event_value & UART_EVENT_KIND_MASK;
     if (channel >= DSPIC33_UART_COUNT) {
         return;
     }
-    base = uart_bases[channel];
-    status = raw_word(cpu, (uint16_t)(base + 2u));
-    if (byte_queue_pop(&cpu->io.uart_rx[channel], &value)) {
-        raw_write_word(cpu, (uint16_t)(base + 6u), value);
-        raw_write_word(cpu, (uint16_t)(base + 2u), (uint16_t)(status | 0x0001u));
-        dspic33_raise_interrupt(cpu, uart_rx_irqs[channel]);
+    if (kind == UART_EVENT_TRANSMIT) {
+        uart_transmit_complete(cpu, channel, (uint16_t)event_value);
+    } else if (kind == UART_EVENT_CTS) {
+        uint8_t bit = (uint8_t)(1u << channel);
+        if ((event_value & 1u) != 0u) {
+            cpu->io.uart_cts |= bit;
+            uart_schedule_transmit(cpu, channel);
+        } else {
+            cpu->io.uart_cts &= (uint8_t)~bit;
+        }
+    } else {
+        Dspic33UartFrame frame;
+        memset(&frame, 0, sizeof(frame));
+        frame.value = (uint16_t)(event_value & 0x01ffu);
+        frame.parity_error = (event_value & UART_EVENT_PARITY_ERROR) != 0u;
+        frame.framing_error = (event_value & UART_EVENT_FRAMING_ERROR) != 0u;
+        frame.baud_period =
+            (uint16_t)((event_value & UART_EVENT_BAUD_MASK) >> UART_EVENT_BAUD_SHIFT);
+        uart_receive_complete(cpu, channel, &frame);
     }
 }
 
@@ -3706,7 +4115,7 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
                        (event->value & PWM_INPUT_HIGH) != 0u);
         break;
     case DSPIC33_EVENT_UART:
-        run_uart(cpu, (uint8_t)event->source);
+        run_uart(cpu, (uint8_t)event->source, event->value);
         break;
     case DSPIC33_EVENT_SPI:
         run_spi(cpu, (uint8_t)event->source, event->value);
@@ -4017,21 +4426,99 @@ static void update_pwm_register(Dspic33* cpu, uint16_t address, uint16_t previou
     }
 }
 
-static void write_uart(Dspic33* cpu, uint16_t address) {
+static void update_uart_register(Dspic33* cpu, uint16_t address, uint16_t previous,
+                                 uint16_t requested) {
+    static const uint16_t pmd_addresses[DSPIC33_UART_COUNT] = {0x0760u, 0x0760u,
+                                                               0x0764u, 0x0766u};
+    static const uint16_t pmd_masks[DSPIC33_UART_COUNT] = {0x0020u, 0x0040u, 0x0008u,
+                                                           0x0020u};
     uint8_t channel;
     for (channel = 0u; channel < DSPIC33_UART_COUNT; channel++) {
         uint16_t base = uart_bases[channel];
-        if ((address & 0xfffeu) == base + 4u && (raw_word(cpu, base) & 0x8000u) != 0u &&
-            (raw_word(cpu, (uint16_t)(base + 2u)) & 0x0400u) != 0u) {
-            uint8_t value = (uint8_t)raw_word(cpu, (uint16_t)(base + 4u));
-            byte_queue_push(&cpu->io.uart_tx[channel], value);
-            raw_write_word(cpu, (uint16_t)(base + 2u),
-                           (uint16_t)(raw_word(cpu, (uint16_t)(base + 2u)) & ~0x0100u));
-            dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, uart_tx_irqs[channel], 0u,
-                             1u);
+        uint16_t offset = (uint16_t)(address - base);
+        if (offset > 8u || (offset & 1u) != 0u) {
+            continue;
+        }
+        if (offset == 0u) {
+            uint16_t mode = raw_word(cpu, base);
+            if ((previous & UART_MODE_ENABLE) != 0u &&
+                (mode & UART_MODE_ENABLE) == 0u) {
+                uart_reset_runtime(cpu, channel);
+            } else {
+                uart_refresh_status(cpu, channel);
+            }
             return;
         }
+        if (offset == 2u) {
+            uint16_t status = raw_word(cpu, (uint16_t)(base + 2u));
+            bool transmitter_was_enabled = (previous & UART_STATUS_TX_ENABLE) != 0u;
+            bool transmitter_enabled;
+            status = (uint16_t)((status & ~UART_STATUS_OVERRUN) |
+                                (previous & requested & UART_STATUS_OVERRUN));
+            if ((raw_word(cpu, base) & UART_MODE_ENABLE) == 0u) {
+                status &= (uint16_t)~(UART_STATUS_TX_ENABLE | UART_STATUS_BREAK);
+            }
+            raw_write_word(cpu, (uint16_t)(base + 2u), status);
+            transmitter_enabled = (status & UART_STATUS_TX_ENABLE) != 0u;
+            if ((previous & UART_STATUS_OVERRUN) != 0u &&
+                (requested & UART_STATUS_OVERRUN) == 0u) {
+                uart_clear_receive(cpu, channel);
+            }
+            if (transmitter_was_enabled && !transmitter_enabled) {
+                uart_clear_transmit(cpu, channel);
+            } else if (!transmitter_was_enabled && transmitter_enabled) {
+                uart_raise_transmit(cpu, channel,
+                                    uart_transmit_interrupt_mode(cpu, channel) == 0u);
+                uart_start_transmit(cpu, channel);
+            }
+            uart_refresh_status(cpu, channel);
+            return;
+        }
+        if (offset == 4u) {
+            Dspic33UartFrame frame;
+            memset(&frame, 0, sizeof(frame));
+            frame.value = requested & 0x01ffu;
+            raw_write_word(cpu, (uint16_t)(base + 4u), 0u);
+            if (uart_transmitter_enabled(cpu, channel) &&
+                uart_fifo_push(&cpu->io.uart_tx_fifo[channel], &frame)) {
+                uart_start_transmit(cpu, channel);
+            }
+            uart_refresh_status(cpu, channel);
+            return;
+        }
+        if (offset == 6u) {
+            uart_refresh_status(cpu, channel);
+            return;
+        }
+        return;
     }
+    for (channel = 0u; channel < DSPIC33_UART_COUNT; channel++) {
+        if (address == pmd_addresses[channel]) {
+            bool was_disabled = (previous & pmd_masks[channel]) != 0u;
+            bool disabled = uart_module_disabled(cpu, channel);
+            if (!was_disabled && disabled) {
+                uart_reset_runtime(cpu, channel);
+            } else if (was_disabled && !disabled) {
+                uart_refresh_status(cpu, channel);
+            }
+        }
+    }
+}
+
+static void uart_read_complete(Dspic33* cpu, uint8_t channel) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    Dspic33UartFrame discarded;
+    if (!uart_fifo_pop(&cpu->io.uart_rx_fifo[channel], &discarded)) {
+        return;
+    }
+    if ((cpu->io.uart_rx_hold_valid & bit) != 0u &&
+        uart_fifo_push(&cpu->io.uart_rx_fifo[channel],
+                       &cpu->io.uart_rx_hold[channel])) {
+        memset(&cpu->io.uart_rx_hold[channel], 0,
+               sizeof(cpu->io.uart_rx_hold[channel]));
+        cpu->io.uart_rx_hold_valid &= (uint8_t)~bit;
+    }
+    uart_refresh_status(cpu, channel);
 }
 
 static void spi_restore_buffer(Dspic33* cpu, uint8_t channel, uint16_t fallback) {
@@ -4539,6 +5026,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     if (register_write_mask(base, &writable) ||
         adc_register_write_mask(base, &writable) ||
         pwm_register_write_mask(base, &writable) ||
+        uart_register_write_mask(cpu, base, &writable) ||
         spi_register_write_mask(base, &writable) ||
         can_register_write_mask(cpu, base, &writable) ||
         usb_register_write_mask(cpu, base, previous, &writable) ||
@@ -4587,7 +5075,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     update_can_register(cpu, base, previous, requested);
     update_usb_register(cpu, base, previous, requested);
     update_oscillator(cpu, base);
-    write_uart(cpu, base);
+    update_uart_register(cpu, base, previous, requested);
     if (base == 0x0728u && (raw_word(cpu, base) & 0x8000u) != 0u) {
         dspic33_schedule(cpu, DSPIC33_EVENT_NVM, 0u, 0u, 2u);
     }
@@ -4657,8 +5145,7 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
     for (channel = 0u; channel < DSPIC33_UART_COUNT; channel++) {
         uint16_t base = uart_bases[channel];
         if ((address & 0xfffeu) == base + 6u && (address & 1u) != 0u) {
-            raw_write_word(cpu, (uint16_t)(base + 2u),
-                           (uint16_t)(raw_word(cpu, (uint16_t)(base + 2u)) & ~0x0001u));
+            uart_read_complete(cpu, channel);
         }
     }
     for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
@@ -4685,9 +5172,38 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
 
 bool dspic33_uart_receive(Dspic33* cpu, uint8_t channel, uint8_t value,
                           uint64_t delay) {
+    Dspic33UartFrame frame;
+    memset(&frame, 0, sizeof(frame));
+    frame.value = value;
+    return dspic33_uart_receive_frame(cpu, channel, &frame, delay);
+}
+
+bool dspic33_uart_receive_frame(Dspic33* cpu, uint8_t channel,
+                                const Dspic33UartFrame* frame, uint64_t delay) {
+    uint32_t event_value;
+    if (channel >= DSPIC33_UART_COUNT || frame == NULL || frame->value > 0x01ffu) {
+        return false;
+    }
+    event_value =
+        frame->value | ((uint32_t)frame->baud_period << UART_EVENT_BAUD_SHIFT);
+    if (frame->parity_error) {
+        event_value |= UART_EVENT_PARITY_ERROR;
+    }
+    if (frame->framing_error) {
+        event_value |= UART_EVENT_FRAMING_ERROR;
+    }
+    return dspic33_schedule(cpu, DSPIC33_EVENT_UART, channel, event_value, delay);
+}
+
+bool dspic33_uart_set_cts(Dspic33* cpu, uint8_t channel, bool clear, uint64_t delay) {
     return channel < DSPIC33_UART_COUNT &&
-           byte_queue_push(&cpu->io.uart_rx[channel], value) &&
-           dspic33_schedule(cpu, DSPIC33_EVENT_UART, channel, 0u, delay);
+           dspic33_schedule(cpu, DSPIC33_EVENT_UART, channel,
+                            UART_EVENT_CTS | (clear ? 1u : 0u), delay);
+}
+
+bool dspic33_uart_transmit(Dspic33* cpu, uint8_t channel, Dspic33UartFrame* frame) {
+    return channel < DSPIC33_UART_COUNT && frame != NULL &&
+           uart_queue_pop(&cpu->io.uart_tx[channel], frame);
 }
 
 bool dspic33_spi_receive(Dspic33* cpu, uint8_t channel, uint16_t value,
@@ -4945,6 +5461,7 @@ void dspic33_gpio_input(Dspic33* cpu, uint8_t port, uint16_t value) {
 void dspic33_device_reset(Dspic33* cpu) {
     size_t index;
     memset(&cpu->io, 0, sizeof(cpu->io));
+    cpu->io.uart_cts = (uint8_t)((1u << DSPIC33_UART_COUNT) - 1u);
     memset(cpu->interrupt_deferred, 0, sizeof(cpu->interrupt_deferred));
     memset(cpu->interrupt_deferred_next, 0, sizeof(cpu->interrupt_deferred_next));
     cpu->gie_disable_deferred = 0u;

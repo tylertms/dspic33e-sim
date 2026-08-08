@@ -21,6 +21,8 @@
 #define DSPIC33_IRQ_COUNT 133u
 #define DSPIC33_IRQ_GROUP_COUNT ((DSPIC33_IRQ_COUNT + 15u) / 16u)
 #define DSPIC33_UART_COUNT 4u
+#define DSPIC33_UART_FIFO_SIZE 4u
+#define DSPIC33_UART_QUEUE_SIZE 1024u
 #define DSPIC33_SPI_COUNT 4u
 #define DSPIC33_CAN_COUNT 2u
 #define DSPIC33_TIMER_COUNT 9u
@@ -75,6 +77,37 @@ typedef struct {
     uint16_t head;
     uint16_t count;
 } Dspic33ByteQueue;
+
+typedef enum {
+    DSPIC33_UART_PARITY_NONE,
+    DSPIC33_UART_PARITY_EVEN,
+    DSPIC33_UART_PARITY_ODD
+} Dspic33UartParity;
+
+typedef struct {
+    uint16_t value;
+    uint16_t baud_period;
+    uint8_t data_bits;
+    uint8_t stop_bits;
+    Dspic33UartParity parity;
+    bool parity_error;
+    bool framing_error;
+    bool break_signal;
+    bool inverted;
+    bool irda;
+} Dspic33UartFrame;
+
+typedef struct {
+    Dspic33UartFrame frames[DSPIC33_UART_FIFO_SIZE];
+    uint8_t head;
+    uint8_t count;
+} Dspic33UartFifo;
+
+typedef struct {
+    Dspic33UartFrame frames[DSPIC33_UART_QUEUE_SIZE];
+    uint16_t head;
+    uint16_t count;
+} Dspic33UartQueue;
 
 typedef struct {
     uint16_t words[8];
@@ -150,8 +183,16 @@ typedef struct {
 } Dspic33UsbPending;
 
 typedef struct {
-    Dspic33ByteQueue uart_rx[DSPIC33_UART_COUNT];
-    Dspic33ByteQueue uart_tx[DSPIC33_UART_COUNT];
+    Dspic33UartFifo uart_rx_fifo[DSPIC33_UART_COUNT];
+    Dspic33UartFifo uart_tx_fifo[DSPIC33_UART_COUNT];
+    Dspic33UartQueue uart_tx[DSPIC33_UART_COUNT];
+    Dspic33UartFrame uart_tx_shift[DSPIC33_UART_COUNT];
+    Dspic33UartFrame uart_rx_hold[DSPIC33_UART_COUNT];
+    uint16_t uart_generation[DSPIC33_UART_COUNT];
+    uint8_t uart_tx_active;
+    uint8_t uart_tx_scheduled;
+    uint8_t uart_rx_hold_valid;
+    uint8_t uart_cts;
     Dspic33ByteQueue spi_tx[DSPIC33_SPI_COUNT];
     Dspic33WordQueue spi_tx_fifo[DSPIC33_SPI_COUNT];
     Dspic33WordQueue spi_rx_fifo[DSPIC33_SPI_COUNT];
@@ -336,6 +377,10 @@ bool dspic33_schedule(Dspic33* cpu, Dspic33EventType type, uint16_t source,
                       uint32_t value, uint64_t delay);
 void dspic33_raise_interrupt(Dspic33* cpu, uint16_t irq);
 bool dspic33_uart_receive(Dspic33* cpu, uint8_t channel, uint8_t value, uint64_t delay);
+bool dspic33_uart_receive_frame(Dspic33* cpu, uint8_t channel,
+                                const Dspic33UartFrame* frame, uint64_t delay);
+bool dspic33_uart_set_cts(Dspic33* cpu, uint8_t channel, bool clear, uint64_t delay);
+bool dspic33_uart_transmit(Dspic33* cpu, uint8_t channel, Dspic33UartFrame* frame);
 bool dspic33_spi_receive(Dspic33* cpu, uint8_t channel, uint16_t value, uint64_t delay);
 bool dspic33_spi_select(Dspic33* cpu, uint8_t channel, bool selected, uint64_t delay);
 bool dspic33_dma_request(Dspic33* cpu, uint8_t request, uint16_t indirect_address,
