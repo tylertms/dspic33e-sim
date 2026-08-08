@@ -16,6 +16,7 @@ add_executable(
     source/arithmetic.s
     source/bits.s
     source/branches.s
+    source/dma.s
     source/divides.s
     source/main.c
     source/extensions.s

@@ -26,14 +26,20 @@ add_executable(
     opentec_simulator_event_conformance conformance/event_scheduler.c
 )
 
+add_executable(opentec_simulator_dma_conformance conformance/dma.c)
+
 target_include_directories(opentec_simulator_core PUBLIC src)
 target_link_libraries(opentec_firmware_simulator PRIVATE opentec_simulator_core)
 target_link_libraries(
     opentec_simulator_event_conformance PRIVATE opentec_simulator_core
 )
+target_link_libraries(
+    opentec_simulator_dma_conformance PRIVATE opentec_simulator_core
+)
 
-set(opentec_simulator_targets opentec_simulator_core opentec_firmware_simulator
-                              opentec_simulator_event_conformance
+set(opentec_simulator_targets
+    opentec_simulator_core opentec_firmware_simulator
+    opentec_simulator_event_conformance opentec_simulator_dma_conformance
 )
 
 foreach(target IN LISTS opentec_simulator_targets)

@@ -89,8 +89,21 @@ typedef struct {
     uint32_t timer_fraction[DSPIC33_TIMER_COUNT];
     uint16_t timer_enabled;
     uint16_t dma_index[DSPIC33_DMA_COUNT];
+    uint16_t dma_generation[DSPIC33_DMA_COUNT];
+    uint32_t dma_start_a[DSPIC33_DMA_COUNT];
+    uint32_t dma_start_b[DSPIC33_DMA_COUNT];
+    uint32_t dma_address[DSPIC33_DMA_COUNT];
     uint16_t dma_enabled;
     uint16_t dma_bank;
+    uint16_t dma_half_raised;
+    uint16_t dma_forced_pending;
+    uint16_t dma_peripheral_pending;
+    uint64_t cpu_write_cycle;
+    uint32_t cpu_write_address;
+    uint16_t cpu_write_previous;
+    uint8_t cpu_write_width;
+    bool cpu_write_valid;
+    bool dma_transfer_active;
     uint8_t usb[4096];
     uint16_t usb_size;
     uint8_t oscillator_unlock;
@@ -187,6 +200,8 @@ bool dspic33_schedule(Dspic33* cpu, Dspic33EventType type, uint16_t source,
 void dspic33_raise_interrupt(Dspic33* cpu, uint16_t irq);
 bool dspic33_uart_receive(Dspic33* cpu, uint8_t channel, uint8_t value, uint64_t delay);
 bool dspic33_spi_receive(Dspic33* cpu, uint8_t channel, uint16_t value, uint64_t delay);
+bool dspic33_dma_request(Dspic33* cpu, uint8_t request, uint16_t indirect_address,
+                         uint64_t delay);
 bool dspic33_can_receive(Dspic33* cpu, uint8_t channel, const Dspic33CanFrame* frame,
                          uint64_t delay);
 bool dspic33_usb_receive(Dspic33* cpu, uint8_t endpoint, const uint8_t* data,

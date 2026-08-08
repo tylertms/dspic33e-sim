@@ -1482,6 +1482,16 @@ static void enter_trap(Dspic33* cpu, uint16_t trap, uint32_t vector, uint8_t pri
     cpu->sr &= (uint16_t)~0x0010u;
 }
 
+void dspic33_raise_dma_address_trap(Dspic33* cpu) {
+    dspic33_write_word(cpu, 0x08c4u,
+                       (uint16_t)(dspic33_read_word(cpu, 0x08c4u) | 0x0020u));
+    enter_trap(cpu, 6u, 0x000010u, 9u, 0u, cpu->pc);
+}
+
+void dspic33_raise_dma_collision_trap(Dspic33* cpu) {
+    enter_trap(cpu, 5u, 0x00000eu, 10u, 0x0020u, cpu->pc);
+}
+
 static bool execute_divide(Dspic33* cpu, uint32_t opcode) {
     bool unsigned_divide = (opcode & 0x008000u) != 0u;
     bool double_word = (opcode & 0x000040u) != 0u;
@@ -2140,6 +2150,15 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
     if (address >= DSPIC33_DATA_SIZE) {
         return;
     }
+    if (!cpu->io.dma_transfer_active) {
+        cpu->io.cpu_write_cycle = cpu->cycles;
+        cpu->io.cpu_write_address = address;
+        cpu->io.cpu_write_previous =
+            address < 32u ? (uint8_t)(cpu->w[address / 2u] >> ((address & 1u) * 8u))
+                          : cpu->data[address];
+        cpu->io.cpu_write_width = 1u;
+        cpu->io.cpu_write_valid = true;
+    }
     if (address < 32u) {
         uint8_t reg = (uint8_t)(address / 2u);
         if ((address & 1u) == 0u) {
@@ -2250,6 +2269,16 @@ void dspic33_write_word(Dspic33* cpu, uint32_t address, uint16_t value) {
     uint16_t previous;
     if (address + 1u >= DSPIC33_DATA_SIZE) {
         return;
+    }
+    if (!cpu->io.dma_transfer_active) {
+        cpu->io.cpu_write_cycle = cpu->cycles;
+        cpu->io.cpu_write_address = address;
+        cpu->io.cpu_write_previous =
+            address < 32u ? cpu->w[address / 2u]
+                          : (uint16_t)(cpu->data[address] |
+                                       ((uint16_t)cpu->data[address + 1u] << 8u));
+        cpu->io.cpu_write_width = 2u;
+        cpu->io.cpu_write_valid = true;
     }
     if (address < 32u || (address >= 0x0020u && address <= 0x0054u)) {
         dspic33_write_byte(cpu, address, (uint8_t)value);

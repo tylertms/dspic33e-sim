@@ -773,6 +773,12 @@ static bool apply_device_stimulus(Dspic33* cpu, const char* type,
                                  &channel) &&
                     dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, (uint16_t)channel,
                                      0u, delay);
+    } else if (strcmp(type, "dma_requests") == 0) {
+        succeeded =
+            event_number(specification, "request", UINT8_MAX, 0u, true, &channel) &&
+            event_number(specification, "indirect_address", UINT16_MAX, 0u, false,
+                         &value) &&
+            dspic33_dma_request(cpu, (uint8_t)channel, (uint16_t)value, delay);
     } else if (strcmp(type, "uart_rx") == 0) {
         succeeded = event_number(specification, "channel", DSPIC33_UART_COUNT - 1u, 0u,
                                  true, &channel) &&
@@ -912,6 +918,8 @@ static bool apply_stimuli_part(Runner* runner, const JsonValue* part, char* erro
         }
     }
     return apply_device_stimuli_pair(runner, stimuli, "interrupts", error,
+                                     error_size) &&
+           apply_device_stimuli_pair(runner, stimuli, "dma_requests", error,
                                      error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "uart_rx", error, error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "spi_rx", error, error_size) &&
