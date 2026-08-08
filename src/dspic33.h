@@ -100,6 +100,19 @@ typedef struct {
     Dspic33WordQueue spi_rx_fifo[DSPIC33_SPI_COUNT];
     Dspic33CanQueue can_rx[DSPIC33_CAN_COUNT];
     Dspic33CanQueue can_tx[DSPIC33_CAN_COUNT];
+    uint16_t can_filter_window[DSPIC33_CAN_COUNT][48];
+    uint16_t can_rx_words[DSPIC33_CAN_COUNT][8];
+    uint16_t can_tx_words[DSPIC33_CAN_COUNT][8];
+    uint8_t can_rx_word[DSPIC33_CAN_COUNT];
+    uint8_t can_tx_word[DSPIC33_CAN_COUNT];
+    uint8_t can_rx_buffer[DSPIC33_CAN_COUNT];
+    uint8_t can_rx_filter[DSPIC33_CAN_COUNT];
+    uint8_t can_tx_buffer[DSPIC33_CAN_COUNT];
+    uint8_t can_last_buffer[DSPIC33_CAN_COUNT];
+    uint8_t can_last_filter[DSPIC33_CAN_COUNT];
+    uint8_t can_fifo_write[DSPIC33_CAN_COUNT];
+    uint8_t can_rx_busy;
+    uint8_t can_tx_busy;
     uint16_t adc[DSPIC33_ADC_CHANNEL_COUNT];
     uint16_t adc_latched[DSPIC33_ADC_COUNT][4];
     uint16_t adc_generation[DSPIC33_ADC_COUNT];
@@ -272,6 +285,9 @@ bool dspic33_pwm_sync_output(const Dspic33* cpu, uint8_t time_base);
 bool dspic33_pwm_output(const Dspic33* cpu, uint8_t generator, bool high);
 bool dspic33_can_receive(Dspic33* cpu, uint8_t channel, const Dspic33CanFrame* frame,
                          uint64_t delay);
+bool dspic33_can_error(Dspic33* cpu, uint8_t channel, bool transmit, uint8_t count,
+                       uint64_t delay);
+bool dspic33_can_transmit(Dspic33* cpu, uint8_t channel, Dspic33CanFrame* frame);
 bool dspic33_usb_receive(Dspic33* cpu, uint8_t endpoint, const uint8_t* data,
                          uint16_t size, uint64_t delay);
 void dspic33_adc_input(Dspic33* cpu, uint8_t channel, uint16_t value);

@@ -853,6 +853,16 @@ static bool apply_device_stimulus(Dspic33* cpu, const char* type,
                     channel != 0u && high_value != NULL &&
                     json_boolean(high_value, &high) &&
                     dspic33_pwm_dead_time(cpu, (uint8_t)(channel - 1u), high, delay);
+    } else if (strcmp(type, "can_errors") == 0) {
+        const JsonValue* transmit_value = json_get(specification, "transmit");
+        bool transmit = false;
+        succeeded =
+            event_number(specification, "channel", DSPIC33_CAN_COUNT - 1u, 0u, true,
+                         &channel) &&
+            event_number(specification, "count", UINT8_MAX, 0u, true, &value) &&
+            value != 0u && transmit_value != NULL &&
+            json_boolean(transmit_value, &transmit) &&
+            dspic33_can_error(cpu, (uint8_t)channel, transmit, (uint8_t)value, delay);
     } else if (strcmp(type, "can_rx") == 0) {
         const JsonValue* data = json_get(specification, "data");
         const JsonValue* extended_value = json_get(specification, "extended");
@@ -995,6 +1005,8 @@ static bool apply_stimuli_part(Runner* runner, const JsonValue* part, char* erro
            apply_device_stimuli_pair(runner, stimuli, "pwm_dead_time", error,
                                      error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "pwm_sync", error, error_size) &&
+           apply_device_stimuli_pair(runner, stimuli, "can_errors", error,
+                                     error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "can_rx", error, error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "usb_rx", error, error_size);
 }
@@ -1557,6 +1569,87 @@ static bool compare_pins(Runner* runner, const StepParts* parts, size_t* failure
     return true;
 }
 
+static bool can_frames_match(const Dspic33CanFrame* reference,
+                             const Dspic33CanFrame* candidate) {
+    return reference->identifier == candidate->identifier &&
+           reference->extended == candidate->extended &&
+           reference->remote == candidate->remote &&
+           reference->length == candidate->length &&
+           memcmp(reference->data, candidate->data, reference->length) == 0;
+}
+
+static void print_can_frame(bool present, const Dspic33CanFrame* frame) {
+    uint8_t index;
+    if (!present) {
+        printf("none");
+        return;
+    }
+    printf("id=0x%08" PRIx32 " extended=%u remote=%u data=", frame->identifier,
+           frame->extended ? 1u : 0u, frame->remote ? 1u : 0u);
+    for (index = 0u; index < frame->length; index++) {
+        printf("%02x", frame->data[index]);
+    }
+}
+
+static bool compare_can_transmit(Runner* runner, const StepParts* parts,
+                                 size_t* failures, char* error, size_t error_size) {
+    const JsonValue* values = scalar_field(parts, "can_tx");
+    size_t index;
+    if (values == NULL) {
+        return true;
+    }
+    if (values->type != JSON_ARRAY) {
+        snprintf(error, error_size, "CAN transmit observations must be an array");
+        return false;
+    }
+    for (index = 0u; index < values->as.array.count; index++) {
+        const JsonValue* item = values->as.array.items[index];
+        uint64_t channel;
+        size_t reference_count;
+        size_t candidate_count;
+        size_t frame_index = 0u;
+        if (item->type != JSON_OBJECT ||
+            !event_number(item, "channel", DSPIC33_CAN_COUNT - 1u, 0u, true,
+                          &channel)) {
+            snprintf(error, error_size, "invalid CAN transmit observation");
+            return false;
+        }
+        reference_count = runner->reference.io.can_tx[channel].count;
+        candidate_count = runner->candidate.io.can_tx[channel].count;
+        runner->comparisons++;
+        if (reference_count != candidate_count) {
+            (*failures)++;
+            printf("  CAN%" PRIu64 " transmit count: reference=%zu candidate=%zu\n",
+                   channel + 1u, reference_count, candidate_count);
+        }
+        while (runner->reference.io.can_tx[channel].count != 0u ||
+               runner->candidate.io.can_tx[channel].count != 0u) {
+            Dspic33CanFrame reference_frame;
+            Dspic33CanFrame candidate_frame;
+            bool reference_present = dspic33_can_transmit(
+                &runner->reference, (uint8_t)channel, &reference_frame);
+            bool candidate_present = dspic33_can_transmit(
+                &runner->candidate, (uint8_t)channel, &candidate_frame);
+            bool matched = reference_present == candidate_present;
+            if (reference_present && candidate_present) {
+                matched = can_frames_match(&reference_frame, &candidate_frame);
+            }
+            runner->comparisons++;
+            if (!matched) {
+                (*failures)++;
+                printf("  CAN%" PRIu64 " transmit frame %zu: reference=", channel + 1u,
+                       frame_index);
+                print_can_frame(reference_present, &reference_frame);
+                printf(" candidate=");
+                print_can_frame(candidate_present, &candidate_frame);
+                printf("\n");
+            }
+            frame_index++;
+        }
+    }
+    return true;
+}
+
 static bool apply_generated_value(Runner* runner, const JsonValue* specification,
                                   int64_t value, bool range, char* error,
                                   size_t error_size) {
@@ -1674,7 +1767,8 @@ static bool execute_step(Runner* runner, const char* scenario_name,
     }
     if (!compare_registers(runner, parts, &failures, error, error_size) ||
         !compare_memory(runner, parts, &failures, error, error_size) ||
-        !compare_pins(runner, parts, &failures, error, error_size)) {
+        !compare_pins(runner, parts, &failures, error, error_size) ||
+        !compare_can_transmit(runner, parts, &failures, error, error_size)) {
         return false;
     }
     if (failures == 0u) {

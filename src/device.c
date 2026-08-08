@@ -19,6 +19,12 @@ static const uint8_t uart_tx_irqs[DSPIC33_UART_COUNT] = {12u, 31u, 83u, 89u};
 static const uint8_t spi_error_irqs[DSPIC33_SPI_COUNT] = {9u, 32u, 90u, 122u};
 static const uint8_t spi_irqs[DSPIC33_SPI_COUNT] = {10u, 33u, 91u, 123u};
 static const uint8_t spi_dma_requests[DSPIC33_SPI_COUNT] = {10u, 33u, 91u, 123u};
+static const uint16_t can_bases[DSPIC33_CAN_COUNT] = {0x0400u, 0x0500u};
+static const uint8_t can_rx_irqs[DSPIC33_CAN_COUNT] = {34u, 55u};
+static const uint8_t can_event_irqs[DSPIC33_CAN_COUNT] = {35u, 56u};
+static const uint8_t can_tx_irqs[DSPIC33_CAN_COUNT] = {70u, 71u};
+static const uint8_t can_rx_requests[DSPIC33_CAN_COUNT] = {34u, 55u};
+static const uint8_t can_tx_requests[DSPIC33_CAN_COUNT] = {70u, 71u};
 static const uint16_t uart_bases[DSPIC33_UART_COUNT] = {0x0220u, 0x0230u, 0x0250u,
                                                         0x02b0u};
 static const uint16_t spi_bases[DSPIC33_SPI_COUNT] = {0x0240u, 0x0260u, 0x02a0u,
@@ -92,6 +98,47 @@ enum {
     SPI_EVENT_GENERATION_SHIFT = 18u,
     SPI_EVENT_GENERATION_MASK = 0x3fffu,
     SPI_SELECT_ACTIVE = 0x00000001u,
+    CAN_WINDOW = 0x0001u,
+    CAN_CAPTURE = 0x0008u,
+    CAN_MODE_MASK = 0x0700u,
+    CAN_MODE_SHIFT = 8u,
+    CAN_MODE_NORMAL = 0u,
+    CAN_MODE_DISABLE = 1u,
+    CAN_MODE_LOOPBACK = 2u,
+    CAN_MODE_LISTEN = 3u,
+    CAN_MODE_CONFIGURATION = 4u,
+    CAN_MODE_LISTEN_ALL = 7u,
+    CAN_ABORT_ALL = 0x1000u,
+    CAN_STOP_IDLE = 0x2000u,
+    CAN_INTERRUPT_TRANSMIT = 0x0001u,
+    CAN_INTERRUPT_RECEIVE = 0x0002u,
+    CAN_INTERRUPT_OVERFLOW = 0x0004u,
+    CAN_INTERRUPT_FIFO = 0x0008u,
+    CAN_INTERRUPT_ERROR = 0x0020u,
+    CAN_INTERRUPT_WAKE = 0x0040u,
+    CAN_INTERRUPT_INVALID = 0x0080u,
+    CAN_ERROR_WARNING = 0x0100u,
+    CAN_RECEIVE_WARNING = 0x0200u,
+    CAN_TRANSMIT_WARNING = 0x0400u,
+    CAN_RECEIVE_PASSIVE = 0x0800u,
+    CAN_TRANSMIT_PASSIVE = 0x1000u,
+    CAN_BUS_OFF = 0x2000u,
+    CAN_BUFFER_TRANSMIT = 0x0080u,
+    CAN_BUFFER_ABORTED = 0x0040u,
+    CAN_BUFFER_LOST = 0x0020u,
+    CAN_BUFFER_ERROR = 0x0010u,
+    CAN_BUFFER_REQUEST = 0x0008u,
+    CAN_BUFFER_REMOTE = 0x0004u,
+    CAN_EVENT_RECEIVE_START = 1u,
+    CAN_EVENT_RECEIVE_WORD = 2u,
+    CAN_EVENT_RECEIVE_FINISH = 3u,
+    CAN_EVENT_TRANSMIT_START = 4u,
+    CAN_EVENT_TRANSMIT_WORD = 5u,
+    CAN_EVENT_TRANSMIT_FINISH = 6u,
+    CAN_EVENT_ERROR = 7u,
+    CAN_EVENT_KIND_MASK = 0x000000ffu,
+    CAN_EVENT_TRANSMIT_ERROR = 0x00000100u,
+    CAN_EVENT_ERROR_COUNT_SHIFT = 16u,
     ADC_ON = 0x8000u,
     ADC_STOP_IDLE = 0x2000u,
     ADC_BUFFER_ORDER = 0x1000u,
@@ -319,6 +366,60 @@ static bool spi_register_write_mask(uint16_t address, uint16_t* writable) {
             *writable = 0xe003u;
             return true;
         }
+    }
+    return false;
+}
+
+static bool can_register_write_mask(const Dspic33* cpu, uint16_t address,
+                                    uint16_t* writable) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint16_t base = can_bases[channel];
+        uint16_t offset = (uint16_t)(address - base);
+        bool window = (raw_word(cpu, base) & CAN_WINDOW) != 0u;
+        if (offset > 0x7eu || (offset & 1u) != 0u) {
+            continue;
+        }
+        if (offset == 0u) {
+            *writable = 0x3f09u;
+        } else if (offset == 2u) {
+            *writable = 0x001fu;
+        } else if (offset == 4u || offset == 8u || offset == 0x0eu) {
+            *writable = 0u;
+        } else if (offset == 6u) {
+            *writable = 0xe01fu;
+        } else if (offset == 0x0au) {
+            *writable = 0x00efu;
+        } else if (offset == 0x0cu) {
+            *writable = 0x00efu;
+        } else if (offset == 0x10u) {
+            *writable = 0x00ffu;
+        } else if (offset == 0x12u) {
+            *writable = 0x47ffu;
+        } else if (offset == 0x14u || offset == 0x18u || offset == 0x1au) {
+            *writable = 0xffffu;
+        } else if (window && offset >= 0x20u && offset <= 0x7eu) {
+            if (offset >= 0x40u && (offset & 2u) == 0u) {
+                *writable = 0xffebu;
+            } else if (offset == 0x30u || offset == 0x34u || offset == 0x38u) {
+                *writable = 0xffebu;
+            } else if (offset == 0x28u || offset == 0x2au || offset == 0x3cu ||
+                       offset == 0x3eu) {
+                *writable = 0u;
+            } else {
+                *writable = 0xffffu;
+            }
+        } else if (!window && (offset == 0x20u || offset == 0x22u || offset == 0x28u ||
+                               offset == 0x2au)) {
+            *writable = 0xffffu;
+        } else if (!window && offset >= 0x30u && offset <= 0x36u) {
+            *writable = 0x8f8fu;
+        } else if (!window && offset == 0x42u) {
+            *writable = 0xffffu;
+        } else {
+            *writable = 0u;
+        }
+        return true;
     }
     return false;
 }
@@ -2161,28 +2262,555 @@ static void pwm_dead_time_event(Dspic33* cpu, uint8_t generator, bool high) {
     }
 }
 
-static void run_can(Dspic33* cpu, uint8_t channel) {
-    Dspic33CanFrame frame;
-    uint16_t base;
+static uint16_t can_filter_word(const Dspic33* cpu, uint8_t channel, uint16_t offset) {
+    return cpu->io.can_filter_window[channel][(offset - 0x20u) / 2u];
+}
+
+static uint8_t can_mode(const Dspic33* cpu, uint8_t channel) {
+    return (uint8_t)((raw_word(cpu, can_bases[channel]) >> 5u) & 7u);
+}
+
+static bool can_power_enabled(const Dspic33* cpu, uint8_t channel) {
+    uint16_t control = raw_word(cpu, can_bases[channel]);
+    if ((raw_word(cpu, 0x0760u) & (uint16_t)(2u << channel)) != 0u) {
+        return false;
+    }
+    if (cpu->power_state == DSPIC33_POWER_ACTIVE) {
+        return true;
+    }
+    return cpu->power_state == DSPIC33_POWER_IDLE && (control & CAN_STOP_IDLE) == 0u;
+}
+
+static uint8_t can_buffer_count(const Dspic33* cpu, uint8_t channel) {
+    static const uint8_t counts[] = {4u, 6u, 8u, 12u, 16u, 24u, 32u, 32u};
+    uint16_t control = raw_word(cpu, (uint16_t)(can_bases[channel] + 6u));
+    return counts[(control >> 13u) & 7u];
+}
+
+static uint16_t can_buffer_control(const Dspic33* cpu, uint8_t channel,
+                                   uint8_t buffer) {
+    uint16_t value =
+        raw_word(cpu, (uint16_t)(can_bases[channel] + 0x30u + (buffer / 2u) * 2u));
+    return (uint16_t)(value >> ((buffer & 1u) * 8u));
+}
+
+static void can_set_buffer_control(Dspic33* cpu, uint8_t channel, uint8_t buffer,
+                                   uint16_t value) {
+    uint16_t address = (uint16_t)(can_bases[channel] + 0x30u + (buffer / 2u) * 2u);
+    uint16_t current = raw_word(cpu, address);
+    uint8_t shift = (uint8_t)((buffer & 1u) * 8u);
+    current = (uint16_t)((current & ~(uint16_t)(0xffu << shift)) |
+                         ((value & 0xffu) << shift));
+    raw_write_word(cpu, address, current);
+}
+
+static uint16_t can_buffer_flag_address(uint8_t channel, uint8_t buffer,
+                                        bool overflow) {
+    return (uint16_t)(can_bases[channel] + (overflow ? 0x28u : 0x20u) +
+                      (buffer >= 16u ? 2u : 0u));
+}
+
+static bool can_buffer_flag(const Dspic33* cpu, uint8_t channel, uint8_t buffer,
+                            bool overflow) {
+    uint16_t address = can_buffer_flag_address(channel, buffer, overflow);
+    return (raw_word(cpu, address) & (uint16_t)(1u << (buffer & 15u))) != 0u;
+}
+
+static void can_set_buffer_flag(Dspic33* cpu, uint8_t channel, uint8_t buffer,
+                                bool overflow) {
+    uint16_t address = can_buffer_flag_address(channel, buffer, overflow);
+    raw_write_word(
+        cpu, address,
+        (uint16_t)(raw_word(cpu, address) | (uint16_t)(1u << (buffer & 15u))));
+}
+
+static void can_update_vector(Dspic33* cpu, uint8_t channel) {
+    uint16_t base = can_bases[channel];
+    uint16_t active = (uint16_t)(raw_word(cpu, (uint16_t)(base + 0x0au)) &
+                                 raw_word(cpu, (uint16_t)(base + 0x0cu)));
+    uint8_t code = 0x40u;
+    if ((active & (CAN_INTERRUPT_TRANSMIT | CAN_INTERRUPT_RECEIVE)) != 0u) {
+        code = cpu->io.can_last_buffer[channel];
+    } else if ((active & CAN_INTERRUPT_ERROR) != 0u) {
+        code = 0x41u;
+    } else if ((active & CAN_INTERRUPT_WAKE) != 0u) {
+        code = 0x42u;
+    } else if ((active & CAN_INTERRUPT_OVERFLOW) != 0u) {
+        code = 0x43u;
+    } else if ((active & CAN_INTERRUPT_FIFO) != 0u) {
+        code = 0x44u;
+    }
+    raw_write_word(
+        cpu, (uint16_t)(base + 4u),
+        (uint16_t)(((uint16_t)cpu->io.can_last_filter[channel] << 8u) | code));
+    if (active != 0u) {
+        dspic33_raise_interrupt(cpu, can_event_irqs[channel]);
+    }
+}
+
+static void can_raise_event(Dspic33* cpu, uint8_t channel, uint16_t flag,
+                            uint8_t buffer, uint8_t filter) {
+    uint16_t address = (uint16_t)(can_bases[channel] + 0x0au);
+    raw_write_word(cpu, address, (uint16_t)(raw_word(cpu, address) | flag));
+    cpu->io.can_last_buffer[channel] = buffer;
+    cpu->io.can_last_filter[channel] = filter;
+    can_update_vector(cpu, channel);
+}
+
+static bool can_dma_ready(const Dspic33* cpu, uint8_t request, uint16_t pad,
+                          bool transmit) {
+    uint8_t dma;
+    for (dma = 0u; dma < DSPIC33_DMA_COUNT; dma++) {
+        uint16_t base = dma_channel_base(dma);
+        uint16_t control = raw_word(cpu, base);
+        if ((control & DMA_CON_CHEN) != 0u &&
+            (raw_word(cpu, (uint16_t)(base + 2u)) & DMA_REQ_SOURCE_MASK) == request &&
+            raw_word(cpu, (uint16_t)(base + 0x0cu)) == pad &&
+            (control & DMA_CON_SIZE_BYTE) == 0u &&
+            (control & DMA_CON_AMODE_MASK) == DMA_CON_AMODE_PERIPHERAL &&
+            ((control & DMA_CON_RAM_TO_PERIPHERAL) != 0u) == transmit) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static uint32_t can_identifier_sid(const Dspic33CanFrame* frame) {
+    return frame->extended ? (frame->identifier >> 18u) & 0x7ffu
+                           : frame->identifier & 0x7ffu;
+}
+
+static uint32_t can_identifier_eid(const Dspic33CanFrame* frame) {
+    return frame->identifier & 0x3ffffu;
+}
+
+static bool can_devicenet_match(const Dspic33CanFrame* frame, uint32_t expected,
+                                uint8_t bits) {
+    uint32_t data = 0u;
+    uint8_t available = (uint8_t)(frame->length * 8u);
+    if (bits > 18u) {
+        bits = 18u;
+    }
+    if (bits > available) {
+        bits = available;
+    }
+    if (bits == 0u) {
+        return true;
+    }
+    data = (uint32_t)frame->data[0] << 16u;
+    if (frame->length > 1u) {
+        data |= (uint32_t)frame->data[1] << 8u;
+    }
+    if (frame->length > 2u) {
+        data |= frame->data[2];
+    }
+    return (data >> (24u - bits)) == (expected >> (18u - bits));
+}
+
+static bool can_filter_matches(const Dspic33* cpu, uint8_t channel, uint8_t filter,
+                               const Dspic33CanFrame* frame) {
+    uint16_t filter_sid =
+        can_filter_word(cpu, channel, (uint16_t)(0x40u + filter * 4u));
+    uint16_t filter_eid =
+        can_filter_word(cpu, channel, (uint16_t)(0x42u + filter * 4u));
+    uint16_t selection =
+        raw_word(cpu, (uint16_t)(can_bases[channel] + (filter < 8u ? 0x18u : 0x1au)));
+    uint8_t mask_index = (uint8_t)((selection >> ((filter & 7u) * 2u)) & 3u);
+    uint16_t mask_sid;
+    uint16_t mask_eid;
+    uint32_t sid = can_identifier_sid(frame);
+    uint32_t eid = can_identifier_eid(frame);
+    uint8_t devicenet =
+        (uint8_t)(raw_word(cpu, (uint16_t)(can_bases[channel] + 2u)) & 0x001fu);
+    if (mask_index >= 3u) {
+        return false;
+    }
+    mask_sid = can_filter_word(cpu, channel, (uint16_t)(0x30u + mask_index * 4u));
+    mask_eid = can_filter_word(cpu, channel, (uint16_t)(0x32u + mask_index * 4u));
+    if ((mask_sid & 0x0008u) != 0u &&
+        frame->extended != ((filter_sid & 0x0008u) != 0u)) {
+        return false;
+    }
+    if ((((sid << 5u) ^ filter_sid) & mask_sid & 0xffe0u) != 0u) {
+        return false;
+    }
+    if (!frame->extended && devicenet != 0u && (mask_sid & 0x0008u) != 0u &&
+        (filter_sid & 0x0008u) == 0u) {
+        uint32_t expected = ((uint32_t)(filter_sid & 3u) << 16u) | filter_eid;
+        return can_devicenet_match(frame, expected, devicenet);
+    }
+    if (frame->extended) {
+        uint32_t expected = ((uint32_t)(filter_sid & 3u) << 16u) | filter_eid;
+        uint32_t mask = ((uint32_t)(mask_sid & 3u) << 16u) | mask_eid;
+        return ((eid ^ expected) & mask) == 0u;
+    }
+    return true;
+}
+
+static uint8_t can_filter_buffer(const Dspic33* cpu, uint8_t channel, uint8_t filter) {
+    uint16_t value =
+        can_filter_word(cpu, channel, (uint16_t)(0x20u + (filter / 4u) * 2u));
+    return (uint8_t)((value >> ((filter & 3u) * 4u)) & 0x0fu);
+}
+
+static uint8_t can_fifo_end(const Dspic33* cpu, uint8_t channel) {
+    return (uint8_t)(can_buffer_count(cpu, channel) - 1u);
+}
+
+static uint8_t can_next_fifo_buffer(const Dspic33* cpu, uint8_t channel,
+                                    uint8_t buffer) {
+    uint8_t start =
+        (uint8_t)(raw_word(cpu, (uint16_t)(can_bases[channel] + 6u)) & 0x001fu);
+    return buffer >= can_fifo_end(cpu, channel) ? start : (uint8_t)(buffer + 1u);
+}
+
+static bool can_select_receive_buffer(Dspic33* cpu, uint8_t channel,
+                                      const Dspic33CanFrame* frame, uint8_t* buffer,
+                                      uint8_t* matched_filter) {
+    uint16_t enabled = raw_word(cpu, (uint16_t)(can_bases[channel] + 0x14u));
+    uint8_t first_buffer = 0u;
+    uint8_t first_filter = 0u;
+    bool matched = false;
+    uint8_t filter;
+    for (filter = 0u; filter < 16u; filter++) {
+        uint8_t target;
+        uint16_t control;
+        if ((enabled & (uint16_t)(1u << filter)) == 0u ||
+            !can_filter_matches(cpu, channel, filter, frame)) {
+            continue;
+        }
+        target = can_filter_buffer(cpu, channel, filter);
+        if (target == 15u) {
+            target = cpu->io.can_fifo_write[channel];
+        }
+        if (!matched) {
+            matched = true;
+            first_buffer = target;
+            first_filter = filter;
+        }
+        if (target >= can_buffer_count(cpu, channel) || target > 31u) {
+            continue;
+        }
+        control = target < 8u ? can_buffer_control(cpu, channel, target) : 0u;
+        if (target < 8u && (control & CAN_BUFFER_TRANSMIT) != 0u) {
+            if (frame->remote && (control & CAN_BUFFER_REMOTE) != 0u) {
+                can_set_buffer_control(cpu, channel, target,
+                                       (uint16_t)(control | CAN_BUFFER_REQUEST));
+                dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel,
+                                 CAN_EVENT_TRANSMIT_START, 0u);
+                return false;
+            }
+            continue;
+        }
+        if (can_buffer_flag(cpu, channel, target, false)) {
+            continue;
+        }
+        *buffer = target;
+        *matched_filter = filter;
+        return true;
+    }
+    if (matched && first_buffer < 32u) {
+        can_set_buffer_flag(cpu, channel, first_buffer, true);
+        can_raise_event(cpu, channel, CAN_INTERRUPT_OVERFLOW, first_buffer,
+                        first_filter);
+    }
+    return false;
+}
+
+static void can_encode_frame(const Dspic33CanFrame* frame, uint8_t filter,
+                             uint16_t words[8]) {
+    uint32_t sid = can_identifier_sid(frame);
+    uint32_t eid = can_identifier_eid(frame);
     uint8_t index;
-    if (channel >= DSPIC33_CAN_COUNT ||
+    memset(words, 0, sizeof(uint16_t) * 8u);
+    words[0] = (uint16_t)(sid << 2u);
+    if (frame->extended) {
+        words[0] |= 3u;
+        words[1] = (uint16_t)(eid >> 6u);
+        words[2] = (uint16_t)((eid & 0x3fu) << 10u);
+        if (frame->remote) {
+            words[2] |= 0x0200u;
+        }
+    } else if (frame->remote) {
+        words[0] |= 2u;
+    }
+    words[2] |= frame->length > 8u ? 8u : frame->length;
+    for (index = 0u; index < frame->length && index < 8u; index++) {
+        words[3u + index / 2u] |= (uint16_t)frame->data[index] << ((index & 1u) * 8u);
+    }
+    words[7] = (uint16_t)filter << 8u;
+}
+
+static Dspic33CanFrame can_decode_frame(const uint16_t words[8]) {
+    Dspic33CanFrame frame;
+    uint32_t sid = (words[0] >> 2u) & 0x7ffu;
+    uint8_t index;
+    memset(&frame, 0, sizeof(frame));
+    frame.extended = (words[0] & 1u) != 0u;
+    if (frame.extended) {
+        frame.identifier = (sid << 18u) | ((uint32_t)(words[1] & 0x0fffu) << 6u) |
+                           ((words[2] >> 10u) & 0x3fu);
+        frame.remote = (words[2] & 0x0200u) != 0u;
+    } else {
+        frame.identifier = sid;
+        frame.remote = (words[0] & 2u) != 0u;
+    }
+    frame.length = (uint8_t)(words[2] & 0x0fu);
+    if (frame.length > 8u) {
+        frame.length = 8u;
+    }
+    for (index = 0u; index < frame.length; index++) {
+        frame.data[index] = (uint8_t)(words[3u + index / 2u] >> ((index & 1u) * 8u));
+    }
+    return frame;
+}
+
+static void can_refresh_error_status(Dspic33* cpu, uint8_t channel) {
+    uint16_t base = can_bases[channel];
+    uint16_t counts = raw_word(cpu, (uint16_t)(base + 0x0eu));
+    uint16_t status = raw_word(cpu, (uint16_t)(base + 0x0au));
+    uint8_t receive = (uint8_t)counts;
+    uint8_t transmit = (uint8_t)(counts >> 8u);
+    status &= 0x00ffu;
+    if (receive >= 96u || transmit >= 96u) {
+        status |= CAN_ERROR_WARNING;
+    }
+    if (receive >= 96u) {
+        status |= CAN_RECEIVE_WARNING;
+    }
+    if (transmit >= 96u) {
+        status |= CAN_TRANSMIT_WARNING;
+    }
+    if (receive >= 128u) {
+        status |= CAN_RECEIVE_PASSIVE;
+    }
+    if (transmit >= 128u) {
+        status |= CAN_TRANSMIT_PASSIVE;
+    }
+    if (transmit == 0xffu) {
+        status |= CAN_BUS_OFF;
+    }
+    raw_write_word(cpu, (uint16_t)(base + 0x0au), status);
+}
+
+static void can_receive_start(Dspic33* cpu, uint8_t channel) {
+    Dspic33CanFrame frame;
+    uint8_t buffer;
+    uint8_t filter;
+    uint8_t bit = (uint8_t)(1u << channel);
+    if ((cpu->io.can_rx_busy & bit) != 0u ||
         !can_queue_pop(&cpu->io.can_rx[channel], &frame)) {
         return;
     }
-    base = channel == 0u ? 0x0400u : 0x0500u;
-    raw_write_word(cpu, (uint16_t)(base + 4u), 0x0040u);
-    raw_write_word(cpu, (uint16_t)(base + 0x20u),
-                   (uint16_t)(raw_word(cpu, (uint16_t)(base + 0x20u)) | 1u));
-    raw_write_word(cpu, (uint16_t)(base + 0x40u),
-                   (uint16_t)((frame.identifier & 0x7ffu) << 2u));
-    for (index = 0u; index < frame.length; index += 2u) {
-        uint16_t value = frame.data[index];
-        if (index + 1u < frame.length) {
-            value |= (uint16_t)frame.data[index + 1u] << 8u;
-        }
-        raw_write_word(cpu, (uint16_t)(base + 0x42u + index), value);
+    if (cpu->power_state == DSPIC33_POWER_SLEEP) {
+        can_raise_event(cpu, channel, CAN_INTERRUPT_WAKE, 0u, 0u);
+        return;
     }
-    dspic33_raise_interrupt(cpu, channel == 0u ? 34u : 55u);
+    if (!can_power_enabled(cpu, channel) ||
+        can_mode(cpu, channel) == CAN_MODE_DISABLE ||
+        can_mode(cpu, channel) == CAN_MODE_CONFIGURATION) {
+        return;
+    }
+    if (can_mode(cpu, channel) == CAN_MODE_LISTEN_ALL) {
+        filter = 0u;
+        buffer = can_filter_buffer(cpu, channel, filter);
+        if (buffer == 15u) {
+            buffer = cpu->io.can_fifo_write[channel];
+        }
+        if (buffer >= can_buffer_count(cpu, channel) ||
+            can_buffer_flag(cpu, channel, buffer, false)) {
+            if (buffer < 32u) {
+                can_set_buffer_flag(cpu, channel, buffer, true);
+                can_raise_event(cpu, channel, CAN_INTERRUPT_OVERFLOW, buffer, filter);
+            }
+            return;
+        }
+    } else if (!can_select_receive_buffer(cpu, channel, &frame, &buffer, &filter)) {
+        return;
+    }
+    if (!can_dma_ready(cpu, can_rx_requests[channel],
+                       (uint16_t)(can_bases[channel] + 0x40u), false)) {
+        dspic33_raise_interrupt(cpu, can_rx_irqs[channel]);
+        return;
+    }
+    can_encode_frame(&frame, filter, cpu->io.can_rx_words[channel]);
+    cpu->io.can_rx_buffer[channel] = buffer;
+    cpu->io.can_rx_filter[channel] = filter;
+    cpu->io.can_rx_word[channel] = 0u;
+    cpu->io.can_rx_busy |= bit;
+    dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_WORD, 0u);
+}
+
+static void can_receive_word(Dspic33* cpu, uint8_t channel) {
+    uint8_t word = cpu->io.can_rx_word[channel];
+    if (word >= 8u) {
+        dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_FINISH, 0u);
+        return;
+    }
+    cpu->io.can_rx_word[channel]++;
+    dspic33_raise_interrupt(cpu, can_rx_irqs[channel]);
+    dspic33_dma_request(cpu, can_rx_requests[channel],
+                        (uint16_t)(cpu->io.can_rx_buffer[channel] * 16u + word * 2u),
+                        0u);
+    dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_WORD, 1u);
+}
+
+static void can_receive_finish(Dspic33* cpu, uint8_t channel) {
+    uint8_t buffer = cpu->io.can_rx_buffer[channel];
+    uint8_t filter = cpu->io.can_rx_filter[channel];
+    uint8_t bit = (uint8_t)(1u << channel);
+    uint8_t next;
+    uint16_t control = raw_word(cpu, (uint16_t)(can_bases[channel] + 6u));
+    uint16_t fifo;
+    can_set_buffer_flag(cpu, channel, buffer, false);
+    if (can_filter_buffer(cpu, channel, filter) == 15u) {
+        next = can_next_fifo_buffer(cpu, channel, buffer);
+        cpu->io.can_fifo_write[channel] = next;
+        fifo = raw_word(cpu, (uint16_t)(can_bases[channel] + 8u));
+        fifo = (uint16_t)((fifo & 0x003fu) | ((uint16_t)next << 8u));
+        raw_write_word(cpu, (uint16_t)(can_bases[channel] + 8u), fifo);
+        if ((fifo & 0x003fu) == next + 1u ||
+            (((fifo & 0x003fu) == (control & 0x001fu)) &&
+             next == can_fifo_end(cpu, channel))) {
+            can_raise_event(cpu, channel, CAN_INTERRUPT_FIFO, buffer, filter);
+        }
+    }
+    can_raise_event(cpu, channel, CAN_INTERRUPT_RECEIVE, buffer, filter);
+    cpu->io.can_rx_busy &= (uint8_t)~bit;
+    if (cpu->io.can_rx[channel].count != 0u) {
+        dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_START, 0u);
+    }
+}
+
+static int can_transmit_selection(const Dspic33* cpu, uint8_t channel) {
+    int selected = -1;
+    uint8_t priority = 0u;
+    uint8_t buffer;
+    for (buffer = 0u; buffer < 8u; buffer++) {
+        uint16_t control = can_buffer_control(cpu, channel, buffer);
+        uint8_t current_priority = (uint8_t)(control & 3u);
+        if ((control & (CAN_BUFFER_TRANSMIT | CAN_BUFFER_REQUEST)) !=
+            (CAN_BUFFER_TRANSMIT | CAN_BUFFER_REQUEST)) {
+            continue;
+        }
+        if (selected < 0 || current_priority > priority ||
+            (current_priority == priority && buffer > (uint8_t)selected)) {
+            selected = buffer;
+            priority = current_priority;
+        }
+    }
+    return selected;
+}
+
+static void can_transmit_start(Dspic33* cpu, uint8_t channel) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    int selected;
+    if ((cpu->io.can_tx_busy & bit) != 0u || !can_power_enabled(cpu, channel) ||
+        (can_mode(cpu, channel) != CAN_MODE_NORMAL &&
+         can_mode(cpu, channel) != CAN_MODE_LOOPBACK) ||
+        (raw_word(cpu, (uint16_t)(can_bases[channel] + 0x0au)) & CAN_BUS_OFF) != 0u) {
+        return;
+    }
+    selected = can_transmit_selection(cpu, channel);
+    if (selected < 0) {
+        return;
+    }
+    if (!can_dma_ready(cpu, can_tx_requests[channel],
+                       (uint16_t)(can_bases[channel] + 0x42u), true)) {
+        dspic33_raise_interrupt(cpu, can_tx_irqs[channel]);
+        return;
+    }
+    cpu->io.can_tx_buffer[channel] = (uint8_t)selected;
+    cpu->io.can_tx_word[channel] = 0u;
+    memset(cpu->io.can_tx_words[channel], 0, sizeof(cpu->io.can_tx_words[channel]));
+    cpu->io.can_tx_busy |= bit;
+    dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_WORD, 0u);
+}
+
+static void can_transmit_word(Dspic33* cpu, uint8_t channel) {
+    uint8_t word = cpu->io.can_tx_word[channel];
+    if (word >= 8u) {
+        dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_FINISH,
+                         0u);
+        return;
+    }
+    cpu->io.can_tx_word[channel]++;
+    dspic33_raise_interrupt(cpu, can_tx_irqs[channel]);
+    dspic33_dma_request(cpu, can_tx_requests[channel],
+                        (uint16_t)(cpu->io.can_tx_buffer[channel] * 16u + word * 2u),
+                        0u);
+    dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_WORD, 1u);
+}
+
+static void can_transmit_finish(Dspic33* cpu, uint8_t channel) {
+    uint8_t buffer = cpu->io.can_tx_buffer[channel];
+    uint8_t bit = (uint8_t)(1u << channel);
+    uint16_t control = can_buffer_control(cpu, channel, buffer);
+    uint16_t counts = raw_word(cpu, (uint16_t)(can_bases[channel] + 0x0eu));
+    Dspic33CanFrame frame = can_decode_frame(cpu->io.can_tx_words[channel]);
+    can_set_buffer_control(cpu, channel, buffer,
+                           (uint16_t)(control & ~CAN_BUFFER_REQUEST));
+    if ((counts >> 8u) != 0u) {
+        counts = (uint16_t)(counts - 0x0100u);
+        raw_write_word(cpu, (uint16_t)(can_bases[channel] + 0x0eu), counts);
+        can_refresh_error_status(cpu, channel);
+    }
+    can_raise_event(cpu, channel, CAN_INTERRUPT_TRANSMIT, buffer, 0u);
+    if (can_mode(cpu, channel) == CAN_MODE_LOOPBACK) {
+        can_queue_push(&cpu->io.can_rx[channel], &frame);
+        dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_START, 0u);
+    } else {
+        can_queue_push(&cpu->io.can_tx[channel], &frame);
+    }
+    cpu->io.can_tx_busy &= (uint8_t)~bit;
+    dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_START, 0u);
+}
+
+static void can_error_event(Dspic33* cpu, uint8_t channel, uint32_t value) {
+    uint16_t address = (uint16_t)(can_bases[channel] + 0x0eu);
+    uint16_t counts = raw_word(cpu, address);
+    uint16_t increment = (uint16_t)(value >> CAN_EVENT_ERROR_COUNT_SHIFT);
+    if ((value & CAN_EVENT_TRANSMIT_ERROR) != 0u) {
+        uint16_t transmit = (uint16_t)(counts >> 8u);
+        transmit = transmit + increment > 0xffu ? 0xffu : transmit + increment;
+        counts = (uint16_t)((counts & 0x00ffu) | (transmit << 8u));
+    } else {
+        uint16_t receive = (uint16_t)(counts & 0x00ffu);
+        receive = receive + increment > 0xffu ? 0xffu : receive + increment;
+        counts = (uint16_t)((counts & 0xff00u) | receive);
+    }
+    raw_write_word(cpu, address, counts);
+    can_refresh_error_status(cpu, channel);
+    can_raise_event(cpu, channel, CAN_INTERRUPT_ERROR, 0u, 0u);
+}
+
+static void run_can(Dspic33* cpu, uint8_t channel, uint32_t value) {
+    if (channel >= DSPIC33_CAN_COUNT) {
+        return;
+    }
+    switch (value & CAN_EVENT_KIND_MASK) {
+    case CAN_EVENT_RECEIVE_START:
+        can_receive_start(cpu, channel);
+        break;
+    case CAN_EVENT_RECEIVE_WORD:
+        can_receive_word(cpu, channel);
+        break;
+    case CAN_EVENT_RECEIVE_FINISH:
+        can_receive_finish(cpu, channel);
+        break;
+    case CAN_EVENT_TRANSMIT_START:
+        can_transmit_start(cpu, channel);
+        break;
+    case CAN_EVENT_TRANSMIT_WORD:
+        can_transmit_word(cpu, channel);
+        break;
+    case CAN_EVENT_TRANSMIT_FINISH:
+        can_transmit_finish(cpu, channel);
+        break;
+    case CAN_EVENT_ERROR:
+        can_error_event(cpu, channel, value);
+        break;
+    }
 }
 
 static bool timer_is_type_b(uint8_t timer) { return timer >= 1u && (timer & 1u) != 0u; }
@@ -2405,7 +3033,7 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
                        (event->value & SPI_SELECT_ACTIVE) != 0u);
         break;
     case DSPIC33_EVENT_CAN:
-        run_can(cpu, (uint8_t)event->source);
+        run_can(cpu, (uint8_t)event->source, event->value);
         break;
     case DSPIC33_EVENT_USB:
         raw_write_word(cpu, 0x04c0u, (uint16_t)(raw_word(cpu, 0x04c0u) | 0x0008u));
@@ -2451,8 +3079,7 @@ static void advance_timers(Dspic33* cpu, uint64_t cycles) {
     }
 }
 
-bool dspic33_device_advance(Dspic33* cpu, uint64_t cycles) {
-    size_t group;
+static void advance_device_cycles(Dspic33* cpu, uint64_t cycles) {
     cpu->cycles += cycles;
     if (cpu->disicnt > cycles) {
         cpu->disicnt = (uint16_t)(cpu->disicnt - cycles);
@@ -2461,11 +3088,32 @@ bool dspic33_device_advance(Dspic33* cpu, uint64_t cycles) {
     }
     advance_timers(cpu, cycles);
     advance_pwm(cpu, cycles);
-    while (cpu->events.count != 0u && cpu->events.items[0].cycle <= cpu->cycles) {
-        Dspic33Event event = event_pop(&cpu->events);
-        process_event(cpu, &event);
-        if (cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR) {
-            return false;
+}
+
+bool dspic33_device_advance(Dspic33* cpu, uint64_t cycles) {
+    uint64_t target;
+    size_t group;
+    if (cycles > UINT64_MAX - cpu->cycles) {
+        return false;
+    }
+    target = cpu->cycles + cycles;
+    for (;;) {
+        if (cpu->events.count == 0u || cpu->events.items[0].cycle > target) {
+            if (cpu->cycles == target) {
+                break;
+            }
+            advance_device_cycles(cpu, target - cpu->cycles);
+            continue;
+        }
+        if (cpu->events.items[0].cycle > cpu->cycles) {
+            advance_device_cycles(cpu, cpu->events.items[0].cycle - cpu->cycles);
+        }
+        {
+            Dspic33Event event = event_pop(&cpu->events);
+            process_event(cpu, &event);
+            if (cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR) {
+                return false;
+            }
         }
     }
     for (group = 0u; group < DSPIC33_IRQ_GROUP_COUNT; group++) {
@@ -2935,6 +3583,154 @@ static void update_dma_request(Dspic33* cpu, uint8_t channel, uint16_t previous)
     }
 }
 
+static void can_abort_transmissions(Dspic33* cpu, uint8_t channel) {
+    uint8_t buffer;
+    for (buffer = 0u; buffer < 8u; buffer++) {
+        uint16_t control = can_buffer_control(cpu, channel, buffer);
+        if ((control & CAN_BUFFER_REQUEST) != 0u) {
+            can_set_buffer_control(
+                cpu, channel, buffer,
+                (uint16_t)((control & ~CAN_BUFFER_REQUEST) | CAN_BUFFER_ABORTED));
+            can_raise_event(cpu, channel, CAN_INTERRUPT_TRANSMIT, buffer, 0u);
+        }
+    }
+    raw_write_word(cpu, can_bases[channel],
+                   (uint16_t)(raw_word(cpu, can_bases[channel]) & ~CAN_ABORT_ALL));
+    cpu->io.can_tx_busy &= (uint8_t)~(uint8_t)(1u << channel);
+}
+
+static void can_clear_receive_flags(Dspic33* cpu, uint8_t channel, uint16_t address,
+                                    uint16_t previous, uint16_t requested) {
+    uint16_t cleared;
+    uint16_t result = (uint16_t)(previous & requested);
+    uint8_t high = address == can_bases[channel] + 0x22u ? 16u : 0u;
+    uint8_t bit;
+    raw_write_word(cpu, address, result);
+    if (address != can_bases[channel] + 0x20u &&
+        address != can_bases[channel] + 0x22u) {
+        return;
+    }
+    cleared = (uint16_t)(previous & ~result);
+    for (bit = 0u; bit < 16u; bit++) {
+        uint8_t buffer = (uint8_t)(high + bit);
+        if ((cleared & (uint16_t)(1u << bit)) != 0u &&
+            buffer >= (raw_word(cpu, (uint16_t)(can_bases[channel] + 6u)) & 0x001fu)) {
+            uint8_t next = can_next_fifo_buffer(cpu, channel, buffer);
+            uint16_t fifo = raw_word(cpu, (uint16_t)(can_bases[channel] + 8u));
+            raw_write_word(cpu, (uint16_t)(can_bases[channel] + 8u),
+                           (uint16_t)((fifo & 0x3f00u) | next));
+        }
+    }
+}
+
+static void can_update_transmit_control(Dspic33* cpu, uint8_t channel, uint16_t address,
+                                        uint16_t previous) {
+    uint8_t first = (uint8_t)(((address - can_bases[channel]) - 0x30u));
+    uint8_t half;
+    for (half = 0u; half < 2u; half++) {
+        uint8_t buffer = (uint8_t)(first + half);
+        uint8_t shift = (uint8_t)(half * 8u);
+        uint16_t before = (uint16_t)((previous >> shift) & 0xffu);
+        uint16_t current = can_buffer_control(cpu, channel, buffer);
+        if ((current & CAN_BUFFER_REQUEST) != 0u &&
+            (before & CAN_BUFFER_REQUEST) == 0u) {
+            current &=
+                (uint16_t)~(CAN_BUFFER_ABORTED | CAN_BUFFER_LOST | CAN_BUFFER_ERROR);
+            can_set_buffer_control(cpu, channel, buffer, current);
+            dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_START,
+                             0u);
+        } else if ((current & CAN_BUFFER_REQUEST) == 0u &&
+                   (before & CAN_BUFFER_REQUEST) != 0u) {
+            can_set_buffer_control(cpu, channel, buffer,
+                                   (uint16_t)(current | CAN_BUFFER_ABORTED));
+            can_raise_event(cpu, channel, CAN_INTERRUPT_TRANSMIT, buffer, 0u);
+        }
+    }
+}
+
+static void update_can_register(Dspic33* cpu, uint16_t address, uint16_t previous,
+                                uint16_t requested) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint16_t base = can_bases[channel];
+        uint16_t offset = (uint16_t)(address - base);
+        bool window;
+        uint16_t writable;
+        if (offset > 0x7eu || (offset & 1u) != 0u) {
+            continue;
+        }
+        window = (raw_word(cpu, base) & CAN_WINDOW) != 0u;
+        if (offset == 0u) {
+            uint16_t control = raw_word(cpu, base);
+            uint16_t mode = (uint16_t)((control & CAN_MODE_MASK) >> CAN_MODE_SHIFT);
+            control = (uint16_t)((control & ~0x00e0u) | (mode << 5u));
+            raw_write_word(cpu, base, control);
+            if (mode == CAN_MODE_CONFIGURATION &&
+                ((previous >> 5u) & 7u) != CAN_MODE_CONFIGURATION) {
+                raw_write_word(cpu, (uint16_t)(base + 0x0eu), 0u);
+                can_refresh_error_status(cpu, channel);
+            }
+            if ((control & CAN_ABORT_ALL) != 0u) {
+                can_abort_transmissions(cpu, channel);
+            }
+            return;
+        }
+        if ((offset == 6u || offset == 0x10u || offset == 0x12u || offset == 0x14u ||
+             offset == 0x18u || offset == 0x1au) &&
+            can_mode(cpu, channel) != CAN_MODE_CONFIGURATION) {
+            raw_write_word(cpu, address, previous);
+            return;
+        }
+        if (offset == 0x0au) {
+            raw_write_word(cpu, address, (uint16_t)(previous & ~(requested & 0x00efu)));
+            can_refresh_error_status(cpu, channel);
+            can_update_vector(cpu, channel);
+            return;
+        }
+        if (window && offset >= 0x20u) {
+            uint16_t prior = can_filter_word(cpu, channel, offset);
+            if (can_mode(cpu, channel) == CAN_MODE_CONFIGURATION &&
+                can_register_write_mask(cpu, address, &writable)) {
+                cpu->io.can_filter_window[channel][(offset - 0x20u) / 2u] =
+                    (uint16_t)((prior & ~writable) | (requested & writable));
+            }
+            raw_write_word(cpu, address, previous);
+            return;
+        }
+        if (!window && (offset == 0x20u || offset == 0x22u || offset == 0x28u ||
+                        offset == 0x2au)) {
+            can_clear_receive_flags(cpu, channel, address, previous, requested);
+            return;
+        }
+        if (!window && offset >= 0x30u && offset <= 0x36u) {
+            can_update_transmit_control(cpu, channel, address, previous);
+            return;
+        }
+        if (!window && offset == 0x42u &&
+            (cpu->io.can_tx_busy & (uint8_t)(1u << channel)) != 0u &&
+            cpu->io.can_tx_word[channel] != 0u) {
+            cpu->io.can_tx_words[channel][cpu->io.can_tx_word[channel] - 1u] =
+                raw_word(cpu, address);
+            return;
+        }
+        if (offset == 6u) {
+            uint8_t start = (uint8_t)(raw_word(cpu, address) & 0x001fu);
+            cpu->io.can_fifo_write[channel] = start;
+            raw_write_word(cpu, (uint16_t)(base + 8u),
+                           (uint16_t)(((uint16_t)start << 8u) | start));
+        }
+        return;
+    }
+    if (address == 0x0760u) {
+        for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+            if ((raw_word(cpu, address) & (uint16_t)(2u << channel)) != 0u) {
+                cpu->io.can_rx_busy &= (uint8_t)~(uint8_t)(1u << channel);
+                cpu->io.can_tx_busy &= (uint8_t)~(uint8_t)(1u << channel);
+            }
+        }
+    }
+}
+
 void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous) {
     uint16_t base = (uint16_t)(address & 0xfffeu);
     uint16_t requested = raw_word(cpu, base);
@@ -2952,6 +3748,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
         adc_register_write_mask(base, &writable) ||
         pwm_register_write_mask(base, &writable) ||
         spi_register_write_mask(base, &writable) ||
+        can_register_write_mask(cpu, base, &writable) ||
         dma_register_write_mask(base, &writable)) {
         raw_write_word(cpu, base,
                        (uint16_t)((previous & ~writable) | (requested & writable)));
@@ -2998,6 +3795,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     update_adc_register(cpu, base, previous, requested);
     update_pwm_register(cpu, base, previous);
     update_spi_register(cpu, base, previous, requested);
+    update_can_register(cpu, base, previous, requested);
     update_oscillator(cpu, base);
     write_uart(cpu, base);
     if (base == 0x0728u && (raw_word(cpu, base) & 0x8000u) != 0u) {
@@ -3029,6 +3827,22 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
     if (address == 0x08c3u) {
         return cpu->disicnt != 0u ? (uint8_t)(value | 0x40u)
                                   : (uint8_t)(value & ~0x40u);
+    }
+    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint16_t base = can_bases[channel];
+        uint16_t word_address = (uint16_t)(address & 0xfffeu);
+        uint16_t offset = (uint16_t)(word_address - base);
+        if (offset <= 0x7eu && (raw_word(cpu, base) & CAN_WINDOW) != 0u &&
+            offset >= 0x20u) {
+            uint16_t word = can_filter_word(cpu, channel, offset);
+            return (uint8_t)(word >> ((address & 1u) * 8u));
+        }
+        if (offset == 0x40u && (raw_word(cpu, base) & CAN_WINDOW) == 0u &&
+            cpu->io.can_rx_word[channel] != 0u) {
+            uint16_t word =
+                cpu->io.can_rx_words[channel][cpu->io.can_rx_word[channel] - 1u];
+            return (uint8_t)(word >> ((address & 1u) * 8u));
+        }
     }
     if ((address & 1u) == 0u) {
         for (timer = 1u; timer < DSPIC33_TIMER_COUNT; timer += 2u) {
@@ -3191,9 +4005,30 @@ bool dspic33_pwm_output(const Dspic33* cpu, uint8_t generator, bool high) {
 
 bool dspic33_can_receive(Dspic33* cpu, uint8_t channel, const Dspic33CanFrame* frame,
                          uint64_t delay) {
-    return channel < DSPIC33_CAN_COUNT &&
+    return channel < DSPIC33_CAN_COUNT && frame->length <= 8u &&
+           (!frame->extended ? frame->identifier <= 0x7ffu
+                             : frame->identifier <= 0x1fffffffu) &&
            can_queue_push(&cpu->io.can_rx[channel], frame) &&
-           dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, 0u, delay);
+           dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_START,
+                            delay);
+}
+
+bool dspic33_can_error(Dspic33* cpu, uint8_t channel, bool transmit, uint8_t count,
+                       uint64_t delay) {
+    uint32_t value;
+    if (channel >= DSPIC33_CAN_COUNT || count == 0u) {
+        return false;
+    }
+    value = CAN_EVENT_ERROR | ((uint32_t)count << CAN_EVENT_ERROR_COUNT_SHIFT);
+    if (transmit) {
+        value |= CAN_EVENT_TRANSMIT_ERROR;
+    }
+    return dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, value, delay);
+}
+
+bool dspic33_can_transmit(Dspic33* cpu, uint8_t channel, Dspic33CanFrame* frame) {
+    return channel < DSPIC33_CAN_COUNT &&
+           can_queue_pop(&cpu->io.can_tx[channel], frame);
 }
 
 bool dspic33_usb_receive(Dspic33* cpu, uint8_t endpoint, const uint8_t* data,

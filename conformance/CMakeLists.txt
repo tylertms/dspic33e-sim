@@ -19,6 +19,7 @@ add_executable(
     source/spi.s
     source/bits.s
     source/branches.s
+    source/can.s
     source/dma.s
     source/divides.s
     source/main.c
