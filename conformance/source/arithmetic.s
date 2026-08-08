@@ -77,8 +77,81 @@
     record_case \second_id, w2, w1
 .endm
 
+.macro pack_arithmetic_pointer_deltas source_base, destination_base
+    mov SR, w0
+    mov #\source_base, w1
+    sub w4, w1, w3
+    and #0x00ff, w3
+    mov #\destination_base, w1
+    sub w5, w1, w5
+    sl w5, #8, w5
+    ior w3, w5, w3
+    mov w0, SR
+.endm
+
+.macro pack_arithmetic_destination_delta destination_base
+    mov SR, w0
+    mov #\destination_base, w1
+    sub w5, w1, w3
+    mov w0, SR
+.endm
+
+.macro binary_indirect_word operation, id, left, right, status
+    set_status \status
+    mov #\left, w2
+    mov #_conformance_scratch+4, w4
+    mov #_conformance_scratch+20, w5
+    mov #\right, w1
+    mov w1, [w4]
+    mov #0x5a34, w1
+    mov w1, [w5]
+    \operation w2, [w4++], [w5--]
+    mov [w5+2], w1
+    pack_arithmetic_pointer_deltas _conformance_scratch+4, _conformance_scratch+20
+    record_case \id, w1, w3
+.endm
+
+.macro binary_indirect_byte operation, id, left, right, status
+    set_status \status
+    mov #\left, w2
+    mov #_conformance_scratch+3, w4
+    mov #_conformance_scratch+19, w5
+    mov #\right, w1
+    mov w1, _conformance_scratch+4
+    mov #0x5a34, w1
+    mov w1, _conformance_scratch+20
+    \operation.b w2, [++w4], [++w5]
+    mov _conformance_scratch+20, w1
+    pack_arithmetic_pointer_deltas _conformance_scratch+3, _conformance_scratch+19
+    record_case \id, w1, w3
+.endm
+
+.macro literal_destination_word operation, id, left, status
+    set_status \status
+    mov #\left, w2
+    mov #_conformance_scratch+22, w5
+    mov #0x5a34, w1
+    mov w1, _conformance_scratch+20
+    \operation w2, #31, [--w5]
+    mov [w5], w4
+    pack_arithmetic_destination_delta _conformance_scratch+22
+    record_case \id, w4, w3
+.endm
+
+.macro literal_destination_byte operation, id, left, status
+    set_status \status
+    mov #\left, w2
+    mov #_conformance_scratch+20, w5
+    mov #0x5a34, w1
+    mov w1, [w5]
+    \operation.b w2, #31, [w5++]
+    mov _conformance_scratch+20, w4
+    pack_arithmetic_destination_delta _conformance_scratch+20
+    record_case \id, w4, w3
+.endm
+
 .global _arithmetic_conformance_cases
-_arithmetic_conformance_cases = 127
+_arithmetic_conformance_cases = 183
 .global _arithmetic_conformance_group_complete
 _arithmetic_conformance_group_complete = 0
 
@@ -598,5 +671,193 @@ _run_arithmetic_conformance:
     mov #0x5a34, w3
     addc.b w1, w2, w3
     record_case 0x0385, w3, w2
+
+    binary_indirect_word add, 0x0390, 0xffff, 0x0001, 0x0000
+    binary_indirect_byte add, 0x0391, 0xa5ff, 0x0001, 0x0000
+    binary_indirect_word addc, 0x0392, 0xffff, 0x0000, 0x0001
+    binary_indirect_byte addc, 0x0393, 0xa5ff, 0x0000, 0x0001
+    binary_indirect_word sub, 0x0394, 0x0000, 0x0001, 0x0000
+    binary_indirect_byte sub, 0x0395, 0xa500, 0x0001, 0x0000
+    binary_indirect_word subb, 0x0396, 0x0001, 0x0000, 0x0000
+    binary_indirect_byte subb, 0x0397, 0xa501, 0x0000, 0x0000
+    binary_indirect_word subr, 0x0398, 0x0001, 0x0003, 0x0000
+    binary_indirect_byte subr, 0x0399, 0xa501, 0x0003, 0x0000
+    binary_indirect_word subbr, 0x039a, 0x0001, 0x0003, 0x0000
+    binary_indirect_byte subbr, 0x039b, 0xa501, 0x0003, 0x0000
+    binary_indirect_word and, 0x039c, 0x0ff0, 0x00ff, 0x0105
+    binary_indirect_byte and, 0x039d, 0xa5f0, 0x000f, 0x0105
+    binary_indirect_word xor, 0x039e, 0x0ff0, 0x00ff, 0x0105
+    binary_indirect_byte xor, 0x039f, 0xa5f0, 0x000f, 0x0105
+    binary_indirect_word ior, 0x03a0, 0x0ff0, 0x00ff, 0x0105
+    binary_indirect_byte ior, 0x03a1, 0xa5f0, 0x000f, 0x0105
+
+    literal_destination_word add, 0x03a2, 0x7ff0, 0x0000
+    literal_destination_byte add, 0x03a3, 0xa5f0, 0x0000
+    literal_destination_word addc, 0x03a4, 0x7ff0, 0x0001
+    literal_destination_byte addc, 0x03a5, 0xa5f0, 0x0001
+    literal_destination_word sub, 0x03a6, 0x0010, 0x0000
+    literal_destination_byte sub, 0x03a7, 0xa510, 0x0000
+    literal_destination_word subb, 0x03a8, 0x0020, 0x0000
+    literal_destination_byte subb, 0x03a9, 0xa520, 0x0000
+    literal_destination_word subr, 0x03aa, 0x0010, 0x0000
+    literal_destination_byte subr, 0x03ab, 0xa510, 0x0000
+    literal_destination_word subbr, 0x03ac, 0x0010, 0x0000
+    literal_destination_byte subbr, 0x03ad, 0xa510, 0x0000
+    literal_destination_word and, 0x03ae, 0x0fff, 0x0105
+    literal_destination_byte and, 0x03af, 0xa5ff, 0x0105
+    literal_destination_word xor, 0x03b0, 0x0ff0, 0x0105
+    literal_destination_byte xor, 0x03b1, 0xa5f0, 0x0105
+    literal_destination_word ior, 0x03b2, 0x0ff0, 0x0105
+    literal_destination_byte ior, 0x03b3, 0xa5f0, 0x0105
+
+    set_status 0x0000
+    mov #0x1234, w2
+    mov #_conformance_scratch+4, w4
+    mov #0x1234, w1
+    mov w1, [w4]
+    cp w2, [w4++]
+    mov [w4-2], w1
+    record_case 0x03b4, w1, w4
+
+    set_status 0x0000
+    mov #0xa534, w2
+    mov #_conformance_scratch+5, w4
+    mov #0xa534, w1
+    mov w1, _conformance_scratch+4
+    cp.b w2, [--w4]
+    mov _conformance_scratch+4, w1
+    record_case 0x03b5, w1, w4
+
+    set_status 0x0000
+    mov #0x1234, w2
+    mov #_conformance_scratch+4, w4
+    mov #0x1233, w1
+    mov w1, [w4]
+    cpb w2, [w4++]
+    mov [w4-2], w1
+    record_case 0x03b6, w1, w4
+
+    set_status 0x0000
+    mov #0xa534, w2
+    mov #_conformance_scratch+5, w4
+    mov #0xa533, w1
+    mov w1, _conformance_scratch+4
+    cpb.b w2, [--w4]
+    mov _conformance_scratch+4, w1
+    record_case 0x03b7, w1, w4
+
+    set_status 0x0000
+    mov #_conformance_scratch+4, w4
+    mov #0x8000, w1
+    mov w1, [w4]
+    cp0 [w4++]
+    mov [w4-2], w1
+    record_case 0x03b8, w1, w4
+
+    set_status 0x0000
+    mov #_conformance_scratch+5, w4
+    mov #0xa580, w1
+    mov w1, _conformance_scratch+4
+    cp0.b [--w4]
+    mov _conformance_scratch+4, w1
+    record_case 0x03b9, w1, w4
+
+    set_status 0x0000
+    mov #_conformance_scratch+4, w4
+    mov #_conformance_scratch+20, w5
+    mov #0x8000, w1
+    mov w1, [w4]
+    neg [w4++], [w5--]
+    mov [w5+2], w2
+    record_case 0x03ba, w2, w4
+
+    set_status 0x0000
+    mov #_conformance_scratch+3, w4
+    mov #_conformance_scratch+19, w5
+    mov #0xa580, w1
+    mov w1, _conformance_scratch+4
+    neg.b [++w4], [++w5]
+    mov _conformance_scratch+20, w2
+    record_case 0x03bb, w2, w5
+
+    set_status 0x0105
+    mov #_conformance_scratch+4, w4
+    mov #_conformance_scratch+20, w5
+    mov #0x0ff0, w1
+    mov w1, [w4]
+    com [w4--], [w5++]
+    mov [w5-2], w2
+    record_case 0x03bc, w2, w4
+
+    set_status 0x0105
+    mov #_conformance_scratch+5, w4
+    mov #_conformance_scratch+21, w5
+    mov #0xa5f0, w1
+    mov w1, _conformance_scratch+4
+    com.b [--w4], [--w5]
+    mov _conformance_scratch+20, w2
+    record_case 0x03bd, w2, w5
+
+    set_status 0x0105
+    mov #_conformance_scratch+20, w5
+    mov #0xa55a, w1
+    mov w1, [w5]
+    clr [w5++]
+    mov [w5-2], w2
+    record_case 0x03be, w2, w5
+
+    set_status 0x0105
+    mov #_conformance_scratch+21, w5
+    mov #0xa55a, w1
+    mov w1, _conformance_scratch+20
+    clr.b [--w5]
+    mov _conformance_scratch+20, w2
+    record_case 0x03bf, w2, w5
+
+    set_status 0x0105
+    mov #_conformance_scratch+22, w5
+    mov #0xa55a, w1
+    mov w1, _conformance_scratch+20
+    setm [--w5]
+    mov [w5], w2
+    record_case 0x03c0, w2, w5
+
+    set_status 0x0105
+    mov #_conformance_scratch+20, w5
+    mov #0xa55a, w1
+    mov w1, [w5]
+    setm.b [w5++]
+    mov _conformance_scratch+20, w2
+    record_case 0x03c1, w2, w5
+
+    set_status 0x0000
+    mov #0x009a, w1
+    daw.b w1
+    record_case 0x03c2, w1, w1
+
+    set_status 0x0101
+    mov #0x009a, w1
+    daw.b w1
+    record_case 0x03c3, w1, w1
+
+    set_status 0x0100
+    mov #0x771a, w1
+    daw.b w1
+    record_case 0x03c4, w1, w1
+
+    set_status 0x0001
+    mov #0x7712, w1
+    daw.b w1
+    record_case 0x03c5, w1, w1
+
+    set_status 0x0000
+    mov #0x7799, w1
+    daw.b w1
+    record_case 0x03c6, w1, w1
+
+    set_status 0x0000
+    mov #0x77aa, w1
+    daw.b w1
+    record_case 0x03c7, w1, w1
 
     end_results

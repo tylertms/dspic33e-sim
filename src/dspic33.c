@@ -1114,6 +1114,23 @@ static bool execute_find_first(Dspic33* cpu, uint32_t opcode) {
     return true;
 }
 
+static bool execute_decimal_adjust(Dspic33* cpu, uint32_t opcode) {
+    uint8_t destination = (uint8_t)(opcode & 0x0fu);
+    uint16_t original = cpu->w[destination];
+    uint16_t adjusted = (uint8_t)original;
+    bool carry = (cpu->sr & 0x0001u) != 0u;
+    if ((adjusted & 0x000fu) > 9u || (cpu->sr & 0x0100u) != 0u) {
+        adjusted += 6u;
+    }
+    if (adjusted > 0x009fu || carry) {
+        adjusted += 0x0060u;
+    }
+    cpu->w[destination] = (uint16_t)((original & 0xff00u) | (uint8_t)adjusted);
+    cpu->sr =
+        (uint16_t)((cpu->sr & ~0x0001u) | (carry || adjusted > 0x00ffu ? 1u : 0u));
+    return true;
+}
+
 static void update_divide_flags(Dspic33* cpu, int64_t remainder, bool overflow) {
     cpu->sr &= (uint16_t)~0x000fu;
     if (remainder == 0) {
@@ -1199,6 +1216,9 @@ static bool execute_fractional_divide(Dspic33* cpu, uint32_t opcode) {
 }
 
 static bool execute(Dspic33* cpu, uint32_t opcode) {
+    if ((opcode & 0xfffff0u) == 0xfd4000u) {
+        return execute_decimal_adjust(cpu, opcode);
+    }
     if ((opcode & 0xfff870u) == 0xfd0000u) {
         uint8_t source = (uint8_t)(opcode & 0x0fu);
         uint8_t destination = (uint8_t)((opcode >> 7u) & 0x0fu);
