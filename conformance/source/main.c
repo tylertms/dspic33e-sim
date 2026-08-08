@@ -30,6 +30,7 @@ extern uint16_t run_loop_high_conformance(volatile uint16_t* results);
 extern uint16_t run_move_conformance(volatile uint16_t* results);
 extern uint16_t run_multiply_conformance(volatile uint16_t* results);
 extern uint16_t run_shift_conformance(volatile uint16_t* results);
+extern uint16_t run_sfr_conformance(volatile uint16_t* results);
 extern uint16_t run_stack_conformance(volatile uint16_t* results);
 extern uint16_t run_system_conformance(volatile uint16_t* results);
 extern uint16_t run_table_conformance(volatile uint16_t* results);
@@ -41,7 +42,9 @@ int main(void) {
     if (system_probe_selector != 0u) {
         run_system_probe(system_probe_selector);
     }
-    conformance_output.result_words = run_shift_conformance(conformance_output.results);
+    conformance_output.result_words = run_sfr_conformance(conformance_output.results);
+    conformance_output.result_words += run_shift_conformance(
+        conformance_output.results + conformance_output.result_words);
     conformance_output.result_words += run_branch_conformance(
         conformance_output.results + conformance_output.result_words);
     conformance_output.result_words += run_arithmetic_conformance(

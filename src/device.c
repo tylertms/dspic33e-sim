@@ -26,6 +26,56 @@ typedef struct {
     uint16_t value;
 } Dspic33ResetValue;
 
+typedef struct {
+    uint16_t address;
+    uint16_t writable;
+} Dspic33RegisterMask;
+
+static const Dspic33RegisterMask register_masks[] = {
+    {0x0046u, 0xcfffu}, {0x0048u, 0xfffeu}, {0x004au, 0xfffeu}, {0x004cu, 0xfffeu},
+    {0x004eu, 0xfffeu}, {0x0050u, 0xffffu}, {0x0680u, 0x3f3fu}, {0x0682u, 0x3f3fu},
+    {0x0684u, 0x3f3fu}, {0x0686u, 0x3f3fu}, {0x0688u, 0x3f3fu}, {0x068au, 0x3f3fu},
+    {0x068cu, 0x3f3fu}, {0x068eu, 0x3f3fu}, {0x0690u, 0x3f3fu}, {0x0692u, 0x3f3fu},
+    {0x0696u, 0x3f3fu}, {0x0698u, 0x3f3fu}, {0x069au, 0x3f3fu}, {0x069cu, 0x3f3fu},
+    {0x069eu, 0x3f3fu}, {0x06a0u, 0x7f00u}, {0x06a2u, 0x7f7fu}, {0x06a4u, 0x7f7fu},
+    {0x06a6u, 0x7f7fu}, {0x06a8u, 0x7f7fu}, {0x06aau, 0x7f7fu}, {0x06acu, 0x7f7fu},
+    {0x06aeu, 0x7f7fu}, {0x06b0u, 0x7f7fu}, {0x06b2u, 0x7f7fu}, {0x06b4u, 0x7f7fu},
+    {0x06b6u, 0x7f7fu}, {0x06b8u, 0x7f7fu}, {0x06bau, 0x7f7fu}, {0x06bcu, 0x7f7fu},
+    {0x06beu, 0x7f7fu}, {0x06c0u, 0x7f7fu}, {0x06c2u, 0x7f7fu}, {0x06c4u, 0x7f7fu},
+    {0x06c6u, 0x7f7fu}, {0x06c8u, 0x7f7fu}, {0x06cau, 0x007fu}, {0x06ceu, 0x007fu},
+    {0x06d0u, 0x7f7fu}, {0x06d2u, 0x007fu}, {0x06d4u, 0x7f7fu}, {0x06d6u, 0x7f7fu},
+    {0x06d8u, 0x7f7fu}, {0x06dau, 0x7f7fu}, {0x06dcu, 0x007fu}, {0x06deu, 0x7f7fu},
+    {0x06e0u, 0x007fu}, {0x06e2u, 0x7f7fu}, {0x06e4u, 0x7f7fu}, {0x06e6u, 0x7f7fu},
+    {0x06e8u, 0x7f7fu}, {0x06eau, 0x7f7fu}, {0x06ecu, 0x7f7fu}, {0x06eeu, 0x7f7fu},
+    {0x06f0u, 0x7f7fu}, {0x06f2u, 0x007fu}, {0x06f4u, 0x7f7fu}, {0x06f6u, 0x007fu},
+    {0x0744u, 0xffdfu}, {0x0746u, 0x01ffu}, {0x0748u, 0x003fu}, {0x074eu, 0xbf00u},
+    {0x075au, 0x183fu}, {0x0760u, 0xffffu}, {0x0762u, 0xffffu}, {0x0764u, 0xf7abu},
+    {0x0766u, 0x0021u}, {0x0768u, 0xffffu}, {0x076au, 0x3f03u}, {0x076cu, 0x00f0u},
+    {0x0800u, 0xffffu}, {0x0802u, 0xffffu}, {0x0804u, 0xffffu}, {0x0806u, 0x7fffu},
+    {0x0808u, 0x0afeu}, {0x080au, 0xdfeeu}, {0x080cu, 0xc3efu}, {0x080eu, 0xffc0u},
+    {0x0810u, 0x7fdfu}, {0x0820u, 0xffffu}, {0x0822u, 0xffffu}, {0x0824u, 0xffffu},
+    {0x0826u, 0x7fffu}, {0x0828u, 0x0afeu}, {0x082au, 0xdfeeu}, {0x082cu, 0xffefu},
+    {0x082eu, 0xffc0u}, {0x0830u, 0x001fu}, {0x0840u, 0x7777u}, {0x0842u, 0x7777u},
+    {0x0844u, 0x7777u}, {0x0846u, 0x7777u}, {0x0848u, 0x7777u}, {0x084au, 0x7777u},
+    {0x084cu, 0x7777u}, {0x084eu, 0x7777u}, {0x0850u, 0x7777u}, {0x0852u, 0x7777u},
+    {0x0854u, 0x7777u}, {0x0856u, 0x7777u}, {0x0858u, 0x7777u}, {0x085au, 0x7777u},
+    {0x085cu, 0x7777u}, {0x085eu, 0x0777u}, {0x0860u, 0x7770u}, {0x0862u, 0x7777u},
+    {0x0864u, 0x7070u}, {0x0868u, 0x7770u}, {0x086au, 0x7700u}, {0x086cu, 0x7777u},
+    {0x086eu, 0x7777u}, {0x0870u, 0x7777u}, {0x087au, 0x7700u}, {0x087cu, 0x7777u},
+    {0x087eu, 0x7777u}, {0x0880u, 0x7777u}, {0x0882u, 0x7707u}, {0x0884u, 0x7777u},
+    {0x0886u, 0x0777u}, {0x0e00u, 0xc6ffu}, {0x0e04u, 0xc6ffu}, {0x0e06u, 0xc03fu},
+    {0x0e08u, 0xc6ffu}, {0x0e0au, 0xc6ffu}, {0x0e0cu, 0xc6ffu}, {0x0e0eu, 0x06c0u},
+    {0x0e10u, 0xffffu}, {0x0e14u, 0xffffu}, {0x0e18u, 0xffffu}, {0x0e1au, 0xffffu},
+    {0x0e1cu, 0xffffu}, {0x0e1eu, 0xffffu}, {0x0e20u, 0xf01eu}, {0x0e24u, 0xf01eu},
+    {0x0e28u, 0xf01eu}, {0x0e2au, 0xf01eu}, {0x0e2cu, 0xf01eu}, {0x0e2eu, 0x601eu},
+    {0x0e30u, 0xffffu}, {0x0e34u, 0xffffu}, {0x0e36u, 0xff3fu}, {0x0e38u, 0xffffu},
+    {0x0e3au, 0xffffu}, {0x0e3cu, 0xffffu}, {0x0e3eu, 0x00c0u}, {0x0e40u, 0x03ffu},
+    {0x0e44u, 0x03ffu}, {0x0e48u, 0x03ffu}, {0x0e4au, 0x03ffu}, {0x0e4cu, 0x03ffu},
+    {0x0e4eu, 0x03ffu}, {0x0e50u, 0x313fu}, {0x0e54u, 0x313fu}, {0x0e56u, 0x313fu},
+    {0x0e58u, 0x313fu}, {0x0e5au, 0x313fu}, {0x0e5cu, 0x313fu}, {0x0e60u, 0xf3c3u},
+    {0x0e64u, 0xf3c3u}, {0x0e66u, 0xf003u}, {0x0e68u, 0xf3cfu}, {0x0e6au, 0xf3c3u},
+    {0x0e6cu, 0xf3c3u}, {0x0e6eu, 0x03c0u}};
+
 static const Dspic33ResetValue reset_values[] = {
     {0x004au, 0x0001u}, {0x004eu, 0x0001u}, {0x0102u, 0xffffu}, {0x010cu, 0xffffu},
     {0x010eu, 0xffffu}, {0x011au, 0xffffu}, {0x011cu, 0xffffu}, {0x0128u, 0xffffu},
@@ -61,6 +111,29 @@ static uint16_t raw_word(const Dspic33* cpu, uint16_t address) {
 static void raw_write_word(Dspic33* cpu, uint16_t address, uint16_t value) {
     cpu->data[address] = (uint8_t)value;
     cpu->data[(uint16_t)(address + 1u)] = (uint8_t)(value >> 8u);
+}
+
+static bool register_write_mask(uint16_t address, uint16_t* writable) {
+    size_t first = 0u;
+    size_t count = sizeof(register_masks) / sizeof(register_masks[0]);
+
+    while (count != 0u) {
+        size_t step = count / 2u;
+        size_t index = first + step;
+
+        if (register_masks[index].address < address) {
+            first = index + 1u;
+            count -= step + 1u;
+        } else {
+            count = step;
+        }
+    }
+    if (first == sizeof(register_masks) / sizeof(register_masks[0]) ||
+        register_masks[first].address != address) {
+        return false;
+    }
+    *writable = register_masks[first].writable;
+    return true;
 }
 
 static bool byte_queue_push(Dspic33ByteQueue* queue, uint8_t value) {
@@ -591,9 +664,62 @@ static void update_oscillator(Dspic33* cpu, uint16_t address) {
     }
 }
 
+static bool protect_oscillator_write(Dspic33* cpu, uint16_t address,
+                                     uint16_t previous) {
+    uint8_t value;
+    uint8_t first;
+    uint8_t second;
+    uint8_t ready;
+
+    if (address != 0x0742u && address != 0x0743u) {
+        return false;
+    }
+    value = cpu->data[address];
+    if (address == 0x0742u) {
+        first = 0x46u;
+        second = 0x57u;
+        ready = 2u;
+    } else {
+        first = 0x78u;
+        second = 0x9au;
+        ready = 4u;
+    }
+    if (value == first) {
+        cpu->io.oscillator_unlock = (uint8_t)(ready - 1u);
+        raw_write_word(cpu, 0x0742u, previous);
+        return true;
+    }
+    if (cpu->io.oscillator_unlock == ready - 1u && value == second) {
+        cpu->io.oscillator_unlock = ready;
+        raw_write_word(cpu, 0x0742u, previous);
+        return true;
+    }
+    if (cpu->io.oscillator_unlock == ready) {
+        cpu->io.oscillator_unlock = 0u;
+        return false;
+    }
+    cpu->io.oscillator_unlock = 0u;
+    raw_write_word(cpu, 0x0742u, previous);
+    return true;
+}
+
 void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous) {
     uint16_t base = (uint16_t)(address & 0xfffeu);
+    uint16_t writable;
     uint8_t channel;
+    if (protect_oscillator_write(cpu, address, previous)) {
+        return;
+    }
+    if (base >= 0x0680u && base <= 0x06f6u &&
+        (raw_word(cpu, 0x0742u) & 0x0040u) != 0u) {
+        raw_write_word(cpu, base, previous);
+        return;
+    }
+    if (register_write_mask(base, &writable)) {
+        uint16_t requested = raw_word(cpu, base);
+        raw_write_word(cpu, base,
+                       (uint16_t)((previous & ~writable) | (requested & writable)));
+    }
     if (base >= 0x0800u && base < 0x0800u + DSPIC33_IRQ_GROUP_COUNT * 2u) {
         uint16_t group = (uint16_t)((base - 0x0800u) / 2u);
         uint16_t current = raw_word(cpu, base);
@@ -658,6 +784,8 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
         0x0e00u, 0x0e10u, 0x0e20u, 0x0e30u, 0x0e40u, 0x0e50u, 0x0e60u};
     static const uint16_t lat_addresses[DSPIC33_GPIO_PORT_COUNT] = {
         0x0e04u, 0x0e14u, 0x0e24u, 0x0e34u, 0x0e44u, 0x0e54u, 0x0e64u};
+    static const uint16_t analog_addresses[DSPIC33_GPIO_PORT_COUNT] = {
+        0x0e0eu, 0x0e1eu, 0x0e2eu, 0x0e3eu, 0x0e4eu, 0u, 0x0e6eu};
     uint8_t port;
     uint8_t channel;
     if (address == 0x08c3u) {
@@ -669,6 +797,9 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
             uint16_t tris = raw_word(cpu, tris_addresses[port]);
             uint16_t lat = raw_word(cpu, lat_addresses[port]);
             uint16_t pins = (uint16_t)((cpu->io.gpio[port] & tris) | (lat & ~tris));
+            if (analog_addresses[port] != 0u) {
+                pins &= (uint16_t)~raw_word(cpu, analog_addresses[port]);
+            }
             return (uint8_t)(pins >> ((address & 1u) * 8u));
         }
     }

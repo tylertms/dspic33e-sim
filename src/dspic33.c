@@ -2214,6 +2214,27 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
             if (word_address == 0x0042u && (cpu->data[0x08c1u] & 0x80u) != 0u) {
                 *reg = (uint16_t)((*reg & ~0x00e0u) | preserved_priority);
             }
+            if (word_address == 0x0020u) {
+                *reg &= 0xfffeu;
+            } else if (word_address == 0x0032u) {
+                *reg &= 0x03ffu;
+            } else if (word_address == 0x0034u) {
+                *reg &= 0x01ffu;
+            }
+            return;
+        }
+        if (word_address == 0x003au || word_address == 0x003cu) {
+            uint8_t shift = (uint8_t)((address - 0x003au) * 8u);
+            cpu->dostart = (cpu->dostart & ~((uint32_t)0xffu << shift)) |
+                           ((uint32_t)value << shift);
+            cpu->dostart &= 0x003ffffeu;
+            return;
+        }
+        if (word_address == 0x003eu || word_address == 0x0040u) {
+            uint8_t shift = (uint8_t)((address - 0x003eu) * 8u);
+            cpu->doend =
+                (cpu->doend & ~((uint32_t)0xffu << shift)) | ((uint32_t)value << shift);
+            cpu->doend &= 0x003ffffeu;
             return;
         }
     }

@@ -93,6 +93,7 @@ typedef struct {
     uint16_t dma_bank;
     uint8_t usb[4096];
     uint16_t usb_size;
+    uint8_t oscillator_unlock;
 } Dspic33Io;
 
 typedef enum {
