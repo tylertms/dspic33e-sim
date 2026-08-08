@@ -11,10 +11,13 @@ set(device_linker_script
     "${toolchain_bin}/../support/dsPIC33E/gld/p33EP512MU810.gld"
 )
 
-add_executable(dspic33-conformance source/main.c source/shifts.s)
+add_executable(
+    dspic33-conformance source/branches.s source/main.c source/shifts.s
+)
 
 set_target_properties(dspic33-conformance PROPERTIES SUFFIX ".bin")
 target_compile_features(dspic33-conformance PRIVATE c_std_99)
+target_include_directories(dspic33-conformance PRIVATE source)
 target_compile_options(
     dspic33-conformance
     PRIVATE -Wall

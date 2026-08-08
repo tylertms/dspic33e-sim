@@ -1,25 +1,12 @@
 .section .text,code
+.include "conformance.inc"
 
-.macro set_status value
-    mov #\value, w0
-    mov w0, SR
-.endm
-
-.macro record_case id, result, auxiliary
-    mov #\id, w0
-    mov w0, [w7++]
-    mov \result, [w7++]
-    mov SR, w0
-    mov w0, [w7++]
-    mov \auxiliary, [w7++]
-.endm
+.global _shift_conformance_cases
+_shift_conformance_cases = 22
 
 .global _run_shift_conformance
 _run_shift_conformance:
-    push w6
-    push w7
-    mov w0, w6
-    mov w0, w7
+    begin_results
 
     set_status 0x0000
     mov #0x0001, w1
@@ -150,11 +137,7 @@ _run_shift_conformance:
     dec2 w1, w2
     record_case 0x0125, w2, w1
 
-    sub w7, w6, w0
-    lsr w0, #1, w0
-    pop w7
-    pop w6
-    return
+    end_results
 
 .global _conformance_complete
 _conformance_complete:
