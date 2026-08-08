@@ -9,10 +9,10 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     )
 endif()
 
+add_library(opentec_simulator_core STATIC src/device.c src/dspic33.c)
+
 add_executable(
     opentec_firmware_simulator
-    src/device.c
-    src/dspic33.c
     src/elf_image.c
     src/firmware_image.c
     src/firmware_runner.c
@@ -22,14 +22,34 @@ add_executable(
     src/scenario_stream.c
 )
 
-target_compile_features(opentec_firmware_simulator PRIVATE c_std_11)
+add_executable(
+    opentec_simulator_event_conformance conformance/event_scheduler.c
+)
+
+target_include_directories(opentec_simulator_core PUBLIC src)
+target_link_libraries(opentec_firmware_simulator PRIVATE opentec_simulator_core)
+target_link_libraries(
+    opentec_simulator_event_conformance PRIVATE opentec_simulator_core
+)
+
+set(opentec_simulator_targets opentec_simulator_core opentec_firmware_simulator
+                              opentec_simulator_event_conformance
+)
+
+foreach(target IN LISTS opentec_simulator_targets)
+    target_compile_features(${target} PRIVATE c_std_11)
+endforeach()
 
 if(MSVC)
-    target_compile_options(opentec_firmware_simulator PRIVATE /W4 /WX)
+    foreach(target IN LISTS opentec_simulator_targets)
+        target_compile_options(${target} PRIVATE /W4 /WX)
+    endforeach()
 else()
-    target_compile_options(
-        opentec_firmware_simulator PRIVATE -Wall -Wextra -Wpedantic -Werror
-    )
+    foreach(target IN LISTS opentec_simulator_targets)
+        target_compile_options(
+            ${target} PRIVATE -Wall -Wextra -Wpedantic -Werror
+        )
+    endforeach()
 endif()
 
 if(WIN32)

@@ -131,6 +131,9 @@ bool dspic33_schedule(Dspic33* cpu, Dspic33EventType type, uint16_t source,
     Dspic33Event event;
     size_t index;
     size_t parent;
+    if (delay > UINT64_MAX - cpu->cycles) {
+        return false;
+    }
     if (!event_reserve(&cpu->events)) {
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
         return false;
