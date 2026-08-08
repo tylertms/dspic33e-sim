@@ -860,6 +860,37 @@ static bool execute_shift(Dspic33* cpu, uint32_t opcode, uint8_t operation) {
     return true;
 }
 
+static uint16_t shift_single_bit(const Dspic33* cpu, uint16_t source, uint8_t family,
+                                 bool alternate, bool byte_mode, uint16_t* next_carry,
+                                 bool* carry_affected) {
+    uint16_t width_mask = byte_mode ? 0x00ffu : 0xffffu;
+    uint16_t sign_mask = byte_mode ? 0x0080u : 0x8000u;
+    uint16_t carry = (cpu->sr & 1u) != 0u ? 1u : 0u;
+    uint16_t value;
+    *carry_affected = family < 2u || alternate;
+    if (family == 0u) {
+        *next_carry = (source & sign_mask) != 0u;
+        value = (uint16_t)((source << 1u) & width_mask);
+    } else if (family == 1u) {
+        *next_carry = source & 1u;
+        value = (uint16_t)(source >> 1u);
+        if (alternate && (source & sign_mask) != 0u) {
+            value |= sign_mask;
+        }
+    } else if (family == 2u) {
+        *next_carry = (source & sign_mask) != 0u;
+        value = (uint16_t)((source << 1u) & width_mask);
+        value |= alternate ? carry : *next_carry;
+    } else {
+        *next_carry = source & 1u;
+        value = (uint16_t)(source >> 1u);
+        if (alternate ? carry != 0u : *next_carry != 0u) {
+            value |= sign_mask;
+        }
+    }
+    return value;
+}
+
 static bool execute_single_shift(Dspic33* cpu, uint32_t opcode) {
     uint8_t family = (uint8_t)((opcode >> 16u) & 0x03u);
     bool alternate = (opcode & 0x008000u) != 0u;
@@ -871,38 +902,49 @@ static bool execute_single_shift(Dspic33* cpu, uint32_t opcode) {
     uint16_t source = byte_mode
                           ? read_operand_byte(cpu, source_mode, source_register, 0u)
                           : read_operand_word(cpu, source_mode, source_register, 0u);
-    uint16_t width_mask = byte_mode ? 0x00ffu : 0xffffu;
-    uint16_t sign_mask = byte_mode ? 0x0080u : 0x8000u;
-    uint16_t carry = (cpu->sr & 1u) != 0u ? 1u : 0u;
     uint16_t next_carry;
-    uint16_t value;
-    if (family == 0u) {
-        next_carry = (source & sign_mask) != 0u;
-        value = (uint16_t)((source << 1u) & width_mask);
-    } else if (family == 1u) {
-        next_carry = source & 1u;
-        value = (uint16_t)(source >> 1u);
-        if (alternate && (source & sign_mask) != 0u) {
-            value |= sign_mask;
-        }
-    } else if (family == 2u) {
-        next_carry = (source & sign_mask) != 0u;
-        value = (uint16_t)((source << 1u) & width_mask);
-        value |= alternate ? carry : next_carry;
-    } else {
-        next_carry = source & 1u;
-        value = (uint16_t)(source >> 1u);
-        if (alternate ? carry != 0u : next_carry != 0u) {
-            value |= sign_mask;
-        }
-    }
+    bool carry_affected;
+    uint16_t value = shift_single_bit(cpu, source, family, alternate, byte_mode,
+                                      &next_carry, &carry_affected);
     update_logic_flags(cpu, value, byte_mode);
-    cpu->sr = (uint16_t)((cpu->sr & ~1u) | next_carry);
+    if (carry_affected) {
+        cpu->sr = (uint16_t)((cpu->sr & ~1u) | next_carry);
+    }
     if (byte_mode) {
         return write_operand_byte(cpu, destination_mode, destination_register, 0u,
                                   (uint8_t)value);
     }
     return write_operand_word(cpu, destination_mode, destination_register, 0u, value);
+}
+
+static bool execute_file_shift(Dspic33* cpu, uint32_t opcode) {
+    uint8_t family = (uint8_t)((opcode >> 16u) & 0x03u);
+    bool alternate = (opcode & 0x008000u) != 0u;
+    bool byte_mode = (opcode & 0x004000u) != 0u;
+    bool file_destination = (opcode & 0x002000u) != 0u;
+    uint16_t address = (uint16_t)(opcode & 0x1fffu);
+    uint16_t source =
+        byte_mode ? dspic33_read_byte(cpu, address) : dspic33_read_word(cpu, address);
+    uint16_t next_carry;
+    bool carry_affected;
+    uint16_t value = shift_single_bit(cpu, source, family, alternate, byte_mode,
+                                      &next_carry, &carry_affected);
+    update_logic_flags(cpu, value, byte_mode);
+    if (carry_affected) {
+        cpu->sr = (uint16_t)((cpu->sr & ~1u) | next_carry);
+    }
+    if (file_destination) {
+        if (byte_mode) {
+            dspic33_write_byte(cpu, address, (uint8_t)value);
+        } else {
+            dspic33_write_word(cpu, address, value);
+        }
+    } else if (byte_mode) {
+        cpu->w[0] = (uint16_t)((cpu->w[0] & 0xff00u) | (uint8_t)value);
+    } else {
+        cpu->w[0] = value;
+    }
+    return true;
 }
 
 static bool execute_multiply(Dspic33* cpu, uint32_t opcode) {
@@ -1249,6 +1291,9 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         cpu->w[destination] = zero_extend ? source : (uint16_t)(int16_t)(int8_t)source;
         update_logic_flags(cpu, cpu->w[destination], false);
         return true;
+    }
+    if ((opcode & 0xfc0000u) == 0xd40000u) {
+        return execute_file_shift(cpu, opcode);
     }
     if ((opcode & 0xfc0000u) == 0xd00000u) {
         return execute_single_shift(cpu, opcode);
