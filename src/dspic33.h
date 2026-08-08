@@ -31,6 +31,7 @@
 typedef enum {
     DSPIC33_EVENT_INTERRUPT,
     DSPIC33_EVENT_TIMER,
+    DSPIC33_EVENT_TIMER_GATE,
     DSPIC33_EVENT_DMA,
     DSPIC33_EVENT_ADC,
     DSPIC33_EVENT_UART,
@@ -88,6 +89,9 @@ typedef struct {
     uint16_t pwm[12];
     uint32_t timer_fraction[DSPIC33_TIMER_COUNT];
     uint16_t timer_enabled;
+    uint16_t timer_gate;
+    uint16_t timer_external_started;
+    uint16_t timer_interrupt_pending;
     uint16_t dma_index[DSPIC33_DMA_COUNT];
     uint16_t dma_generation[DSPIC33_DMA_COUNT];
     uint32_t dma_start_a[DSPIC33_DMA_COUNT];
@@ -202,6 +206,8 @@ bool dspic33_uart_receive(Dspic33* cpu, uint8_t channel, uint8_t value, uint64_t
 bool dspic33_spi_receive(Dspic33* cpu, uint8_t channel, uint16_t value, uint64_t delay);
 bool dspic33_dma_request(Dspic33* cpu, uint8_t request, uint16_t indirect_address,
                          uint64_t delay);
+bool dspic33_timer_pulse(Dspic33* cpu, uint8_t timer, uint32_t pulses, uint64_t delay);
+bool dspic33_timer_gate(Dspic33* cpu, uint8_t timer, bool high, uint64_t delay);
 bool dspic33_can_receive(Dspic33* cpu, uint8_t channel, const Dspic33CanFrame* frame,
                          uint64_t delay);
 bool dspic33_usb_receive(Dspic33* cpu, uint8_t endpoint, const uint8_t* data,

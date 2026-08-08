@@ -9,6 +9,7 @@ static const uint16_t timer_periods[DSPIC33_TIMER_COUNT] = {
     0x0102u, 0x010cu, 0x010eu, 0x011au, 0x011cu, 0x0128u, 0x012au, 0x0136u, 0x0138u};
 static const uint16_t timer_controls[DSPIC33_TIMER_COUNT] = {
     0x0104u, 0x0110u, 0x0112u, 0x011eu, 0x0120u, 0x012cu, 0x012eu, 0x013au, 0x013cu};
+static const uint16_t timer_holding_registers[4] = {0x0108u, 0x0116u, 0x0124u, 0x0132u};
 static const uint8_t timer_irqs[DSPIC33_TIMER_COUNT] = {3u,  7u,  8u,  27u, 28u,
                                                         47u, 48u, 51u, 52u};
 static const uint8_t dma_irqs[DSPIC33_DMA_COUNT] = {
@@ -32,6 +33,13 @@ typedef struct {
 } Dspic33RegisterMask;
 
 enum {
+    TIMER_ON = 0x8000u,
+    TIMER_STOP_IDLE = 0x2000u,
+    TIMER_GATE = 0x0040u,
+    TIMER_PRESCALE_MASK = 0x0030u,
+    TIMER_32_BIT = 0x0008u,
+    TIMER_SYNC = 0x0004u,
+    TIMER_EXTERNAL = 0x0002u,
     DMA_CHANNEL_BASE = 0x0b00u,
     DMA_CHANNEL_STRIDE = 0x0010u,
     DMA_CON_CHEN = 0x8000u,
@@ -61,48 +69,50 @@ enum {
 
 static const Dspic33RegisterMask register_masks[] = {
     {0x0046u, 0xcfffu}, {0x0048u, 0xfffeu}, {0x004au, 0xfffeu}, {0x004cu, 0xfffeu},
-    {0x004eu, 0xfffeu}, {0x0050u, 0xffffu}, {0x0680u, 0x3f3fu}, {0x0682u, 0x3f3fu},
-    {0x0684u, 0x3f3fu}, {0x0686u, 0x3f3fu}, {0x0688u, 0x3f3fu}, {0x068au, 0x3f3fu},
-    {0x068cu, 0x3f3fu}, {0x068eu, 0x3f3fu}, {0x0690u, 0x3f3fu}, {0x0692u, 0x3f3fu},
-    {0x0696u, 0x3f3fu}, {0x0698u, 0x3f3fu}, {0x069au, 0x3f3fu}, {0x069cu, 0x3f3fu},
-    {0x069eu, 0x3f3fu}, {0x06a0u, 0x7f00u}, {0x06a2u, 0x7f7fu}, {0x06a4u, 0x7f7fu},
-    {0x06a6u, 0x7f7fu}, {0x06a8u, 0x7f7fu}, {0x06aau, 0x7f7fu}, {0x06acu, 0x7f7fu},
-    {0x06aeu, 0x7f7fu}, {0x06b0u, 0x7f7fu}, {0x06b2u, 0x7f7fu}, {0x06b4u, 0x7f7fu},
-    {0x06b6u, 0x7f7fu}, {0x06b8u, 0x7f7fu}, {0x06bau, 0x7f7fu}, {0x06bcu, 0x7f7fu},
-    {0x06beu, 0x7f7fu}, {0x06c0u, 0x7f7fu}, {0x06c2u, 0x7f7fu}, {0x06c4u, 0x7f7fu},
-    {0x06c6u, 0x7f7fu}, {0x06c8u, 0x7f7fu}, {0x06cau, 0x007fu}, {0x06ceu, 0x007fu},
-    {0x06d0u, 0x7f7fu}, {0x06d2u, 0x007fu}, {0x06d4u, 0x7f7fu}, {0x06d6u, 0x7f7fu},
-    {0x06d8u, 0x7f7fu}, {0x06dau, 0x7f7fu}, {0x06dcu, 0x007fu}, {0x06deu, 0x7f7fu},
-    {0x06e0u, 0x007fu}, {0x06e2u, 0x7f7fu}, {0x06e4u, 0x7f7fu}, {0x06e6u, 0x7f7fu},
-    {0x06e8u, 0x7f7fu}, {0x06eau, 0x7f7fu}, {0x06ecu, 0x7f7fu}, {0x06eeu, 0x7f7fu},
-    {0x06f0u, 0x7f7fu}, {0x06f2u, 0x007fu}, {0x06f4u, 0x7f7fu}, {0x06f6u, 0x007fu},
-    {0x0744u, 0xffdfu}, {0x0746u, 0x01ffu}, {0x0748u, 0x003fu}, {0x074eu, 0xbf00u},
-    {0x075au, 0x183fu}, {0x0760u, 0xffffu}, {0x0762u, 0xffffu}, {0x0764u, 0xf7abu},
-    {0x0766u, 0x0021u}, {0x0768u, 0xffffu}, {0x076au, 0x3f03u}, {0x076cu, 0x00f0u},
-    {0x0800u, 0xffffu}, {0x0802u, 0xffffu}, {0x0804u, 0xffffu}, {0x0806u, 0x7fffu},
-    {0x0808u, 0x0afeu}, {0x080au, 0xdfeeu}, {0x080cu, 0xc3efu}, {0x080eu, 0xffc0u},
-    {0x0810u, 0x7fdfu}, {0x0820u, 0xffffu}, {0x0822u, 0xffffu}, {0x0824u, 0xffffu},
-    {0x0826u, 0x7fffu}, {0x0828u, 0x0afeu}, {0x082au, 0xdfeeu}, {0x082cu, 0xffefu},
-    {0x082eu, 0xffc0u}, {0x0830u, 0x001fu}, {0x0840u, 0x7777u}, {0x0842u, 0x7777u},
-    {0x0844u, 0x7777u}, {0x0846u, 0x7777u}, {0x0848u, 0x7777u}, {0x084au, 0x7777u},
-    {0x084cu, 0x7777u}, {0x084eu, 0x7777u}, {0x0850u, 0x7777u}, {0x0852u, 0x7777u},
-    {0x0854u, 0x7777u}, {0x0856u, 0x7777u}, {0x0858u, 0x7777u}, {0x085au, 0x7777u},
-    {0x085cu, 0x7777u}, {0x085eu, 0x0777u}, {0x0860u, 0x7770u}, {0x0862u, 0x7777u},
-    {0x0864u, 0x7070u}, {0x0868u, 0x7770u}, {0x086au, 0x7700u}, {0x086cu, 0x7777u},
-    {0x086eu, 0x7777u}, {0x0870u, 0x7777u}, {0x087au, 0x7700u}, {0x087cu, 0x7777u},
-    {0x087eu, 0x7777u}, {0x0880u, 0x7777u}, {0x0882u, 0x7707u}, {0x0884u, 0x7777u},
-    {0x0886u, 0x0777u}, {0x0e00u, 0xc6ffu}, {0x0e04u, 0xc6ffu}, {0x0e06u, 0xc03fu},
-    {0x0e08u, 0xc6ffu}, {0x0e0au, 0xc6ffu}, {0x0e0cu, 0xc6ffu}, {0x0e0eu, 0x06c0u},
-    {0x0e10u, 0xffffu}, {0x0e14u, 0xffffu}, {0x0e18u, 0xffffu}, {0x0e1au, 0xffffu},
-    {0x0e1cu, 0xffffu}, {0x0e1eu, 0xffffu}, {0x0e20u, 0xf01eu}, {0x0e24u, 0xf01eu},
-    {0x0e28u, 0xf01eu}, {0x0e2au, 0xf01eu}, {0x0e2cu, 0xf01eu}, {0x0e2eu, 0x601eu},
-    {0x0e30u, 0xffffu}, {0x0e34u, 0xffffu}, {0x0e36u, 0xff3fu}, {0x0e38u, 0xffffu},
-    {0x0e3au, 0xffffu}, {0x0e3cu, 0xffffu}, {0x0e3eu, 0x00c0u}, {0x0e40u, 0x03ffu},
-    {0x0e44u, 0x03ffu}, {0x0e48u, 0x03ffu}, {0x0e4au, 0x03ffu}, {0x0e4cu, 0x03ffu},
-    {0x0e4eu, 0x03ffu}, {0x0e50u, 0x313fu}, {0x0e54u, 0x313fu}, {0x0e56u, 0x313fu},
-    {0x0e58u, 0x313fu}, {0x0e5au, 0x313fu}, {0x0e5cu, 0x313fu}, {0x0e60u, 0xf3c3u},
-    {0x0e64u, 0xf3c3u}, {0x0e66u, 0xf003u}, {0x0e68u, 0xf3cfu}, {0x0e6au, 0xf3c3u},
-    {0x0e6cu, 0xf3c3u}, {0x0e6eu, 0x03c0u}};
+    {0x004eu, 0xfffeu}, {0x0050u, 0xffffu}, {0x0104u, 0xa076u}, {0x0110u, 0xa07au},
+    {0x0112u, 0xa072u}, {0x011eu, 0xa07au}, {0x0120u, 0xa072u}, {0x012cu, 0xa07au},
+    {0x012eu, 0xa072u}, {0x013au, 0xa07au}, {0x013cu, 0xa072u}, {0x0680u, 0x3f3fu},
+    {0x0682u, 0x3f3fu}, {0x0684u, 0x3f3fu}, {0x0686u, 0x3f3fu}, {0x0688u, 0x3f3fu},
+    {0x068au, 0x3f3fu}, {0x068cu, 0x3f3fu}, {0x068eu, 0x3f3fu}, {0x0690u, 0x3f3fu},
+    {0x0692u, 0x3f3fu}, {0x0696u, 0x3f3fu}, {0x0698u, 0x3f3fu}, {0x069au, 0x3f3fu},
+    {0x069cu, 0x3f3fu}, {0x069eu, 0x3f3fu}, {0x06a0u, 0x7f00u}, {0x06a2u, 0x7f7fu},
+    {0x06a4u, 0x7f7fu}, {0x06a6u, 0x7f7fu}, {0x06a8u, 0x7f7fu}, {0x06aau, 0x7f7fu},
+    {0x06acu, 0x7f7fu}, {0x06aeu, 0x7f7fu}, {0x06b0u, 0x7f7fu}, {0x06b2u, 0x7f7fu},
+    {0x06b4u, 0x7f7fu}, {0x06b6u, 0x7f7fu}, {0x06b8u, 0x7f7fu}, {0x06bau, 0x7f7fu},
+    {0x06bcu, 0x7f7fu}, {0x06beu, 0x7f7fu}, {0x06c0u, 0x7f7fu}, {0x06c2u, 0x7f7fu},
+    {0x06c4u, 0x7f7fu}, {0x06c6u, 0x7f7fu}, {0x06c8u, 0x7f7fu}, {0x06cau, 0x007fu},
+    {0x06ceu, 0x007fu}, {0x06d0u, 0x7f7fu}, {0x06d2u, 0x007fu}, {0x06d4u, 0x7f7fu},
+    {0x06d6u, 0x7f7fu}, {0x06d8u, 0x7f7fu}, {0x06dau, 0x7f7fu}, {0x06dcu, 0x007fu},
+    {0x06deu, 0x7f7fu}, {0x06e0u, 0x007fu}, {0x06e2u, 0x7f7fu}, {0x06e4u, 0x7f7fu},
+    {0x06e6u, 0x7f7fu}, {0x06e8u, 0x7f7fu}, {0x06eau, 0x7f7fu}, {0x06ecu, 0x7f7fu},
+    {0x06eeu, 0x7f7fu}, {0x06f0u, 0x7f7fu}, {0x06f2u, 0x007fu}, {0x06f4u, 0x7f7fu},
+    {0x06f6u, 0x007fu}, {0x0744u, 0xffdfu}, {0x0746u, 0x01ffu}, {0x0748u, 0x003fu},
+    {0x074eu, 0xbf00u}, {0x075au, 0x183fu}, {0x0760u, 0xffffu}, {0x0762u, 0xffffu},
+    {0x0764u, 0xf7abu}, {0x0766u, 0x0021u}, {0x0768u, 0xffffu}, {0x076au, 0x3f03u},
+    {0x076cu, 0x00f0u}, {0x0800u, 0xffffu}, {0x0802u, 0xffffu}, {0x0804u, 0xffffu},
+    {0x0806u, 0x7fffu}, {0x0808u, 0x0afeu}, {0x080au, 0xdfeeu}, {0x080cu, 0xc3efu},
+    {0x080eu, 0xffc0u}, {0x0810u, 0x7fdfu}, {0x0820u, 0xffffu}, {0x0822u, 0xffffu},
+    {0x0824u, 0xffffu}, {0x0826u, 0x7fffu}, {0x0828u, 0x0afeu}, {0x082au, 0xdfeeu},
+    {0x082cu, 0xffefu}, {0x082eu, 0xffc0u}, {0x0830u, 0x001fu}, {0x0840u, 0x7777u},
+    {0x0842u, 0x7777u}, {0x0844u, 0x7777u}, {0x0846u, 0x7777u}, {0x0848u, 0x7777u},
+    {0x084au, 0x7777u}, {0x084cu, 0x7777u}, {0x084eu, 0x7777u}, {0x0850u, 0x7777u},
+    {0x0852u, 0x7777u}, {0x0854u, 0x7777u}, {0x0856u, 0x7777u}, {0x0858u, 0x7777u},
+    {0x085au, 0x7777u}, {0x085cu, 0x7777u}, {0x085eu, 0x0777u}, {0x0860u, 0x7770u},
+    {0x0862u, 0x7777u}, {0x0864u, 0x7070u}, {0x0868u, 0x7770u}, {0x086au, 0x7700u},
+    {0x086cu, 0x7777u}, {0x086eu, 0x7777u}, {0x0870u, 0x7777u}, {0x087au, 0x7700u},
+    {0x087cu, 0x7777u}, {0x087eu, 0x7777u}, {0x0880u, 0x7777u}, {0x0882u, 0x7707u},
+    {0x0884u, 0x7777u}, {0x0886u, 0x0777u}, {0x0e00u, 0xc6ffu}, {0x0e04u, 0xc6ffu},
+    {0x0e06u, 0xc03fu}, {0x0e08u, 0xc6ffu}, {0x0e0au, 0xc6ffu}, {0x0e0cu, 0xc6ffu},
+    {0x0e0eu, 0x06c0u}, {0x0e10u, 0xffffu}, {0x0e14u, 0xffffu}, {0x0e18u, 0xffffu},
+    {0x0e1au, 0xffffu}, {0x0e1cu, 0xffffu}, {0x0e1eu, 0xffffu}, {0x0e20u, 0xf01eu},
+    {0x0e24u, 0xf01eu}, {0x0e28u, 0xf01eu}, {0x0e2au, 0xf01eu}, {0x0e2cu, 0xf01eu},
+    {0x0e2eu, 0x601eu}, {0x0e30u, 0xffffu}, {0x0e34u, 0xffffu}, {0x0e36u, 0xff3fu},
+    {0x0e38u, 0xffffu}, {0x0e3au, 0xffffu}, {0x0e3cu, 0xffffu}, {0x0e3eu, 0x00c0u},
+    {0x0e40u, 0x03ffu}, {0x0e44u, 0x03ffu}, {0x0e48u, 0x03ffu}, {0x0e4au, 0x03ffu},
+    {0x0e4cu, 0x03ffu}, {0x0e4eu, 0x03ffu}, {0x0e50u, 0x313fu}, {0x0e54u, 0x313fu},
+    {0x0e56u, 0x313fu}, {0x0e58u, 0x313fu}, {0x0e5au, 0x313fu}, {0x0e5cu, 0x313fu},
+    {0x0e60u, 0xf3c3u}, {0x0e64u, 0xf3c3u}, {0x0e66u, 0xf003u}, {0x0e68u, 0xf3cfu},
+    {0x0e6au, 0xf3c3u}, {0x0e6cu, 0xf3c3u}, {0x0e6eu, 0x03c0u}};
 
 static const Dspic33ResetValue reset_values[] = {
     {0x004au, 0x0001u}, {0x004eu, 0x0001u}, {0x0102u, 0xffffu}, {0x010cu, 0xffffu},
@@ -773,13 +783,192 @@ static void run_can(Dspic33* cpu, uint8_t channel) {
     dspic33_raise_interrupt(cpu, channel == 0u ? 34u : 55u);
 }
 
+static bool timer_is_type_b(uint8_t timer) { return timer >= 1u && (timer & 1u) != 0u; }
+
+static bool timer_is_type_c(uint8_t timer) { return timer >= 2u && (timer & 1u) == 0u; }
+
+static bool timer_pair_enabled(const Dspic33* cpu, uint8_t timer) {
+    return timer_is_type_b(timer) &&
+           (raw_word(cpu, timer_controls[timer]) & TIMER_32_BIT) != 0u;
+}
+
+static bool timer_is_paired_high(const Dspic33* cpu, uint8_t timer) {
+    return timer_is_type_c(timer) && timer_pair_enabled(cpu, (uint8_t)(timer - 1u));
+}
+
+static uint32_t timer_prescale(uint16_t control) {
+    switch (control & TIMER_PRESCALE_MASK) {
+    case 0x0010u:
+        return 8u;
+    case 0x0020u:
+        return 64u;
+    case 0x0030u:
+        return 256u;
+    default:
+        return 1u;
+    }
+}
+
+static bool timer_power_enabled(const Dspic33* cpu, uint8_t timer, bool external) {
+    uint16_t control = raw_word(cpu, timer_controls[timer]);
+    if (cpu->power_state == DSPIC33_POWER_ACTIVE) {
+        return true;
+    }
+    if (cpu->power_state == DSPIC33_POWER_IDLE && (control & TIMER_STOP_IDLE) == 0u &&
+        (!timer_pair_enabled(cpu, timer) ||
+         (raw_word(cpu, timer_controls[timer + 1u]) & TIMER_STOP_IDLE) == 0u)) {
+        return true;
+    }
+    return external && timer == 0u && (control & TIMER_SYNC) == 0u;
+}
+
+typedef struct {
+    uint64_t value;
+    uint64_t matches;
+} TimerAdvance;
+
+static TimerAdvance advance_counter(uint64_t current, uint64_t period, uint64_t maximum,
+                                    uint64_t ticks) {
+    TimerAdvance result = {current, 0u};
+    uint64_t cycle = period + 1u;
+    uint64_t first_match;
+    uint64_t first_reset;
+    uint64_t remaining;
+    if (ticks == 0u) {
+        return result;
+    }
+    if (current == period) {
+        first_match = cycle;
+        first_reset = 1u;
+    } else if (current < period) {
+        first_match = period - current;
+        first_reset = first_match + 1u;
+    } else {
+        first_match = maximum - current + 1u + period;
+        first_reset = first_match + 1u;
+    }
+    if (ticks >= first_match) {
+        result.matches = 1u + (ticks - first_match) / cycle;
+    }
+    if (ticks < first_reset) {
+        result.value = (current + ticks) & maximum;
+        return result;
+    }
+    remaining = ticks - first_reset;
+    result.value = remaining % cycle;
+    return result;
+}
+
+static void signal_timer_period(Dspic33* cpu, uint8_t timer, uint64_t matches,
+                                bool gated) {
+    if (matches != 0u) {
+        dspic33_dma_request(cpu, timer_irqs[timer], 0u, 0u);
+        if (!gated) {
+            cpu->io.timer_interrupt_pending |= (uint16_t)(1u << timer);
+        }
+    }
+}
+
+static void advance_timer_ticks(Dspic33* cpu, uint8_t timer, uint64_t ticks) {
+    uint16_t control = raw_word(cpu, timer_controls[timer]);
+    bool paired = timer_pair_enabled(cpu, timer);
+    bool gated = (control & TIMER_GATE) != 0u && (control & TIMER_EXTERNAL) == 0u;
+    if (ticks == 0u) {
+        return;
+    }
+    if (paired) {
+        uint64_t current =
+            raw_word(cpu, timer_registers[timer]) |
+            ((uint64_t)raw_word(cpu, timer_registers[timer + 1u]) << 16u);
+        uint64_t period = raw_word(cpu, timer_periods[timer]) |
+                          ((uint64_t)raw_word(cpu, timer_periods[timer + 1u]) << 16u);
+        TimerAdvance result = advance_counter(current, period, UINT32_MAX, ticks);
+        raw_write_word(cpu, timer_registers[timer], (uint16_t)result.value);
+        raw_write_word(cpu, timer_registers[timer + 1u],
+                       (uint16_t)(result.value >> 16u));
+        if (period != 0u) {
+            signal_timer_period(cpu, (uint8_t)(timer + 1u), result.matches, gated);
+        }
+    } else {
+        uint16_t period = raw_word(cpu, timer_periods[timer]);
+        TimerAdvance result = advance_counter(raw_word(cpu, timer_registers[timer]),
+                                              period, UINT16_MAX, ticks);
+        raw_write_word(cpu, timer_registers[timer], (uint16_t)result.value);
+        if (period != 0u) {
+            signal_timer_period(cpu, timer, result.matches, gated);
+        }
+    }
+}
+
+static void clock_timer(Dspic33* cpu, uint8_t timer, uint64_t clocks) {
+    uint16_t control = raw_word(cpu, timer_controls[timer]);
+    uint32_t prescale = timer_prescale(control);
+    uint64_t accumulated = cpu->io.timer_fraction[timer] + clocks;
+    cpu->io.timer_fraction[timer] = (uint32_t)(accumulated % prescale);
+    advance_timer_ticks(cpu, timer, accumulated / prescale);
+}
+
+static void pulse_timer(Dspic33* cpu, uint8_t timer, uint32_t pulses) {
+    uint16_t bit;
+    uint16_t control;
+    if (timer >= DSPIC33_TIMER_COUNT || pulses == 0u ||
+        timer_is_paired_high(cpu, timer)) {
+        return;
+    }
+    bit = (uint16_t)(1u << timer);
+    control = raw_word(cpu, timer_controls[timer]);
+    if ((cpu->io.timer_enabled & bit) == 0u || (control & TIMER_EXTERNAL) == 0u ||
+        !timer_power_enabled(cpu, timer, true)) {
+        return;
+    }
+    if ((timer == 0u || timer_is_type_b(timer)) &&
+        (cpu->io.timer_external_started & bit) == 0u) {
+        cpu->io.timer_external_started |= bit;
+        pulses--;
+    }
+    clock_timer(cpu, timer, pulses);
+}
+
+static void set_timer_gate(Dspic33* cpu, uint8_t timer, bool high) {
+    uint16_t bit;
+    bool previous;
+    uint16_t control;
+    if (timer >= DSPIC33_TIMER_COUNT || timer_is_paired_high(cpu, timer)) {
+        return;
+    }
+    bit = (uint16_t)(1u << timer);
+    previous = (cpu->io.timer_gate & bit) != 0u;
+    if (high) {
+        cpu->io.timer_gate |= bit;
+    } else {
+        cpu->io.timer_gate &= (uint16_t)~bit;
+    }
+    control = raw_word(cpu, timer_controls[timer]);
+    if (previous && !high && (cpu->io.timer_enabled & bit) != 0u &&
+        (control & (TIMER_GATE | TIMER_EXTERNAL)) == TIMER_GATE &&
+        timer_power_enabled(cpu, timer, false)) {
+        uint8_t interrupt_timer =
+            timer_pair_enabled(cpu, timer) ? (uint8_t)(timer + 1u) : timer;
+        uint32_t period = raw_word(cpu, timer_periods[timer]);
+        if (timer_pair_enabled(cpu, timer)) {
+            period |= (uint32_t)raw_word(cpu, timer_periods[timer + 1u]) << 16u;
+        }
+        if (period != 0u) {
+            dspic33_raise_interrupt(cpu, timer_irqs[interrupt_timer]);
+        }
+    }
+}
+
 static void process_event(Dspic33* cpu, const Dspic33Event* event) {
     switch (event->type) {
     case DSPIC33_EVENT_INTERRUPT:
         dspic33_raise_interrupt(cpu, event->source);
         break;
     case DSPIC33_EVENT_TIMER:
-        dspic33_raise_interrupt(cpu, event->source);
+        pulse_timer(cpu, (uint8_t)event->source, event->value);
+        break;
+    case DSPIC33_EVENT_TIMER_GATE:
+        set_timer_gate(cpu, (uint8_t)event->source, event->value != 0u);
         break;
     case DSPIC33_EVENT_DMA:
         run_dma(cpu, (uint8_t)event->source, event->value);
@@ -813,26 +1002,27 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
 static void advance_timers(Dspic33* cpu, uint64_t cycles) {
     uint16_t enabled = cpu->io.timer_enabled;
     uint8_t timer = 0u;
+    if (cycles != 0u) {
+        uint16_t pending = cpu->io.timer_interrupt_pending;
+        cpu->io.timer_interrupt_pending = 0u;
+        while (pending != 0u) {
+            if ((pending & 1u) != 0u) {
+                dspic33_raise_interrupt(cpu, timer_irqs[timer]);
+            }
+            pending >>= 1u;
+            timer++;
+        }
+        timer = 0u;
+    }
     while (enabled != 0u) {
         if ((enabled & 1u) != 0u) {
             uint16_t control = raw_word(cpu, timer_controls[timer]);
-            uint16_t prescale_bits = (uint16_t)((control >> 4u) & 3u);
-            uint32_t prescale = prescale_bits == 0u   ? 1u
-                                : prescale_bits == 1u ? 8u
-                                : prescale_bits == 2u ? 64u
-                                                      : 256u;
-            uint64_t accumulated = cpu->io.timer_fraction[timer] + cycles;
-            uint32_t ticks = (uint32_t)(accumulated / prescale);
-            uint32_t value;
-            uint32_t period;
-            cpu->io.timer_fraction[timer] = (uint32_t)(accumulated % prescale);
-            value = raw_word(cpu, timer_registers[timer]) + ticks;
-            period = (uint32_t)raw_word(cpu, timer_periods[timer]) + 1u;
-            if (period != 0u && value >= period) {
-                value %= period;
-                dspic33_raise_interrupt(cpu, timer_irqs[timer]);
+            bool gated = (control & TIMER_GATE) != 0u;
+            bool gate_high = (cpu->io.timer_gate & (uint16_t)(1u << timer)) != 0u;
+            if (!timer_is_paired_high(cpu, timer) && (control & TIMER_EXTERNAL) == 0u &&
+                timer_power_enabled(cpu, timer, false) && (!gated || gate_high)) {
+                clock_timer(cpu, timer, cycles);
             }
-            raw_write_word(cpu, timer_registers[timer], (uint16_t)value);
         }
         enabled >>= 1u;
         timer++;
@@ -864,14 +1054,27 @@ bool dspic33_device_advance(Dspic33* cpu, uint64_t cycles) {
     return true;
 }
 
-static void update_timer_control(Dspic33* cpu, uint16_t address) {
+static void update_timer_register(Dspic33* cpu, uint16_t address) {
     uint8_t timer;
     for (timer = 0u; timer < DSPIC33_TIMER_COUNT; timer++) {
         if ((address & 0xfffeu) == timer_controls[timer]) {
-            if ((raw_word(cpu, timer_controls[timer]) & 0x8002u) == 0x8000u) {
+            uint16_t bit = (uint16_t)(1u << timer);
+            if ((raw_word(cpu, timer_controls[timer]) & TIMER_ON) != 0u) {
                 cpu->io.timer_enabled |= (uint16_t)(1u << timer);
             } else {
                 cpu->io.timer_enabled &= (uint16_t)~(1u << timer);
+            }
+            cpu->io.timer_fraction[timer] = 0u;
+            cpu->io.timer_external_started &= (uint16_t)~bit;
+            return;
+        }
+        if ((address & 0xfffeu) == timer_registers[timer]) {
+            uint16_t bit = (uint16_t)(1u << timer);
+            cpu->io.timer_fraction[timer] = 0u;
+            cpu->io.timer_external_started &= (uint16_t)~bit;
+            if (timer_pair_enabled(cpu, timer)) {
+                raw_write_word(cpu, timer_registers[timer + 1u],
+                               raw_word(cpu, timer_holding_registers[timer / 2u]));
             }
             return;
         }
@@ -1104,7 +1307,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
             dspic33_schedule(cpu, DSPIC33_EVENT_AUX_PLL, 0u, 0u, 32u);
         }
     }
-    update_timer_control(cpu, base);
+    update_timer_register(cpu, base);
     update_oscillator(cpu, base);
     write_uart(cpu, base);
     write_spi(cpu, base);
@@ -1139,9 +1342,19 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
         0x0e0eu, 0x0e1eu, 0x0e2eu, 0x0e3eu, 0x0e4eu, 0u, 0x0e6eu};
     uint8_t port;
     uint8_t channel;
+    uint8_t timer;
     if (address == 0x08c3u) {
         return cpu->disicnt != 0u ? (uint8_t)(value | 0x40u)
                                   : (uint8_t)(value & ~0x40u);
+    }
+    if ((address & 1u) == 0u) {
+        for (timer = 1u; timer < DSPIC33_TIMER_COUNT; timer += 2u) {
+            if (address == timer_registers[timer] && timer_pair_enabled(cpu, timer)) {
+                raw_write_word(cpu, timer_holding_registers[timer / 2u],
+                               raw_word(cpu, timer_registers[timer + 1u]));
+                break;
+            }
+        }
     }
     for (port = 0u; port < DSPIC33_GPIO_PORT_COUNT; port++) {
         if ((address & 0xfffeu) == port_addresses[port]) {
@@ -1208,6 +1421,17 @@ bool dspic33_dma_request(Dspic33* cpu, uint8_t request, uint16_t indirect_addres
         }
     }
     return succeeded;
+}
+
+bool dspic33_timer_pulse(Dspic33* cpu, uint8_t timer, uint32_t pulses, uint64_t delay) {
+    return timer < DSPIC33_TIMER_COUNT && pulses != 0u &&
+           dspic33_schedule(cpu, DSPIC33_EVENT_TIMER, timer, pulses, delay);
+}
+
+bool dspic33_timer_gate(Dspic33* cpu, uint8_t timer, bool high, uint64_t delay) {
+    return timer < DSPIC33_TIMER_COUNT &&
+           dspic33_schedule(cpu, DSPIC33_EVENT_TIMER_GATE, timer, high ? 1u : 0u,
+                            delay);
 }
 
 bool dspic33_can_receive(Dspic33* cpu, uint8_t channel, const Dspic33CanFrame* frame,

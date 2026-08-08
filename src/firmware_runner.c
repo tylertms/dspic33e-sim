@@ -779,6 +779,22 @@ static bool apply_device_stimulus(Dspic33* cpu, const char* type,
             event_number(specification, "indirect_address", UINT16_MAX, 0u, false,
                          &value) &&
             dspic33_dma_request(cpu, (uint8_t)channel, (uint16_t)value, delay);
+    } else if (strcmp(type, "timer_pulses") == 0) {
+        succeeded =
+            event_number(specification, "timer", DSPIC33_TIMER_COUNT, 0u, true,
+                         &channel) &&
+            channel != 0u &&
+            event_number(specification, "pulses", UINT32_MAX, 0u, true, &value) &&
+            value != 0u &&
+            dspic33_timer_pulse(cpu, (uint8_t)(channel - 1u), (uint32_t)value, delay);
+    } else if (strcmp(type, "timer_gates") == 0) {
+        const JsonValue* high_value = json_get(specification, "high");
+        bool high = false;
+        succeeded = event_number(specification, "timer", DSPIC33_TIMER_COUNT, 0u, true,
+                                 &channel) &&
+                    channel != 0u && high_value != NULL &&
+                    json_boolean(high_value, &high) &&
+                    dspic33_timer_gate(cpu, (uint8_t)(channel - 1u), high, delay);
     } else if (strcmp(type, "uart_rx") == 0) {
         succeeded = event_number(specification, "channel", DSPIC33_UART_COUNT - 1u, 0u,
                                  true, &channel) &&
@@ -920,6 +936,10 @@ static bool apply_stimuli_part(Runner* runner, const JsonValue* part, char* erro
     return apply_device_stimuli_pair(runner, stimuli, "interrupts", error,
                                      error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "dma_requests", error,
+                                     error_size) &&
+           apply_device_stimuli_pair(runner, stimuli, "timer_pulses", error,
+                                     error_size) &&
+           apply_device_stimuli_pair(runner, stimuli, "timer_gates", error,
                                      error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "uart_rx", error, error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "spi_rx", error, error_size) &&

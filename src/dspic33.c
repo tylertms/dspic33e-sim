@@ -2370,8 +2370,9 @@ uint8_t dspic33_read_byte(Dspic33* cpu, uint32_t address) {
 }
 
 uint16_t dspic33_read_word(Dspic33* cpu, uint32_t address) {
-    return (uint16_t)(dspic33_read_byte(cpu, address) |
-                      ((uint16_t)dspic33_read_byte(cpu, address + 1u) << 8u));
+    uint16_t low = dspic33_read_byte(cpu, address);
+    uint16_t high = dspic33_read_byte(cpu, address + 1u);
+    return (uint16_t)(low | (high << 8u));
 }
 
 Dspic33StopReason dspic33_step(Dspic33* cpu) {

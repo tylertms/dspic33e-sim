@@ -1,6 +1,6 @@
 #include <stdint.h>
 
-enum { CONFORMANCE_RESULT_WORDS = 4096 };
+enum { CONFORMANCE_RESULT_WORDS = 8192 };
 
 typedef struct {
     uint16_t result_words;
@@ -35,6 +35,7 @@ extern uint16_t run_sfr_conformance(volatile uint16_t* results);
 extern uint16_t run_stack_conformance(volatile uint16_t* results);
 extern uint16_t run_system_conformance(volatile uint16_t* results);
 extern uint16_t run_table_conformance(volatile uint16_t* results);
+extern uint16_t run_timer_conformance(volatile uint16_t* results);
 extern void run_system_probe(uint16_t selector);
 extern uint16_t run_branch_conformance(volatile uint16_t* results);
 extern void conformance_complete(void);
@@ -45,6 +46,8 @@ int main(void) {
     }
     conformance_output.result_words = run_sfr_conformance(conformance_output.results);
     conformance_output.result_words += run_dma_conformance(
+        conformance_output.results + conformance_output.result_words);
+    conformance_output.result_words += run_timer_conformance(
         conformance_output.results + conformance_output.result_words);
     conformance_output.result_words += run_shift_conformance(
         conformance_output.results + conformance_output.result_words);

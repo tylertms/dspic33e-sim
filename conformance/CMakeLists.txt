@@ -29,6 +29,7 @@ add_executable(
     source/stacks.s
     source/system.s
     source/tables.s
+    source/timer.s
 )
 
 set_target_properties(dspic33-conformance PROPERTIES SUFFIX ".bin")
