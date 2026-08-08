@@ -3,6 +3,8 @@
 
 .global _branch_conformance_cases
 _branch_conformance_cases = 29
+.global _branch_conformance_group_complete
+_branch_conformance_group_complete = 1
 
 .macro record_conditional_branch id, condition, status
     set_status \status

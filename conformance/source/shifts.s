@@ -3,6 +3,8 @@
 
 .global _shift_conformance_cases
 _shift_conformance_cases = 22
+.global _shift_conformance_group_complete
+_shift_conformance_group_complete = 0
 
 .global _run_shift_conformance
 _run_shift_conformance:
