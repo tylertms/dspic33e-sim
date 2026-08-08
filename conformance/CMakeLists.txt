@@ -12,8 +12,14 @@ set(device_linker_script
 )
 
 add_executable(
-    dspic33-conformance source/arithmetic.s source/branches.s source/main.c
-                        source/extensions.s source/moves.s source/shifts.s
+    dspic33-conformance
+    source/arithmetic.s
+    source/bits.s
+    source/branches.s
+    source/main.c
+    source/extensions.s
+    source/moves.s
+    source/shifts.s
 )
 
 set_target_properties(dspic33-conformance PROPERTIES SUFFIX ".bin")

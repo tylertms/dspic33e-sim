@@ -647,10 +647,11 @@ static void skip_instruction(Dspic33* cpu) {
 static bool execute_bit(Dspic33* cpu, uint32_t opcode) {
     uint8_t kind = (uint8_t)((opcode >> 16u) & 0x07u);
     bool file = (opcode & 0x080000u) != 0u;
+    bool indirect = false;
     uint8_t bit;
     uint16_t value;
     uint16_t mask;
-    uint16_t address = 0u;
+    uint32_t address = 0u;
     uint8_t mode = 0u;
     uint8_t reg = 0u;
     bool byte_mode = false;
@@ -667,8 +668,17 @@ static bool execute_bit(Dspic33* cpu, uint32_t opcode) {
         } else {
             bit = (uint8_t)((opcode >> 12u) & 0x0fu);
         }
-        value = byte_mode ? read_operand_byte(cpu, mode, reg, 0u)
-                          : read_operand_word(cpu, mode, reg, 0u);
+        if (mode == 0u) {
+            value = byte_mode ? (uint8_t)cpu->w[reg] : cpu->w[reg];
+        } else {
+            if (!operand_address(cpu, mode, reg, 0u, byte_mode ? 1u : 2u, false,
+                                 &address)) {
+                return false;
+            }
+            indirect = true;
+            value = byte_mode ? dspic33_read_byte(cpu, address)
+                              : dspic33_read_word(cpu, address);
+        }
     }
     mask = (uint16_t)(1u << bit);
     if (kind == 0u) {
@@ -678,7 +688,7 @@ static bool execute_bit(Dspic33* cpu, uint32_t opcode) {
     } else if (kind == 2u) {
         value ^= mask;
     } else if (kind == 3u || kind == 5u) {
-        bool zero_destination = (opcode & 0x000800u) != 0u;
+        bool zero_destination = (opcode & (kind == 5u ? 0x008000u : 0x000800u)) != 0u;
         if (zero_destination || file) {
             cpu->sr = (uint16_t)((cpu->sr & ~0x0002u) |
                                  ((value & mask) == 0u ? 0x0002u : 0u));
@@ -706,10 +716,16 @@ static bool execute_bit(Dspic33* cpu, uint32_t opcode) {
     }
     if (file) {
         dspic33_write_byte(cpu, address, (uint8_t)value);
+    } else if (indirect) {
+        if (byte_mode) {
+            dspic33_write_byte(cpu, address, (uint8_t)value);
+        } else {
+            dspic33_write_word(cpu, address, value);
+        }
     } else if (byte_mode) {
-        return write_operand_byte(cpu, mode, reg, 0u, (uint8_t)value);
+        cpu->w[reg] = (uint16_t)((cpu->w[reg] & 0xff00u) | (uint8_t)value);
     } else {
-        return write_operand_word(cpu, mode, reg, 0u, value);
+        cpu->w[reg] = value;
     }
     return true;
 }
