@@ -288,14 +288,16 @@ static void update_add_flags(Dspic33* cpu, uint16_t left, uint16_t right,
 }
 
 static void update_subtract_flags(Dspic33* cpu, uint16_t left, uint16_t right,
-                                  uint16_t value, bool byte_mode, bool sticky_zero) {
-    uint16_t mask = byte_mode ? 0x00ffu : 0xffffu;
+                                  uint16_t borrow, uint16_t value, bool byte_mode,
+                                  bool sticky_zero) {
+    uint32_t mask = byte_mode ? 0x00ffu : 0xffffu;
     uint16_t sign = byte_mode ? 0x0080u : 0x8000u;
     uint16_t digit_mask = byte_mode ? 0x000fu : 0x00ffu;
+    uint32_t subtraction = (right & mask) + borrow;
+    uint16_t operand = (uint16_t)(subtraction & mask);
     bool previous_zero = (cpu->sr & 0x0002u) != 0u;
-    left &= mask;
-    right &= mask;
-    value &= mask;
+    left = (uint16_t)(left & mask);
+    value = (uint16_t)(value & mask);
     cpu->sr = (uint16_t)(cpu->sr & ~0x010fu);
     if (value == 0u && (!sticky_zero || previous_zero)) {
         cpu->sr |= 0x0002u;
@@ -303,13 +305,13 @@ static void update_subtract_flags(Dspic33* cpu, uint16_t left, uint16_t right,
     if ((value & sign) != 0u) {
         cpu->sr |= 0x0008u;
     }
-    if (left >= right) {
+    if (left >= subtraction) {
         cpu->sr |= 0x0001u;
     }
-    if ((left & digit_mask) >= (right & digit_mask)) {
+    if ((left & digit_mask) >= (uint32_t)(right & digit_mask) + borrow) {
         cpu->sr |= 0x0100u;
     }
-    if ((((left ^ right) & (left ^ value)) & sign) != 0u) {
+    if ((((left ^ operand) & (left ^ value)) & sign) != 0u) {
         cpu->sr |= 0x0004u;
     }
 }
@@ -325,7 +327,8 @@ static bool execute_binary(Dspic33* cpu, uint32_t opcode, uint32_t operation) {
     bool with_carry =
         operation == 0x480000u || operation == 0x580000u || operation == 0x180000u;
     uint16_t carry = (cpu->sr & 1u) != 0u ? 1u : 0u;
-    uint16_t subtraction_right;
+    uint16_t borrow = 0u;
+    uint32_t subtraction_right;
 
     left = byte_mode ? (uint8_t)left : left;
     if ((opcode & 0x0060u) == 0x0060u) {
@@ -344,15 +347,15 @@ static bool execute_binary(Dspic33* cpu, uint32_t opcode, uint32_t operation) {
     } else if (operation == 0x480000u) {
         result = (uint32_t)left + right + carry;
     } else if (operation == 0x500000u || operation == 0x580000u) {
-        uint16_t borrow = with_carry && carry == 0u ? 1u : 0u;
-        subtraction_right = (uint16_t)(right + borrow);
+        borrow = with_carry && carry == 0u ? 1u : 0u;
+        subtraction_right = (uint32_t)right + borrow;
         result = (uint16_t)(left - subtraction_right);
     } else if (operation == 0x100000u || operation == 0x180000u) {
-        uint16_t borrow = with_carry && carry == 0u ? 1u : 0u;
+        borrow = with_carry && carry == 0u ? 1u : 0u;
         uint16_t swap = left;
         left = right;
         right = swap;
-        subtraction_right = (uint16_t)(right + borrow);
+        subtraction_right = (uint32_t)right + borrow;
         result = (uint16_t)(left - subtraction_right);
     } else if (operation == 0x600000u) {
         result = left & right;
@@ -376,8 +379,7 @@ static bool execute_binary(Dspic33* cpu, uint32_t opcode, uint32_t operation) {
                          result, byte_mode, operation == 0x480000u);
     } else if (operation == 0x500000u || operation == 0x580000u ||
                operation == 0x100000u || operation == 0x180000u) {
-        update_subtract_flags(cpu, left, subtraction_right, value, byte_mode,
-                              with_carry);
+        update_subtract_flags(cpu, left, right, borrow, value, byte_mode, with_carry);
     } else {
         update_logic_flags(cpu, value, byte_mode);
     }
@@ -386,7 +388,8 @@ static bool execute_binary(Dspic33* cpu, uint32_t opcode, uint32_t operation) {
 
 static bool execute_compare(Dspic33* cpu, uint32_t opcode) {
     bool byte_mode;
-    bool borrow;
+    bool with_borrow;
+    uint16_t borrow;
     uint16_t left;
     uint16_t right;
     uint16_t value;
@@ -396,7 +399,7 @@ static bool execute_compare(Dspic33* cpu, uint32_t opcode) {
         left = byte_mode ? read_operand_byte(cpu, mode, (uint8_t)(opcode & 0x0fu), 0u)
                          : read_operand_word(cpu, mode, (uint8_t)(opcode & 0x0fu), 0u);
         right = 0u;
-        borrow = false;
+        with_borrow = false;
     } else if ((opcode & 0xff0000u) == 0xe10000u) {
         uint8_t base = (uint8_t)((opcode >> 11u) & 0x0fu);
         byte_mode = (opcode & 0x000400u) != 0u;
@@ -409,22 +412,20 @@ static bool execute_compare(Dspic33* cpu, uint32_t opcode) {
                         ? read_operand_byte(cpu, mode, (uint8_t)(opcode & 0x0fu), 0u)
                         : read_operand_word(cpu, mode, (uint8_t)(opcode & 0x0fu), 0u);
         }
-        borrow = (opcode & 0x008000u) != 0u;
+        with_borrow = (opcode & 0x008000u) != 0u;
     } else if ((opcode & 0xff8000u) == 0xe20000u) {
         uint16_t address = (uint16_t)(opcode & 0x1fffu);
         byte_mode = (opcode & 0x004000u) != 0u;
         left = byte_mode ? dspic33_read_byte(cpu, address)
                          : dspic33_read_word(cpu, address);
         right = 0u;
-        borrow = false;
+        with_borrow = false;
     } else {
         return false;
     }
-    if (borrow && (cpu->sr & 1u) == 0u) {
-        right++;
-    }
-    value = (uint16_t)(left - right);
-    update_subtract_flags(cpu, left, right, value, byte_mode, borrow);
+    borrow = with_borrow && (cpu->sr & 1u) == 0u ? 1u : 0u;
+    value = (uint16_t)(left - right - borrow);
+    update_subtract_flags(cpu, left, right, borrow, value, byte_mode, with_borrow);
     return true;
 }
 
@@ -467,10 +468,10 @@ static bool execute_unary(Dspic33* cpu, uint32_t opcode) {
         update_add_flags(cpu, source, alternate ? 2u : 1u,
                          (uint32_t)source + (alternate ? 2u : 1u), byte_mode, false);
     } else if (family == 0xe9u) {
-        update_subtract_flags(cpu, source, alternate ? 2u : 1u, value, byte_mode,
+        update_subtract_flags(cpu, source, alternate ? 2u : 1u, 0u, value, byte_mode,
                               false);
     } else if (family == 0xeau && arithmetic) {
-        update_subtract_flags(cpu, 0u, source, value, byte_mode, false);
+        update_subtract_flags(cpu, 0u, source, 0u, value, byte_mode, false);
     } else if (family == 0xeau) {
         update_logic_flags(cpu, value, byte_mode);
     }
@@ -568,8 +569,7 @@ static bool execute_literal_binary(Dspic33* cpu, uint32_t opcode) {
     } else if (family == 1u) {
         uint16_t borrow = alternate && carry == 0u ? 1u : 0u;
         value = (uint16_t)(left - literal - borrow);
-        update_subtract_flags(cpu, left, (uint16_t)(literal + borrow), value, byte_mode,
-                              alternate);
+        update_subtract_flags(cpu, left, literal, borrow, value, byte_mode, alternate);
     } else if (family == 2u) {
         value = alternate ? (uint16_t)(left ^ literal) : (uint16_t)(left & literal);
         update_logic_flags(cpu, value, byte_mode);
@@ -608,8 +608,7 @@ static bool execute_file_binary(Dspic33* cpu, uint32_t opcode) {
     } else if (family == 1u) {
         uint16_t borrow = alternate && carry == 0u ? 1u : 0u;
         value = (uint16_t)(left - right - borrow);
-        update_subtract_flags(cpu, left, (uint16_t)(right + borrow), value, byte_mode,
-                              alternate);
+        update_subtract_flags(cpu, left, right, borrow, value, byte_mode, alternate);
     } else if (family == 2u) {
         value = alternate ? (uint16_t)(left ^ right) : (uint16_t)(left & right);
         update_logic_flags(cpu, value, byte_mode);
@@ -730,14 +729,14 @@ static bool execute_file_unary(Dspic33* cpu, uint32_t opcode) {
                          (uint32_t)source + (alternate ? 2u : 1u), byte_mode, false);
     } else if (family == 0xedu) {
         value = (uint16_t)(source - (alternate ? 2u : 1u));
-        update_subtract_flags(cpu, source, alternate ? 2u : 1u, value, byte_mode,
+        update_subtract_flags(cpu, source, alternate ? 2u : 1u, 0u, value, byte_mode,
                               false);
     } else if (family == 0xeeu) {
         value = alternate ? (uint16_t)~source : (uint16_t)(0u - source);
         if (alternate) {
             update_logic_flags(cpu, value, byte_mode);
         } else {
-            update_subtract_flags(cpu, 0u, source, value, byte_mode, false);
+            update_subtract_flags(cpu, 0u, source, 0u, value, byte_mode, false);
         }
     } else if (family == 0xefu) {
         value = alternate ? 0xffffu : 0u;
@@ -838,25 +837,44 @@ static uint32_t pop_program_counter(Dspic33* cpu) {
     return (high << 16u) | (low & 0xfffeu);
 }
 
-static bool execute_shift(Dspic33* cpu, uint32_t opcode, uint8_t operation) {
+static bool execute_shift(Dspic33* cpu, uint32_t opcode, bool left) {
     uint8_t source = (uint8_t)((opcode >> 11u) & 0x0fu);
     uint8_t destination = (uint8_t)((opcode >> 7u) & 0x0fu);
+    bool arithmetic = !left && (opcode & 0x008000u) != 0u;
     uint16_t amount;
     uint16_t value;
 
     amount =
         (opcode & 0x0040u) != 0u ? (uint16_t)(opcode & 0x0fu) : cpu->w[opcode & 0x0fu];
     if (amount >= 16u) {
-        value = operation == 2u && (cpu->w[source] & 0x8000u) != 0u ? 0xffffu : 0u;
-    } else if (operation == 0u) {
+        value = arithmetic && (cpu->w[source] & 0x8000u) != 0u ? 0xffffu : 0u;
+    } else if (left) {
         value = (uint16_t)(cpu->w[source] << amount);
-    } else if (operation == 1u) {
-        value = (uint16_t)(cpu->w[source] >> amount);
-    } else {
+    } else if (arithmetic) {
         value = (uint16_t)((int16_t)cpu->w[source] >> amount);
+    } else {
+        value = (uint16_t)(cpu->w[source] >> amount);
     }
     cpu->w[destination] = value;
     update_logic_flags(cpu, value, false);
+    return true;
+}
+
+static bool execute_find_first_sign_change(Dspic33* cpu, uint32_t opcode) {
+    uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
+    uint8_t source_register = (uint8_t)(opcode & 0x0fu);
+    uint8_t destination = (uint8_t)((opcode >> 7u) & 0x0fu);
+    uint16_t source = read_operand_word(cpu, source_mode, source_register, 0u);
+    bool sign = (source & 0x8000u) != 0u;
+    uint8_t shifts = 0u;
+
+    source <<= 1u;
+    while (shifts < 15u && ((source & 0x8000u) != 0u) == sign) {
+        source <<= 1u;
+        shifts++;
+    }
+    cpu->w[destination] = (uint16_t)(-(int16_t)shifts);
+    cpu->sr = (uint16_t)((cpu->sr & ~1u) | (shifts == 15u ? 1u : 0u));
     return true;
 }
 
@@ -1320,13 +1338,13 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         return execute_divide(cpu, opcode);
     }
     if ((opcode & 0xff0000u) == 0xdd0000u) {
-        return execute_shift(cpu, opcode, 0u);
+        return execute_shift(cpu, opcode, true);
     }
     if ((opcode & 0xff0000u) == 0xde0000u) {
-        return execute_shift(cpu, opcode, 1u);
+        return execute_shift(cpu, opcode, false);
     }
     if ((opcode & 0xff0000u) == 0xdf0000u) {
-        return execute_shift(cpu, opcode, 2u);
+        return execute_find_first_sign_change(cpu, opcode);
     }
     if ((opcode & 0xf80000u) == 0x100000u || (opcode & 0xf80000u) == 0x180000u ||
         (opcode & 0xf80000u) == 0x400000u || (opcode & 0xf80000u) == 0x480000u ||
