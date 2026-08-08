@@ -813,6 +813,13 @@ static bool apply_device_stimulus(Dspic33* cpu, const char* type,
         if (succeeded) {
             dspic33_adc_input(cpu, (uint8_t)channel, (uint16_t)value);
         }
+    } else if (strcmp(type, "adc_triggers") == 0) {
+        succeeded =
+            event_number(specification, "module", DSPIC33_ADC_COUNT, 0u, true,
+                         &channel) &&
+            channel != 0u &&
+            event_number(specification, "source", 14u, 0u, true, &value) &&
+            dspic33_adc_trigger(cpu, (uint8_t)(channel - 1u), (uint8_t)value, delay);
     } else if (strcmp(type, "can_rx") == 0) {
         const JsonValue* data = json_get(specification, "data");
         const JsonValue* extended_value = json_get(specification, "extended");
@@ -944,6 +951,8 @@ static bool apply_stimuli_part(Runner* runner, const JsonValue* part, char* erro
            apply_device_stimuli_pair(runner, stimuli, "uart_rx", error, error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "spi_rx", error, error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "adc", error, error_size) &&
+           apply_device_stimuli_pair(runner, stimuli, "adc_triggers", error,
+                                     error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "can_rx", error, error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "usb_rx", error, error_size);
 }

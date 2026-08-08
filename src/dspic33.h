@@ -25,6 +25,7 @@
 #define DSPIC33_CAN_COUNT 2u
 #define DSPIC33_TIMER_COUNT 9u
 #define DSPIC33_DMA_COUNT 15u
+#define DSPIC33_ADC_COUNT 2u
 #define DSPIC33_ADC_CHANNEL_COUNT 32u
 #define DSPIC33_GPIO_PORT_COUNT 7u
 
@@ -85,6 +86,15 @@ typedef struct {
     Dspic33CanQueue can_rx[DSPIC33_CAN_COUNT];
     Dspic33CanQueue can_tx[DSPIC33_CAN_COUNT];
     uint16_t adc[DSPIC33_ADC_CHANNEL_COUNT];
+    uint16_t adc_latched[DSPIC33_ADC_COUNT][4];
+    uint16_t adc_generation[DSPIC33_ADC_COUNT];
+    uint8_t adc_latched_channel[DSPIC33_ADC_COUNT][4];
+    uint8_t adc_latched_count[DSPIC33_ADC_COUNT];
+    uint8_t adc_buffer_index[DSPIC33_ADC_COUNT];
+    uint8_t adc_sample_count[DSPIC33_ADC_COUNT];
+    uint8_t adc_scan_index[DSPIC33_ADC_COUNT];
+    uint8_t adc_dma_sample[DSPIC33_ADC_COUNT][DSPIC33_ADC_CHANNEL_COUNT];
+    uint8_t adc_mux_b;
     uint16_t gpio[DSPIC33_GPIO_PORT_COUNT];
     uint16_t pwm[12];
     uint32_t timer_fraction[DSPIC33_TIMER_COUNT];
@@ -208,6 +218,7 @@ bool dspic33_dma_request(Dspic33* cpu, uint8_t request, uint16_t indirect_addres
                          uint64_t delay);
 bool dspic33_timer_pulse(Dspic33* cpu, uint8_t timer, uint32_t pulses, uint64_t delay);
 bool dspic33_timer_gate(Dspic33* cpu, uint8_t timer, bool high, uint64_t delay);
+bool dspic33_adc_trigger(Dspic33* cpu, uint8_t module, uint8_t source, uint64_t delay);
 bool dspic33_can_receive(Dspic33* cpu, uint8_t channel, const Dspic33CanFrame* frame,
                          uint64_t delay);
 bool dspic33_usb_receive(Dspic33* cpu, uint8_t endpoint, const uint8_t* data,

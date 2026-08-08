@@ -21,6 +21,7 @@ volatile uint16_t interrupt_handler_marker[4] __attribute__((near));
 volatile uint16_t interrupt_handler_control[4] __attribute__((near));
 
 extern uint16_t run_arithmetic_conformance(volatile uint16_t* results);
+extern uint16_t run_adc_conformance(volatile uint16_t* results);
 extern uint16_t run_bit_conformance(volatile uint16_t* results);
 extern uint16_t run_divide_conformance(volatile uint16_t* results);
 extern uint16_t run_dma_conformance(volatile uint16_t* results);
@@ -48,6 +49,8 @@ int main(void) {
     conformance_output.result_words += run_dma_conformance(
         conformance_output.results + conformance_output.result_words);
     conformance_output.result_words += run_timer_conformance(
+        conformance_output.results + conformance_output.result_words);
+    conformance_output.result_words += run_adc_conformance(
         conformance_output.results + conformance_output.result_words);
     conformance_output.result_words += run_shift_conformance(
         conformance_output.results + conformance_output.result_words);
