@@ -757,6 +757,56 @@ static bool event_number(const JsonValue* specification, const char* name,
     return true;
 }
 
+static bool byte_array(const JsonValue* value, uint8_t* bytes, size_t capacity,
+                       uint16_t* size) {
+    size_t index;
+    if (value == NULL || value->type != JSON_ARRAY ||
+        value->as.array.count > capacity) {
+        return false;
+    }
+    for (index = 0u; index < value->as.array.count; index++) {
+        int64_t byte;
+        if (!parse_number(value->as.array.items[index], &byte) || byte < 0 ||
+            byte > UINT8_MAX) {
+            return false;
+        }
+        bytes[index] = (uint8_t)byte;
+    }
+    *size = (uint16_t)value->as.array.count;
+    return true;
+}
+
+static bool usb_handshake_value(const char* name, Dspic33UsbHandshake* handshake) {
+    static const char* names[] = {"none", "ack", "nak", "stall", "timeout", "error"};
+    size_t index;
+    if (name == NULL) {
+        return false;
+    }
+    for (index = 1u; index < sizeof(names) / sizeof(names[0]); index++) {
+        if (strcmp(name, names[index]) == 0) {
+            *handshake = (Dspic33UsbHandshake)index;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool usb_bus_event_value(const char* name, Dspic33UsbBusEvent* event) {
+    static const char* names[] = {"reset",  "sof",    "idle",  "resume",
+                                  "attach", "detach", "error", "otg_state"};
+    size_t index;
+    if (name == NULL) {
+        return false;
+    }
+    for (index = 0u; index < sizeof(names) / sizeof(names[0]); index++) {
+        if (strcmp(name, names[index]) == 0) {
+            *event = (Dspic33UsbBusEvent)index;
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool apply_device_stimulus(Dspic33* cpu, const char* type,
                                   const JsonValue* specification, char* error,
                                   size_t error_size) {
@@ -892,22 +942,61 @@ static bool apply_device_stimulus(Dspic33* cpu, const char* type,
         }
         succeeded =
             succeeded && dspic33_can_receive(cpu, (uint8_t)channel, &frame, delay);
-    } else if (strcmp(type, "usb_rx") == 0) {
+    } else if (strcmp(type, "usb_rx") == 0 || strcmp(type, "usb_setup") == 0) {
         const JsonValue* data = json_get(specification, "data");
-        uint8_t bytes[64];
-        size_t index;
+        const JsonValue* data1_value = json_get(specification, "data1");
+        const JsonValue* address_value = json_get(specification, "address");
+        uint8_t bytes[DSPIC33_USB_PACKET_SIZE];
+        uint16_t size = 0u;
+        bool data1 = false;
         succeeded = event_number(specification, "endpoint", 15u, 0u, true, &channel) &&
-                    data != NULL && data->type == JSON_ARRAY &&
-                    data->as.array.count <= sizeof(bytes);
-        for (index = 0u; succeeded && index < data->as.array.count; index++) {
-            int64_t byte;
-            succeeded = parse_number(data->as.array.items[index], &byte) && byte >= 0 &&
-                        byte <= UINT8_MAX;
-            bytes[index] = (uint8_t)byte;
+                    byte_array(data, bytes, sizeof(bytes), &size) &&
+                    (data1_value == NULL || json_boolean(data1_value, &data1)) &&
+                    (address_value == NULL ||
+                     event_number(specification, "address", 0x7fu, 0u, true, &value));
+        if (succeeded) {
+            uint8_t pid = strcmp(type, "usb_setup") == 0 ? DSPIC33_USB_PID_SETUP
+                                                         : DSPIC33_USB_PID_OUT;
+            succeeded =
+                address_value != NULL
+                    ? dspic33_usb_token(cpu, (uint8_t)value, (uint8_t)channel,
+                                        (Dspic33UsbPid)pid, bytes, size, data1, delay)
+                    : (pid == DSPIC33_USB_PID_SETUP
+                           ? dspic33_usb_setup(cpu, (uint8_t)channel, bytes, size,
+                                               delay)
+                           : dspic33_usb_receive_toggle(cpu, (uint8_t)channel, bytes,
+                                                        size, data1, delay));
         }
+    } else if (strcmp(type, "usb_in") == 0) {
+        const JsonValue* address_value = json_get(specification, "address");
+        succeeded = event_number(specification, "endpoint", 15u, 0u, true, &channel) &&
+                    (address_value == NULL ||
+                     event_number(specification, "address", 0x7fu, 0u, true, &value)) &&
+                    (address_value != NULL
+                         ? dspic33_usb_token(cpu, (uint8_t)value, (uint8_t)channel,
+                                             DSPIC33_USB_PID_IN, NULL, 0u, false, delay)
+                         : dspic33_usb_request(cpu, (uint8_t)channel, delay));
+    } else if (strcmp(type, "usb_host_responses") == 0) {
+        const JsonValue* data = json_get(specification, "data");
+        const JsonValue* data1_value = json_get(specification, "data1");
+        Dspic33UsbHandshake handshake;
+        uint8_t bytes[DSPIC33_USB_PACKET_SIZE];
+        uint16_t size = 0u;
+        bool data1 = false;
         succeeded =
-            succeeded && dspic33_usb_receive(cpu, (uint8_t)channel, bytes,
-                                             (uint16_t)data->as.array.count, delay);
+            usb_handshake_value(json_string(json_get(specification, "handshake")),
+                                &handshake) &&
+            (data == NULL || byte_array(data, bytes, sizeof(bytes), &size)) &&
+            (data1_value == NULL || json_boolean(data1_value, &data1)) &&
+            dspic33_usb_host_response(cpu, handshake, bytes, size, data1, delay);
+    } else if (strcmp(type, "usb_bus") == 0) {
+        Dspic33UsbBusEvent event;
+        succeeded = usb_bus_event_value(json_string(json_get(specification, "event")),
+                                        &event) &&
+                    event_number(specification, "value", UINT16_MAX,
+                                 event == DSPIC33_USB_BUS_SOF ? UINT16_MAX : 0u, false,
+                                 &value) &&
+                    dspic33_usb_bus(cpu, event, (uint16_t)value, delay);
     }
     if (!succeeded) {
         snprintf(error, error_size, "invalid %s stimulus", type);
@@ -1008,7 +1097,12 @@ static bool apply_stimuli_part(Runner* runner, const JsonValue* part, char* erro
            apply_device_stimuli_pair(runner, stimuli, "can_errors", error,
                                      error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "can_rx", error, error_size) &&
-           apply_device_stimuli_pair(runner, stimuli, "usb_rx", error, error_size);
+           apply_device_stimuli_pair(runner, stimuli, "usb_rx", error, error_size) &&
+           apply_device_stimuli_pair(runner, stimuli, "usb_setup", error, error_size) &&
+           apply_device_stimuli_pair(runner, stimuli, "usb_in", error, error_size) &&
+           apply_device_stimuli_pair(runner, stimuli, "usb_host_responses", error,
+                                     error_size) &&
+           apply_device_stimuli_pair(runner, stimuli, "usb_bus", error, error_size);
 }
 
 static void reset_pair(Runner* runner) {
@@ -1650,6 +1744,89 @@ static bool compare_can_transmit(Runner* runner, const StepParts* parts,
     return true;
 }
 
+static bool usb_packets_match(const Dspic33UsbPacket* reference,
+                              const Dspic33UsbPacket* candidate) {
+    return reference->address == candidate->address &&
+           reference->endpoint == candidate->endpoint &&
+           reference->pid == candidate->pid && reference->error == candidate->error &&
+           reference->handshake == candidate->handshake &&
+           reference->data1 == candidate->data1 &&
+           reference->low_speed == candidate->low_speed &&
+           reference->size == candidate->size &&
+           memcmp(reference->data, candidate->data, reference->size) == 0;
+}
+
+static void print_usb_packet(bool present, const Dspic33UsbPacket* packet) {
+    uint16_t index;
+    if (!present) {
+        printf("none");
+        return;
+    }
+    printf("address=%u endpoint=%u pid=0x%x handshake=%u data1=%u low-speed=%u "
+           "error=0x%02x size=%u data=",
+           packet->address, packet->endpoint, packet->pid, packet->handshake,
+           packet->data1 ? 1u : 0u, packet->low_speed ? 1u : 0u, packet->error,
+           packet->size);
+    for (index = 0u; index < packet->size; index++) {
+        printf("%02x", packet->data[index]);
+    }
+}
+
+static bool compare_usb_transmit(Runner* runner, const StepParts* parts,
+                                 size_t* failures, char* error, size_t error_size) {
+    const JsonValue* values = scalar_field(parts, "usb_tx");
+    size_t index;
+    if (values == NULL) {
+        return true;
+    }
+    if (values->type != JSON_ARRAY) {
+        snprintf(error, error_size, "USB transmit observations must be an array");
+        return false;
+    }
+    for (index = 0u; index < values->as.array.count; index++) {
+        const JsonValue* item = values->as.array.items[index];
+        size_t reference_count;
+        size_t candidate_count;
+        size_t packet_index = 0u;
+        if (item->type != JSON_OBJECT) {
+            snprintf(error, error_size, "invalid USB transmit observation");
+            return false;
+        }
+        reference_count = runner->reference.io.usb_tx.count;
+        candidate_count = runner->candidate.io.usb_tx.count;
+        runner->comparisons++;
+        if (reference_count != candidate_count) {
+            (*failures)++;
+            printf("  USB transmit count: reference=%zu candidate=%zu\n",
+                   reference_count, candidate_count);
+        }
+        while (runner->reference.io.usb_tx.count != 0u ||
+               runner->candidate.io.usb_tx.count != 0u) {
+            Dspic33UsbPacket reference_packet;
+            Dspic33UsbPacket candidate_packet;
+            bool reference_present =
+                dspic33_usb_transmit(&runner->reference, &reference_packet);
+            bool candidate_present =
+                dspic33_usb_transmit(&runner->candidate, &candidate_packet);
+            bool matched = reference_present == candidate_present;
+            if (reference_present && candidate_present) {
+                matched = usb_packets_match(&reference_packet, &candidate_packet);
+            }
+            runner->comparisons++;
+            if (!matched) {
+                (*failures)++;
+                printf("  USB transmit packet %zu: reference=", packet_index);
+                print_usb_packet(reference_present, &reference_packet);
+                printf(" candidate=");
+                print_usb_packet(candidate_present, &candidate_packet);
+                printf("\n");
+            }
+            packet_index++;
+        }
+    }
+    return true;
+}
+
 static bool apply_generated_value(Runner* runner, const JsonValue* specification,
                                   int64_t value, bool range, char* error,
                                   size_t error_size) {
@@ -1768,7 +1945,8 @@ static bool execute_step(Runner* runner, const char* scenario_name,
     if (!compare_registers(runner, parts, &failures, error, error_size) ||
         !compare_memory(runner, parts, &failures, error, error_size) ||
         !compare_pins(runner, parts, &failures, error, error_size) ||
-        !compare_can_transmit(runner, parts, &failures, error, error_size)) {
+        !compare_can_transmit(runner, parts, &failures, error, error_size) ||
+        !compare_usb_transmit(runner, parts, &failures, error, error_size)) {
         return false;
     }
     if (failures == 0u) {

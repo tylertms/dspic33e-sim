@@ -139,6 +139,69 @@ enum {
     CAN_EVENT_KIND_MASK = 0x000000ffu,
     CAN_EVENT_TRANSMIT_ERROR = 0x00000100u,
     CAN_EVENT_ERROR_COUNT_SHIFT = 16u,
+    USB_OTGIR = 0x0488u,
+    USB_OTGIE = 0x048au,
+    USB_OTGSTAT = 0x048cu,
+    USB_OTGCON = 0x048eu,
+    USB_PWRC = 0x0490u,
+    USB_IR = 0x04c0u,
+    USB_IE = 0x04c2u,
+    USB_EIR = 0x04c4u,
+    USB_EIE = 0x04c6u,
+    USB_STAT = 0x04c8u,
+    USB_CON = 0x04cau,
+    USB_ADDR = 0x04ccu,
+    USB_BDTP1 = 0x04ceu,
+    USB_FRML = 0x04d0u,
+    USB_FRMH = 0x04d2u,
+    USB_TOK = 0x04d4u,
+    USB_SOF = 0x04d6u,
+    USB_BDTP2 = 0x04d8u,
+    USB_BDTP3 = 0x04dau,
+    USB_CNFG1 = 0x04dcu,
+    USB_CNFG2 = 0x04deu,
+    USB_EP0 = 0x04e0u,
+    USB_PWMRRS = 0x0580u,
+    USB_PWMCON = 0x0582u,
+    USB_POWER = 0x0001u,
+    USB_SUSPEND = 0x0002u,
+    USB_SLEEP_GUARD = 0x0010u,
+    USB_ACTIVITY_PENDING = 0x0080u,
+    USB_ENABLE = 0x0001u,
+    USB_PING_PONG_RESET = 0x0002u,
+    USB_RESUME = 0x0004u,
+    USB_HOST_ENABLE = 0x0008u,
+    USB_HOST_RESET = 0x0010u,
+    USB_PACKET_DISABLE = 0x0020u,
+    USB_TOKEN_BUSY = 0x0020u,
+    USB_STALL_INTERRUPT = 0x0080u,
+    USB_RESUME_INTERRUPT = 0x0020u,
+    USB_IDLE_INTERRUPT = 0x0010u,
+    USB_TRANSACTION_INTERRUPT = 0x0008u,
+    USB_SOF_INTERRUPT = 0x0004u,
+    USB_ERROR_INTERRUPT = 0x0002u,
+    USB_RESET_INTERRUPT = 0x0001u,
+    USB_ENDPOINT_CONTROL_DISABLED = 0x0010u,
+    USB_ENDPOINT_RX_ENABLE = 0x0008u,
+    USB_ENDPOINT_TX_ENABLE = 0x0004u,
+    USB_ENDPOINT_STALL = 0x0002u,
+    USB_ENDPOINT_HANDSHAKE = 0x0001u,
+    USB_DESCRIPTOR_OWNED = 0x0080u,
+    USB_DESCRIPTOR_DATA1 = 0x0040u,
+    USB_DESCRIPTOR_KEEP = 0x0020u,
+    USB_DESCRIPTOR_NO_INCREMENT = 0x0010u,
+    USB_DESCRIPTOR_DTS_ENABLE = 0x0008u,
+    USB_DESCRIPTOR_STALL = 0x0004u,
+    USB_DESCRIPTOR_PID_MASK = 0x003cu,
+    USB_DESCRIPTOR_COUNT_MASK = 0x03ffu,
+    USB_ERROR_DMA = 0x0020u,
+    USB_ERROR_BTO = 0x0010u,
+    USB_ERROR_DFN8 = 0x0008u,
+    USB_ERROR_CRC16 = 0x0004u,
+    USB_ERROR_CRC5 = 0x0002u,
+    USB_ERROR_PID = 0x0001u,
+    USB_IRQ = 86u,
+    USB_FRAME_CYCLES = 60000u,
     ADC_ON = 0x8000u,
     ADC_STOP_IDLE = 0x2000u,
     ADC_BUFFER_ORDER = 0x1000u,
@@ -199,6 +262,9 @@ enum {
     PWM_INPUT_HIGH = 0x00000001u,
     PWM_INPUT_KIND = 0x00000002u
 };
+
+static bool usb_schedule_bus_event(Dspic33* cpu, Dspic33UsbBusEvent event,
+                                   uint16_t value, uint64_t delay);
 
 static const Dspic33RegisterMask register_masks[] = {
     {0x0046u, 0xcfffu}, {0x0048u, 0xfffeu}, {0x004au, 0xfffeu}, {0x004cu, 0xfffeu},
@@ -422,6 +488,48 @@ static bool can_register_write_mask(const Dspic33* cpu, uint16_t address,
         return true;
     }
     return false;
+}
+
+static bool usb_register_write_mask(const Dspic33* cpu, uint16_t address,
+                                    uint16_t previous, uint16_t* writable) {
+    bool host = ((address == USB_CON ? previous : raw_word(cpu, USB_CON)) &
+                 USB_HOST_ENABLE) != 0u;
+    if (address == USB_OTGIR || address == USB_OTGSTAT || address == USB_IR ||
+        address == USB_EIR || address == USB_STAT || address == USB_FRML ||
+        address == USB_FRMH) {
+        *writable = 0u;
+    } else if (address == USB_OTGIE) {
+        *writable = 0x00fdu;
+    } else if (address == USB_OTGCON) {
+        *writable = 0x00ffu;
+    } else if (address == USB_PWRC) {
+        *writable = USB_POWER | USB_SUSPEND | USB_SLEEP_GUARD;
+    } else if (address == USB_IE) {
+        *writable = host ? 0x00ffu : 0x00bfu;
+    } else if (address == USB_EIE) {
+        *writable = 0x00ffu;
+    } else if (address == USB_CON) {
+        *writable = host ? 0x001fu : 0x002fu;
+    } else if (address == USB_ADDR || address == USB_TOK || address == USB_SOF ||
+               address == USB_BDTP2 || address == USB_BDTP3) {
+        *writable = 0x00ffu;
+    } else if (address == USB_BDTP1) {
+        *writable = 0x00feu;
+    } else if (address == USB_CNFG1) {
+        *writable = 0x00d0u;
+    } else if (address == USB_CNFG2) {
+        *writable = 0x003fu;
+    } else if (address >= USB_EP0 &&
+               address < USB_EP0 + DSPIC33_USB_ENDPOINT_COUNT * 2u) {
+        *writable = address == USB_EP0 ? 0x00dfu : 0x001fu;
+    } else if (address == USB_PWMRRS) {
+        *writable = 0xffffu;
+    } else if (address == USB_PWMCON) {
+        *writable = 0x8300u;
+    } else {
+        return false;
+    }
+    return true;
 }
 
 static bool pwm_register_write_mask(uint16_t address, uint16_t* writable) {
@@ -2989,6 +3097,581 @@ static void set_timer_gate(Dspic33* cpu, uint8_t timer, bool high) {
     }
 }
 
+static bool usb_queue_push(Dspic33UsbQueue* queue, const Dspic33UsbPacket* packet) {
+    uint8_t index;
+    if (queue->count == DSPIC33_USB_PACKET_QUEUE_SIZE) {
+        return false;
+    }
+    index = (uint8_t)((queue->head + queue->count) % DSPIC33_USB_PACKET_QUEUE_SIZE);
+    queue->packets[index] = *packet;
+    queue->count++;
+    return true;
+}
+
+static bool usb_queue_pop(Dspic33UsbQueue* queue, Dspic33UsbPacket* packet) {
+    if (queue->count == 0u) {
+        return false;
+    }
+    *packet = queue->packets[queue->head];
+    queue->head = (uint8_t)((queue->head + 1u) % DSPIC33_USB_PACKET_QUEUE_SIZE);
+    queue->count--;
+    return true;
+}
+
+static uint32_t usb_bdt_base(const Dspic33* cpu) {
+    return ((uint32_t)(raw_word(cpu, USB_BDTP3) & 0x00ffu) << 24u) |
+           ((uint32_t)(raw_word(cpu, USB_BDTP2) & 0x00ffu) << 16u) |
+           ((uint32_t)(raw_word(cpu, USB_BDTP1) & 0x00feu) << 8u);
+}
+
+static uint32_t usb_descriptor_address(const Dspic33* cpu, uint8_t endpoint,
+                                       uint8_t direction, uint8_t bank) {
+    uint32_t index = (uint32_t)endpoint * 4u + (uint32_t)direction * 2u + bank;
+    return usb_bdt_base(cpu) + index * 8u;
+}
+
+static bool usb_memory_word(const Dspic33* cpu, uint32_t address, uint16_t* value) {
+    if (address > DSPIC33_DATA_SIZE - 2u) {
+        return false;
+    }
+    *value = (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[address + 1u] << 8u));
+    return true;
+}
+
+static bool usb_write_memory_word(Dspic33* cpu, uint32_t address, uint16_t value) {
+    if (address > DSPIC33_DATA_SIZE - 2u) {
+        return false;
+    }
+    cpu->data[address] = (uint8_t)value;
+    cpu->data[address + 1u] = (uint8_t)(value >> 8u);
+    return true;
+}
+
+static bool usb_descriptor(const Dspic33* cpu, uint8_t endpoint, uint8_t direction,
+                           uint8_t bank, uint16_t words[4]) {
+    uint32_t address = usb_descriptor_address(cpu, endpoint, direction, bank);
+    uint8_t index;
+    for (index = 0u; index < 4u; index++) {
+        if (!usb_memory_word(cpu, address + index * 2u, &words[index])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool usb_write_descriptor(Dspic33* cpu, uint8_t endpoint, uint8_t direction,
+                                 uint8_t bank, const uint16_t words[4]) {
+    uint32_t address = usb_descriptor_address(cpu, endpoint, direction, bank);
+    uint8_t index;
+    for (index = 0u; index < 4u; index++) {
+        if (!usb_write_memory_word(cpu, address + index * 2u, words[index])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void usb_refresh_interrupt(Dspic33* cpu) {
+    uint16_t errors = (uint16_t)(raw_word(cpu, USB_EIR) & raw_word(cpu, USB_EIE));
+    uint16_t interrupts = raw_word(cpu, USB_IR);
+    if (errors != 0u) {
+        interrupts |= USB_ERROR_INTERRUPT;
+    } else {
+        interrupts &= (uint16_t)~USB_ERROR_INTERRUPT;
+    }
+    raw_write_word(cpu, USB_IR, interrupts);
+    if ((interrupts & raw_word(cpu, USB_IE)) != 0u ||
+        (raw_word(cpu, USB_OTGIR) & raw_word(cpu, USB_OTGIE)) != 0u) {
+        dspic33_raise_interrupt(cpu, USB_IRQ);
+    }
+}
+
+static void usb_set_error(Dspic33* cpu, uint8_t error) {
+    raw_write_word(cpu, USB_EIR,
+                   (uint16_t)(raw_word(cpu, USB_EIR) | (error & 0x00ffu)));
+    usb_refresh_interrupt(cpu);
+}
+
+static void usb_refresh_transaction_status(Dspic33* cpu) {
+    uint16_t interrupts = raw_word(cpu, USB_IR);
+    if (cpu->io.usb_status_count == 0u) {
+        raw_write_word(cpu, USB_STAT, 0u);
+        interrupts &= (uint16_t)~USB_TRANSACTION_INTERRUPT;
+    } else {
+        raw_write_word(cpu, USB_STAT, cpu->io.usb_status[cpu->io.usb_status_head]);
+        interrupts |= USB_TRANSACTION_INTERRUPT;
+    }
+    raw_write_word(cpu, USB_IR, interrupts);
+    usb_refresh_interrupt(cpu);
+}
+
+static void usb_push_transaction_status(Dspic33* cpu, uint8_t status) {
+    uint8_t index;
+    if (cpu->io.usb_status_count == sizeof(cpu->io.usb_status)) {
+        usb_set_error(cpu, USB_ERROR_DMA);
+        return;
+    }
+    index = (uint8_t)((cpu->io.usb_status_head + cpu->io.usb_status_count) %
+                      sizeof(cpu->io.usb_status));
+    cpu->io.usb_status[index] = status;
+    cpu->io.usb_status_count++;
+    usb_refresh_transaction_status(cpu);
+}
+
+static void usb_pop_transaction_status(Dspic33* cpu) {
+    if (cpu->io.usb_status_count != 0u) {
+        cpu->io.usb_status_head =
+            (uint8_t)((cpu->io.usb_status_head + 1u) % sizeof(cpu->io.usb_status));
+        cpu->io.usb_status_count--;
+    }
+    usb_refresh_transaction_status(cpu);
+}
+
+static void usb_reset_ping_pong(Dspic33* cpu) {
+    memset(cpu->io.usb_next_bank, 0, sizeof(cpu->io.usb_next_bank));
+}
+
+static void usb_cancel_events(Dspic33* cpu) {
+    size_t source;
+    size_t destination = 0u;
+    for (source = 0u; source < cpu->events.count; source++) {
+        if (cpu->events.items[source].type != DSPIC33_EVENT_USB) {
+            cpu->events.items[destination++] = cpu->events.items[source];
+        }
+    }
+    cpu->events.count = destination;
+}
+
+static void usb_reset_runtime(Dspic33* cpu) {
+    usb_cancel_events(cpu);
+    memset(cpu->io.usb_pending, 0, sizeof(cpu->io.usb_pending));
+    memset(&cpu->io.usb_tx, 0, sizeof(cpu->io.usb_tx));
+    memset(cpu->io.usb_status, 0, sizeof(cpu->io.usb_status));
+    cpu->io.usb_status_head = 0u;
+    cpu->io.usb_status_count = 0u;
+    cpu->io.usb_last_endpoint = 0u;
+    cpu->io.usb_last_handshake = DSPIC33_USB_HANDSHAKE_NONE;
+    cpu->io.usb_host_pending = false;
+    usb_reset_ping_pong(cpu);
+}
+
+static void usb_reset_registers(Dspic33* cpu) {
+    uint16_t address;
+    raw_write_word(cpu, USB_OTGIR, 0u);
+    raw_write_word(cpu, USB_OTGIE, 0u);
+    raw_write_word(cpu, USB_OTGSTAT, 0u);
+    raw_write_word(cpu, USB_OTGCON, 0u);
+    raw_write_word(cpu, USB_IR, 0u);
+    raw_write_word(cpu, USB_IE, 0u);
+    raw_write_word(cpu, USB_EIR, 0u);
+    raw_write_word(cpu, USB_EIE, 0u);
+    raw_write_word(cpu, USB_STAT, 0u);
+    raw_write_word(cpu, USB_CON, 0u);
+    raw_write_word(cpu, USB_ADDR, 0u);
+    raw_write_word(cpu, USB_BDTP1, 0u);
+    raw_write_word(cpu, USB_FRML, 0u);
+    raw_write_word(cpu, USB_FRMH, 0u);
+    raw_write_word(cpu, USB_TOK, 0u);
+    raw_write_word(cpu, USB_SOF, 0u);
+    raw_write_word(cpu, USB_BDTP2, 0u);
+    raw_write_word(cpu, USB_BDTP3, 0u);
+    raw_write_word(cpu, USB_CNFG1, 0u);
+    raw_write_word(cpu, USB_CNFG2, 0u);
+    for (address = USB_EP0; address < USB_EP0 + DSPIC33_USB_ENDPOINT_COUNT * 2u;
+         address += 2u) {
+        raw_write_word(cpu, address, 0u);
+    }
+    raw_write_word(cpu, USB_PWMRRS, 0u);
+    raw_write_word(cpu, USB_PWMCON, 0u);
+    usb_reset_runtime(cpu);
+}
+
+static void usb_set_frame(Dspic33* cpu, uint16_t frame) {
+    frame &= 0x07ffu;
+    raw_write_word(cpu, USB_FRML, frame & 0x00ffu);
+    raw_write_word(cpu, USB_FRMH, frame >> 8u);
+}
+
+static uint16_t usb_frame(const Dspic33* cpu) {
+    return (uint16_t)(((raw_word(cpu, USB_FRMH) & 7u) << 8u) |
+                      (raw_word(cpu, USB_FRML) & 0xffu));
+}
+
+static void usb_response(Dspic33* cpu, const Dspic33UsbPacket* token,
+                         Dspic33UsbHandshake handshake, const uint8_t* data,
+                         uint16_t size, bool data1) {
+    Dspic33UsbPacket response;
+    memset(&response, 0, sizeof(response));
+    response.address = token->address;
+    response.endpoint = token->endpoint;
+    response.pid = token->pid;
+    response.handshake = handshake;
+    response.data1 = data1;
+    response.low_speed = token->low_speed;
+    response.size = size;
+    if (size != 0u) {
+        memcpy(response.data, data, size);
+    }
+    cpu->io.usb_last_endpoint = token->endpoint;
+    cpu->io.usb_last_handshake = handshake;
+    usb_queue_push(&cpu->io.usb_tx, &response);
+}
+
+static bool usb_read_memory(const Dspic33* cpu, uint32_t address, uint8_t* data,
+                            uint16_t size, bool increment) {
+    uint16_t index;
+    for (index = 0u; index < size; index++) {
+        uint32_t current = address + (increment ? index : 0u);
+        if (current >= DSPIC33_DATA_SIZE) {
+            return false;
+        }
+        data[index] = cpu->data[current];
+    }
+    return true;
+}
+
+static bool usb_write_memory(Dspic33* cpu, uint32_t address, const uint8_t* data,
+                             uint16_t size, bool increment) {
+    uint16_t index;
+    for (index = 0u; index < size; index++) {
+        uint32_t current = address + (increment ? index : 0u);
+        if (current >= DSPIC33_DATA_SIZE) {
+            return false;
+        }
+        cpu->data[current] = data[index];
+    }
+    return true;
+}
+
+static void usb_clear_endpoint_stalls(Dspic33* cpu, uint8_t endpoint) {
+    uint8_t direction;
+    uint8_t bank;
+    uint16_t words[4];
+    for (direction = 0u; direction < 2u; direction++) {
+        for (bank = 0u; bank < 2u; bank++) {
+            if (usb_descriptor(cpu, endpoint, direction, bank, words)) {
+                words[0] &= (uint16_t)~USB_DESCRIPTOR_STALL;
+                usb_write_descriptor(cpu, endpoint, direction, bank, words);
+            }
+        }
+    }
+    raw_write_word(cpu, (uint16_t)(USB_EP0 + endpoint * 2u),
+                   (uint16_t)(raw_word(cpu, (uint16_t)(USB_EP0 + endpoint * 2u)) &
+                              ~USB_ENDPOINT_STALL));
+}
+
+static bool usb_device_active(const Dspic33* cpu) {
+    uint16_t control = raw_word(cpu, USB_CON);
+    return (raw_word(cpu, 0x0766u) & 1u) == 0u &&
+           (raw_word(cpu, USB_PWRC) & USB_POWER) != 0u &&
+           (raw_word(cpu, USB_PWRC) & USB_SUSPEND) == 0u &&
+           (control & (USB_ENABLE | USB_HOST_ENABLE | USB_PACKET_DISABLE)) ==
+               USB_ENABLE;
+}
+
+static bool usb_device_ready(const Dspic33* cpu, uint8_t endpoint, uint8_t pid) {
+    uint16_t endpoint_control;
+    if (endpoint >= DSPIC33_USB_ENDPOINT_COUNT || !usb_device_active(cpu)) {
+        return false;
+    }
+    endpoint_control = raw_word(cpu, (uint16_t)(USB_EP0 + endpoint * 2u));
+    if (pid == DSPIC33_USB_PID_IN) {
+        return (endpoint_control & USB_ENDPOINT_TX_ENABLE) != 0u;
+    }
+    if ((endpoint_control & USB_ENDPOINT_RX_ENABLE) == 0u) {
+        return false;
+    }
+    return pid != DSPIC33_USB_PID_SETUP ||
+           (endpoint_control & USB_ENDPOINT_CONTROL_DISABLED) == 0u;
+}
+
+static bool usb_endpoint_handshake(const Dspic33* cpu, uint8_t endpoint) {
+    return (raw_word(cpu, (uint16_t)(USB_EP0 + endpoint * 2u)) &
+            USB_ENDPOINT_HANDSHAKE) != 0u;
+}
+
+static void usb_complete_descriptor(Dspic33* cpu, uint8_t endpoint, uint8_t direction,
+                                    uint8_t bank, uint16_t words[4], uint8_t pid,
+                                    bool data1, uint16_t count, bool keep) {
+    if (!keep) {
+        words[0] =
+            (uint16_t)((data1 ? USB_DESCRIPTOR_DATA1 : 0u) | ((uint16_t)pid << 2u));
+    }
+    words[1] = count & USB_DESCRIPTOR_COUNT_MASK;
+    usb_write_descriptor(cpu, endpoint, direction, bank, words);
+    if (!keep) {
+        cpu->io.usb_next_bank[endpoint][direction] ^= 1u;
+    }
+    usb_push_transaction_status(
+        cpu, (uint8_t)((endpoint << 4u) | (direction << 3u) | (bank << 2u)));
+}
+
+static void usb_run_device_token(Dspic33* cpu, const Dspic33UsbPacket* token) {
+    uint8_t response_data[DSPIC33_USB_PACKET_SIZE];
+    uint8_t direction = token->pid == DSPIC33_USB_PID_IN ? 1u : 0u;
+    uint8_t bank = (raw_word(cpu, USB_CON) & USB_PING_PONG_RESET) != 0u
+                       ? 0u
+                       : cpu->io.usb_next_bank[token->endpoint][direction];
+    uint16_t words[4];
+    uint16_t descriptor_count;
+    uint16_t count;
+    uint32_t buffer;
+    bool keep;
+    bool increment;
+    bool expected_data1;
+    if (!usb_device_active(cpu)) {
+        usb_response(cpu, token, DSPIC33_USB_HANDSHAKE_TIMEOUT, NULL, 0u, false);
+        return;
+    }
+    if (token->address != (raw_word(cpu, USB_ADDR) & 0x007fu)) {
+        usb_response(cpu, token, DSPIC33_USB_HANDSHAKE_TIMEOUT, NULL, 0u, false);
+        return;
+    }
+    if (!usb_device_ready(cpu, token->endpoint, token->pid)) {
+        usb_response(cpu, token,
+                     usb_endpoint_handshake(cpu, token->endpoint)
+                         ? DSPIC33_USB_HANDSHAKE_NAK
+                         : DSPIC33_USB_HANDSHAKE_TIMEOUT,
+                     NULL, 0u, false);
+        return;
+    }
+    if (token->pid == DSPIC33_USB_PID_SETUP) {
+        usb_clear_endpoint_stalls(cpu, token->endpoint);
+        bank = 0u;
+        cpu->io.usb_next_bank[token->endpoint][0] = 0u;
+        raw_write_word(cpu, USB_CON,
+                       (uint16_t)(raw_word(cpu, USB_CON) | USB_PACKET_DISABLE));
+    }
+    if (!usb_descriptor(cpu, token->endpoint, direction, bank, words)) {
+        usb_set_error(cpu, USB_ERROR_DMA);
+        usb_response(cpu, token, DSPIC33_USB_HANDSHAKE_ERROR, NULL, 0u, false);
+        return;
+    }
+    if ((words[0] & USB_DESCRIPTOR_OWNED) == 0u) {
+        usb_response(cpu, token,
+                     usb_endpoint_handshake(cpu, token->endpoint)
+                         ? DSPIC33_USB_HANDSHAKE_NAK
+                         : DSPIC33_USB_HANDSHAKE_TIMEOUT,
+                     NULL, 0u, false);
+        return;
+    }
+    if ((words[0] & USB_DESCRIPTOR_STALL) != 0u &&
+        usb_endpoint_handshake(cpu, token->endpoint)) {
+        raw_write_word(
+            cpu, (uint16_t)(USB_EP0 + token->endpoint * 2u),
+            (uint16_t)(raw_word(cpu, (uint16_t)(USB_EP0 + token->endpoint * 2u)) |
+                       USB_ENDPOINT_STALL));
+        raw_write_word(cpu, USB_IR,
+                       (uint16_t)(raw_word(cpu, USB_IR) | USB_STALL_INTERRUPT));
+        usb_refresh_interrupt(cpu);
+        usb_response(cpu, token, DSPIC33_USB_HANDSHAKE_STALL, NULL, 0u, false);
+        return;
+    }
+    expected_data1 = (words[0] & USB_DESCRIPTOR_DATA1) != 0u;
+    if (token->pid != DSPIC33_USB_PID_SETUP &&
+        (words[0] & USB_DESCRIPTOR_DTS_ENABLE) != 0u &&
+        token->pid != DSPIC33_USB_PID_IN && token->data1 != expected_data1) {
+        usb_response(cpu, token,
+                     usb_endpoint_handshake(cpu, token->endpoint)
+                         ? DSPIC33_USB_HANDSHAKE_ACK
+                         : DSPIC33_USB_HANDSHAKE_NONE,
+                     NULL, 0u, false);
+        return;
+    }
+    descriptor_count = words[1] & USB_DESCRIPTOR_COUNT_MASK;
+    buffer = ((uint32_t)words[3] << 16u) | words[2];
+    keep = (words[0] & USB_DESCRIPTOR_KEEP) != 0u;
+    increment = (words[0] & USB_DESCRIPTOR_NO_INCREMENT) == 0u;
+    if (token->pid == DSPIC33_USB_PID_IN) {
+        count = descriptor_count;
+        if (!usb_read_memory(cpu, buffer, response_data, count, increment)) {
+            usb_set_error(cpu, USB_ERROR_DMA);
+            usb_response(cpu, token, DSPIC33_USB_HANDSHAKE_ERROR, NULL, 0u, false);
+            return;
+        }
+        usb_response(cpu, token,
+                     usb_endpoint_handshake(cpu, token->endpoint)
+                         ? DSPIC33_USB_HANDSHAKE_ACK
+                         : DSPIC33_USB_HANDSHAKE_NONE,
+                     response_data, count, expected_data1);
+    } else {
+        count = token->size < descriptor_count ? token->size : descriptor_count;
+        if (!usb_write_memory(cpu, buffer, token->data, count, increment)) {
+            usb_set_error(cpu, USB_ERROR_DMA);
+            usb_response(cpu, token, DSPIC33_USB_HANDSHAKE_ERROR, NULL, 0u, false);
+            return;
+        }
+        if (token->size > descriptor_count) {
+            usb_set_error(cpu, USB_ERROR_DMA);
+        }
+        usb_response(cpu, token,
+                     usb_endpoint_handshake(cpu, token->endpoint)
+                         ? DSPIC33_USB_HANDSHAKE_ACK
+                         : DSPIC33_USB_HANDSHAKE_NONE,
+                     NULL, 0u, token->data1);
+    }
+    usb_complete_descriptor(
+        cpu, token->endpoint, direction, bank, words, token->pid,
+        token->pid == DSPIC33_USB_PID_SETUP
+            ? false
+            : (token->pid == DSPIC33_USB_PID_IN ? expected_data1 : token->data1),
+        count, keep);
+}
+
+static void usb_run_host_response(Dspic33* cpu, const Dspic33UsbPacket* response) {
+    uint8_t direction;
+    uint8_t bank;
+    uint8_t pid = 0u;
+    uint16_t words[4];
+    uint16_t count = 0u;
+    uint32_t buffer;
+    bool keep = false;
+    bool increment = true;
+    bool complete = false;
+    if (!cpu->io.usb_host_pending || (raw_word(cpu, USB_CON) & USB_HOST_ENABLE) == 0u) {
+        return;
+    }
+    direction = cpu->io.usb_host_pid == DSPIC33_USB_PID_IN ? 0u : 1u;
+    bank = (raw_word(cpu, USB_CON) & USB_PING_PONG_RESET) != 0u
+               ? 0u
+               : cpu->io.usb_next_bank[0][direction];
+    if (!usb_descriptor(cpu, 0u, direction, bank, words) ||
+        (words[0] & USB_DESCRIPTOR_OWNED) == 0u) {
+        usb_set_error(cpu, USB_ERROR_DMA);
+        response = NULL;
+    }
+    if (response != NULL) {
+        keep = (words[0] & USB_DESCRIPTOR_KEEP) != 0u;
+        increment = (words[0] & USB_DESCRIPTOR_NO_INCREMENT) == 0u;
+    }
+    if (response != NULL && response->handshake == DSPIC33_USB_HANDSHAKE_ACK) {
+        pid = 2u;
+        complete = true;
+        count = words[1] & USB_DESCRIPTOR_COUNT_MASK;
+        if (direction == 0u && response->size < count) {
+            count = response->size;
+        }
+        buffer = ((uint32_t)words[3] << 16u) | words[2];
+        if (direction == 0u &&
+            !usb_write_memory(cpu, buffer, response->data, count, increment)) {
+            usb_set_error(cpu, USB_ERROR_DMA);
+            complete = false;
+        }
+    } else if (response != NULL && response->handshake == DSPIC33_USB_HANDSHAKE_NAK) {
+        pid = 0x0au;
+        complete = true;
+    } else if (response != NULL && response->handshake == DSPIC33_USB_HANDSHAKE_STALL) {
+        pid = 0x0eu;
+        complete = true;
+    } else if (response != NULL &&
+               response->handshake == DSPIC33_USB_HANDSHAKE_TIMEOUT) {
+        usb_set_error(cpu, USB_ERROR_BTO);
+        complete = true;
+    } else if (response != NULL && response->handshake == DSPIC33_USB_HANDSHAKE_ERROR) {
+        usb_set_error(cpu, response->error != 0u ? response->error : USB_ERROR_PID);
+        complete = true;
+    }
+    if (complete) {
+        usb_complete_descriptor(cpu, 0u, direction, bank, words, pid, response->data1,
+                                count, keep);
+    }
+    cpu->io.usb_last_handshake =
+        response != NULL ? response->handshake : DSPIC33_USB_HANDSHAKE_ERROR;
+    cpu->io.usb_host_pending = false;
+    raw_write_word(cpu, USB_CON, (uint16_t)(raw_word(cpu, USB_CON) & ~USB_TOKEN_BUSY));
+    usb_refresh_interrupt(cpu);
+}
+
+static void usb_run_bus_event(Dspic33* cpu, Dspic33UsbBusEvent event, uint16_t value) {
+    uint16_t status;
+    switch (event) {
+    case DSPIC33_USB_BUS_RESET:
+        raw_write_word(cpu, USB_ADDR, 0u);
+        raw_write_word(cpu, USB_CON,
+                       (uint16_t)(raw_word(cpu, USB_CON) & ~USB_PACKET_DISABLE));
+        cpu->io.usb_status_head = 0u;
+        cpu->io.usb_status_count = 0u;
+        usb_reset_ping_pong(cpu);
+        raw_write_word(cpu, USB_IR,
+                       (uint16_t)(raw_word(cpu, USB_IR) | USB_RESET_INTERRUPT));
+        usb_refresh_transaction_status(cpu);
+        break;
+    case DSPIC33_USB_BUS_SOF:
+        usb_set_frame(cpu,
+                      value == UINT16_MAX ? (uint16_t)(usb_frame(cpu) + 1u) : value);
+        raw_write_word(cpu, USB_IR,
+                       (uint16_t)(raw_word(cpu, USB_IR) | USB_SOF_INTERRUPT));
+        usb_refresh_interrupt(cpu);
+        if ((raw_word(cpu, USB_PWRC) & USB_POWER) != 0u &&
+            (raw_word(cpu, USB_CON) & (USB_HOST_ENABLE | USB_ENABLE)) ==
+                (USB_HOST_ENABLE | USB_ENABLE)) {
+            usb_schedule_bus_event(cpu, DSPIC33_USB_BUS_SOF, UINT16_MAX,
+                                   USB_FRAME_CYCLES);
+        }
+        break;
+    case DSPIC33_USB_BUS_IDLE:
+        raw_write_word(cpu, USB_IR,
+                       (uint16_t)(raw_word(cpu, USB_IR) | USB_IDLE_INTERRUPT));
+        usb_refresh_interrupt(cpu);
+        break;
+    case DSPIC33_USB_BUS_RESUME:
+        raw_write_word(cpu, USB_PWRC,
+                       (uint16_t)(raw_word(cpu, USB_PWRC) & ~USB_SUSPEND));
+        raw_write_word(cpu, USB_IR,
+                       (uint16_t)(raw_word(cpu, USB_IR) | USB_RESUME_INTERRUPT));
+        raw_write_word(cpu, USB_OTGIR, (uint16_t)(raw_word(cpu, USB_OTGIR) | 0x0010u));
+        usb_refresh_interrupt(cpu);
+        break;
+    case DSPIC33_USB_BUS_ATTACH:
+        raw_write_word(cpu, USB_OTGSTAT,
+                       (uint16_t)(raw_word(cpu, USB_OTGSTAT) | 0x0009u));
+        if ((raw_word(cpu, USB_CON) & USB_HOST_ENABLE) != 0u) {
+            raw_write_word(cpu, USB_IR, (uint16_t)(raw_word(cpu, USB_IR) | 0x0040u));
+        }
+        usb_refresh_interrupt(cpu);
+        break;
+    case DSPIC33_USB_BUS_DETACH:
+        raw_write_word(cpu, USB_OTGSTAT,
+                       (uint16_t)(raw_word(cpu, USB_OTGSTAT) & ~0x0009u));
+        raw_write_word(cpu, USB_OTGIR, (uint16_t)(raw_word(cpu, USB_OTGIR) | 0x0020u));
+        usb_refresh_interrupt(cpu);
+        break;
+    case DSPIC33_USB_BUS_ERROR:
+        usb_set_error(cpu, (uint8_t)value);
+        break;
+    case DSPIC33_USB_BUS_OTG_STATE:
+        status = raw_word(cpu, USB_OTGSTAT);
+        raw_write_word(cpu, USB_OTGSTAT, value & 0x00adu);
+        if (status != (value & 0x00adu)) {
+            raw_write_word(
+                cpu, USB_OTGIR,
+                (uint16_t)(raw_word(cpu, USB_OTGIR) | ((status ^ value) & 0x00adu)));
+        }
+        usb_refresh_interrupt(cpu);
+        break;
+    }
+}
+
+static void run_usb(Dspic33* cpu, uint16_t slot) {
+    Dspic33UsbPending* pending;
+    if (slot >= DSPIC33_USB_PENDING_COUNT) {
+        return;
+    }
+    pending = &cpu->io.usb_pending[slot];
+    if (!pending->active) {
+        return;
+    }
+    if (pending->bus_event) {
+        usb_run_bus_event(cpu, pending->event, pending->value);
+    } else if ((raw_word(cpu, USB_CON) & USB_HOST_ENABLE) != 0u &&
+               pending->packet.handshake != DSPIC33_USB_HANDSHAKE_NONE) {
+        usb_run_host_response(cpu, &pending->packet);
+    } else {
+        usb_run_device_token(cpu, &pending->packet);
+    }
+    pending->active = false;
+}
+
 static void process_event(Dspic33* cpu, const Dspic33Event* event) {
     switch (event->type) {
     case DSPIC33_EVENT_INTERRUPT:
@@ -3036,8 +3719,7 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
         run_can(cpu, (uint8_t)event->source, event->value);
         break;
     case DSPIC33_EVENT_USB:
-        raw_write_word(cpu, 0x04c0u, (uint16_t)(raw_word(cpu, 0x04c0u) | 0x0008u));
-        dspic33_raise_interrupt(cpu, 86u);
+        run_usb(cpu, event->source);
         break;
     case DSPIC33_EVENT_NVM:
         dspic33_complete_nvm(cpu);
@@ -3731,6 +4413,116 @@ static void update_can_register(Dspic33* cpu, uint16_t address, uint16_t previou
     }
 }
 
+static void usb_start_host_token(Dspic33* cpu) {
+    Dspic33UsbPacket packet;
+    uint16_t token = raw_word(cpu, USB_TOK);
+    uint8_t direction;
+    uint8_t bank;
+    uint16_t words[4];
+    uint32_t buffer;
+    bool increment;
+    memset(&packet, 0, sizeof(packet));
+    packet.address = (uint8_t)(raw_word(cpu, USB_ADDR) & 0x007fu);
+    packet.low_speed = (raw_word(cpu, USB_ADDR) & 0x0080u) != 0u;
+    packet.endpoint = (uint8_t)(token & 0x0fu);
+    packet.pid = (uint8_t)((token >> 4u) & 0x0fu);
+    if ((raw_word(cpu, 0x0766u) & 1u) != 0u ||
+        (raw_word(cpu, USB_PWRC) & USB_POWER) == 0u ||
+        (raw_word(cpu, USB_CON) & USB_HOST_ENABLE) == 0u ||
+        (raw_word(cpu, USB_CON) & USB_TOKEN_BUSY) != 0u ||
+        (packet.pid != DSPIC33_USB_PID_OUT && packet.pid != DSPIC33_USB_PID_IN &&
+         packet.pid != DSPIC33_USB_PID_SETUP)) {
+        return;
+    }
+    direction = packet.pid == DSPIC33_USB_PID_IN ? 0u : 1u;
+    bank = (raw_word(cpu, USB_CON) & USB_PING_PONG_RESET) != 0u
+               ? 0u
+               : cpu->io.usb_next_bank[0][direction];
+    if (!usb_descriptor(cpu, 0u, direction, bank, words) ||
+        (words[0] & USB_DESCRIPTOR_OWNED) == 0u) {
+        return;
+    }
+    if (direction != 0u) {
+        packet.size = words[1] & USB_DESCRIPTOR_COUNT_MASK;
+        packet.data1 = (words[0] & USB_DESCRIPTOR_DATA1) != 0u;
+        buffer = ((uint32_t)words[3] << 16u) | words[2];
+        increment = (words[0] & USB_DESCRIPTOR_NO_INCREMENT) == 0u;
+        if (!usb_read_memory(cpu, buffer, packet.data, packet.size, increment)) {
+            usb_set_error(cpu, USB_ERROR_DMA);
+            return;
+        }
+    }
+    if (!usb_queue_push(&cpu->io.usb_tx, &packet)) {
+        usb_set_error(cpu, USB_ERROR_DMA);
+        return;
+    }
+    cpu->io.usb_host_pid = packet.pid;
+    cpu->io.usb_host_endpoint = packet.endpoint;
+    cpu->io.usb_host_pending = true;
+    raw_write_word(cpu, USB_CON, (uint16_t)(raw_word(cpu, USB_CON) | USB_TOKEN_BUSY));
+}
+
+static void update_usb_register(Dspic33* cpu, uint16_t address, uint16_t previous,
+                                uint16_t requested) {
+    uint16_t current = raw_word(cpu, address);
+    if (address == USB_OTGIR) {
+        raw_write_word(cpu, address, (uint16_t)(previous & ~(requested & 0x00fdu)));
+        usb_refresh_interrupt(cpu);
+        return;
+    }
+    if (address == USB_EIR) {
+        raw_write_word(cpu, address, (uint16_t)(previous & ~(requested & 0x00ffu)));
+        usb_refresh_interrupt(cpu);
+        return;
+    }
+    if (address == USB_IR) {
+        uint16_t cleared = requested & 0x00fdu;
+        raw_write_word(cpu, address,
+                       (uint16_t)(previous & ~(cleared & ~USB_TRANSACTION_INTERRUPT)));
+        if ((cleared & USB_TRANSACTION_INTERRUPT) != 0u) {
+            usb_pop_transaction_status(cpu);
+        } else {
+            usb_refresh_transaction_status(cpu);
+        }
+        return;
+    }
+    if (address == USB_PWRC) {
+        if ((previous & USB_POWER) != 0u && (current & USB_POWER) == 0u) {
+            usb_reset_registers(cpu);
+        }
+        return;
+    }
+    if (address == USB_CON) {
+        if ((current & USB_PING_PONG_RESET) != 0u) {
+            usb_reset_ping_pong(cpu);
+        }
+        if ((previous & USB_HOST_ENABLE) != 0u && (current & USB_HOST_ENABLE) == 0u) {
+            cpu->io.usb_host_pending = false;
+        }
+        if ((current & (USB_HOST_ENABLE | USB_ENABLE)) ==
+                (USB_HOST_ENABLE | USB_ENABLE) &&
+            (previous & (USB_HOST_ENABLE | USB_ENABLE)) !=
+                (USB_HOST_ENABLE | USB_ENABLE)) {
+            usb_schedule_bus_event(cpu, DSPIC33_USB_BUS_SOF, UINT16_MAX,
+                                   USB_FRAME_CYCLES);
+        }
+        return;
+    }
+    if (address == USB_TOK) {
+        usb_start_host_token(cpu);
+        return;
+    }
+    if (address == USB_EIE || address == USB_IE || address == USB_OTGIE) {
+        usb_refresh_interrupt(cpu);
+        return;
+    }
+    if (address >= USB_EP0 && address < USB_EP0 + DSPIC33_USB_ENDPOINT_COUNT * 2u &&
+        (requested & USB_ENDPOINT_STALL) == 0u) {
+        raw_write_word(cpu, address,
+                       (uint16_t)(raw_word(cpu, address) & ~USB_ENDPOINT_STALL));
+    }
+}
+
 void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous) {
     uint16_t base = (uint16_t)(address & 0xfffeu);
     uint16_t requested = raw_word(cpu, base);
@@ -3749,6 +4541,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
         pwm_register_write_mask(base, &writable) ||
         spi_register_write_mask(base, &writable) ||
         can_register_write_mask(cpu, base, &writable) ||
+        usb_register_write_mask(cpu, base, previous, &writable) ||
         dma_register_write_mask(base, &writable)) {
         raw_write_word(cpu, base,
                        (uint16_t)((previous & ~writable) | (requested & writable)));
@@ -3779,10 +4572,6 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
         raw_write_word(cpu, DMA_PWC, 0u);
         raw_write_word(cpu, DMA_RQC, 0u);
     }
-    if (base == 0x0488u || base == 0x04c0u || base == 0x04c4u) {
-        uint16_t mask = base == 0x04c4u ? 0x00ffu : 0x00fdu;
-        raw_write_word(cpu, base, (uint16_t)(previous & ~(raw_word(cpu, base) & mask)));
-    }
     if (base == 0x0758u) {
         raw_write_word(cpu, base,
                        (uint16_t)((raw_word(cpu, base) & 0x40ffu) | 0xa400u));
@@ -3796,6 +4585,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     update_pwm_register(cpu, base, previous);
     update_spi_register(cpu, base, previous, requested);
     update_can_register(cpu, base, previous, requested);
+    update_usb_register(cpu, base, previous, requested);
     update_oscillator(cpu, base);
     write_uart(cpu, base);
     if (base == 0x0728u && (raw_word(cpu, base) & 0x8000u) != 0u) {
@@ -4031,17 +4821,112 @@ bool dspic33_can_transmit(Dspic33* cpu, uint8_t channel, Dspic33CanFrame* frame)
            can_queue_pop(&cpu->io.can_tx[channel], frame);
 }
 
-bool dspic33_usb_receive(Dspic33* cpu, uint8_t endpoint, const uint8_t* data,
-                         uint16_t size, uint64_t delay) {
-    uint16_t offset = (uint16_t)endpoint * 64u;
-    if (endpoint >= 16u || size > 64u || offset + size > sizeof(cpu->io.usb)) {
+static bool usb_schedule_pending(Dspic33* cpu, const Dspic33UsbPending* pending,
+                                 uint64_t delay) {
+    uint16_t slot;
+    for (slot = 0u; slot < DSPIC33_USB_PENDING_COUNT; slot++) {
+        if (!cpu->io.usb_pending[slot].active) {
+            cpu->io.usb_pending[slot] = *pending;
+            cpu->io.usb_pending[slot].active = true;
+            if (dspic33_schedule(cpu, DSPIC33_EVENT_USB, slot, 0u, delay)) {
+                return true;
+            }
+            cpu->io.usb_pending[slot].active = false;
+            return false;
+        }
+    }
+    return false;
+}
+
+static bool usb_schedule_token(Dspic33* cpu, uint8_t address, uint8_t endpoint,
+                               uint8_t pid, const uint8_t* data, uint16_t size,
+                               bool data1, Dspic33UsbHandshake handshake,
+                               uint64_t delay) {
+    Dspic33UsbPending pending;
+    if (endpoint >= DSPIC33_USB_ENDPOINT_COUNT || size > DSPIC33_USB_PACKET_SIZE ||
+        (size != 0u && data == NULL)) {
         return false;
     }
-    memcpy(cpu->io.usb + offset, data, size);
-    if (offset + size > cpu->io.usb_size) {
-        cpu->io.usb_size = (uint16_t)(offset + size);
+    memset(&pending, 0, sizeof(pending));
+    pending.packet.address = address;
+    pending.packet.endpoint = endpoint;
+    pending.packet.pid = pid;
+    pending.packet.size = size;
+    pending.packet.data1 = data1;
+    pending.packet.handshake = handshake;
+    if (size != 0u) {
+        memcpy(pending.packet.data, data, size);
     }
-    return dspic33_schedule(cpu, DSPIC33_EVENT_USB, endpoint, size, delay);
+    return usb_schedule_pending(cpu, &pending, delay);
+}
+
+bool dspic33_usb_receive_toggle(Dspic33* cpu, uint8_t endpoint, const uint8_t* data,
+                                uint16_t size, bool data1, uint64_t delay) {
+    return usb_schedule_token(cpu, (uint8_t)(raw_word(cpu, USB_ADDR) & 0x007fu),
+                              endpoint, DSPIC33_USB_PID_OUT, data, size, data1,
+                              DSPIC33_USB_HANDSHAKE_NONE, delay);
+}
+
+bool dspic33_usb_receive(Dspic33* cpu, uint8_t endpoint, const uint8_t* data,
+                         uint16_t size, uint64_t delay) {
+    return dspic33_usb_receive_toggle(cpu, endpoint, data, size, false, delay);
+}
+
+bool dspic33_usb_setup(Dspic33* cpu, uint8_t endpoint, const uint8_t* data,
+                       uint16_t size, uint64_t delay) {
+    return size == 8u &&
+           usb_schedule_token(cpu, (uint8_t)(raw_word(cpu, USB_ADDR) & 0x007fu),
+                              endpoint, DSPIC33_USB_PID_SETUP, data, size, false,
+                              DSPIC33_USB_HANDSHAKE_NONE, delay);
+}
+
+bool dspic33_usb_request(Dspic33* cpu, uint8_t endpoint, uint64_t delay) {
+    return usb_schedule_token(cpu, (uint8_t)(raw_word(cpu, USB_ADDR) & 0x007fu),
+                              endpoint, DSPIC33_USB_PID_IN, NULL, 0u, false,
+                              DSPIC33_USB_HANDSHAKE_NONE, delay);
+}
+
+bool dspic33_usb_token(Dspic33* cpu, uint8_t address, uint8_t endpoint,
+                       Dspic33UsbPid pid, const uint8_t* data, uint16_t size,
+                       bool data1, uint64_t delay) {
+    return address <= 0x7fu &&
+           (pid == DSPIC33_USB_PID_OUT || pid == DSPIC33_USB_PID_IN ||
+            pid == DSPIC33_USB_PID_SETUP) &&
+           (pid != DSPIC33_USB_PID_SETUP || size == 8u) &&
+           (pid != DSPIC33_USB_PID_IN || size == 0u) &&
+           usb_schedule_token(cpu, address, endpoint, (uint8_t)pid, data, size, data1,
+                              DSPIC33_USB_HANDSHAKE_NONE, delay);
+}
+
+bool dspic33_usb_host_response(Dspic33* cpu, Dspic33UsbHandshake handshake,
+                               const uint8_t* data, uint16_t size, bool data1,
+                               uint64_t delay) {
+    return cpu->io.usb_host_pending &&
+           usb_schedule_token(cpu, (uint8_t)(raw_word(cpu, USB_ADDR) & 0x007fu),
+                              cpu->io.usb_host_endpoint, cpu->io.usb_host_pid, data,
+                              size, data1, handshake, delay);
+}
+
+bool dspic33_usb_bus(Dspic33* cpu, Dspic33UsbBusEvent event, uint16_t value,
+                     uint64_t delay) {
+    return usb_schedule_bus_event(cpu, event, value, delay);
+}
+
+static bool usb_schedule_bus_event(Dspic33* cpu, Dspic33UsbBusEvent event,
+                                   uint16_t value, uint64_t delay) {
+    Dspic33UsbPending pending;
+    if (event > DSPIC33_USB_BUS_OTG_STATE) {
+        return false;
+    }
+    memset(&pending, 0, sizeof(pending));
+    pending.bus_event = true;
+    pending.event = event;
+    pending.value = value;
+    return usb_schedule_pending(cpu, &pending, delay);
+}
+
+bool dspic33_usb_transmit(Dspic33* cpu, Dspic33UsbPacket* packet) {
+    return usb_queue_pop(&cpu->io.usb_tx, packet);
 }
 
 void dspic33_adc_input(Dspic33* cpu, uint8_t channel, uint16_t value) {
@@ -4064,10 +4949,11 @@ void dspic33_device_reset(Dspic33* cpu) {
     memset(cpu->interrupt_deferred_next, 0, sizeof(cpu->interrupt_deferred_next));
     cpu->gie_disable_deferred = 0u;
     cpu->gie_disable_deferred_next = 0u;
-    cpu->io.usb_size = sizeof(cpu->io.usb);
     for (index = 0u; index < sizeof(reset_values) / sizeof(reset_values[0]); index++) {
         raw_write_word(cpu, reset_values[index].address, reset_values[index].value);
     }
+    usb_reset_registers(cpu);
+    raw_write_word(cpu, USB_PWRC, 0u);
     raw_write_word(cpu, 0x0742u, 0x3020u);
     raw_write_word(cpu, 0x0758u, 0xa400u);
     raw_write_word(cpu, 0x08c2u, 0x8000u);

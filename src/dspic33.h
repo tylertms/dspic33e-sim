@@ -31,6 +31,10 @@
 #define DSPIC33_PWM_OUTPUT_COUNT (DSPIC33_PWM_COUNT * 2u)
 #define DSPIC33_PWM_INPUT_COUNT 32u
 #define DSPIC33_GPIO_PORT_COUNT 7u
+#define DSPIC33_USB_ENDPOINT_COUNT 16u
+#define DSPIC33_USB_PACKET_SIZE 1023u
+#define DSPIC33_USB_PACKET_QUEUE_SIZE 64u
+#define DSPIC33_USB_PENDING_COUNT 64u
 
 typedef enum {
     DSPIC33_EVENT_INTERRUPT,
@@ -91,6 +95,59 @@ typedef struct {
     uint8_t head;
     uint8_t count;
 } Dspic33CanQueue;
+
+typedef enum {
+    DSPIC33_USB_PID_OUT = 0x01u,
+    DSPIC33_USB_PID_SOF = 0x05u,
+    DSPIC33_USB_PID_IN = 0x09u,
+    DSPIC33_USB_PID_SETUP = 0x0du
+} Dspic33UsbPid;
+
+typedef enum {
+    DSPIC33_USB_HANDSHAKE_NONE,
+    DSPIC33_USB_HANDSHAKE_ACK,
+    DSPIC33_USB_HANDSHAKE_NAK,
+    DSPIC33_USB_HANDSHAKE_STALL,
+    DSPIC33_USB_HANDSHAKE_TIMEOUT,
+    DSPIC33_USB_HANDSHAKE_ERROR
+} Dspic33UsbHandshake;
+
+typedef enum {
+    DSPIC33_USB_BUS_RESET,
+    DSPIC33_USB_BUS_SOF,
+    DSPIC33_USB_BUS_IDLE,
+    DSPIC33_USB_BUS_RESUME,
+    DSPIC33_USB_BUS_ATTACH,
+    DSPIC33_USB_BUS_DETACH,
+    DSPIC33_USB_BUS_ERROR,
+    DSPIC33_USB_BUS_OTG_STATE
+} Dspic33UsbBusEvent;
+
+typedef struct {
+    uint8_t data[DSPIC33_USB_PACKET_SIZE];
+    uint16_t size;
+    uint8_t address;
+    uint8_t endpoint;
+    uint8_t pid;
+    uint8_t error;
+    Dspic33UsbHandshake handshake;
+    bool data1;
+    bool low_speed;
+} Dspic33UsbPacket;
+
+typedef struct {
+    Dspic33UsbPacket packets[DSPIC33_USB_PACKET_QUEUE_SIZE];
+    uint8_t head;
+    uint8_t count;
+} Dspic33UsbQueue;
+
+typedef struct {
+    Dspic33UsbPacket packet;
+    Dspic33UsbBusEvent event;
+    uint16_t value;
+    bool active;
+    bool bus_event;
+} Dspic33UsbPending;
 
 typedef struct {
     Dspic33ByteQueue uart_rx[DSPIC33_UART_COUNT];
@@ -175,8 +232,17 @@ typedef struct {
     uint8_t cpu_write_width;
     bool cpu_write_valid;
     bool dma_transfer_active;
-    uint8_t usb[4096];
-    uint16_t usb_size;
+    Dspic33UsbPending usb_pending[DSPIC33_USB_PENDING_COUNT];
+    Dspic33UsbQueue usb_tx;
+    uint8_t usb_next_bank[DSPIC33_USB_ENDPOINT_COUNT][2];
+    uint8_t usb_status[4];
+    uint8_t usb_status_head;
+    uint8_t usb_status_count;
+    uint8_t usb_last_endpoint;
+    uint8_t usb_host_pid;
+    uint8_t usb_host_endpoint;
+    Dspic33UsbHandshake usb_last_handshake;
+    bool usb_host_pending;
     uint8_t oscillator_unlock;
 } Dspic33Io;
 
@@ -290,6 +356,20 @@ bool dspic33_can_error(Dspic33* cpu, uint8_t channel, bool transmit, uint8_t cou
 bool dspic33_can_transmit(Dspic33* cpu, uint8_t channel, Dspic33CanFrame* frame);
 bool dspic33_usb_receive(Dspic33* cpu, uint8_t endpoint, const uint8_t* data,
                          uint16_t size, uint64_t delay);
+bool dspic33_usb_token(Dspic33* cpu, uint8_t address, uint8_t endpoint,
+                       Dspic33UsbPid pid, const uint8_t* data, uint16_t size,
+                       bool data1, uint64_t delay);
+bool dspic33_usb_receive_toggle(Dspic33* cpu, uint8_t endpoint, const uint8_t* data,
+                                uint16_t size, bool data1, uint64_t delay);
+bool dspic33_usb_setup(Dspic33* cpu, uint8_t endpoint, const uint8_t* data,
+                       uint16_t size, uint64_t delay);
+bool dspic33_usb_request(Dspic33* cpu, uint8_t endpoint, uint64_t delay);
+bool dspic33_usb_host_response(Dspic33* cpu, Dspic33UsbHandshake handshake,
+                               const uint8_t* data, uint16_t size, bool data1,
+                               uint64_t delay);
+bool dspic33_usb_bus(Dspic33* cpu, Dspic33UsbBusEvent event, uint16_t value,
+                     uint64_t delay);
+bool dspic33_usb_transmit(Dspic33* cpu, Dspic33UsbPacket* packet);
 void dspic33_adc_input(Dspic33* cpu, uint8_t channel, uint16_t value);
 void dspic33_gpio_input(Dspic33* cpu, uint8_t port, uint16_t value);
 Dspic33StopReason dspic33_step(Dspic33* cpu);

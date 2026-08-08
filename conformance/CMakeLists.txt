@@ -20,6 +20,7 @@ add_executable(
     source/bits.s
     source/branches.s
     source/can.s
+    source/usb.s
     source/dma.s
     source/divides.s
     source/main.c
