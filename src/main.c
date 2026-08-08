@@ -13,9 +13,11 @@ typedef struct {
     const char* entry_symbol;
     const char* stop_symbol;
     const char* write_symbol;
+    const char* dump_memory_symbol;
     uint16_t write_value;
     uint8_t write_width;
     uint16_t write_offset;
+    uint32_t dump_memory_size;
     bool register_set[16];
     uint16_t register_value[16];
     uint64_t instruction_limit;
@@ -58,9 +60,11 @@ static bool parse_arguments(int argc, char** argv, Arguments* arguments) {
     arguments->entry_symbol = argv[2];
     arguments->stop_symbol = NULL;
     arguments->write_symbol = NULL;
+    arguments->dump_memory_symbol = NULL;
     arguments->write_value = 0u;
     arguments->write_width = 0u;
     arguments->write_offset = 0u;
+    arguments->dump_memory_size = 0u;
     memset(arguments->register_set, 0, sizeof(arguments->register_set));
     memset(arguments->register_value, 0, sizeof(arguments->register_value));
     arguments->instruction_limit = 1000000u;
@@ -103,6 +107,12 @@ static bool parse_arguments(int argc, char** argv, Arguments* arguments) {
             arguments->stop_symbol = argv[++index];
         } else if (strcmp(argv[index], "--dump-registers") == 0) {
             arguments->dump_registers = true;
+        } else if (strcmp(argv[index], "--dump-memory") == 0 && index + 2 < argc) {
+            arguments->dump_memory_symbol = argv[++index];
+            if (!parse_u64(argv[++index], DSPIC33_DATA_SIZE, &value) || value == 0u) {
+                return false;
+            }
+            arguments->dump_memory_size = (uint32_t)value;
         } else if (strcmp(argv[index], "--trace-address") == 0 && index + 1 < argc) {
             if (!parse_u64(argv[++index], UINT32_MAX, &value)) {
                 return false;
@@ -121,6 +131,7 @@ static void print_usage(const char* program) {
             "Usage: %s IMAGE ENTRY [--write8 SYMBOL VALUE] [--write16 SYMBOL VALUE] "
             "[--write-offset BYTES] [--register Wn VALUE] "
             "[--stop ADDRESS] [--max-instructions COUNT] [--dump-registers] "
+            "[--dump-memory SYMBOL SIZE] "
             "[--trace-address ADDRESS]\n",
             program);
 }
@@ -178,6 +189,7 @@ int main(int argc, char** argv) {
     uint32_t entry;
     uint32_t write_address;
     uint32_t stop_address;
+    uint32_t dump_memory_address;
     Dspic33StopReason reason;
     uint8_t reg;
     char error[160];
@@ -247,6 +259,21 @@ int main(int argc, char** argv) {
                                       arguments.trace_address)
                      : dspic33_run(&cpu, arguments.instruction_limit);
     }
+    if (arguments.dump_memory_symbol != NULL) {
+        if (!resolve_location(&image, arguments.dump_memory_symbol,
+                              &dump_memory_address, error, sizeof(error))) {
+            fprintf(stderr, "[error] %s\n", error);
+            dspic33_destroy(&cpu);
+            firmware_image_close(&image);
+            return 1;
+        }
+        if (dump_memory_address > DSPIC33_DATA_SIZE - arguments.dump_memory_size) {
+            fprintf(stderr, "[error] memory dump exceeds data memory\n");
+            dspic33_destroy(&cpu);
+            firmware_image_close(&image);
+            return 1;
+        }
+    }
     printf("[%s] pc=0x%06" PRIx32 " instructions=%" PRIu64 " W0=0x%04x SR=0x%04x\n",
            reason == DSPIC33_RETURNED || reason == DSPIC33_STOPPED ? "passed"
                                                                    : "failed",
@@ -260,6 +287,16 @@ int main(int argc, char** argv) {
         for (reg = 0u; reg < 16u; reg++) {
             printf("W%u=0x%04x%s", reg, cpu.w[reg], reg == 15u ? "\n" : " ");
         }
+    }
+    if (arguments.dump_memory_symbol != NULL) {
+        uint32_t offset;
+        printf("[memory] %s address=0x%04" PRIx32 " size=%" PRIu32 " data=",
+               arguments.dump_memory_symbol, dump_memory_address,
+               arguments.dump_memory_size);
+        for (offset = 0u; offset < arguments.dump_memory_size; offset++) {
+            printf("%02x", dspic33_read_byte(&cpu, dump_memory_address + offset));
+        }
+        printf("\n");
     }
     dspic33_destroy(&cpu);
     firmware_image_close(&image);
