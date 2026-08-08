@@ -1476,6 +1476,11 @@ static bool compare_registers(Runner* runner, const StepParts* parts, size_t* fa
         uint8_t reg;
         int64_t mask = UINT16_MAX;
         int64_t expected;
+        int64_t expected_location_offset = 0;
+        uint32_t reference_expected_address = 0u;
+        uint32_t candidate_expected_address = 0u;
+        const JsonValue* expected_location =
+            item->type == JSON_OBJECT ? json_get(item, "expected_location") : NULL;
         bool has_expected = item->type == JSON_OBJECT &&
                             parse_number(json_get(item, "expected"), &expected);
         bool matched;
@@ -1487,9 +1492,29 @@ static bool compare_registers(Runner* runner, const StepParts* parts, size_t* fa
             !parse_number(json_get(item, "mask"), &mask)) {
             return false;
         }
-        matched =
-            (runner->reference.w[reg] & mask) == (runner->candidate.w[reg] & mask);
-        if (has_expected) {
+        if (expected_location != NULL) {
+            if (!mapped_address(runner, expected_location, false,
+                                &reference_expected_address, error, error_size) ||
+                !mapped_address(runner, expected_location, true,
+                                &candidate_expected_address, error, error_size) ||
+                (json_get(item, "expected_location_offset") != NULL &&
+                 !parse_number(json_get(item, "expected_location_offset"),
+                               &expected_location_offset))) {
+                return false;
+            }
+            reference_expected_address =
+                (uint32_t)(reference_expected_address + expected_location_offset);
+            candidate_expected_address =
+                (uint32_t)(candidate_expected_address + expected_location_offset);
+            matched = (runner->reference.w[reg] & mask) ==
+                          ((uint16_t)reference_expected_address & mask) &&
+                      (runner->candidate.w[reg] & mask) ==
+                          ((uint16_t)candidate_expected_address & mask);
+        } else {
+            matched =
+                (runner->reference.w[reg] & mask) == (runner->candidate.w[reg] & mask);
+        }
+        if (has_expected && expected_location == NULL) {
             matched = matched &&
                       (runner->reference.w[reg] & mask) == ((uint16_t)expected & mask);
         }
@@ -1500,6 +1525,10 @@ static bool compare_registers(Runner* runner, const StepParts* parts, size_t* fa
                    runner->reference.w[reg], runner->candidate.w[reg]);
             if (has_expected) {
                 printf(" expected=0x%04x", (uint16_t)expected);
+            } else if (expected_location != NULL) {
+                printf(" expected=reference:0x%04x,candidate:0x%04x",
+                       (uint16_t)reference_expected_address,
+                       (uint16_t)candidate_expected_address);
             }
             printf("\n");
         }
