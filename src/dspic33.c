@@ -1374,6 +1374,38 @@ void dspic33_destroy(Dspic33* cpu) {
     cpu->events.capacity = 0u;
 }
 
+bool dspic33_copy(Dspic33* destination, const Dspic33* source) {
+    Dspic33Event* events = destination->events.items;
+    size_t event_capacity = destination->events.capacity;
+    uint32_t* program = destination->program;
+    uint32_t* persistent_program = destination->persistent_program;
+    uint8_t* data = destination->data;
+    if (event_capacity < source->events.count) {
+        Dspic33Event* resized =
+            realloc(events, source->events.count * sizeof(*source->events.items));
+        if (resized == NULL) {
+            return false;
+        }
+        events = resized;
+        event_capacity = source->events.count;
+    }
+    memcpy(program, source->program, DSPIC33_PROGRAM_WORDS * sizeof(*program));
+    memcpy(persistent_program, source->persistent_program,
+           DSPIC33_PERSISTENT_PROGRAM_WORDS * sizeof(*persistent_program));
+    memcpy(data, source->data, DSPIC33_DATA_SIZE);
+    if (source->events.count != 0u) {
+        memcpy(events, source->events.items,
+               source->events.count * sizeof(*source->events.items));
+    }
+    *destination = *source;
+    destination->program = program;
+    destination->persistent_program = persistent_program;
+    destination->data = data;
+    destination->events.items = events;
+    destination->events.capacity = event_capacity;
+    return true;
+}
+
 void dspic33_reset(Dspic33* cpu, uint32_t entry) {
     memset(cpu->data, 0, DSPIC33_DATA_SIZE);
     memset(cpu->w, 0, sizeof(cpu->w));

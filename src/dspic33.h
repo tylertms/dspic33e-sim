@@ -151,6 +151,7 @@ typedef struct {
 
 bool dspic33_initialize(Dspic33* cpu);
 void dspic33_destroy(Dspic33* cpu);
+bool dspic33_copy(Dspic33* destination, const Dspic33* source);
 void dspic33_reset(Dspic33* cpu, uint32_t entry);
 bool dspic33_load_program_word(Dspic33* cpu, uint32_t address, uint32_t word);
 void dspic33_complete_nvm(Dspic33* cpu);

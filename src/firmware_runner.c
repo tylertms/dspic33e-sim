@@ -41,6 +41,9 @@ typedef struct {
     FirmwareImage candidate_image;
     Dspic33 reference;
     Dspic33 candidate;
+    Dspic33 reference_baseline;
+    Dspic33 candidate_baseline;
+    bool restore_baseline;
 #ifdef _WIN32
     RunTask* run_tasks;
 #endif
@@ -515,6 +518,8 @@ static bool open_images(Runner* runner, char* error, size_t error_size) {
     }
     if (!dspic33_initialize(&runner->reference) ||
         !dspic33_initialize(&runner->candidate) ||
+        !dspic33_initialize(&runner->reference_baseline) ||
+        !dspic33_initialize(&runner->candidate_baseline) ||
         !firmware_image_load_program(&runner->reference_image, &runner->reference,
                                      error, error_size) ||
         !firmware_image_load_program(&runner->candidate_image, &runner->candidate,
@@ -527,6 +532,8 @@ static bool open_images(Runner* runner, char* error, size_t error_size) {
 static void close_images(Runner* runner) {
     dspic33_destroy(&runner->reference);
     dspic33_destroy(&runner->candidate);
+    dspic33_destroy(&runner->reference_baseline);
+    dspic33_destroy(&runner->candidate_baseline);
     firmware_image_close(&runner->reference_image);
     firmware_image_close(&runner->candidate_image);
 }
@@ -918,6 +925,24 @@ static void reset_pair(Runner* runner) {
     dspic33_reset(&runner->candidate, 0u);
     dspic33_gpio_input(&runner->reference, 1u, 1u);
     dspic33_gpio_input(&runner->candidate, 1u, 1u);
+}
+
+static bool save_baseline(Runner* runner, char* error, size_t error_size) {
+    if (!dspic33_copy(&runner->reference_baseline, &runner->reference) ||
+        !dspic33_copy(&runner->candidate_baseline, &runner->candidate)) {
+        snprintf(error, error_size, "cannot save simulator baseline");
+        return false;
+    }
+    return true;
+}
+
+static bool restore_baseline(Runner* runner, char* error, size_t error_size) {
+    if (!dspic33_copy(&runner->reference, &runner->reference_baseline) ||
+        !dspic33_copy(&runner->candidate, &runner->candidate_baseline)) {
+        snprintf(error, error_size, "cannot restore simulator baseline");
+        return false;
+    }
+    return true;
 }
 
 static void print_cpu_diagnostics(const Dspic33* cpu) {
@@ -1507,6 +1532,9 @@ static bool execute_step(Runner* runner, const char* scenario_name,
     if (call == NULL) {
         call = scenario_call;
     }
+    if (runner->restore_baseline && !restore_baseline(runner, error, error_size)) {
+        return false;
+    }
     json_boolean(reset, &reset_value);
     if (reset_value) {
         reset_pair(runner);
@@ -1879,6 +1907,7 @@ static bool execute_scenario(const char* path, const JsonValue* scenario, void* 
         return true;
     }
     runner->current_scenario++;
+    runner->restore_baseline = false;
     reset_pair(runner);
     printf("[scenario] %zu/%zu %s\n", runner->current_scenario, runner->scenarios,
            name);
@@ -1894,9 +1923,15 @@ static bool execute_scenario(const char* path, const JsonValue* scenario, void* 
         }
     }
     mode = json_get(scenario, "steps");
-    if (mode == NULL) {
-        mode = json_get(scenario, "vectors");
+    if (mode != NULL) {
+        runner->restore_baseline = false;
+        return execute_regular_steps(runner, scenario, mode, name, error, error_size);
     }
+    if (!save_baseline(runner, error, error_size)) {
+        return false;
+    }
+    runner->restore_baseline = true;
+    mode = json_get(scenario, "vectors");
     if (mode != NULL) {
         return execute_regular_steps(runner, scenario, mode, name, error, error_size);
     }
@@ -1967,7 +2002,7 @@ int firmware_runner_main(int argc, char** argv) {
         json_free((JsonValue*)runner.suite);
         return 1;
     }
-    printf("[prepare] Loaded %zu scenarios with %zu ordered steps\n", runner.scenarios,
+    printf("[prepare] Loaded %zu scenarios with %zu test steps\n", runner.scenarios,
            runner.steps);
     fflush(stdout);
     if (!open_images(&runner, error, sizeof(error))) {
