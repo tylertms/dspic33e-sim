@@ -23,6 +23,7 @@ add_executable(
     source/moves.s
     source/multiplies.s
     source/shifts.s
+    source/stacks.s
 )
 
 set_target_properties(dspic33-conformance PROPERTIES SUFFIX ".bin")

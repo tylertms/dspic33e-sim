@@ -1183,6 +1183,17 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         cpu->w[15] = cpu->w[14];
         cpu->w[15] -= 2u;
         cpu->w[14] = read_word(cpu, cpu->w[15]);
+        cpu->corcon &= (uint16_t)~0x0004u;
+        return true;
+    }
+    if (opcode == 0xfea000u) {
+        memcpy(cpu->shadow_w, cpu->w, sizeof(cpu->shadow_w));
+        cpu->shadow_status = (uint16_t)(cpu->sr & 0x010fu);
+        return true;
+    }
+    if (opcode == 0xfe8000u) {
+        memcpy(cpu->w, cpu->shadow_w, sizeof(cpu->shadow_w));
+        cpu->sr = (uint16_t)((cpu->sr & ~0x010fu) | cpu->shadow_status);
         return true;
     }
     if ((opcode & 0xffe000u) == 0xf80000u) {
@@ -1199,6 +1210,7 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         write_word(cpu, cpu->w[15], cpu->w[14]);
         cpu->w[15] += 2u;
         cpu->w[14] = cpu->w[15];
+        cpu->corcon |= 0x0004u;
         cpu->w[15] = (uint16_t)(cpu->w[15] + (opcode & 0x007ffeu));
         return true;
     }
@@ -1569,6 +1581,8 @@ bool dspic33_copy(Dspic33* destination, const Dspic33* source) {
 void dspic33_reset(Dspic33* cpu, uint32_t entry) {
     memset(cpu->data, 0, DSPIC33_DATA_SIZE);
     memset(cpu->w, 0, sizeof(cpu->w));
+    memset(cpu->shadow_w, 0, sizeof(cpu->shadow_w));
+    cpu->shadow_status = 0u;
     memset(cpu->accumulator, 0, sizeof(cpu->accumulator));
     cpu->w[15] = 0x1000u;
     cpu->pc = entry;

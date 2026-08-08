@@ -112,6 +112,8 @@ typedef struct {
     uint8_t* data;
     uint8_t configuration[DSPIC33_CONFIGURATION_SIZE];
     uint16_t w[16];
+    uint16_t shadow_w[4];
+    uint16_t shadow_status;
     int64_t accumulator[2];
     uint32_t pc;
     uint16_t sr;
