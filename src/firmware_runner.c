@@ -806,6 +806,13 @@ static bool apply_device_stimulus(Dspic33* cpu, const char* type,
                          &channel) &&
             event_number(specification, "value", UINT16_MAX, 0u, true, &value) &&
             dspic33_spi_receive(cpu, (uint8_t)channel, (uint16_t)value, delay);
+    } else if (strcmp(type, "spi_select") == 0) {
+        const JsonValue* selected_value = json_get(specification, "selected");
+        bool selected = false;
+        succeeded = event_number(specification, "channel", DSPIC33_SPI_COUNT - 1u, 0u,
+                                 true, &channel) &&
+                    selected_value != NULL && json_boolean(selected_value, &selected) &&
+                    dspic33_spi_select(cpu, (uint8_t)channel, selected, delay);
     } else if (strcmp(type, "adc") == 0) {
         succeeded = event_number(specification, "channel",
                                  DSPIC33_ADC_CHANNEL_COUNT - 1u, 0u, true, &channel) &&
@@ -975,6 +982,8 @@ static bool apply_stimuli_part(Runner* runner, const JsonValue* part, char* erro
            apply_device_stimuli_pair(runner, stimuli, "timer_gates", error,
                                      error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "uart_rx", error, error_size) &&
+           apply_device_stimuli_pair(runner, stimuli, "spi_select", error,
+                                     error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "spi_rx", error, error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "adc", error, error_size) &&
            apply_device_stimuli_pair(runner, stimuli, "adc_triggers", error,

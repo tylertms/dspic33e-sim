@@ -16,6 +16,7 @@ add_executable(
     source/arithmetic.s
     source/adc.s
     source/pwm.s
+    source/spi.s
     source/bits.s
     source/branches.s
     source/dma.s

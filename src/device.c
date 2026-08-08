@@ -16,7 +16,9 @@ static const uint8_t dma_irqs[DSPIC33_DMA_COUNT] = {
     4u, 14u, 24u, 36u, 46u, 61u, 68u, 69u, 118u, 119u, 120u, 121u, 130u, 131u, 132u};
 static const uint8_t uart_rx_irqs[DSPIC33_UART_COUNT] = {11u, 30u, 82u, 88u};
 static const uint8_t uart_tx_irqs[DSPIC33_UART_COUNT] = {12u, 31u, 83u, 89u};
+static const uint8_t spi_error_irqs[DSPIC33_SPI_COUNT] = {9u, 32u, 90u, 122u};
 static const uint8_t spi_irqs[DSPIC33_SPI_COUNT] = {10u, 33u, 91u, 123u};
+static const uint8_t spi_dma_requests[DSPIC33_SPI_COUNT] = {10u, 33u, 91u, 123u};
 static const uint16_t uart_bases[DSPIC33_UART_COUNT] = {0x0220u, 0x0230u, 0x0250u,
                                                         0x02b0u};
 static const uint16_t spi_bases[DSPIC33_SPI_COUNT] = {0x0240u, 0x0260u, 0x02a0u,
@@ -69,6 +71,27 @@ enum {
     DMA_LCA = 0x0bf6u,
     DMA_SADRL = 0x0bf8u,
     DMA_SADRH = 0x0bfau,
+    SPI_ENABLE = 0x8000u,
+    SPI_STOP_IDLE = 0x2000u,
+    SPI_BUFFER_COUNT_MASK = 0x0700u,
+    SPI_SHIFT_EMPTY = 0x0080u,
+    SPI_OVERFLOW = 0x0040u,
+    SPI_RX_EMPTY = 0x0020u,
+    SPI_INTERRUPT_MODE_MASK = 0x001cu,
+    SPI_TX_FULL = 0x0002u,
+    SPI_RX_FULL = 0x0001u,
+    SPI_DISABLE_CLOCK = 0x1000u,
+    SPI_MODE_16 = 0x0400u,
+    SPI_SAMPLE_END = 0x0200u,
+    SPI_MASTER = 0x0020u,
+    SPI_FRAME_ENABLE = 0x8000u,
+    SPI_FRAME_SLAVE = 0x4000u,
+    SPI_ENHANCED = 0x0001u,
+    SPI_EVENT_EXTERNAL = 0x00010000u,
+    SPI_EVENT_INTERNAL = 0x00020000u,
+    SPI_EVENT_GENERATION_SHIFT = 18u,
+    SPI_EVENT_GENERATION_MASK = 0x3fffu,
+    SPI_SELECT_ACTIVE = 0x00000001u,
     ADC_ON = 0x8000u,
     ADC_STOP_IDLE = 0x2000u,
     ADC_BUFFER_ORDER = 0x1000u,
@@ -280,6 +303,26 @@ static bool adc_register_write_mask(uint16_t address, uint16_t* writable) {
     return false;
 }
 
+static bool spi_register_write_mask(uint16_t address, uint16_t* writable) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
+        uint16_t offset = (uint16_t)(address - spi_bases[channel]);
+        if (offset == 0u) {
+            *writable = 0xa05cu;
+            return true;
+        }
+        if (offset == 2u) {
+            *writable = 0x1fffu;
+            return true;
+        }
+        if (offset == 4u) {
+            *writable = 0xe003u;
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool pwm_register_write_mask(uint16_t address, uint16_t* writable) {
     static const uint16_t global_masks[16] = {
         0xafffu, 0x0007u, 0xffffu, 0xffffu, 0x0000u, 0xffffu, 0x0000u, 0x0fffu,
@@ -317,6 +360,37 @@ static bool byte_queue_pop(Dspic33ByteQueue* queue, uint8_t* value) {
     *value = queue->bytes[queue->head];
     queue->head = (uint16_t)((queue->head + 1u) % sizeof(queue->bytes));
     queue->count--;
+    return true;
+}
+
+static bool word_queue_push(Dspic33WordQueue* queue, uint16_t value) {
+    uint8_t index;
+    if (queue->count == sizeof(queue->words) / sizeof(queue->words[0])) {
+        return false;
+    }
+    index = (uint8_t)((queue->head + queue->count) %
+                      (sizeof(queue->words) / sizeof(queue->words[0])));
+    queue->words[index] = value;
+    queue->count++;
+    return true;
+}
+
+static bool word_queue_pop(Dspic33WordQueue* queue, uint16_t* value) {
+    if (queue->count == 0u) {
+        return false;
+    }
+    *value = queue->words[queue->head];
+    queue->head = (uint8_t)((queue->head + 1u) %
+                            (sizeof(queue->words) / sizeof(queue->words[0])));
+    queue->count--;
+    return true;
+}
+
+static bool word_queue_front(const Dspic33WordQueue* queue, uint16_t* value) {
+    if (queue->count == 0u) {
+        return false;
+    }
+    *value = queue->words[queue->head];
     return true;
 }
 
@@ -852,24 +926,259 @@ static void run_uart(Dspic33* cpu, uint8_t channel) {
     }
 }
 
-static void run_spi(Dspic33* cpu, uint8_t channel, uint16_t fallback) {
+static bool spi_module_disabled(const Dspic33* cpu, uint8_t channel) {
+    if (channel < 2u) {
+        return (raw_word(cpu, 0x0760u) & (uint16_t)(0x0008u << channel)) != 0u;
+    }
+    return (raw_word(cpu, 0x076au) & (uint16_t)(1u << (channel - 2u))) != 0u;
+}
+
+static bool spi_master(const Dspic33* cpu, uint8_t channel) {
+    return (raw_word(cpu, (uint16_t)(spi_bases[channel] + 2u)) & SPI_MASTER) != 0u;
+}
+
+static bool spi_enhanced(const Dspic33* cpu, uint8_t channel) {
+    return (raw_word(cpu, (uint16_t)(spi_bases[channel] + 4u)) & SPI_ENHANCED) != 0u;
+}
+
+static void spi_refresh_status(Dspic33* cpu, uint8_t channel) {
+    uint16_t base = spi_bases[channel];
+    uint16_t status = raw_word(cpu, base);
+    uint8_t pending;
+    status &= (uint16_t)~(SPI_BUFFER_COUNT_MASK | SPI_SHIFT_EMPTY | SPI_RX_EMPTY |
+                          SPI_TX_FULL | SPI_RX_FULL);
+    if (spi_enhanced(cpu, channel)) {
+        if ((cpu->io.spi_busy & (uint8_t)(1u << channel)) == 0u) {
+            status |= SPI_SHIFT_EMPTY;
+        }
+        if (cpu->io.spi_rx_fifo[channel].count == 0u) {
+            status |= SPI_RX_EMPTY;
+        }
+        if (cpu->io.spi_tx_fifo[channel].count == 8u) {
+            status |= SPI_TX_FULL;
+        }
+        if (cpu->io.spi_rx_fifo[channel].count == 8u) {
+            status |= SPI_RX_FULL;
+        }
+        pending = spi_master(cpu, channel) ? cpu->io.spi_tx_fifo[channel].count
+                                           : cpu->io.spi_rx_fifo[channel].count;
+        if (pending > 7u) {
+            pending = 7u;
+        }
+        status |= (uint16_t)pending << 8u;
+    } else {
+        if (cpu->io.spi_tx_fifo[channel].count != 0u) {
+            status |= SPI_TX_FULL;
+        }
+        if (cpu->io.spi_rx_fifo[channel].count != 0u) {
+            status |= SPI_RX_FULL;
+        }
+    }
+    raw_write_word(cpu, base, status);
+}
+
+static void spi_clear_buffers(Dspic33* cpu, uint8_t channel) {
+    memset(&cpu->io.spi_tx_fifo[channel], 0, sizeof(cpu->io.spi_tx_fifo[channel]));
+    memset(&cpu->io.spi_rx_fifo[channel], 0, sizeof(cpu->io.spi_rx_fifo[channel]));
+    cpu->io.spi_busy &= (uint8_t)~(1u << channel);
+    cpu->io.spi_shift[channel] = 0u;
+    cpu->io.spi_generation[channel] =
+        (uint16_t)((cpu->io.spi_generation[channel] + 1u) & SPI_EVENT_GENERATION_MASK);
+    raw_write_word(cpu, (uint16_t)(spi_bases[channel] + 8u), 0u);
+    spi_refresh_status(cpu, channel);
+}
+
+static bool spi_power_enabled(const Dspic33* cpu, uint8_t channel) {
+    uint16_t status = raw_word(cpu, spi_bases[channel]);
+    if (!spi_master(cpu, channel)) {
+        return true;
+    }
+    if (cpu->power_state == DSPIC33_POWER_ACTIVE) {
+        return true;
+    }
+    return cpu->power_state == DSPIC33_POWER_IDLE && (status & SPI_STOP_IDLE) == 0u;
+}
+
+static bool spi_selected(const Dspic33* cpu, uint8_t channel) {
+    uint16_t control1 = raw_word(cpu, (uint16_t)(spi_bases[channel] + 2u));
+    uint16_t control2 = raw_word(cpu, (uint16_t)(spi_bases[channel] + 4u));
+    bool required = (control2 & SPI_FRAME_ENABLE) != 0u
+                        ? (control2 & SPI_FRAME_SLAVE) != 0u
+                        : !spi_master(cpu, channel) && (control1 & 0x0080u) != 0u;
+    return !required || (cpu->io.spi_selected & (uint8_t)(1u << channel)) != 0u;
+}
+
+static uint64_t spi_transfer_cycles(const Dspic33* cpu, uint8_t channel) {
+    static const uint8_t primary[] = {64u, 16u, 4u, 1u};
+    uint16_t control = raw_word(cpu, (uint16_t)(spi_bases[channel] + 2u));
+    uint8_t secondary = (uint8_t)(8u - ((control >> 2u) & 7u));
+    uint8_t bits = (control & SPI_MODE_16) != 0u ? 16u : 8u;
+    return (uint64_t)bits * primary[control & 3u] * secondary;
+}
+
+static uint8_t spi_interrupt_mode(const Dspic33* cpu, uint8_t channel) {
+    return (uint8_t)((raw_word(cpu, spi_bases[channel]) & SPI_INTERRUPT_MODE_MASK) >>
+                     2u);
+}
+
+static void spi_raise_mode(Dspic33* cpu, uint8_t channel, uint8_t mode) {
+    if (!spi_enhanced(cpu, channel) || spi_interrupt_mode(cpu, channel) == mode) {
+        dspic33_raise_interrupt(cpu, spi_irqs[channel]);
+    }
+}
+
+static void spi_schedule_current(Dspic33* cpu, uint8_t channel) {
+    uint16_t control = raw_word(cpu, (uint16_t)(spi_bases[channel] + 2u));
+    uint8_t bit = (uint8_t)(1u << channel);
+    uint32_t event_value;
+    if ((cpu->io.spi_busy & bit) == 0u || !spi_master(cpu, channel) ||
+        (control & SPI_DISABLE_CLOCK) != 0u || !spi_power_enabled(cpu, channel)) {
+        return;
+    }
+    event_value =
+        SPI_EVENT_INTERNAL |
+        ((uint32_t)cpu->io.spi_generation[channel] << SPI_EVENT_GENERATION_SHIFT) |
+        cpu->io.spi_shift[channel];
+    dspic33_schedule(cpu, DSPIC33_EVENT_SPI, channel, event_value,
+                     spi_transfer_cycles(cpu, channel));
+}
+
+static void spi_start_next(Dspic33* cpu, uint8_t channel) {
+    uint16_t base = spi_bases[channel];
+    uint16_t control = raw_word(cpu, (uint16_t)(base + 2u));
+    uint8_t bit = (uint8_t)(1u << channel);
+    uint8_t previous_count = cpu->io.spi_tx_fifo[channel].count;
+    uint16_t value;
+    if ((cpu->io.spi_busy & bit) != 0u || previous_count == 0u ||
+        (raw_word(cpu, base) & SPI_ENABLE) == 0u || spi_module_disabled(cpu, channel) ||
+        !word_queue_pop(&cpu->io.spi_tx_fifo[channel], &value)) {
+        spi_refresh_status(cpu, channel);
+        return;
+    }
+    cpu->io.spi_busy |= bit;
+    cpu->io.spi_shift[channel] = value;
+    byte_queue_push(&cpu->io.spi_tx[channel], (uint8_t)value);
+    if ((control & SPI_MODE_16) != 0u) {
+        byte_queue_push(&cpu->io.spi_tx[channel], (uint8_t)(value >> 8u));
+    }
+    spi_refresh_status(cpu, channel);
+    if (spi_enhanced(cpu, channel)) {
+        if (previous_count == 8u) {
+            spi_raise_mode(cpu, channel, 4u);
+        }
+        if (cpu->io.spi_tx_fifo[channel].count == 0u) {
+            spi_raise_mode(cpu, channel, 6u);
+        }
+    }
+    spi_schedule_current(cpu, channel);
+}
+
+static void spi_receive_word(Dspic33* cpu, uint8_t channel, uint16_t value) {
+    uint16_t base = spi_bases[channel];
+    uint16_t status = raw_word(cpu, base);
+    uint8_t capacity = spi_enhanced(cpu, channel) ? 8u : 1u;
+    if ((raw_word(cpu, (uint16_t)(base + 2u)) & SPI_MODE_16) == 0u) {
+        value &= 0x00ffu;
+    }
+    if ((status & SPI_OVERFLOW) != 0u) {
+        return;
+    }
+    if (cpu->io.spi_rx_fifo[channel].count >= capacity ||
+        !word_queue_push(&cpu->io.spi_rx_fifo[channel], value)) {
+        raw_write_word(cpu, base, (uint16_t)(status | SPI_OVERFLOW));
+        dspic33_raise_interrupt(cpu, spi_error_irqs[channel]);
+        dspic33_raise_interrupt(cpu, spi_irqs[channel]);
+        return;
+    }
+    if (cpu->io.spi_rx_fifo[channel].count == 1u) {
+        raw_write_word(cpu, (uint16_t)(base + 8u), value);
+    }
+    spi_refresh_status(cpu, channel);
+    if (spi_enhanced(cpu, channel)) {
+        spi_raise_mode(cpu, channel, 1u);
+        if (cpu->io.spi_rx_fifo[channel].count >= 6u) {
+            spi_raise_mode(cpu, channel, 2u);
+        }
+        if (cpu->io.spi_rx_fifo[channel].count == 8u) {
+            spi_raise_mode(cpu, channel, 3u);
+        }
+    }
+}
+
+static void spi_complete_transfer(Dspic33* cpu, uint8_t channel, uint16_t value) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    cpu->io.spi_busy &= (uint8_t)~bit;
+    spi_receive_word(cpu, channel, value);
+    dspic33_dma_request(cpu, spi_dma_requests[channel],
+                        (uint16_t)(spi_bases[channel] + 8u), 0u);
+    spi_start_next(cpu, channel);
+    if (!spi_enhanced(cpu, channel)) {
+        dspic33_raise_interrupt(cpu, spi_irqs[channel]);
+    } else if ((cpu->io.spi_busy & bit) == 0u &&
+               cpu->io.spi_tx_fifo[channel].count == 0u) {
+        spi_raise_mode(cpu, channel, 5u);
+    }
+    spi_refresh_status(cpu, channel);
+}
+
+static void run_spi(Dspic33* cpu, uint8_t channel, uint32_t event_value) {
     uint16_t base;
-    uint16_t value = fallback;
-    uint8_t low;
-    uint8_t high;
+    uint16_t value = (uint16_t)event_value;
+    uint8_t bit;
     if (channel >= DSPIC33_SPI_COUNT) {
         return;
     }
     base = spi_bases[channel];
-    if (byte_queue_pop(&cpu->io.spi_rx[channel], &low)) {
-        value = low;
-        if (byte_queue_pop(&cpu->io.spi_rx[channel], &high)) {
-            value |= (uint16_t)high << 8u;
-        }
+    bit = (uint8_t)(1u << channel);
+    if ((event_value & (SPI_EVENT_EXTERNAL | SPI_EVENT_INTERNAL)) == 0u) {
+        raw_write_word(cpu, (uint16_t)(base + 8u), value);
+        raw_write_word(cpu, base, (uint16_t)(raw_word(cpu, base) | SPI_RX_FULL));
+        dspic33_raise_interrupt(cpu, spi_irqs[channel]);
+        return;
     }
-    raw_write_word(cpu, (uint16_t)(base + 8u), value);
-    raw_write_word(cpu, base, (uint16_t)(raw_word(cpu, base) | 0x0001u));
-    dspic33_raise_interrupt(cpu, spi_irqs[channel]);
+    if ((raw_word(cpu, base) & SPI_ENABLE) == 0u || spi_module_disabled(cpu, channel)) {
+        return;
+    }
+    if ((event_value & SPI_EVENT_INTERNAL) != 0u) {
+        uint16_t generation = (uint16_t)((event_value >> SPI_EVENT_GENERATION_SHIFT) &
+                                         SPI_EVENT_GENERATION_MASK);
+        if (generation != cpu->io.spi_generation[channel] ||
+            (cpu->io.spi_busy & bit) == 0u) {
+            return;
+        }
+        if (!spi_power_enabled(cpu, channel)) {
+            spi_clear_buffers(cpu, channel);
+            return;
+        }
+        spi_complete_transfer(cpu, channel, value);
+        return;
+    }
+    if (!spi_selected(cpu, channel) ||
+        (spi_master(cpu, channel) && (cpu->io.spi_busy & bit) == 0u)) {
+        return;
+    }
+    if (spi_master(cpu, channel)) {
+        cpu->io.spi_generation[channel] =
+            (uint16_t)((cpu->io.spi_generation[channel] + 1u) &
+                       SPI_EVENT_GENERATION_MASK);
+    } else if ((cpu->io.spi_busy & bit) == 0u) {
+        cpu->io.spi_busy |= bit;
+        cpu->io.spi_shift[channel] = raw_word(cpu, (uint16_t)(base + 8u));
+    }
+    spi_complete_transfer(cpu, channel, value);
+}
+
+static void run_spi_select(Dspic33* cpu, uint8_t channel, bool selected) {
+    uint8_t bit;
+    if (channel >= DSPIC33_SPI_COUNT) {
+        return;
+    }
+    bit = (uint8_t)(1u << channel);
+    if (selected) {
+        cpu->io.spi_selected |= bit;
+    } else {
+        cpu->io.spi_selected &= (uint8_t)~bit;
+    }
 }
 
 static uint16_t adc_register(const Dspic33* cpu, uint8_t module, uint16_t offset) {
@@ -2089,7 +2398,11 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
         run_uart(cpu, (uint8_t)event->source);
         break;
     case DSPIC33_EVENT_SPI:
-        run_spi(cpu, (uint8_t)event->source, (uint16_t)event->value);
+        run_spi(cpu, (uint8_t)event->source, event->value);
+        break;
+    case DSPIC33_EVENT_SPI_SELECT:
+        run_spi_select(cpu, (uint8_t)event->source,
+                       (event->value & SPI_SELECT_ACTIVE) != 0u);
         break;
     case DSPIC33_EVENT_CAN:
         run_can(cpu, (uint8_t)event->source);
@@ -2391,18 +2704,96 @@ static void write_uart(Dspic33* cpu, uint16_t address) {
     }
 }
 
-static void write_spi(Dspic33* cpu, uint16_t address) {
+static void spi_restore_buffer(Dspic33* cpu, uint8_t channel, uint16_t fallback) {
+    uint16_t value;
+    if (!word_queue_front(&cpu->io.spi_rx_fifo[channel], &value)) {
+        value = fallback;
+    }
+    raw_write_word(cpu, (uint16_t)(spi_bases[channel] + 8u), value);
+}
+
+static void update_spi_register(Dspic33* cpu, uint16_t address, uint16_t previous,
+                                uint16_t requested) {
     uint8_t channel;
     for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
         uint16_t base = spi_bases[channel];
-        if ((address & 0xfffeu) == base + 8u && (raw_word(cpu, base) & 0x8000u) != 0u) {
-            uint16_t value = raw_word(cpu, (uint16_t)(base + 8u));
-            byte_queue_push(&cpu->io.spi_tx[channel], (uint8_t)value);
-            byte_queue_push(&cpu->io.spi_tx[channel], (uint8_t)(value >> 8u));
-            raw_write_word(cpu, base,
-                           (uint16_t)((raw_word(cpu, base) & ~0x0001u) | 0x0002u));
-            dspic33_schedule(cpu, DSPIC33_EVENT_SPI, channel, value, 1u);
+        uint16_t offset;
+        uint16_t control;
+        uint16_t value;
+        uint8_t capacity;
+        if (address < base || address > base + 8u) {
+            continue;
+        }
+        offset = (uint16_t)(address - base);
+        if (offset == 0u) {
+            uint16_t status = raw_word(cpu, base);
+            if ((requested & SPI_OVERFLOW) != 0u) {
+                status =
+                    (uint16_t)((status & ~SPI_OVERFLOW) | (previous & SPI_OVERFLOW));
+            } else {
+                status &= (uint16_t)~SPI_OVERFLOW;
+            }
+            raw_write_word(cpu, base, status);
+            if ((status & SPI_ENABLE) == 0u) {
+                spi_clear_buffers(cpu, channel);
+            } else {
+                spi_refresh_status(cpu, channel);
+            }
             return;
+        }
+        if (offset == 2u) {
+            control = raw_word(cpu, (uint16_t)(base + 2u));
+            if ((control & SPI_MASTER) == 0u) {
+                control &= (uint16_t)~SPI_SAMPLE_END;
+                raw_write_word(cpu, (uint16_t)(base + 2u), control);
+            }
+            if (((control ^ previous) & (SPI_MODE_16 | SPI_MASTER)) != 0u) {
+                spi_clear_buffers(cpu, channel);
+            } else if ((previous & SPI_DISABLE_CLOCK) != 0u &&
+                       (control & SPI_DISABLE_CLOCK) == 0u) {
+                cpu->io.spi_generation[channel] =
+                    (uint16_t)((cpu->io.spi_generation[channel] + 1u) &
+                               SPI_EVENT_GENERATION_MASK);
+                spi_schedule_current(cpu, channel);
+            }
+            return;
+        }
+        if (offset == 4u) {
+            control = raw_word(cpu, (uint16_t)(base + 4u));
+            if (((control ^ previous) & SPI_ENHANCED) != 0u) {
+                spi_clear_buffers(cpu, channel);
+            }
+            return;
+        }
+        if (offset != 8u) {
+            return;
+        }
+        value = raw_word(cpu, (uint16_t)(base + 8u));
+        if ((raw_word(cpu, (uint16_t)(base + 2u)) & SPI_MODE_16) == 0u) {
+            value &= 0x00ffu;
+        }
+        capacity = spi_enhanced(cpu, channel) ? 8u : 1u;
+        if ((raw_word(cpu, base) & SPI_ENABLE) == 0u ||
+            spi_module_disabled(cpu, channel) ||
+            cpu->io.spi_tx_fifo[channel].count >= capacity ||
+            !word_queue_push(&cpu->io.spi_tx_fifo[channel], value)) {
+            spi_restore_buffer(cpu, channel, previous);
+            spi_refresh_status(cpu, channel);
+            return;
+        }
+        if (spi_enhanced(cpu, channel) && cpu->io.spi_tx_fifo[channel].count == 8u) {
+            spi_raise_mode(cpu, channel, 7u);
+        }
+        spi_start_next(cpu, channel);
+        spi_restore_buffer(cpu, channel, value);
+        spi_refresh_status(cpu, channel);
+        return;
+    }
+    if (address == 0x0760u || address == 0x076au) {
+        for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
+            if (spi_module_disabled(cpu, channel)) {
+                spi_clear_buffers(cpu, channel);
+            }
         }
     }
 }
@@ -2560,6 +2951,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     if (register_write_mask(base, &writable) ||
         adc_register_write_mask(base, &writable) ||
         pwm_register_write_mask(base, &writable) ||
+        spi_register_write_mask(base, &writable) ||
         dma_register_write_mask(base, &writable)) {
         raw_write_word(cpu, base,
                        (uint16_t)((previous & ~writable) | (requested & writable)));
@@ -2605,9 +2997,9 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     update_timer_register(cpu, base);
     update_adc_register(cpu, base, previous, requested);
     update_pwm_register(cpu, base, previous);
+    update_spi_register(cpu, base, previous, requested);
     update_oscillator(cpu, base);
     write_uart(cpu, base);
-    write_spi(cpu, base);
     if (base == 0x0728u && (raw_word(cpu, base) & 0x8000u) != 0u) {
         dspic33_schedule(cpu, DSPIC33_EVENT_NVM, 0u, 0u, 2u);
     }
@@ -2668,7 +3060,20 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
     for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
         uint16_t base = spi_bases[channel];
         if ((address & 0xfffeu) == base + 8u && (address & 1u) != 0u) {
-            raw_write_word(cpu, base, (uint16_t)(raw_word(cpu, base) & ~0x0001u));
+            uint16_t discarded;
+            if (word_queue_pop(&cpu->io.spi_rx_fifo[channel], &discarded)) {
+                if (word_queue_front(&cpu->io.spi_rx_fifo[channel], &discarded)) {
+                    raw_write_word(cpu, (uint16_t)(base + 8u), discarded);
+                }
+                spi_refresh_status(cpu, channel);
+                if (spi_enhanced(cpu, channel) &&
+                    cpu->io.spi_rx_fifo[channel].count == 0u) {
+                    spi_raise_mode(cpu, channel, 0u);
+                }
+            } else {
+                raw_write_word(cpu, base,
+                               (uint16_t)(raw_word(cpu, base) & ~SPI_RX_FULL));
+            }
         }
     }
     return value;
@@ -2684,9 +3089,14 @@ bool dspic33_uart_receive(Dspic33* cpu, uint8_t channel, uint8_t value,
 bool dspic33_spi_receive(Dspic33* cpu, uint8_t channel, uint16_t value,
                          uint64_t delay) {
     return channel < DSPIC33_SPI_COUNT &&
-           byte_queue_push(&cpu->io.spi_rx[channel], (uint8_t)value) &&
-           byte_queue_push(&cpu->io.spi_rx[channel], (uint8_t)(value >> 8u)) &&
-           dspic33_schedule(cpu, DSPIC33_EVENT_SPI, channel, value, delay);
+           dspic33_schedule(cpu, DSPIC33_EVENT_SPI, channel, SPI_EVENT_EXTERNAL | value,
+                            delay);
+}
+
+bool dspic33_spi_select(Dspic33* cpu, uint8_t channel, bool selected, uint64_t delay) {
+    return channel < DSPIC33_SPI_COUNT &&
+           dspic33_schedule(cpu, DSPIC33_EVENT_SPI_SELECT, channel,
+                            selected ? SPI_SELECT_ACTIVE : 0u, delay);
 }
 
 bool dspic33_dma_request(Dspic33* cpu, uint8_t request, uint16_t indirect_address,

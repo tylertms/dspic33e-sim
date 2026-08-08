@@ -44,6 +44,7 @@ typedef enum {
     DSPIC33_EVENT_PWM_SYNC,
     DSPIC33_EVENT_UART,
     DSPIC33_EVENT_SPI,
+    DSPIC33_EVENT_SPI_SELECT,
     DSPIC33_EVENT_CAN,
     DSPIC33_EVENT_USB,
     DSPIC33_EVENT_NVM,
@@ -72,6 +73,12 @@ typedef struct {
 } Dspic33ByteQueue;
 
 typedef struct {
+    uint16_t words[8];
+    uint8_t head;
+    uint8_t count;
+} Dspic33WordQueue;
+
+typedef struct {
     uint32_t identifier;
     uint8_t data[8];
     uint8_t length;
@@ -88,8 +95,9 @@ typedef struct {
 typedef struct {
     Dspic33ByteQueue uart_rx[DSPIC33_UART_COUNT];
     Dspic33ByteQueue uart_tx[DSPIC33_UART_COUNT];
-    Dspic33ByteQueue spi_rx[DSPIC33_SPI_COUNT];
     Dspic33ByteQueue spi_tx[DSPIC33_SPI_COUNT];
+    Dspic33WordQueue spi_tx_fifo[DSPIC33_SPI_COUNT];
+    Dspic33WordQueue spi_rx_fifo[DSPIC33_SPI_COUNT];
     Dspic33CanQueue can_rx[DSPIC33_CAN_COUNT];
     Dspic33CanQueue can_tx[DSPIC33_CAN_COUNT];
     uint16_t adc[DSPIC33_ADC_CHANNEL_COUNT];
@@ -144,6 +152,10 @@ typedef struct {
     uint16_t dma_half_raised;
     uint16_t dma_forced_pending;
     uint16_t dma_peripheral_pending;
+    uint16_t spi_shift[DSPIC33_SPI_COUNT];
+    uint16_t spi_generation[DSPIC33_SPI_COUNT];
+    uint8_t spi_busy;
+    uint8_t spi_selected;
     uint64_t cpu_write_cycle;
     uint32_t cpu_write_address;
     uint16_t cpu_write_previous;
@@ -246,6 +258,7 @@ bool dspic33_schedule(Dspic33* cpu, Dspic33EventType type, uint16_t source,
 void dspic33_raise_interrupt(Dspic33* cpu, uint16_t irq);
 bool dspic33_uart_receive(Dspic33* cpu, uint8_t channel, uint8_t value, uint64_t delay);
 bool dspic33_spi_receive(Dspic33* cpu, uint8_t channel, uint16_t value, uint64_t delay);
+bool dspic33_spi_select(Dspic33* cpu, uint8_t channel, bool selected, uint64_t delay);
 bool dspic33_dma_request(Dspic33* cpu, uint8_t request, uint16_t indirect_address,
                          uint64_t delay);
 bool dspic33_timer_pulse(Dspic33* cpu, uint8_t timer, uint32_t pulses, uint64_t delay);
