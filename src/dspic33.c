@@ -50,25 +50,27 @@ static void apply_accumulator_result(Dspic33* cpu, uint8_t accumulator,
     uint16_t saturation_enable = accumulator == 0u ? 0x0080u : 0x0040u;
     int64_t minimum = (cpu->corcon & 0x0010u) != 0u ? -0x8000000000ll : INT32_MIN;
     int64_t maximum = (cpu->corcon & 0x0010u) != 0u ? 0x7fffffffffll : INT32_MAX;
-    bool overflow = result < INT32_MIN || result > INT32_MAX;
-    bool saturated = false;
+    bool accumulator_overflow = result < -0x8000000000ll || result > 0x7fffffffffll;
+    bool saturation_status = accumulator_overflow;
 
     if ((cpu->corcon & saturation_enable) != 0u) {
         if (result < minimum) {
             result = minimum;
-            saturated = true;
+            saturation_status = true;
         } else if (result > maximum) {
             result = maximum;
-            saturated = true;
+            saturation_status = true;
         }
     }
 
     cpu->accumulator[accumulator] = accumulator_value((uint64_t)result);
+    bool overflow = cpu->accumulator[accumulator] < INT32_MIN ||
+                    cpu->accumulator[accumulator] > INT32_MAX;
     cpu->sr &= (uint16_t)~overflow_flag;
     if (overflow) {
         cpu->sr |= overflow_flag;
     }
-    if (saturated) {
+    if (saturation_status) {
         cpu->sr |= saturation_flag;
     }
     update_accumulator_combined_status(cpu);
@@ -1243,6 +1245,13 @@ static bool dsp_multiply_registers(uint32_t opcode, uint8_t* left, uint8_t* righ
     return true;
 }
 
+static int64_t dsp_multiply_operand(const Dspic33* cpu, uint8_t register_index,
+                                    uint8_t sign_mode) {
+    bool unsigned_operand =
+        sign_mode == 1u || (sign_mode == 2u && (register_index & 1u) == 0u);
+    return unsigned_operand ? cpu->w[register_index] : (int16_t)cpu->w[register_index];
+}
+
 static bool execute_dsp_multiply(Dspic33* cpu, uint32_t opcode) {
     uint8_t left_register;
     uint8_t right_register;
@@ -1258,8 +1267,8 @@ static bool execute_dsp_multiply(Dspic33* cpu, uint32_t opcode) {
         sign_mode == 3u) {
         return false;
     }
-    left = sign_mode == 1u ? cpu->w[left_register] : (int16_t)cpu->w[left_register];
-    right = sign_mode == 0u ? (int16_t)cpu->w[right_register] : cpu->w[right_register];
+    left = dsp_multiply_operand(cpu, left_register, sign_mode);
+    right = dsp_multiply_operand(cpu, right_register, sign_mode);
     product = left * right;
     if ((cpu->corcon & 1u) == 0u) {
         product *= 2;

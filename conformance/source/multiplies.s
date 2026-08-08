@@ -2,7 +2,7 @@
 .include "conformance.inc"
 
 .global _multiply_conformance_cases
-_multiply_conformance_cases = 77
+_multiply_conformance_cases = 90
 .global _multiply_conformance_group_complete
 _multiply_conformance_group_complete = 0
 
@@ -517,6 +517,83 @@ _run_multiply_conformance:
     record_accumulator 0x074b, ACCAL, ACCAH, ACCAU
     mov SR, w1
     record_case 0x074c, w1, w1
+
+    mov #0x2001, w0
+    mov w0, CORCON
+    prepare_dsp_case 0x0000
+    mov #0xffff, w4
+    mov #0xfffe, w5
+    mpy w4*w5, A
+    record_accumulator 0x074d, ACCAL, ACCAH, ACCAU
+
+    prepare_dsp_case 0x0000
+    mov #0xffff, w4
+    mpy w4*w4, A
+    record_accumulator 0x074e, ACCAL, ACCAH, ACCAU
+
+    prepare_dsp_case 0x0000
+    mov #0xffff, w5
+    mpy w5*w5, B
+    record_accumulator 0x074f, ACCBL, ACCBH, ACCBU
+
+    clr w0
+    mov w0, CORCON
+    prepare_dsp_case 0x0000
+    mov #0xffff, w4
+    mov #0x4000, w5
+    mpy w4*w5, A
+    record_accumulator 0x0750, ACCAL, ACCAH, ACCAU
+
+    mov #0x0081, w0
+    mov w0, CORCON
+    prepare_dsp_case 0x0000
+    load_accumulator 0xffff, 0x7fff, 0x0000, ACCAL, ACCAH, ACCAU
+    mov #1, w4
+    mov #1, w5
+    mac w4*w5, A
+    record_accumulator 0x0751, ACCAL, ACCAH, ACCAU
+    mov SR, w1
+    record_case 0x0752, w1, w1
+
+    mov #0x0041, w0
+    mov w0, CORCON
+    prepare_dsp_case 0x0000
+    load_accumulator 0x0000, 0x8000, 0xffff, ACCBL, ACCBH, ACCBU
+    mov #1, w4
+    mov #1, w5
+    msc w4*w5, B
+    record_accumulator 0x0753, ACCBL, ACCBH, ACCBU
+    mov SR, w1
+    record_case 0x0754, w1, w1
+
+    mov #0x0091, w0
+    mov w0, CORCON
+    prepare_dsp_case 0x0000
+    load_accumulator 0xffff, 0xffff, 0x007f, ACCAL, ACCAH, ACCAU
+    mov #1, w4
+    mov #1, w5
+    mac w4*w5, A
+    record_accumulator 0x0755, ACCAL, ACCAH, ACCAU
+    mov SR, w1
+    record_case 0x0756, w1, w1
+
+    mov #1, w0
+    mov w0, CORCON
+    prepare_dsp_case 0x0000
+    load_accumulator 0xffff, 0xffff, 0x007f, ACCAL, ACCAH, ACCAU
+    mov #1, w4
+    mov #1, w5
+    mac w4*w5, A
+    record_accumulator 0x0757, ACCAL, ACCAH, ACCAU
+    mov SR, w1
+    record_case 0x0758, w1, w1
+
+    prepare_dsp_case 0x2400
+    mov #1, w4
+    mov #1, w5
+    mpy w4*w5, A
+    mov SR, w1
+    record_case 0x0759, w1, w1
 
     prepare_dsp_case 0x0000
     end_results
