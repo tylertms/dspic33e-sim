@@ -2,7 +2,7 @@
 .include "conformance.inc"
 
 .global _multiply_conformance_cases
-_multiply_conformance_cases = 57
+_multiply_conformance_cases = 67
 .global _multiply_conformance_group_complete
 _multiply_conformance_group_complete = 0
 
@@ -389,6 +389,66 @@ _run_multiply_conformance:
     record_accumulator 0x0737, ACCAL, ACCAH, ACCAU
     mov SR, w1
     record_case 0x0738, w1, w1
+
+    mov #1, w0
+    mov w0, CORCON
+    prepare_dsp_case 0x0000
+    load_accumulator 0x5678, 0x1234, 0x0000, ACCAL, ACCAH, ACCAU
+    sac A, w2
+    record_case 0x0739, w2, w2
+
+    prepare_dsp_case 0x0000
+    load_accumulator 0x0000, 0x2468, 0x0000, ACCBL, ACCBH, ACCBU
+    sac B, #1, w3
+    record_case 0x073a, w3, w3
+
+    prepare_dsp_case 0x0000
+    load_accumulator 0x0000, 0x1234, 0x0000, ACCAL, ACCAH, ACCAU
+    sac A, #-1, w4
+    record_case 0x073b, w4, w4
+
+    prepare_dsp_case 0x0000
+    load_accumulator 0x0000, 0x7f00, 0x0000, ACCBL, ACCBH, ACCBU
+    sac B, #7, w5
+    record_case 0x073c, w5, w5
+
+    prepare_dsp_case 0x0000
+    load_accumulator 0x0000, 0x0012, 0x0000, ACCAL, ACCAH, ACCAU
+    mov #_conformance_scratch+20, w4
+    sac A, #-8, [w4++]
+    mov _conformance_scratch+20, w2
+    record_case 0x073d, w2, w4
+
+    mov #3, w0
+    mov w0, CORCON
+    prepare_dsp_case 0x0000
+    load_accumulator 0xff00, 0x120f, 0x0000, ACCAL, ACCAH, ACCAU
+    sac.r A, w2
+    record_case 0x073e, w2, w2
+
+    mov #1, w0
+    mov w0, CORCON
+    prepare_dsp_case 0x0000
+    load_accumulator 0x8000, 0x120f, 0x0000, ACCBL, ACCBH, ACCBU
+    sac.r B, w2
+    record_case 0x073f, w2, w2
+
+    prepare_dsp_case 0x0000
+    load_accumulator 0x8000, 0x120e, 0x0000, ACCBL, ACCBH, ACCBU
+    sac.r B, w2
+    record_case 0x0740, w2, w2
+
+    mov #0x0021, w0
+    mov w0, CORCON
+    prepare_dsp_case 0x0000
+    load_accumulator 0x0000, 0x8000, 0x0000, ACCAL, ACCAH, ACCAU
+    sac A, w2
+    record_case 0x0741, w2, w2
+
+    prepare_dsp_case 0x0000
+    load_accumulator 0xffff, 0x7fff, 0xffff, ACCBL, ACCBH, ACCBU
+    sac B, w2
+    record_case 0x0742, w2, w2
 
     prepare_dsp_case 0x0000
     end_results

@@ -1187,6 +1187,39 @@ static bool execute_accumulator_shift(Dspic33* cpu, uint32_t opcode) {
     return true;
 }
 
+static uint16_t accumulator_store_value(const Dspic33* cpu, int64_t value,
+                                        bool rounded) {
+    uint64_t bits = (uint64_t)value & ACCUMULATOR_MASK;
+    uint16_t high = (uint16_t)(bits >> 16u);
+    uint16_t low = (uint16_t)bits;
+    if (rounded && ((cpu->corcon & 0x0002u) != 0u || low > 0x8000u ||
+                    (low == 0x8000u && (high & 1u) != 0u))) {
+        value += 0x8000;
+    }
+    if ((cpu->corcon & 0x0020u) != 0u) {
+        if (value > INT32_MAX) {
+            return 0x7fffu;
+        }
+        if (value < INT32_MIN) {
+            return 0x8000u;
+        }
+    }
+    return (uint16_t)((uint64_t)value >> 16u);
+}
+
+static bool execute_accumulator_store(Dspic33* cpu, uint32_t opcode) {
+    uint8_t accumulator = (uint8_t)((opcode >> 15u) & 1u);
+    uint8_t offset_register = (uint8_t)((opcode >> 11u) & 0x0fu);
+    uint8_t encoded_shift = (uint8_t)((opcode >> 7u) & 0x0fu);
+    int8_t shift = (int8_t)(encoded_shift >= 8u ? encoded_shift - 16u : encoded_shift);
+    uint8_t destination_mode = (uint8_t)((opcode >> 4u) & 0x07u);
+    uint8_t destination_register = (uint8_t)(opcode & 0x0fu);
+    int64_t value = shift_accumulator_value(cpu->accumulator[accumulator], shift);
+    return write_operand_word(
+        cpu, destination_mode, destination_register, offset_register,
+        accumulator_store_value(cpu, value, (opcode & 0x010000u) != 0u));
+}
+
 static bool execute_find_first(Dspic33* cpu, uint32_t opcode) {
     bool left = (opcode & 0x008000u) != 0u;
     uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
@@ -1583,6 +1616,9 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     }
     if ((opcode & 0xff7f00u) == 0xc80000u) {
         return execute_accumulator_shift(cpu, opcode);
+    }
+    if ((opcode & 0xfe0000u) == 0xcc0000u) {
+        return execute_accumulator_store(cpu, opcode);
     }
     if ((opcode & 0xffa000u) == 0xbc0000u) {
         uint16_t address = (uint16_t)(opcode & 0x1fffu);
