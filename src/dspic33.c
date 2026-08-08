@@ -1308,6 +1308,8 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         uint8_t source = read_operand_byte(cpu, source_mode, source_register, 0u);
         cpu->w[destination] = zero_extend ? source : (uint16_t)(int16_t)(int8_t)source;
         update_logic_flags(cpu, cpu->w[destination], false);
+        cpu->sr = (uint16_t)((cpu->sr & ~0x0001u) |
+                             ((cpu->sr & 0x0008u) == 0u ? 0x0001u : 0u));
         return true;
     }
     if ((opcode & 0xfc0000u) == 0xd40000u) {
