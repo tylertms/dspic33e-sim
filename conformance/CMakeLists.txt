@@ -24,6 +24,7 @@ add_executable(
     source/multiplies.s
     source/shifts.s
     source/stacks.s
+    source/tables.s
 )
 
 set_target_properties(dspic33-conformance PROPERTIES SUFFIX ".bin")

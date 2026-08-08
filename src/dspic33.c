@@ -522,13 +522,23 @@ static bool execute_unary(Dspic33* cpu, uint32_t opcode) {
     return true;
 }
 
+static uint16_t table_adjust_pointer(uint16_t pointer, int16_t adjustment) {
+    uint16_t adjusted = (uint16_t)(pointer + adjustment);
+    if ((pointer & 0x8000u) != 0u && (adjusted & 0x8000u) == 0u) {
+        adjusted |= 0x8000u;
+    }
+    return adjusted;
+}
+
 static uint16_t table_operand_address(Dspic33* cpu, uint8_t mode, uint8_t reg,
                                       uint8_t width) {
     uint16_t address = cpu->w[reg];
     if (mode == 2u || mode == 3u) {
-        cpu->w[reg] = (uint16_t)(cpu->w[reg] + (mode == 3u ? width : -width));
+        cpu->w[reg] = table_adjust_pointer(cpu->w[reg], mode == 3u ? (int16_t)width
+                                                                   : -(int16_t)width);
     } else if (mode == 4u || mode == 5u) {
-        cpu->w[reg] = (uint16_t)(cpu->w[reg] + (mode == 5u ? width : -width));
+        cpu->w[reg] = table_adjust_pointer(cpu->w[reg], mode == 5u ? (int16_t)width
+                                                                   : -(int16_t)width);
         address = cpu->w[reg];
     }
     return address;
@@ -1305,7 +1315,7 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
             cpu->dswpag = value & 0x01ffu;
             break;
         case 3u:
-            cpu->tblpag = value & 0x01ffu;
+            cpu->tblpag = value & 0x00ffu;
             break;
         default:
             return false;
@@ -1322,7 +1332,7 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
             cpu->dswpag = value & 0x01ffu;
             break;
         case 3u:
-            cpu->tblpag = value & 0x01ffu;
+            cpu->tblpag = value & 0x00ffu;
             break;
         default:
             return false;
@@ -1736,6 +1746,12 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
             }
             return;
         }
+        if (word_address == 0x0054u) {
+            if ((address & 1u) == 0u) {
+                cpu->tblpag = value;
+            }
+            return;
+        }
         switch (word_address) {
         case 0x0020u:
             reg = &cpu->splim;
@@ -1757,9 +1773,6 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
             break;
         case 0x0052u:
             reg = &cpu->disicnt;
-            break;
-        case 0x0054u:
-            reg = &cpu->tblpag;
             break;
         default:
             break;

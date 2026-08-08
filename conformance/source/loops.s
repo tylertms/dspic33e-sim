@@ -93,7 +93,8 @@ loop_dostart_body:
     nop
     mov #tbloffset(loop_dostart_body), w4
     sub w2, w4, w2
-    clr w4
+    mov #tblpage(loop_dostart_body), w4
+    and #0x007f, w4
     sub w3, w4, w3
     record_double_case 0x0912, w2, w3
 
@@ -105,7 +106,8 @@ loop_doend_body:
     nop
     mov #tbloffset(loop_doend_body), w4
     sub w2, w4, w2
-    clr w4
+    mov #tblpage(loop_doend_body), w4
+    and #0x007f, w4
     sub w3, w4, w3
     record_double_case 0x0913, w2, w3
 
