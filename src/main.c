@@ -141,13 +141,17 @@ static Dspic33StopReason run_with_trace(Dspic33* cpu, uint32_t stop_address,
             uint16_t stack_high =
                 cpu->w[15] >= 2u ? dspic33_read_word(cpu, cpu->w[15] - 2u) : 0u;
             printf("[trace] instruction=%" PRIu64 " cycles=%" PRIu64 " PC=0x%06" PRIx32
-                   " W9=0x%04x W10=0x%04x W11=0x%04x "
-                   "W12=0x%04x W14=0x%04x W15=0x%04x SR=0x%04x "
+                   " W0=0x%04x W1=0x%04x W2=0x%04x W3=0x%04x "
+                   "W4=0x%04x W5=0x%04x W6=0x%04x W7=0x%04x "
+                   "W8=0x%04x W9=0x%04x W10=0x%04x W11=0x%04x "
+                   "W12=0x%04x W13=0x%04x W14=0x%04x W15=0x%04x SR=0x%04x "
                    "TBLPAG=0x%04x DSRPAG=0x%04x DSWPAG=0x%04x "
                    "return=0x%02x%04x\n",
-                   cpu->instructions, cpu->cycles, cpu->pc, cpu->w[9], cpu->w[10],
-                   cpu->w[11], cpu->w[12], cpu->w[14], cpu->w[15], cpu->sr, cpu->tblpag,
-                   cpu->dsrpag, cpu->dswpag, stack_high & 0x007fu, stack_low & 0xfffeu);
+                   cpu->instructions, cpu->cycles, cpu->pc, cpu->w[0], cpu->w[1],
+                   cpu->w[2], cpu->w[3], cpu->w[4], cpu->w[5], cpu->w[6], cpu->w[7],
+                   cpu->w[8], cpu->w[9], cpu->w[10], cpu->w[11], cpu->w[12], cpu->w[13],
+                   cpu->w[14], cpu->w[15], cpu->sr, cpu->tblpag, cpu->dsrpag,
+                   cpu->dswpag, stack_high & 0x007fu, stack_low & 0xfffeu);
         }
         if (dspic33_step(cpu) != DSPIC33_RUNNING) {
             return cpu->stop_reason;

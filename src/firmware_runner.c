@@ -955,13 +955,15 @@ static void print_cpu_diagnostics(const Dspic33* cpu) {
                item + 1u, cpu->interrupt_log_irq[index],
                cpu->interrupt_log_entry[index], cpu->interrupt_log_return[index]);
     }
-    printf("  state PC=0x%06" PRIx32 " W0=0x%04x W1=0x%04x W6=0x%04x "
-           "W7=0x%04x W9=0x%04x W10=0x%04x W11=0x%04x W12=0x%04x "
-           "W15=0x%04x SR=0x%04x TBLPAG=0x%04x DSRPAG=0x%04x "
+    printf("  state PC=0x%06" PRIx32 " W0=0x%04x W1=0x%04x W2=0x%04x "
+           "W3=0x%04x W4=0x%04x W5=0x%04x W6=0x%04x W7=0x%04x "
+           "W8=0x%04x W9=0x%04x W10=0x%04x W11=0x%04x W12=0x%04x "
+           "W13=0x%04x W14=0x%04x W15=0x%04x SR=0x%04x TBLPAG=0x%04x DSRPAG=0x%04x "
            "DSWPAG=0x%04x\n",
-           cpu->pc, cpu->w[0], cpu->w[1], cpu->w[6], cpu->w[7], cpu->w[9], cpu->w[10],
-           cpu->w[11], cpu->w[12], cpu->w[15], cpu->sr, cpu->tblpag, cpu->dsrpag,
-           cpu->dswpag);
+           cpu->pc, cpu->w[0], cpu->w[1], cpu->w[2], cpu->w[3], cpu->w[4], cpu->w[5],
+           cpu->w[6], cpu->w[7], cpu->w[8], cpu->w[9], cpu->w[10], cpu->w[11],
+           cpu->w[12], cpu->w[13], cpu->w[14], cpu->w[15], cpu->sr, cpu->tblpag,
+           cpu->dsrpag, cpu->dswpag);
     printf("  control call-depth=%u interrupt-depth=%u instructions=%" PRIu64
            " cycles=%" PRIu64 "\n",
            cpu->call_depth, cpu->interrupt_depth, cpu->instructions, cpu->cycles);
