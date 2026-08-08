@@ -307,11 +307,17 @@ static void update_logic_flags(Dspic33* cpu, uint16_t value, bool byte_mode) {
 }
 
 static void update_add_flags(Dspic33* cpu, uint16_t left, uint16_t right,
-                             uint32_t result, bool byte_mode, bool sticky_zero) {
+                             uint16_t carry_in, uint32_t result, bool byte_mode,
+                             bool sticky_zero) {
     uint32_t mask = byte_mode ? 0xffu : 0xffffu;
     uint16_t sign = byte_mode ? 0x0080u : 0x8000u;
     uint16_t digit_mask = byte_mode ? 0x000fu : 0x00ffu;
     uint16_t value = (uint16_t)(result & mask);
+    int32_t signed_left = byte_mode ? (int8_t)left : (int16_t)left;
+    int32_t signed_right = byte_mode ? (int8_t)right : (int16_t)right;
+    int32_t signed_result = signed_left + signed_right + carry_in;
+    int32_t signed_minimum = byte_mode ? INT8_MIN : INT16_MIN;
+    int32_t signed_maximum = byte_mode ? INT8_MAX : INT16_MAX;
     bool previous_zero = (cpu->sr & 0x0002u) != 0u;
     cpu->sr = (uint16_t)(cpu->sr & ~0x010fu);
     if (value == 0u && (!sticky_zero || previous_zero)) {
@@ -323,10 +329,10 @@ static void update_add_flags(Dspic33* cpu, uint16_t left, uint16_t right,
     if (result > mask) {
         cpu->sr |= 0x0001u;
     }
-    if (((left & digit_mask) + (right & digit_mask)) > digit_mask) {
+    if (((left & digit_mask) + (right & digit_mask) + carry_in) > digit_mask) {
         cpu->sr |= 0x0100u;
     }
-    if (((~(left ^ right) & (left ^ value)) & sign) != 0u) {
+    if (signed_result < signed_minimum || signed_result > signed_maximum) {
         cpu->sr |= 0x0004u;
     }
 }
@@ -419,8 +425,8 @@ static bool execute_binary(Dspic33* cpu, uint32_t opcode, uint32_t operation) {
         return false;
     }
     if (operation == 0x400000u || operation == 0x480000u) {
-        update_add_flags(cpu, left, right + (operation == 0x480000u ? carry : 0u),
-                         result, byte_mode, operation == 0x480000u);
+        update_add_flags(cpu, left, right, operation == 0x480000u ? carry : 0u, result,
+                         byte_mode, operation == 0x480000u);
     } else if (operation == 0x500000u || operation == 0x580000u ||
                operation == 0x100000u || operation == 0x180000u) {
         update_subtract_flags(cpu, left, right, borrow, value, byte_mode, with_carry);
@@ -456,6 +462,13 @@ static bool execute_compare(Dspic33* cpu, uint32_t opcode) {
                         ? read_operand_byte(cpu, mode, (uint8_t)(opcode & 0x0fu), 0u)
                         : read_operand_word(cpu, mode, (uint8_t)(opcode & 0x0fu), 0u);
         }
+        with_borrow = (opcode & 0x008000u) != 0u;
+    } else if ((opcode & 0xff0000u) == 0xe30000u) {
+        uint16_t address = (uint16_t)(opcode & 0x1fffu);
+        byte_mode = (opcode & 0x004000u) != 0u;
+        left = byte_mode ? dspic33_read_byte(cpu, address)
+                         : dspic33_read_word(cpu, address);
+        right = byte_mode ? (uint8_t)cpu->w[0] : cpu->w[0];
         with_borrow = (opcode & 0x008000u) != 0u;
     } else if ((opcode & 0xff8000u) == 0xe20000u) {
         uint16_t address = (uint16_t)(opcode & 0x1fffu);
@@ -509,7 +522,7 @@ static bool execute_unary(Dspic33* cpu, uint32_t opcode) {
         return false;
     }
     if (family == 0xe8u) {
-        update_add_flags(cpu, source, alternate ? 2u : 1u,
+        update_add_flags(cpu, source, alternate ? 2u : 1u, 0u,
                          (uint32_t)source + (alternate ? 2u : 1u), byte_mode, false);
     } else if (family == 0xe9u) {
         update_subtract_flags(cpu, source, alternate ? 2u : 1u, 0u, value, byte_mode,
@@ -618,8 +631,8 @@ static bool execute_literal_binary(Dspic33* cpu, uint32_t opcode) {
     if (family == 0u) {
         result = (uint32_t)left + literal + (alternate ? carry : 0u);
         value = (uint16_t)result;
-        update_add_flags(cpu, left, (uint16_t)(literal + (alternate ? carry : 0u)),
-                         result, byte_mode, alternate);
+        update_add_flags(cpu, left, literal, alternate ? carry : 0u, result, byte_mode,
+                         alternate);
     } else if (family == 1u) {
         uint16_t borrow = alternate && carry == 0u ? 1u : 0u;
         value = (uint16_t)(left - literal - borrow);
@@ -645,6 +658,7 @@ static bool execute_literal_binary(Dspic33* cpu, uint32_t opcode) {
 static bool execute_file_binary(Dspic33* cpu, uint32_t opcode) {
     uint8_t family = (uint8_t)((opcode >> 16u) & 0x03u);
     bool alternate = (opcode & 0x008000u) != 0u;
+    bool reverse_subtract = (opcode & 0xff0000u) == 0xbd0000u;
     bool byte_mode = (opcode & 0x004000u) != 0u;
     bool file_destination = (opcode & 0x002000u) != 0u;
     uint16_t address = (uint16_t)(opcode & 0x1fffu);
@@ -657,8 +671,12 @@ static bool execute_file_binary(Dspic33* cpu, uint32_t opcode) {
     if (family == 0u) {
         result = (uint32_t)left + right + (alternate ? carry : 0u);
         value = (uint16_t)result;
-        update_add_flags(cpu, left, (uint16_t)(right + (alternate ? carry : 0u)),
-                         result, byte_mode, alternate);
+        update_add_flags(cpu, left, right, alternate ? carry : 0u, result, byte_mode,
+                         alternate);
+    } else if (reverse_subtract) {
+        uint16_t borrow = alternate && carry == 0u ? 1u : 0u;
+        value = (uint16_t)(right - left - borrow);
+        update_subtract_flags(cpu, right, left, borrow, value, byte_mode, alternate);
     } else if (family == 1u) {
         uint16_t borrow = alternate && carry == 0u ? 1u : 0u;
         value = (uint16_t)(left - right - borrow);
@@ -795,7 +813,7 @@ static bool execute_file_unary(Dspic33* cpu, uint32_t opcode) {
     uint16_t value;
     if (family == 0xecu) {
         value = (uint16_t)(source + (alternate ? 2u : 1u));
-        update_add_flags(cpu, source, alternate ? 2u : 1u,
+        update_add_flags(cpu, source, alternate ? 2u : 1u, 0u,
                          (uint32_t)source + (alternate ? 2u : 1u), byte_mode, false);
     } else if (family == 0xedu) {
         value = (uint16_t)(source - (alternate ? 2u : 1u));
@@ -1396,7 +1414,7 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         }
         return true;
     }
-    if ((opcode & 0xfc0000u) == 0xb40000u) {
+    if ((opcode & 0xfc0000u) == 0xb40000u || (opcode & 0xff0000u) == 0xbd0000u) {
         return execute_file_binary(cpu, opcode);
     }
     if ((opcode & 0xff8000u) == 0xbf8000u) {

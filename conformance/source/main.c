@@ -1,6 +1,6 @@
 #include <stdint.h>
 
-enum { CONFORMANCE_RESULT_WORDS = 2048 };
+enum { CONFORMANCE_RESULT_WORDS = 4096 };
 
 typedef struct {
     uint16_t result_words;
