@@ -455,7 +455,7 @@ static bool execute_compare(Dspic33* cpu, uint32_t opcode) {
         byte_mode = (opcode & 0x000400u) != 0u;
         left = byte_mode ? (uint8_t)cpu->w[base] : cpu->w[base];
         if ((opcode & 0x0060u) == 0x0060u) {
-            right = (uint16_t)(opcode & 0x001fu);
+            right = (uint16_t)(((opcode >> 2u) & 0x00e0u) | (opcode & 0x001fu));
         } else {
             uint8_t mode = (uint8_t)((opcode >> 4u) & 0x07u);
             right = byte_mode

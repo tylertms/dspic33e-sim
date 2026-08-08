@@ -151,9 +151,9 @@
 .endm
 
 .global _arithmetic_conformance_cases
-_arithmetic_conformance_cases = 183
+_arithmetic_conformance_cases = 191
 .global _arithmetic_conformance_group_complete
-_arithmetic_conformance_group_complete = 0
+_arithmetic_conformance_group_complete = 1
 
 .global _run_arithmetic_conformance
 _run_arithmetic_conformance:
@@ -859,5 +859,45 @@ _run_arithmetic_conformance:
     mov #0x77aa, w1
     daw.b w1
     record_case 0x03c7, w1, w1
+
+    set_status 0x0000
+    mov #31, w1
+    cp w1, #31
+    record_case 0x03c8, w1, w1
+
+    set_status 0x0000
+    mov #0xa51f, w1
+    cp.b w1, #31
+    record_case 0x03c9, w1, w1
+
+    set_status 0x0000
+    mov #255, w1
+    cp w1, #255
+    record_case 0x03ca, w1, w1
+
+    set_status 0x0000
+    mov #0xa5ff, w1
+    cp.b w1, #255
+    record_case 0x03cb, w1, w1
+
+    set_status 0x0001
+    mov #30, w1
+    cpb w1, #31
+    record_case 0x03cc, w1, w1
+
+    set_status 0x0001
+    mov #0xa51e, w1
+    cpb.b w1, #31
+    record_case 0x03cd, w1, w1
+
+    set_status 0x0001
+    mov #254, w1
+    cpb w1, #255
+    record_case 0x03ce, w1, w1
+
+    set_status 0x0001
+    mov #0xa5fe, w1
+    cpb.b w1, #255
+    record_case 0x03cf, w1, w1
 
     end_results
