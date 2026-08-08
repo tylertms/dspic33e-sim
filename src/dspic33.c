@@ -1161,6 +1161,32 @@ static bool execute_accumulator_clear(Dspic33* cpu, uint32_t opcode) {
     return true;
 }
 
+static int64_t shift_accumulator_value(int64_t value, int8_t amount) {
+    if (amount < 0) {
+        return value * ((int64_t)1 << -amount);
+    }
+    if (amount == 0 || value >= 0) {
+        return value >> amount;
+    }
+    return -((-value + ((int64_t)1 << amount) - 1) >> amount);
+}
+
+static bool execute_accumulator_shift(Dspic33* cpu, uint32_t opcode) {
+    uint8_t accumulator = (uint8_t)((opcode >> 15u) & 1u);
+    uint8_t encoded_amount = (uint8_t)(opcode & 0x003fu);
+    int16_t amount =
+        (opcode & 0x0040u) != 0u
+            ? (int16_t)(encoded_amount >= 32u ? encoded_amount - 64u : encoded_amount)
+            : (int16_t)cpu->w[opcode & 0x0fu];
+    if (amount < -16 || amount > 16) {
+        return false;
+    }
+    apply_accumulator_result(
+        cpu, accumulator,
+        shift_accumulator_value(cpu->accumulator[accumulator], amount));
+    return true;
+}
+
 static bool execute_find_first(Dspic33* cpu, uint32_t opcode) {
     bool left = (opcode & 0x008000u) != 0u;
     uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
@@ -1554,6 +1580,9 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     }
     if ((opcode & 0xff7fffu) == 0xc30112u) {
         return execute_accumulator_clear(cpu, opcode);
+    }
+    if ((opcode & 0xff7f00u) == 0xc80000u) {
+        return execute_accumulator_shift(cpu, opcode);
     }
     if ((opcode & 0xffa000u) == 0xbc0000u) {
         uint16_t address = (uint16_t)(opcode & 0x1fffu);

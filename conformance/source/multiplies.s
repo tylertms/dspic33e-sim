@@ -2,7 +2,7 @@
 .include "conformance.inc"
 
 .global _multiply_conformance_cases
-_multiply_conformance_cases = 48
+_multiply_conformance_cases = 57
 .global _multiply_conformance_group_complete
 _multiply_conformance_group_complete = 0
 
@@ -343,4 +343,52 @@ _run_multiply_conformance:
     clr B
     record_accumulator 0x072f, ACCBL, ACCBH, ACCBU
 
+    mov #1, w0
+    mov w0, CORCON
+    prepare_dsp_case 0x0000
+    load_accumulator 0x789a, 0x3456, 0x0012, ACCAL, ACCAH, ACCAU
+    sftac A, #0
+    record_accumulator 0x0730, ACCAL, ACCAH, ACCAU
+
+    prepare_dsp_case 0x0000
+    load_accumulator 0xff00, 0x120f, 0x0000, ACCAL, ACCAH, ACCAU
+    sftac A, #1
+    record_accumulator 0x0731, ACCAL, ACCAH, ACCAU
+
+    prepare_dsp_case 0x0000
+    load_accumulator 0x0003, 0x0000, 0x0000, ACCBL, ACCBH, ACCBU
+    sftac B, #-1
+    record_accumulator 0x0732, ACCBL, ACCBH, ACCBU
+
+    prepare_dsp_case 0x0000
+    load_accumulator 0x0000, 0xffff, 0xffff, ACCBL, ACCBH, ACCBU
+    sftac B, #16
+    record_accumulator 0x0733, ACCBL, ACCBH, ACCBU
+
+    prepare_dsp_case 0x0000
+    load_accumulator 0x0001, 0x0000, 0x0000, ACCAL, ACCAH, ACCAU
+    sftac A, #-16
+    record_accumulator 0x0734, ACCAL, ACCAH, ACCAU
+
+    prepare_dsp_case 0x0000
+    load_accumulator 0x1234, 0x0000, 0x0000, ACCAL, ACCAH, ACCAU
+    mov #4, w2
+    sftac A, w2
+    record_accumulator 0x0735, ACCAL, ACCAH, ACCAU
+
+    prepare_dsp_case 0x0000
+    load_accumulator 0x0123, 0x0000, 0x0000, ACCBL, ACCBH, ACCBU
+    mov #0xfffc, w2
+    sftac B, w2
+    record_accumulator 0x0736, ACCBL, ACCBH, ACCBU
+
+    prepare_dsp_case 0x0000
+    load_accumulator 0xffff, 0x7fff, 0x0000, ACCAL, ACCAH, ACCAU
+    mov #0xffff, w2
+    sftac A, w2
+    record_accumulator 0x0737, ACCAL, ACCAH, ACCAU
+    mov SR, w1
+    record_case 0x0738, w1, w1
+
+    prepare_dsp_case 0x0000
     end_results
