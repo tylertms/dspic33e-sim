@@ -2,7 +2,7 @@
 .include "conformance.inc"
 
 .global _sfr_conformance_cases
-_sfr_conformance_cases = 189
+_sfr_conformance_cases = 190
 .global _sfr_conformance_group_complete
 _sfr_conformance_group_complete = 0
 
@@ -20,6 +20,26 @@ _sfr_conformance_group_complete = 0
     mov w2, [w7++]
     mov w3, [w7++]
     mov w1, \address
+.endm
+
+.macro gpio_latch_case identifier, port, lat
+    mov \lat, w5
+    mov #\port, w4
+    mov #0xa55a, w0
+    mov w0, [w4]
+    mov \lat, w1
+    mov #0x003c, w0
+    mov.b w0, [w4]
+    mov \lat, w2
+    mov #0x00c3, w0
+    mov.b w0, [w4+1]
+    mov \lat, w3
+    mov #\identifier, w0
+    mov w0, [w7++]
+    mov w1, [w7++]
+    mov w2, [w7++]
+    mov w3, [w7++]
+    mov w5, \lat
 .endm
 
 .macro commit_oscillator_low
@@ -287,5 +307,6 @@ _run_sfr_conformance:
     gpio_output_case 0x0eb9, 0x0e40, 0x0e42, 0x0e44
     gpio_output_case 0x0eba, 0x0e50, 0x0e52, 0x0e54
     gpio_output_case 0x0ebb, 0x0e60, 0x0e62, 0x0e64
+    gpio_latch_case 0x0efd, 0x0e32, 0x0e34
 
     end_results

@@ -318,6 +318,7 @@ typedef struct {
     uint16_t cpu_write_previous;
     uint8_t cpu_write_width;
     bool cpu_write_valid;
+    uint8_t dma_transfer_width;
     bool dma_transfer_active;
     Dspic33UsbPending usb_pending[DSPIC33_USB_PENDING_COUNT];
     Dspic33UsbQueue usb_tx;

@@ -132,6 +132,29 @@ static void direction_and_width_cases(DmaConformance* state, Dspic33* cpu) {
     expect(state, dspic33_read_word(cpu, 0x2000u) == 0xccabu, "byte peripheral to RAM");
 }
 
+static void gpio_latch_cases(DmaConformance* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x2000u, 0x5aa5u);
+    configure_channel(cpu, 0u, 0x2001u, 0x48u, 0x2000u, 0u, 0x0e32u, 0u);
+    expect(state, request(cpu, 0x48u, 0u), "word GPIO latch request");
+    expect(state, dspic33_read_word(cpu, 0x0e34u) == 0x5aa5u,
+           "word PORT write updates latch");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x2000u, 0x00a5u);
+    configure_channel(cpu, 0u, 0x6001u, 0x49u, 0x2000u, 0u, 0x0e32u, 0u);
+    expect(state, request(cpu, 0x49u, 0u), "low-byte GPIO latch request");
+    expect(state, dspic33_read_word(cpu, 0x0e34u) == 0x00a5u,
+           "low-byte PORT write updates latch");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x2000u, 0x003cu);
+    configure_channel(cpu, 0u, 0x6001u, 0x4au, 0x2000u, 0u, 0x0e33u, 0u);
+    expect(state, request(cpu, 0x4au, 0u), "high-byte GPIO latch request");
+    expect(state, dspic33_read_word(cpu, 0x0e34u) == 0x3c00u,
+           "high-byte PORT write updates latch");
+}
+
 static void addressing_cases(DmaConformance* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     configure_channel(cpu, 0u, 0x0000u, 0x50u, 0x2200u, 0u, 0x2300u, 2u);
@@ -466,6 +489,7 @@ int main(void) {
     if (initialized) {
         register_cases(&state, &cpu);
         direction_and_width_cases(&state, &cpu);
+        gpio_latch_cases(&state, &cpu);
         addressing_cases(&state, &cpu);
         operating_mode_cases(&state, &cpu);
         interrupt_and_null_cases(&state, &cpu);

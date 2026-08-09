@@ -36,6 +36,14 @@ static const uint16_t adc_buffers[DSPIC33_ADC_COUNT] = {0x0300u, 0x0340u};
 static const uint16_t adc_controls[DSPIC33_ADC_COUNT] = {0x0320u, 0x0360u};
 static const uint8_t adc_irqs[DSPIC33_ADC_COUNT] = {13u, 21u};
 static const uint8_t pwm_irqs[DSPIC33_PWM_COUNT] = {94u, 95u, 96u, 97u, 98u, 99u};
+static const uint16_t gpio_port_addresses[DSPIC33_GPIO_PORT_COUNT] = {
+    0x0e02u, 0x0e12u, 0x0e22u, 0x0e32u, 0x0e42u, 0x0e52u, 0x0e62u};
+static const uint16_t gpio_tris_addresses[DSPIC33_GPIO_PORT_COUNT] = {
+    0x0e00u, 0x0e10u, 0x0e20u, 0x0e30u, 0x0e40u, 0x0e50u, 0x0e60u};
+static const uint16_t gpio_latch_addresses[DSPIC33_GPIO_PORT_COUNT] = {
+    0x0e04u, 0x0e14u, 0x0e24u, 0x0e34u, 0x0e44u, 0x0e54u, 0x0e64u};
+static const uint16_t gpio_analog_addresses[DSPIC33_GPIO_PORT_COUNT] = {
+    0x0e0eu, 0x0e1eu, 0x0e2eu, 0x0e3eu, 0x0e4eu, 0u, 0x0e6eu};
 
 typedef struct {
     uint16_t address;
@@ -407,6 +415,40 @@ static bool register_write_mask(uint16_t address, uint16_t* writable) {
     }
     *writable = register_masks[first].writable;
     return true;
+}
+
+static void update_gpio_latch(Dspic33* cpu, uint16_t address, uint16_t requested) {
+    uint16_t port_address = (uint16_t)(address & 0xfffeu);
+    uint8_t port;
+
+    for (port = 0u; port < DSPIC33_GPIO_PORT_COUNT; port++) {
+        uint16_t latch_address;
+        uint16_t latch;
+        uint16_t writable;
+        bool word_write;
+
+        if (port_address != gpio_port_addresses[port]) {
+            continue;
+        }
+        latch_address = gpio_latch_addresses[port];
+        word_write = cpu->io.dma_transfer_active
+                         ? cpu->io.dma_transfer_width == 2u
+                         : cpu->io.cpu_write_valid && cpu->io.cpu_write_width == 2u &&
+                               cpu->io.cpu_write_address == port_address;
+        if (word_write) {
+            latch = requested;
+        } else if ((address & 1u) == 0u) {
+            latch = requested & 0x00ffu;
+        } else {
+            latch = requested & 0xff00u;
+        }
+        if (register_write_mask(latch_address, &writable)) {
+            latch = (uint16_t)((raw_word(cpu, latch_address) & ~writable) |
+                               (latch & writable));
+        }
+        raw_write_word(cpu, latch_address, latch);
+        return;
+    }
 }
 
 static bool adc_register_write_mask(uint16_t address, uint16_t* writable) {
@@ -1166,6 +1208,7 @@ static void run_dma(Dspic33* cpu, uint8_t channel, uint32_t event_value) {
         return;
     }
     dma_record_transfer(cpu, channel, control, address);
+    cpu->io.dma_transfer_width = width;
     cpu->io.dma_transfer_active = true;
     if ((control & DMA_CON_RAM_TO_PERIPHERAL) != 0u) {
         value = dma_read_memory(cpu, address, width);
@@ -1192,6 +1235,7 @@ static void run_dma(Dspic33* cpu, uint8_t channel, uint32_t event_value) {
         }
     }
     cpu->io.dma_transfer_active = false;
+    cpu->io.dma_transfer_width = 0u;
     if ((control & DMA_CON_AMODE_MASK) == 0u) {
         cpu->io.dma_address[channel] += width;
     }
@@ -5052,6 +5096,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
         raw_write_word(cpu, base,
                        (uint16_t)((previous & ~writable) | (requested & writable)));
     }
+    update_gpio_latch(cpu, address, requested);
     if (base >= 0x0800u && base < 0x0800u + DSPIC33_IRQ_GROUP_COUNT * 2u) {
         uint16_t group = (uint16_t)((base - 0x0800u) / 2u);
         uint16_t current = raw_word(cpu, base);
@@ -5109,14 +5154,6 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
 }
 
 uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) {
-    static const uint16_t port_addresses[DSPIC33_GPIO_PORT_COUNT] = {
-        0x0e02u, 0x0e12u, 0x0e22u, 0x0e32u, 0x0e42u, 0x0e52u, 0x0e62u};
-    static const uint16_t tris_addresses[DSPIC33_GPIO_PORT_COUNT] = {
-        0x0e00u, 0x0e10u, 0x0e20u, 0x0e30u, 0x0e40u, 0x0e50u, 0x0e60u};
-    static const uint16_t lat_addresses[DSPIC33_GPIO_PORT_COUNT] = {
-        0x0e04u, 0x0e14u, 0x0e24u, 0x0e34u, 0x0e44u, 0x0e54u, 0x0e64u};
-    static const uint16_t analog_addresses[DSPIC33_GPIO_PORT_COUNT] = {
-        0x0e0eu, 0x0e1eu, 0x0e2eu, 0x0e3eu, 0x0e4eu, 0u, 0x0e6eu};
     uint8_t port;
     uint8_t channel;
     uint8_t timer;
@@ -5153,12 +5190,12 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
         }
     }
     for (port = 0u; port < DSPIC33_GPIO_PORT_COUNT; port++) {
-        if ((address & 0xfffeu) == port_addresses[port]) {
-            uint16_t tris = raw_word(cpu, tris_addresses[port]);
-            uint16_t lat = raw_word(cpu, lat_addresses[port]);
+        if ((address & 0xfffeu) == gpio_port_addresses[port]) {
+            uint16_t tris = raw_word(cpu, gpio_tris_addresses[port]);
+            uint16_t lat = raw_word(cpu, gpio_latch_addresses[port]);
             uint16_t pins = (uint16_t)((cpu->io.gpio[port] & tris) | (lat & ~tris));
-            if (analog_addresses[port] != 0u) {
-                pins &= (uint16_t)~raw_word(cpu, analog_addresses[port]);
+            if (gpio_analog_addresses[port] != 0u) {
+                pins &= (uint16_t)~raw_word(cpu, gpio_analog_addresses[port]);
             }
             return (uint8_t)(pins >> ((address & 1u) * 8u));
         }
