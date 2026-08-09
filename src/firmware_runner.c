@@ -24,6 +24,10 @@ typedef struct {
     char suite_directory[1024];
     const char* scenario_filter;
     const char* step_filter;
+    size_t shard_index;
+    size_t shard_count;
+    bool plan_only;
+    bool summary_only;
     bool failures_only;
     size_t scenarios;
     size_t steps;
@@ -145,12 +149,24 @@ static bool wildcard_matches(const char* pattern, const char* value) {
     return *pattern == '\0';
 }
 
+static uint64_t scenario_hash(const char* value) {
+    uint64_t hash = UINT64_C(14695981039346656037);
+    while (*value != '\0') {
+        hash ^= (uint8_t)*value++;
+        hash *= UINT64_C(1099511628211);
+    }
+    return hash;
+}
+
 static bool scenario_selected(const Runner* runner, const JsonValue* scenario) {
     const char* id = json_string(json_get(scenario, "id"));
     const char* name = json_string(json_get(scenario, "name"));
-    return runner->scenario_filter == NULL ||
-           (id != NULL && wildcard_matches(runner->scenario_filter, id)) ||
-           (name != NULL && wildcard_matches(runner->scenario_filter, name));
+    bool filter_matches =
+        runner->scenario_filter == NULL ||
+        (id != NULL && wildcard_matches(runner->scenario_filter, id)) ||
+        (name != NULL && wildcard_matches(runner->scenario_filter, name));
+    return filter_matches && id != NULL &&
+           scenario_hash(id) % runner->shard_count == runner->shard_index;
 }
 
 static bool step_selected(const Runner* runner, const JsonValue* step) {
@@ -1533,16 +1549,18 @@ static bool compare_registers(Runner* runner, const StepParts* parts, size_t* fa
         runner->comparisons++;
         if (!matched) {
             (*failures)++;
-            printf("  register %s: reference=0x%04x candidate=0x%04x", name,
-                   runner->reference.w[reg], runner->candidate.w[reg]);
-            if (has_expected) {
-                printf(" expected=0x%04x", (uint16_t)expected);
-            } else if (expected_location != NULL) {
-                printf(" expected=reference:0x%04x,candidate:0x%04x",
-                       (uint16_t)reference_expected_address,
-                       (uint16_t)candidate_expected_address);
+            if (!runner->summary_only) {
+                printf("  register %s: reference=0x%04x candidate=0x%04x", name,
+                       runner->reference.w[reg], runner->candidate.w[reg]);
+                if (has_expected) {
+                    printf(" expected=0x%04x", (uint16_t)expected);
+                } else if (expected_location != NULL) {
+                    printf(" expected=reference:0x%04x,candidate:0x%04x",
+                           (uint16_t)reference_expected_address,
+                           (uint16_t)candidate_expected_address);
+                }
+                printf("\n");
             }
-            printf("\n");
         }
     }
     return true;
@@ -1801,38 +1819,41 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item, size_t* f
             start = size - shown;
         }
         (*failures)++;
-        printf("  memory %s", name == NULL ? "state" : name);
-        if (first_difference != size) {
-            printf(" difference=+0x%zx", first_difference);
+        if (!runner->summary_only) {
+            printf("  memory %s", name == NULL ? "state" : name);
+            if (first_difference != size) {
+                printf(" difference=+0x%zx", first_difference);
+            }
+            printf(": reference@0x%05" PRIx32 "=", reference_address + (uint32_t)start);
+            for (index = 0u; index < shown; index++) {
+                printf("%02x",
+                       read_memory_byte(&runner->reference, space,
+                                        reference_address + (uint32_t)(start + index)));
+            }
+            printf(" candidate@0x%05" PRIx32 "=", candidate_address + (uint32_t)start);
+            for (index = 0u; index < shown; index++) {
+                printf("%02x",
+                       read_memory_byte(&runner->candidate, space,
+                                        candidate_address + (uint32_t)(start + index)));
+            }
+            if (start + shown != size) {
+                printf("...");
+            }
+            if (has_expected) {
+                printf(" expected=0x%0*" PRIx64, (int)(size * 2u), (uint64_t)expected);
+            } else if (expected_text != NULL) {
+                printf(" expected=%s", expected_text);
+            } else if (expected_location != NULL) {
+                printf(" expected=reference:0x%08" PRIx32 ",candidate:0x%08" PRIx32,
+                       reference_expected_address, candidate_expected_address);
+            } else if (failed_mapped_field != NULL) {
+                printf(" expected-field=reference:0x%08" PRIx32
+                       ",candidate:0x%08" PRIx32,
+                       failed_mapped_field->reference_expected,
+                       failed_mapped_field->candidate_expected);
+            }
+            printf("\n");
         }
-        printf(": reference@0x%05" PRIx32 "=", reference_address + (uint32_t)start);
-        for (index = 0u; index < shown; index++) {
-            printf("%02x",
-                   read_memory_byte(&runner->reference, space,
-                                    reference_address + (uint32_t)(start + index)));
-        }
-        printf(" candidate@0x%05" PRIx32 "=", candidate_address + (uint32_t)start);
-        for (index = 0u; index < shown; index++) {
-            printf("%02x",
-                   read_memory_byte(&runner->candidate, space,
-                                    candidate_address + (uint32_t)(start + index)));
-        }
-        if (start + shown != size) {
-            printf("...");
-        }
-        if (has_expected) {
-            printf(" expected=0x%0*" PRIx64, (int)(size * 2u), (uint64_t)expected);
-        } else if (expected_text != NULL) {
-            printf(" expected=%s", expected_text);
-        } else if (expected_location != NULL) {
-            printf(" expected=reference:0x%08" PRIx32 ",candidate:0x%08" PRIx32,
-                   reference_expected_address, candidate_expected_address);
-        } else if (failed_mapped_field != NULL) {
-            printf(" expected-field=reference:0x%08" PRIx32 ",candidate:0x%08" PRIx32,
-                   failed_mapped_field->reference_expected,
-                   failed_mapped_field->candidate_expected);
-        }
-        printf("\n");
     }
     return true;
 }
@@ -1915,12 +1936,14 @@ static bool compare_pins(Runner* runner, const StepParts* parts, size_t* failure
         runner->comparisons++;
         if (!matched) {
             (*failures)++;
-            printf("  pin %s: reference=%s candidate=%s", name,
-                   reference_high ? "3.3V" : "0V", candidate_high ? "3.3V" : "0V");
-            if (expected != NULL) {
-                printf(" expected=%s", expected);
+            if (!runner->summary_only) {
+                printf("  pin %s: reference=%s candidate=%s", name,
+                       reference_high ? "3.3V" : "0V", candidate_high ? "3.3V" : "0V");
+                if (expected != NULL) {
+                    printf(" expected=%s", expected);
+                }
+                printf("\n");
             }
-            printf("\n");
         }
     }
     return true;
@@ -1990,8 +2013,11 @@ static bool compare_uart_transmit(Runner* runner, const StepParts* parts,
         runner->comparisons++;
         if (reference_count != candidate_count) {
             (*failures)++;
-            printf("  UART%" PRIu64 " transmit count: reference=%zu candidate=%zu\n",
-                   channel + 1u, reference_count, candidate_count);
+            if (!runner->summary_only) {
+                printf("  UART%" PRIu64
+                       " transmit count: reference=%zu candidate=%zu\n",
+                       channel + 1u, reference_count, candidate_count);
+            }
         }
         while (runner->reference.io.uart_tx[channel].count != 0u ||
                runner->candidate.io.uart_tx[channel].count != 0u) {
@@ -2008,12 +2034,14 @@ static bool compare_uart_transmit(Runner* runner, const StepParts* parts,
             runner->comparisons++;
             if (!matched) {
                 (*failures)++;
-                printf("  UART%" PRIu64 " transmit frame %zu: reference=", channel + 1u,
-                       frame_index);
-                print_uart_frame(reference_present, &reference_frame);
-                printf(" candidate=");
-                print_uart_frame(candidate_present, &candidate_frame);
-                printf("\n");
+                if (!runner->summary_only) {
+                    printf("  UART%" PRIu64 " transmit frame %zu: reference=",
+                           channel + 1u, frame_index);
+                    print_uart_frame(reference_present, &reference_frame);
+                    printf(" candidate=");
+                    print_uart_frame(candidate_present, &candidate_frame);
+                    printf("\n");
+                }
             }
             frame_index++;
         }
@@ -2062,8 +2090,10 @@ static bool compare_can_transmit(Runner* runner, const StepParts* parts,
         runner->comparisons++;
         if (reference_count != candidate_count) {
             (*failures)++;
-            printf("  CAN%" PRIu64 " transmit count: reference=%zu candidate=%zu\n",
-                   channel + 1u, reference_count, candidate_count);
+            if (!runner->summary_only) {
+                printf("  CAN%" PRIu64 " transmit count: reference=%zu candidate=%zu\n",
+                       channel + 1u, reference_count, candidate_count);
+            }
         }
         while (runner->reference.io.can_tx[channel].count != 0u ||
                runner->candidate.io.can_tx[channel].count != 0u) {
@@ -2080,12 +2110,14 @@ static bool compare_can_transmit(Runner* runner, const StepParts* parts,
             runner->comparisons++;
             if (!matched) {
                 (*failures)++;
-                printf("  CAN%" PRIu64 " transmit frame %zu: reference=", channel + 1u,
-                       frame_index);
-                print_can_frame(reference_present, &reference_frame);
-                printf(" candidate=");
-                print_can_frame(candidate_present, &candidate_frame);
-                printf("\n");
+                if (!runner->summary_only) {
+                    printf("  CAN%" PRIu64 " transmit frame %zu: reference=",
+                           channel + 1u, frame_index);
+                    print_can_frame(reference_present, &reference_frame);
+                    printf(" candidate=");
+                    print_can_frame(candidate_present, &candidate_frame);
+                    printf("\n");
+                }
             }
             frame_index++;
         }
@@ -2146,8 +2178,10 @@ static bool compare_usb_transmit(Runner* runner, const StepParts* parts,
         runner->comparisons++;
         if (reference_count != candidate_count) {
             (*failures)++;
-            printf("  USB transmit count: reference=%zu candidate=%zu\n",
-                   reference_count, candidate_count);
+            if (!runner->summary_only) {
+                printf("  USB transmit count: reference=%zu candidate=%zu\n",
+                       reference_count, candidate_count);
+            }
         }
         while (runner->reference.io.usb_tx.count != 0u ||
                runner->candidate.io.usb_tx.count != 0u) {
@@ -2164,11 +2198,13 @@ static bool compare_usb_transmit(Runner* runner, const StepParts* parts,
             runner->comparisons++;
             if (!matched) {
                 (*failures)++;
-                printf("  USB transmit packet %zu: reference=", packet_index);
-                print_usb_packet(reference_present, &reference_packet);
-                printf(" candidate=");
-                print_usb_packet(candidate_present, &candidate_packet);
-                printf("\n");
+                if (!runner->summary_only) {
+                    printf("  USB transmit packet %zu: reference=", packet_index);
+                    print_usb_packet(reference_present, &reference_packet);
+                    printf(" candidate=");
+                    print_usb_packet(candidate_present, &candidate_packet);
+                    printf("\n");
+                }
             }
             packet_index++;
         }
@@ -2369,7 +2405,7 @@ static bool execute_step(Runner* runner, const char* scenario_name,
         reset_pair(runner);
     }
     runner->current_step++;
-    if (!runner->failures_only) {
+    if (!runner->failures_only && !runner->summary_only) {
         printf("[running] %zu/%zu %s: %s\n", runner->current_step, runner->steps,
                scenario_name, step_name);
         fflush(stdout);
@@ -2404,9 +2440,11 @@ static bool execute_step(Runner* runner, const char* scenario_name,
             return false;
         }
         runner->failed++;
-        printf("[failed] %zu/%zu %s (execution: %s)\n", runner->current_step,
-               runner->steps, step_name, error);
-        fflush(stdout);
+        if (!runner->summary_only) {
+            printf("[failed] %zu/%zu %s (execution: %s)\n", runner->current_step,
+                   runner->steps, step_name, error);
+            fflush(stdout);
+        }
         return true;
     }
     if (!compare_registers(runner, parts, &failures, error, error_size) ||
@@ -2419,14 +2457,16 @@ static bool execute_step(Runner* runner, const char* scenario_name,
     }
     if (failures == 0u) {
         runner->passed++;
-        if (!runner->failures_only) {
+        if (!runner->failures_only && !runner->summary_only) {
             printf("[passed] %zu/%zu %s\n", runner->current_step, runner->steps,
                    step_name);
         }
     } else {
         runner->failed++;
-        printf("[failed] %zu/%zu %s (%zu differences)\n", runner->current_step,
-               runner->steps, step_name, failures);
+        if (!runner->summary_only) {
+            printf("[failed] %zu/%zu %s (%zu differences)\n", runner->current_step,
+                   runner->steps, step_name, failures);
+        }
     }
     fflush(stdout);
     return true;
@@ -2772,10 +2812,16 @@ static bool execute_matrix(Runner* runner, const JsonValue* scenario,
 static bool execute_scenario(const char* path, const JsonValue* scenario, void* context,
                              char* error, size_t error_size) {
     Runner* runner = context;
+    const char* id = json_string(json_get(scenario, "id"));
     const char* name = json_string(json_get(scenario, "name"));
     const JsonValue* fixtures;
     const JsonValue* mode;
+    size_t start_step;
+    size_t start_passed;
+    size_t start_failed;
+    size_t start_comparisons;
     size_t index;
+    bool completed;
     (void)path;
     if (!scenario_selected(runner, scenario)) {
         return true;
@@ -2784,6 +2830,10 @@ static bool execute_scenario(const char* path, const JsonValue* scenario, void* 
         return true;
     }
     runner->current_scenario++;
+    start_step = runner->current_step;
+    start_passed = runner->passed;
+    start_failed = runner->failed;
+    start_comparisons = runner->comparisons;
     runner->restore_baseline = false;
     reset_pair(runner);
     printf("[scenario] %zu/%zu %s\n", runner->current_scenario, runner->scenarios,
@@ -2802,29 +2852,43 @@ static bool execute_scenario(const char* path, const JsonValue* scenario, void* 
     mode = json_get(scenario, "steps");
     if (mode != NULL) {
         runner->restore_baseline = false;
-        return execute_regular_steps(runner, scenario, mode, name, error, error_size);
+        completed =
+            execute_regular_steps(runner, scenario, mode, name, error, error_size);
+    } else {
+        if (!save_baseline(runner, error, error_size)) {
+            return false;
+        }
+        runner->restore_baseline = true;
+        mode = json_get(scenario, "vectors");
+        if (mode != NULL) {
+            completed =
+                execute_regular_steps(runner, scenario, mode, name, error, error_size);
+        } else {
+            mode = json_get(scenario, "range");
+            if (mode != NULL) {
+                completed =
+                    execute_range(runner, scenario, mode, name, error, error_size);
+            } else {
+                mode = json_get(scenario, "matrix");
+                completed = mode != NULL && execute_matrix(runner, scenario, mode, name,
+                                                           error, error_size);
+            }
+        }
     }
-    if (!save_baseline(runner, error, error_size)) {
-        return false;
+    if (completed && runner->summary_only) {
+        printf("[scenario-result] %s steps=%zu passed=%zu failed=%zu comparisons=%zu\n",
+               id, runner->current_step - start_step, runner->passed - start_passed,
+               runner->failed - start_failed, runner->comparisons - start_comparisons);
+        fflush(stdout);
     }
-    runner->restore_baseline = true;
-    mode = json_get(scenario, "vectors");
-    if (mode != NULL) {
-        return execute_regular_steps(runner, scenario, mode, name, error, error_size);
-    }
-    mode = json_get(scenario, "range");
-    if (mode != NULL) {
-        return execute_range(runner, scenario, mode, name, error, error_size);
-    }
-    mode = json_get(scenario, "matrix");
-    return mode != NULL &&
-           execute_matrix(runner, scenario, mode, name, error, error_size);
+    return completed;
 }
 
 static void print_usage(const char* program) {
     fprintf(stderr,
             "Usage: %s --suite FILE [--scenario PATTERN] [--step PATTERN] "
-            "[--failures-only] [--max-instructions COUNT]\n",
+            "[--shard-index INDEX --shard-count COUNT] [--failures-only] "
+            "[--summary-only] [--plan] [--max-instructions COUNT]\n",
             program);
 }
 
@@ -2833,6 +2897,7 @@ int firmware_runner_main(int argc, char** argv) {
     const char* suite_path = NULL;
     char error[256];
     int index;
+    runner.shard_count = 1u;
     for (index = 1; index < argc; index++) {
         if (strcmp(argv[index], "--suite") == 0 && index + 1 < argc) {
             suite_path = argv[++index];
@@ -2840,6 +2905,24 @@ int firmware_runner_main(int argc, char** argv) {
             runner.scenario_filter = argv[++index];
         } else if (strcmp(argv[index], "--step") == 0 && index + 1 < argc) {
             runner.step_filter = argv[++index];
+        } else if (strcmp(argv[index], "--shard-index") == 0 && index + 1 < argc) {
+            char* end;
+            runner.shard_index = strtoull(argv[++index], &end, 0);
+            if (*end != '\0') {
+                print_usage(argv[0]);
+                return 2;
+            }
+        } else if (strcmp(argv[index], "--shard-count") == 0 && index + 1 < argc) {
+            char* end;
+            runner.shard_count = strtoull(argv[++index], &end, 0);
+            if (*end != '\0' || runner.shard_count == 0u) {
+                print_usage(argv[0]);
+                return 2;
+            }
+        } else if (strcmp(argv[index], "--plan") == 0) {
+            runner.plan_only = true;
+        } else if (strcmp(argv[index], "--summary-only") == 0) {
+            runner.summary_only = true;
         } else if (strcmp(argv[index], "--failures-only") == 0) {
             runner.failures_only = true;
         } else if (strcmp(argv[index], "--max-instructions") == 0 && index + 1 < argc) {
@@ -2854,8 +2937,9 @@ int firmware_runner_main(int argc, char** argv) {
             return 2;
         }
     }
-    if (suite_path == NULL || !suite_directory(suite_path, runner.suite_directory,
-                                               sizeof(runner.suite_directory))) {
+    if (suite_path == NULL || runner.shard_index >= runner.shard_count ||
+        !suite_directory(suite_path, runner.suite_directory,
+                         sizeof(runner.suite_directory))) {
         print_usage(argv[0]);
         return 2;
     }
@@ -2882,6 +2966,10 @@ int firmware_runner_main(int argc, char** argv) {
     printf("[prepare] Loaded %zu scenarios with %zu test steps\n", runner.scenarios,
            runner.steps);
     fflush(stdout);
+    if (runner.plan_only) {
+        json_free((JsonValue*)runner.suite);
+        return 0;
+    }
     if (!open_images(&runner, error, sizeof(error))) {
         fprintf(stderr, "[error] %s\n", error);
         close_images(&runner);
