@@ -2,7 +2,7 @@
 .include "conformance.inc"
 
 .global _move_conformance_cases
-_move_conformance_cases = 33
+_move_conformance_cases = 45
 .global _move_conformance_group_complete
 _move_conformance_group_complete = 0
 
@@ -218,5 +218,96 @@ _run_move_conformance:
     mov.b _conformance_scratch+5, WREG
     mov w0, w2
     record_case 0x0520, w2, w2
+
+    mov MODCON, w8
+    mov XMODSRT, w9
+    mov XMODEND, w10
+    mov #_conformance_scratch, w0
+    mov w0, XMODSRT
+    mov #_conformance_scratch+7, w0
+    mov w0, XMODEND
+    mov #0x8ff4, w0
+    mov w0, MODCON
+    nop
+
+    mov #0x6601, w1
+    mov w1, _conformance_scratch+6
+    mov #_conformance_scratch+6, w4
+    mov [w4++], w2
+    record_case 0x0521, w2, w4
+
+    mov #0x6602, w1
+    mov w1, _conformance_scratch
+    mov #_conformance_scratch+6, w4
+    mov [++w4], w2
+    record_case 0x0522, w2, w4
+
+    mov #0x6603, w1
+    mov w1, _conformance_scratch
+    mov #_conformance_scratch, w4
+    mov [w4--], w2
+    record_case 0x0523, w2, w4
+
+    mov #0x6604, w1
+    mov w1, _conformance_scratch+6
+    mov #_conformance_scratch, w4
+    mov [--w4], w2
+    record_case 0x0524, w2, w4
+
+    mov #0x66a5, w0
+    mov.b WREG, _conformance_scratch+7
+    mov #_conformance_scratch+7, w4
+    clr w2
+    mov.b [w4++], w2
+    record_case 0x0525, w2, w4
+
+    mov #_conformance_scratch+6, w5
+    mov [w5++], w2
+    record_case 0x0526, w2, w5
+
+    mov #0x6607, w1
+    mov w1, _conformance_scratch+2
+    mov #_conformance_scratch+6, w4
+    mov #4, w5
+    mov [w4+w5], w2
+    record_case 0x0527, w2, w4
+
+    mov #0x0ff4, w0
+    mov w0, MODCON
+    nop
+    mov #_conformance_scratch+6, w4
+    mov [w4++], w2
+    record_case 0x0528, w2, w4
+
+    mov #0x8ff4, w0
+    mov w0, MODCON
+    nop
+    mov #0x6609, w1
+    mov #_conformance_scratch+6, w4
+    mov w1, [w4++]
+    mov _conformance_scratch+6, w2
+    record_case 0x0529, w2, w4
+
+    mov #0x660a, w1
+    mov #_conformance_scratch+6, w4
+    mov w1, [++w4]
+    mov _conformance_scratch, w2
+    record_case 0x052a, w2, w4
+
+    mov #0x660b, w1
+    mov w1, _conformance_scratch+2
+    mov #_conformance_scratch+6, w4
+    mov [w4+4], w2
+    record_case 0x052b, w2, w4
+
+    mov #0x660c, w1
+    mov #_conformance_scratch+6, w4
+    mov w1, [w4+4]
+    mov _conformance_scratch+2, w2
+    record_case 0x052c, w2, w4
+
+    mov w8, MODCON
+    mov w9, XMODSRT
+    mov w10, XMODEND
 
     end_results

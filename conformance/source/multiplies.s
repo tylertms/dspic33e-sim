@@ -3,7 +3,7 @@
 .equ _conformance_y_scratch, 0x9000
 
 .global _multiply_conformance_cases
-_multiply_conformance_cases = 151
+_multiply_conformance_cases = 153
 .global _multiply_conformance_group_complete
 _multiply_conformance_group_complete = 1
 
@@ -940,6 +940,45 @@ _run_multiply_conformance:
     record_accumulator 0x0794, ACCBL, ACCBH, ACCBU
     record_case 0x0795, w1, w9
     record_case 0x0796, w11, w11
+
+    mov MODCON, w0
+    push w0
+    mov XMODSRT, w0
+    push w0
+    mov XMODEND, w0
+    push w0
+    mov YMODSRT, w0
+    push w0
+    mov YMODEND, w0
+    push w0
+    mov #_conformance_scratch, w0
+    mov w0, XMODSRT
+    mov #_conformance_scratch+7, w0
+    mov w0, XMODEND
+    mov #_conformance_y_scratch, w0
+    mov w0, YMODSRT
+    mov #_conformance_y_scratch+7, w0
+    mov w0, YMODEND
+    mov #0xcfa8, w0
+    mov w0, MODCON
+    nop
+    mov #_conformance_scratch+6, w8
+    mov #_conformance_y_scratch, w10
+    mov #3, w4
+    mov #4, w5
+    mpy w4*w5, A, [w8]+=2, w4, [w10]-=2, w5
+    record_case 0x0797, w8, w8
+    record_case 0x0798, w10, w10
+    pop w0
+    mov w0, YMODEND
+    pop w0
+    mov w0, YMODSRT
+    pop w0
+    mov w0, XMODEND
+    pop w0
+    mov w0, XMODSRT
+    pop w0
+    mov w0, MODCON
 
     prepare_dsp_case 0x0000
     pop w13

@@ -140,8 +140,35 @@ static void write_word(Dspic33* cpu, uint32_t address, uint16_t value) {
     dspic33_write_word(cpu, address, value);
 }
 
+static uint16_t stored_word(const Dspic33* cpu, uint16_t address) {
+    return (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[address + 1u] << 8u));
+}
+
+static uint16_t modulo_address(const Dspic33* cpu, uint8_t reg, int32_t address,
+                               int32_t delta, bool y_space) {
+    uint16_t modcon = stored_word(cpu, 0x0046u);
+    uint16_t enable = y_space ? 0x4000u : 0x8000u;
+    uint8_t selector = (uint8_t)((modcon >> (y_space ? 4u : 0u)) & 0x0fu);
+    uint16_t start = stored_word(cpu, y_space ? 0x004cu : 0x0048u);
+    uint16_t end = stored_word(cpu, y_space ? 0x004eu : 0x004au);
+    uint32_t length = (uint32_t)end - start + 1u;
+
+    if ((modcon & enable) == 0u || selector == 15u || selector != reg || delta == 0 ||
+        end < start) {
+        return (uint16_t)address;
+    }
+    if (delta > 0 && address > end && (uint32_t)(address - end) <= length) {
+        return (uint16_t)(start + address - end - 1);
+    }
+    if (delta < 0 && address < start && (uint32_t)(start - address) <= length) {
+        return (uint16_t)(end - (start - address) + 1);
+    }
+    return (uint16_t)address;
+}
+
 static bool operand_address(Dspic33* cpu, uint8_t mode, uint8_t reg, uint8_t offset_reg,
                             uint8_t width, bool write, uint32_t* address) {
+    int32_t delta = 0;
     if (mode == 0u) {
         return false;
     }
@@ -149,12 +176,17 @@ static bool operand_address(Dspic33* cpu, uint8_t mode, uint8_t reg, uint8_t off
         *address = cpu->w[reg];
     } else if (mode == 2u || mode == 3u) {
         *address = cpu->w[reg];
-        cpu->w[reg] = (uint16_t)(cpu->w[reg] + (mode == 3u ? width : -width));
+        delta = mode == 3u ? width : -(int32_t)width;
+        cpu->w[reg] =
+            modulo_address(cpu, reg, (int32_t)cpu->w[reg] + delta, delta, false);
     } else if (mode == 4u || mode == 5u) {
-        cpu->w[reg] = (uint16_t)(cpu->w[reg] + (mode == 5u ? width : -width));
+        delta = mode == 5u ? width : -(int32_t)width;
+        cpu->w[reg] =
+            modulo_address(cpu, reg, (int32_t)cpu->w[reg] + delta, delta, false);
         *address = cpu->w[reg];
     } else {
-        *address = (uint16_t)(cpu->w[reg] + cpu->w[offset_reg]);
+        delta = (int16_t)cpu->w[offset_reg];
+        *address = modulo_address(cpu, reg, (int32_t)cpu->w[reg] + delta, delta, false);
     }
     if (*address >= 0x8000u &&
         !((reg == 14u || reg == 15u) && (cpu->corcon & 0x0004u) != 0u)) {
@@ -249,7 +281,9 @@ static bool execute_move(Dspic33* cpu, uint32_t opcode) {
 
 static uint32_t indirect_literal_address(Dspic33* cpu, uint8_t reg, int16_t offset,
                                          bool write) {
-    uint32_t address = (uint16_t)(cpu->w[reg] + offset);
+    int32_t delta = offset;
+    uint32_t address =
+        modulo_address(cpu, reg, (int32_t)cpu->w[reg] + delta, delta, false);
     if (address >= 0x8000u &&
         !((reg == 14u || reg == 15u) && (cpu->corcon & 0x0004u) != 0u)) {
         uint16_t page = write ? cpu->dswpag : cpu->dsrpag;
@@ -1276,6 +1310,7 @@ static bool dsp_prefetch_value(Dspic33* cpu, uint8_t operation, bool y_space,
         0, 2, 4, 6, 0, -6, -4, -2, 0, 2, 4, 6, 0, -6, -4, -2,
     };
     uint8_t base_register;
+    int32_t delta;
     uint16_t address;
     if (operation == 4u) {
         return false;
@@ -1283,10 +1318,14 @@ static bool dsp_prefetch_value(Dspic33* cpu, uint8_t operation, bool y_space,
     base_register = (uint8_t)((y_space ? 10u : 8u) + (operation >= 8u ? 1u : 0u));
     address = cpu->w[base_register];
     if (operation == 12u) {
-        address = (uint16_t)(address + cpu->w[12]);
+        delta = (int16_t)cpu->w[12];
+        address = modulo_address(cpu, base_register, (int32_t)address + delta, delta,
+                                 y_space);
     }
     *value = dspic33_read_word(cpu, address);
-    cpu->w[base_register] = (uint16_t)(cpu->w[base_register] + updates[operation]);
+    delta = updates[operation];
+    cpu->w[base_register] = modulo_address(
+        cpu, base_register, (int32_t)cpu->w[base_register] + delta, delta, y_space);
     return true;
 }
 
