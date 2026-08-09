@@ -5494,7 +5494,6 @@ void dspic33_device_reset(Dspic33* cpu) {
     usb_reset_registers(cpu);
     raw_write_word(cpu, USB_PWRC, 0u);
     raw_write_word(cpu, 0x0742u, 0x3020u);
-    raw_write_word(cpu, 0x0758u, 0xa400u);
     raw_write_word(cpu, 0x08c2u, 0x8000u);
     raw_write_word(cpu, 0x08c8u, 0u);
     raw_write_word(cpu, DMA_LCA, 0x000fu);

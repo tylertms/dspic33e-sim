@@ -241,6 +241,7 @@ typedef struct {
     uint8_t i2c_master_active;
     uint8_t i2c_slave_active;
     uint8_t i2c_slave_read;
+    uint8_t i2c_slave_rejected;
     Dspic33CanQueue can_rx[DSPIC33_CAN_COUNT];
     Dspic33CanQueue can_tx[DSPIC33_CAN_COUNT];
     uint16_t can_filter_window[DSPIC33_CAN_COUNT][48];
@@ -395,6 +396,10 @@ typedef struct {
     uint32_t last_trap_return;
     uint16_t reset_interrupt;
     uint16_t last_trap;
+    uint32_t pending_soft_trap_vector;
+    uint16_t pending_soft_trap;
+    uint8_t pending_soft_trap_priority;
+    uint8_t pending_soft_trap_delay;
     bool stop_on_trap;
     bool async_events_enabled;
     uint16_t interrupt_log_irq[16];

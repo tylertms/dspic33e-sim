@@ -11,7 +11,7 @@ volatile ConformanceOutput conformance_output;
 volatile uint16_t conformance_scratch[16] __attribute__((near));
 volatile uint16_t system_probe_selector __attribute__((near));
 volatile uint16_t system_reset_state __attribute__((near));
-volatile uint16_t system_trap_state[4] __attribute__((near));
+volatile uint16_t system_trap_state[10] __attribute__((near));
 volatile uint16_t interrupt_count __attribute__((near));
 volatile uint16_t interrupt_mode __attribute__((near));
 volatile uint16_t interrupt_order[4] __attribute__((near));

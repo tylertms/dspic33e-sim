@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 4
+_system_conformance_terminal_count = 6
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -18,6 +18,10 @@ _run_system_probe:
     bra z, _system_reset_probe
     cp w0, #4
     bra z, _system_divide_zero_probe
+    cp w0, #5
+    bra z, _system_sftac_probe
+    cp w0, #6
+    bra z, _system_sftac_consecutive_probe
     return
 
 .global _system_sleep_probe
@@ -45,6 +49,29 @@ _system_divide_zero_probe:
     div.s w2, w3
     return
 
+.global _system_sftac_probe
+_system_sftac_probe:
+    mov #0x1234, w4
+    lac w4, A
+    set_status 0x010f
+    mov #17, w5
+    sftac A, w5
+    mov INTCON1, w1
+    mov #0x2222, w2
+    return
+
+.global _system_sftac_consecutive_probe
+_system_sftac_consecutive_probe:
+    mov #0x1234, w4
+    lac w4, A
+    set_status 0x010f
+    mov #17, w5
+    mov #0x1111, w1
+    sftac A, w5
+    sftac B, w5
+    mov #0x2222, w2
+    return
+
 .global __MathError
 __MathError:
     mov [w15-4], w0
@@ -55,6 +82,16 @@ __MathError:
     mov w0, _system_trap_state+4
     mov INTTREG, w0
     mov w0, _system_trap_state+6
+    mov ACCAL, w0
+    mov w0, _system_trap_state+8
+    mov ACCAH, w0
+    mov w0, _system_trap_state+10
+    mov ACCAU, w0
+    mov w0, _system_trap_state+12
+    mov w1, _system_trap_state+14
+    mov w2, _system_trap_state+16
+    mov SR, w0
+    mov w0, _system_trap_state+18
 .global _system_math_trap_complete
 _system_math_trap_complete:
     bra _system_math_trap_complete

@@ -14,6 +14,10 @@ enum {
 static const uint64_t ACCUMULATOR_MASK = 0xffffffffffu;
 
 static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory);
+static void enter_trap(Dspic33* cpu, uint16_t trap, uint32_t vector, uint8_t priority,
+                       uint16_t status, uint32_t return_pc);
+static void schedule_soft_trap(Dspic33* cpu, uint16_t trap, uint32_t vector,
+                               uint8_t priority, uint16_t status);
 
 static bool accumulator_byte_location(uint32_t address, uint8_t* accumulator,
                                       uint8_t* byte) {
@@ -1210,7 +1214,8 @@ static bool execute_accumulator_shift(Dspic33* cpu, uint32_t opcode) {
             ? (int16_t)(encoded_amount >= 32u ? encoded_amount - 64u : encoded_amount)
             : (int16_t)cpu->w[opcode & 0x0fu];
     if (amount < -16 || amount > 16) {
-        return false;
+        schedule_soft_trap(cpu, 4u, 0x00000cu, 11u, 0x0090u);
+        return true;
     }
     apply_accumulator_result(
         cpu, accumulator,
@@ -1526,6 +1531,41 @@ static void enter_trap(Dspic33* cpu, uint16_t trap, uint32_t vector, uint8_t pri
     if (cpu->stop_on_trap) {
         cpu->stop_reason = DSPIC33_TRAPPED;
     }
+}
+
+static void schedule_soft_trap(Dspic33* cpu, uint16_t trap, uint32_t vector,
+                               uint8_t priority, uint16_t status) {
+    dspic33_write_word(cpu, 0x08c0u,
+                       (uint16_t)(dspic33_read_word(cpu, 0x08c0u) | status));
+    if (cpu->pending_soft_trap_delay != 0u) {
+        return;
+    }
+    cpu->pending_soft_trap = trap;
+    cpu->pending_soft_trap_vector = vector;
+    cpu->pending_soft_trap_priority = priority;
+    cpu->pending_soft_trap_delay = 2u;
+}
+
+static void advance_instruction(Dspic33* cpu, uint64_t cycles) {
+    uint16_t trap;
+    uint32_t vector;
+    uint8_t priority;
+
+    dspic33_device_advance(cpu, cycles);
+    if (cpu->pending_soft_trap_delay == 0u) {
+        return;
+    }
+    cpu->pending_soft_trap_delay--;
+    if (cpu->pending_soft_trap_delay != 0u) {
+        return;
+    }
+    trap = cpu->pending_soft_trap;
+    vector = cpu->pending_soft_trap_vector;
+    priority = cpu->pending_soft_trap_priority;
+    cpu->pending_soft_trap = 0u;
+    cpu->pending_soft_trap_vector = 0u;
+    cpu->pending_soft_trap_priority = 0u;
+    enter_trap(cpu, trap, vector, priority, 0u, cpu->pc);
 }
 
 void dspic33_raise_dma_address_trap(Dspic33* cpu) {
@@ -2108,6 +2148,10 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
     cpu->last_trap_return = 0u;
     cpu->reset_interrupt = UINT16_MAX;
     cpu->last_trap = UINT16_MAX;
+    cpu->pending_soft_trap_vector = 0u;
+    cpu->pending_soft_trap = 0u;
+    cpu->pending_soft_trap_priority = 0u;
+    cpu->pending_soft_trap_delay = 0u;
     cpu->async_events_enabled = true;
     memset(cpu->interrupt_log_irq, 0xff, sizeof(cpu->interrupt_log_irq));
     memset(cpu->interrupt_log_entry, 0, sizeof(cpu->interrupt_log_entry));
@@ -2454,7 +2498,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     if (opcode == 0x064000u) {
         dspic33_device_return_interrupt(cpu);
         cpu->instructions++;
-        dspic33_device_advance(cpu, 3u);
+        advance_instruction(cpu, 3u);
         return cpu->stop_reason;
     }
     if (opcode == 0x060000u) {
@@ -2464,7 +2508,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         }
         cpu->pc = pop_program_counter(cpu);
         cpu->instructions++;
-        dspic33_device_advance(cpu, 3u);
+        advance_instruction(cpu, 3u);
         return cpu->stop_reason;
     }
     cpu->pc += 2u;
@@ -2510,7 +2554,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
             }
         }
     }
-    dspic33_device_advance(cpu, 1u);
+    advance_instruction(cpu, 1u);
     if (cpu->power_state != DSPIC33_POWER_ACTIVE && dspic33_device_wake(cpu)) {
         cpu->power_state = DSPIC33_POWER_ACTIVE;
         cpu->stop_reason = DSPIC33_RUNNING;
