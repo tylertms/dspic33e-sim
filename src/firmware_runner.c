@@ -14,7 +14,12 @@
 #include "json.h"
 #include "scenario_stream.h"
 
-enum { MAX_STEP_PARTS = 32, MAX_MATRIX_DIMENSIONS = 16, MAX_MAPPED_FIELDS = 64 };
+enum {
+    MAX_STEP_PARTS = 32,
+    MAX_MATRIX_DIMENSIONS = 16,
+    MAX_MAPPED_FIELDS = 64,
+    MAX_MAPPED_TARGETS = 32
+};
 
 typedef struct RunTask RunTask;
 
@@ -70,8 +75,12 @@ typedef struct {
     size_t size;
     uint32_t reference_expected;
     uint32_t candidate_expected;
+    uint32_t reference_targets[MAX_MAPPED_TARGETS];
+    uint32_t candidate_targets[MAX_MAPPED_TARGETS];
+    size_t target_count;
     uint32_t mask;
     bool relative;
+    bool nullable;
 } MappedField;
 
 typedef struct {
@@ -1620,24 +1629,38 @@ static bool load_mapped_fields(Runner* runner, const JsonValue* item,
             json_get(specification, "expected_location");
         const JsonValue* relative_location =
             json_get(specification, "relative_location");
+        const JsonValue* expected_locations =
+            json_get(specification, "expected_locations");
         const JsonValue* mapped_location =
             expected_location != NULL ? expected_location : relative_location;
         int64_t offset;
         int64_t size;
         int64_t expected_offset = 0;
         int64_t mask = UINT32_MAX;
+        bool nullable = false;
+        const JsonValue* nullable_value = json_get(specification, "nullable");
         MappedField* field = &result->items[result->count];
         if (specification->type != JSON_OBJECT ||
             !parse_number(json_get(specification, "offset"), &offset) || offset < 0 ||
             !parse_number(json_get(specification, "size"), &size) || size < 1 ||
             size > 4 || (uint64_t)offset + (uint64_t)size > observation_size ||
-            (expected_location == NULL) == (relative_location == NULL) ||
-            !mapped_address(runner, mapped_location, false, &field->reference_expected,
-                            error, error_size) ||
-            !mapped_address(runner, mapped_location, true, &field->candidate_expected,
-                            error, error_size) ||
+            (size_t)(expected_location != NULL) + (size_t)(relative_location != NULL) +
+                    (size_t)(expected_locations != NULL) !=
+                1u ||
+            (mapped_location != NULL &&
+             (!mapped_address(runner, mapped_location, false,
+                              &field->reference_expected, error, error_size) ||
+              !mapped_address(runner, mapped_location, true, &field->candidate_expected,
+                              error, error_size))) ||
+            (expected_locations != NULL &&
+             (expected_locations->type != JSON_ARRAY ||
+              expected_locations->as.array.count == 0u ||
+              expected_locations->as.array.count > MAX_MAPPED_TARGETS)) ||
             (relative_location != NULL &&
              json_get(specification, "expected_location_offset") != NULL) ||
+            (expected_locations != NULL &&
+             json_get(specification, "expected_location_offset") != NULL) ||
+            (nullable_value != NULL && !json_boolean(nullable_value, &nullable)) ||
             (json_get(specification, "expected_location_offset") != NULL &&
              !parse_number(json_get(specification, "expected_location_offset"),
                            &expected_offset)) ||
@@ -1655,6 +1678,26 @@ static bool load_mapped_fields(Runner* runner, const JsonValue* item,
             (uint32_t)(field->candidate_expected + expected_offset);
         field->mask = (uint32_t)mask;
         field->relative = relative_location != NULL;
+        field->nullable = nullable;
+        field->target_count = 0u;
+        if (expected_locations != NULL) {
+            size_t target_index;
+            field->target_count = expected_locations->as.array.count;
+            for (target_index = 0u; target_index < field->target_count;
+                 target_index++) {
+                const JsonValue* target =
+                    expected_locations->as.array.items[target_index];
+                if (!mapped_address(runner, target, false,
+                                    &field->reference_targets[target_index], error,
+                                    error_size) ||
+                    !mapped_address(runner, target, true,
+                                    &field->candidate_targets[target_index], error,
+                                    error_size)) {
+                    snprintf(error, error_size, "invalid mapped memory field target");
+                    return false;
+                }
+            }
+        }
         result->count++;
     }
     return true;
@@ -1739,14 +1782,35 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item, size_t* f
         uint32_t candidate_value =
             read_memory_value(&runner->candidate, space,
                               candidate_address + (uint32_t)field->offset, field->size);
-        bool field_matches =
-            field->relative
-                ? ((reference_value - field->reference_expected) & field->mask) ==
-                      ((candidate_value - field->candidate_expected) & field->mask)
-                : (reference_value & field->mask) ==
-                          (field->reference_expected & field->mask) &&
-                      (candidate_value & field->mask) ==
-                          (field->candidate_expected & field->mask);
+        bool both_null = reference_value == 0u && candidate_value == 0u;
+        bool both_nonnull = reference_value != 0u && candidate_value != 0u;
+        bool field_matches = field->nullable && both_null;
+        if (!field_matches && (!field->nullable || both_nonnull)) {
+            if (field->target_count != 0u) {
+                size_t target_index;
+                for (target_index = 0u; target_index < field->target_count;
+                     target_index++) {
+                    if ((reference_value & field->mask) ==
+                            (field->reference_targets[target_index] & field->mask) &&
+                        (candidate_value & field->mask) ==
+                            (field->candidate_targets[target_index] & field->mask)) {
+                        field_matches = true;
+                        break;
+                    }
+                }
+            } else {
+                field_matches =
+                    field->relative
+                        ? ((reference_value - field->reference_expected) &
+                           field->mask) ==
+                              ((candidate_value - field->candidate_expected) &
+                               field->mask)
+                        : (reference_value & field->mask) ==
+                                  (field->reference_expected & field->mask) &&
+                              (candidate_value & field->mask) ==
+                                  (field->candidate_expected & field->mask);
+            }
+        }
         if (!field_matches) {
             matched = false;
             if (failed_mapped_field == NULL) {
@@ -1870,10 +1934,14 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item, size_t* f
                 printf(" expected=reference:0x%08" PRIx32 ",candidate:0x%08" PRIx32,
                        reference_expected_address, candidate_expected_address);
             } else if (failed_mapped_field != NULL) {
-                printf(" expected-field=reference:0x%08" PRIx32
-                       ",candidate:0x%08" PRIx32,
-                       failed_mapped_field->reference_expected,
-                       failed_mapped_field->candidate_expected);
+                if (failed_mapped_field->target_count != 0u) {
+                    printf(" expected-field=mapped-address");
+                } else {
+                    printf(" expected-field=reference:0x%08" PRIx32
+                           ",candidate:0x%08" PRIx32,
+                           failed_mapped_field->reference_expected,
+                           failed_mapped_field->candidate_expected);
+                }
             }
             printf("\n");
         }
