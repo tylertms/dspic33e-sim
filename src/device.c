@@ -5277,7 +5277,10 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
     }
     for (channel = 0u; channel < DSPIC33_UART_COUNT; channel++) {
         uint16_t base = uart_bases[channel];
-        if ((address & 0xfffeu) == base + 6u && (address & 1u) != 0u) {
+        bool high_byte = (address & 1u) != 0u;
+        bool nine_bit =
+            (raw_word(cpu, base) & UART_MODE_DATA_MASK) == UART_MODE_DATA_MASK;
+        if ((address & 0xfffeu) == base + 6u && high_byte == nine_bit) {
             uart_read_complete(cpu, channel);
         }
     }

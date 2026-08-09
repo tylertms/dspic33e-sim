@@ -228,30 +228,150 @@ static void receive_fifo_cases(UartConformance* state, Dspic33* cpu) {
         }
     }
 
-    dspic33_reset(cpu, 0u);
-    configure(cpu, 0u, 0x8000u, 0u, 0u);
-    clear_interrupt(cpu, error_irqs[0]);
-    for (index = 0u; index < 6u; index++) {
+    {
+        uint8_t channel;
+        for (channel = 0u; channel < DSPIC33_UART_COUNT; channel++) {
+            dspic33_reset(cpu, 0u);
+            configure(cpu, channel, 0x8000u, 0u, 0u);
+            clear_interrupt(cpu, error_irqs[channel]);
+            for (index = 0u; index < 6u; index++) {
+                Dspic33UartFrame frame;
+                memset(&frame, 0, sizeof(frame));
+                frame.value = (uint16_t)(0x70u + index);
+                expect(state, receive_frame(cpu, channel, &frame, 0u),
+                       "receive overrun schedule");
+            }
+            expect(state,
+                   (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) &
+                    0x0002u) != 0u,
+                   "receive overrun status");
+            expect(state, interrupt_flag(cpu, error_irqs[channel]),
+                   "receive overrun interrupt");
+            for (index = 0u; index < 5u; index++) {
+                expect(state,
+                       dspic33_read_word(cpu, (uint16_t)(bases[channel] + 6u)) ==
+                           (uint16_t)(0x70u + index),
+                       "receive overrun held ordering");
+            }
+            expect(state,
+                   (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) &
+                    0x0003u) == 0x0002u,
+                   "receive overrun persists after reads");
+            dspic33_write_word(cpu, (uint16_t)(bases[channel] + 2u), 0u);
+            expect(state,
+                   (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) &
+                    0x0003u) == 0u,
+                   "receive overrun clear resets FIFO");
+            {
+                Dspic33UartFrame frame;
+                memset(&frame, 0, sizeof(frame));
+                frame.value = 0x7fu;
+                expect(state, receive_frame(cpu, channel, &frame, 0u),
+                       "receive overrun recovery schedule");
+                expect(state,
+                       dspic33_read_word(cpu, (uint16_t)(bases[channel] + 6u)) ==
+                           frame.value,
+                       "receive overrun recovery value");
+            }
+
+            dspic33_reset(cpu, 0u);
+            configure(cpu, channel, 0x8000u, 0u, 0u);
+            for (index = 0u; index < 6u; index++) {
+                Dspic33UartFrame frame;
+                memset(&frame, 0, sizeof(frame));
+                frame.value = (uint16_t)(0x60u + index);
+                expect(state, receive_frame(cpu, channel, &frame, 0u),
+                       "receive populated overrun schedule");
+            }
+            expect(state,
+                   (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) &
+                    0x0003u) == 0x0003u,
+                   "receive populated overrun status");
+            expect(state, cpu->io.uart_rx_fifo[channel].count == 4u,
+                   "receive populated overrun FIFO depth");
+            expect(state, (cpu->io.uart_rx_hold_valid & (uint8_t)(1u << channel)) != 0u,
+                   "receive populated overrun held value");
+            dspic33_write_word(cpu, (uint16_t)(bases[channel] + 2u), 0u);
+            expect(state,
+                   (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) &
+                    0x0003u) == 0u,
+                   "receive populated overrun clear status");
+            expect(state, cpu->io.uart_rx_fifo[channel].count == 0u,
+                   "receive populated overrun clear FIFO");
+            expect(state, (cpu->io.uart_rx_hold_valid & (uint8_t)(1u << channel)) == 0u,
+                   "receive populated overrun clear held value");
+            {
+                Dspic33UartFrame frame;
+                memset(&frame, 0, sizeof(frame));
+                frame.value = 0x5du;
+                expect(state, receive_frame(cpu, channel, &frame, 0u),
+                       "receive populated overrun recovery schedule");
+                expect(state,
+                       dspic33_read_word(cpu, (uint16_t)(bases[channel] + 6u)) ==
+                           frame.value,
+                       "receive populated overrun recovery value");
+                expect(state,
+                       (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) &
+                        0x0001u) == 0u,
+                       "receive populated overrun recovery empty");
+            }
+        }
+    }
+}
+
+static void receive_access_width_cases(UartConformance* state, Dspic33* cpu) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_UART_COUNT; channel++) {
         Dspic33UartFrame frame;
+        uint16_t address = (uint16_t)(bases[channel] + 6u);
+        dspic33_reset(cpu, 0u);
+        configure(cpu, channel, 0x8000u, 0u, 0u);
         memset(&frame, 0, sizeof(frame));
-        frame.value = (uint16_t)(0x70u + index);
-        expect(state, receive_frame(cpu, 0u, &frame, 0u), "receive overrun schedule");
-    }
-    expect(state, (dspic33_read_word(cpu, (uint16_t)(bases[0] + 2u)) & 0x0002u) != 0u,
-           "receive overrun status");
-    expect(state, interrupt_flag(cpu, error_irqs[0]), "receive overrun interrupt");
-    for (index = 0u; index < 5u; index++) {
+        frame.value = 0x51u;
+        expect(state, receive_frame(cpu, channel, &frame, 0u),
+               "eight bit byte read first schedule");
+        frame.value = 0x52u;
+        expect(state, receive_frame(cpu, channel, &frame, 0u),
+               "eight bit byte read second schedule");
+        expect(state, cpu->io.uart_rx_fifo[channel].count == 2u,
+               "eight bit byte read initial depth");
+        expect(state, dspic33_read_byte(cpu, address) == 0x51u,
+               "eight bit low byte first value");
+        expect(state, cpu->io.uart_rx_fifo[channel].count == 1u,
+               "eight bit low byte first pop");
         expect(state,
-               dspic33_read_word(cpu, (uint16_t)(bases[0] + 6u)) ==
-                   (uint16_t)(0x70u + index),
-               "receive overrun held ordering");
+               (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) & 0x0001u) !=
+                   0u,
+               "eight bit low byte remaining status");
+        expect(state, dspic33_read_byte(cpu, address) == 0x52u,
+               "eight bit low byte second value");
+        expect(state, cpu->io.uart_rx_fifo[channel].count == 0u,
+               "eight bit low byte second pop");
+        expect(state,
+               (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) & 0x0001u) ==
+                   0u,
+               "eight bit low byte empty status");
+
+        dspic33_reset(cpu, 0u);
+        configure(cpu, channel, 0x8006u, 0u, 0u);
+        memset(&frame, 0, sizeof(frame));
+        frame.value = 0x1a5u;
+        expect(state, receive_frame(cpu, channel, &frame, 0u),
+               "nine bit word read first schedule");
+        frame.value = 0x155u;
+        expect(state, receive_frame(cpu, channel, &frame, 0u),
+               "nine bit word read second schedule");
+        expect(state, cpu->io.uart_rx_fifo[channel].count == 2u,
+               "nine bit word read initial depth");
+        expect(state, dspic33_read_word(cpu, address) == 0x1a5u,
+               "nine bit word read first value");
+        expect(state, cpu->io.uart_rx_fifo[channel].count == 1u,
+               "nine bit word read first pop");
+        expect(state, dspic33_read_word(cpu, address) == 0x155u,
+               "nine bit word read second value");
+        expect(state, cpu->io.uart_rx_fifo[channel].count == 0u,
+               "nine bit word read second pop");
     }
-    expect(state,
-           (dspic33_read_word(cpu, (uint16_t)(bases[0] + 2u)) & 0x0003u) == 0x0002u,
-           "receive overrun persists after reads");
-    dspic33_write_word(cpu, (uint16_t)(bases[0] + 2u), 0u);
-    expect(state, (dspic33_read_word(cpu, (uint16_t)(bases[0] + 2u)) & 0x0003u) == 0u,
-           "receive overrun clear resets FIFO");
 }
 
 static void receive_error_cases(UartConformance* state, Dspic33* cpu) {
@@ -591,6 +711,7 @@ int main(void) {
         receive_value_domain(&state, &cpu);
         transmit_value_domain(&state, &cpu);
         receive_fifo_cases(&state, &cpu);
+        receive_access_width_cases(&state, &cpu);
         receive_error_cases(&state, &cpu);
         special_receive_cases(&state, &cpu);
         transmit_fifo_cases(&state, &cpu);
