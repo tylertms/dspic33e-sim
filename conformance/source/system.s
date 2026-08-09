@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 8
+_system_conformance_terminal_count = 9
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -26,6 +26,8 @@ _run_system_probe:
     bra z, _system_sftac_repeat_probe
     cp w0, #8
     bra z, _system_do_overflow_probe
+    cp w0, #9
+    bra z, _system_stack_limit_probe
     return
 
 .global _system_sleep_probe
@@ -114,6 +116,50 @@ system_do_level_2_end:
 system_do_outer_end:
     nop
     return
+
+.global _system_stack_limit_probe
+_system_stack_limit_probe:
+    mov #0x5000, w15
+    mov w15, w14
+    mov #0xa5a5, w6
+    mov w6, [w15+10]
+    clr w1
+    clr w2
+    clr w3
+    clr w6
+    add w15, #8, w0
+    mov w0, SPLIM
+    set_status 0x010f
+    nop
+    mov [w15+10], w6
+    mov #0x1111, w1
+    mov #0x2222, w2
+    mov #0x3333, w3
+    return
+
+.global __StackError
+__StackError:
+    mov INTCON1, w0
+    mov w0, _system_stack_trap_state
+    mov SPLIM, w0
+    mov w0, _system_stack_trap_state+2
+    mov w14, _system_stack_trap_state+4
+    mov w15, _system_stack_trap_state+6
+    mov [w15-4], w0
+    mov w0, _system_stack_trap_state+8
+    mov [w15-2], w0
+    mov w0, _system_stack_trap_state+10
+    mov INTTREG, w0
+    mov w0, _system_stack_trap_state+12
+    mov w1, _system_stack_trap_state+14
+    mov w2, _system_stack_trap_state+16
+    mov w3, _system_stack_trap_state+18
+    mov w6, _system_stack_trap_state+20
+    mov SR, w0
+    mov w0, _system_stack_trap_state+22
+.global _system_stack_trap_complete
+_system_stack_trap_complete:
+    bra _system_stack_trap_complete
 
 .global __MathError
 __MathError:

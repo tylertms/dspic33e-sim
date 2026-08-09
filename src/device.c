@@ -888,14 +888,12 @@ void dspic33_device_latch_interrupt(Dspic33* cpu, uint8_t vector, uint8_t priori
     raw_write_word(cpu, 0x08c8u, (uint16_t)(((uint16_t)priority << 8u) | vector));
 }
 
-static bool service_interrupt(Dspic33* cpu, bool waking) {
+static bool select_interrupt(const Dspic33* cpu, bool waking, uint16_t* selected_irq,
+                             uint8_t* selected_priority) {
     uint8_t current = (uint8_t)((cpu->sr >> 5u) & 0x07u);
     uint8_t best_priority = current;
-    uint16_t next_priority;
     uint16_t best_irq = DSPIC33_IRQ_COUNT;
-    size_t log_index;
     uint16_t irq;
-    uint16_t stacked_high;
     uint16_t group;
     if (!cpu->async_events_enabled ||
         ((raw_word(cpu, 0x08c2u) & 0x8000u) == 0u && cpu->gie_disable_deferred == 0u) ||
@@ -929,12 +927,28 @@ static bool service_interrupt(Dspic33* cpu, bool waking) {
     if (best_irq == DSPIC33_IRQ_COUNT) {
         return false;
     }
+    *selected_irq = best_irq;
+    *selected_priority = best_priority;
+    return true;
+}
+
+static bool service_interrupt(Dspic33* cpu, bool waking) {
+    uint8_t best_priority;
+    uint16_t best_irq;
+    uint16_t next_priority;
+    size_t log_index;
+    uint16_t stacked_high;
+    if (!select_interrupt(cpu, waking, &best_irq, &best_priority)) {
+        return false;
+    }
+    dspic33_check_stack_address(cpu, cpu->w[15], cpu->w[15] > 0xfffdu, 2u);
     dspic33_write_word(cpu, cpu->w[15],
                        (uint16_t)((cpu->pc & 0xfffeu) | ((cpu->corcon >> 2u) & 1u)));
     cpu->w[15] += 2u;
     stacked_high = (uint16_t)(((cpu->sr & 0x00ffu) << 8u) |
                               ((cpu->corcon & 0x0008u) != 0u ? 0x0080u : 0u) |
                               ((cpu->pc >> 16u) & 0x007fu));
+    dspic33_check_stack_address(cpu, cpu->w[15], cpu->w[15] > 0xfffdu, 2u);
     dspic33_write_word(cpu, cpu->w[15], stacked_high);
     cpu->w[15] += 2u;
     cpu->corcon &= (uint16_t)~0x0004u;
@@ -952,6 +966,12 @@ static bool service_interrupt(Dspic33* cpu, bool waking) {
     cpu->interrupt_depth++;
     dspic33_device_latch_interrupt(cpu, (uint8_t)(best_irq + 8u), best_priority);
     return true;
+}
+
+bool dspic33_device_interrupt_pending(const Dspic33* cpu) {
+    uint8_t priority;
+    uint16_t irq;
+    return select_interrupt(cpu, false, &irq, &priority);
 }
 
 bool dspic33_device_service_interrupt(Dspic33* cpu) {
@@ -976,8 +996,10 @@ bool dspic33_device_wake(Dspic33* cpu) {
 void dspic33_device_return_interrupt(Dspic33* cpu) {
     uint16_t high;
     uint16_t low;
+    dspic33_check_stack_address(cpu, (int32_t)cpu->w[15] - 2, cpu->w[15] < 2u, 2u);
     cpu->w[15] -= 2u;
     high = dspic33_read_word(cpu, cpu->w[15]);
+    dspic33_check_stack_address(cpu, (int32_t)cpu->w[15] - 2, cpu->w[15] < 2u, 2u);
     cpu->w[15] -= 2u;
     low = dspic33_read_word(cpu, cpu->w[15]);
     cpu->pc = ((uint32_t)(high & 0x007fu) << 16u) | (low & 0xfffeu);

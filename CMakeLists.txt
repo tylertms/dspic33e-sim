@@ -25,6 +25,7 @@ add_executable(
 add_executable(
     opentec_simulator_event_conformance conformance/event_scheduler.c
 )
+add_executable(opentec_simulator_processor_conformance conformance/processor.c)
 
 add_executable(opentec_simulator_dma_conformance conformance/dma.c)
 add_executable(opentec_simulator_timer_conformance conformance/timer.c)
@@ -44,6 +45,9 @@ target_include_directories(opentec_simulator_core PUBLIC src)
 target_link_libraries(opentec_firmware_simulator PRIVATE opentec_simulator_core)
 target_link_libraries(
     opentec_simulator_event_conformance PRIVATE opentec_simulator_core
+)
+target_link_libraries(
+    opentec_simulator_processor_conformance PRIVATE opentec_simulator_core
 )
 target_link_libraries(
     opentec_simulator_dma_conformance PRIVATE opentec_simulator_core
@@ -86,6 +90,7 @@ set(opentec_simulator_targets
     opentec_simulator_core
     opentec_firmware_simulator
     opentec_simulator_event_conformance
+    opentec_simulator_processor_conformance
     opentec_simulator_dma_conformance
     opentec_simulator_timer_conformance
     opentec_simulator_adc_conformance

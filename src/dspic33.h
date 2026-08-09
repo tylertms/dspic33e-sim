@@ -355,6 +355,14 @@ typedef enum {
 } Dspic33PowerState;
 
 typedef struct {
+    uint32_t vector;
+    uint16_t trap;
+    uint8_t priority;
+    uint8_t delay;
+    bool active;
+} Dspic33PendingSoftTrap;
+
+typedef struct {
     uint32_t* program;
     uint32_t* persistent_program;
     uint32_t write_latches[DSPIC33_WRITE_LATCH_WORDS];
@@ -368,6 +376,7 @@ typedef struct {
     uint16_t sr;
     uint16_t corcon;
     uint16_t splim;
+    bool splim_enabled;
     uint16_t rcount;
     uint16_t dcount;
     uint32_t dostart;
@@ -397,10 +406,7 @@ typedef struct {
     uint32_t last_trap_return;
     uint16_t reset_interrupt;
     uint16_t last_trap;
-    uint32_t pending_soft_trap_vector;
-    uint16_t pending_soft_trap;
-    uint8_t pending_soft_trap_priority;
-    uint8_t pending_soft_trap_delay;
+    Dspic33PendingSoftTrap pending_soft_traps[4];
     bool stop_on_trap;
     bool async_events_enabled;
     uint16_t interrupt_log_irq[16];
@@ -485,6 +491,8 @@ bool dspic33_usb_transmit(Dspic33* cpu, Dspic33UsbPacket* packet);
 void dspic33_adc_input(Dspic33* cpu, uint8_t channel, uint16_t value);
 void dspic33_gpio_input(Dspic33* cpu, uint8_t port, uint16_t value);
 void dspic33_set_async_events(Dspic33* cpu, bool enabled);
+void dspic33_check_stack_address(Dspic33* cpu, int32_t address, bool wrapped,
+                                 uint8_t delay);
 Dspic33StopReason dspic33_step(Dspic33* cpu);
 Dspic33StopReason dspic33_run(Dspic33* cpu, uint64_t instruction_limit);
 Dspic33StopReason dspic33_run_until(Dspic33* cpu, uint32_t stop_address,
