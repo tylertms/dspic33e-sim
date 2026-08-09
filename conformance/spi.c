@@ -269,12 +269,38 @@ static void enhanced_fifo_cases(SpiConformance* state, Dspic33* cpu) {
                "enhanced overflow flag");
         expect(state, interrupt_flag(cpu, error_irqs[channel]),
                "enhanced overflow error interrupt");
-        for (index = 0u; index < 8u; index++) {
+        expect(state,
+               dspic33_spi_receive(cpu, channel, 0x3eeeu, 1u) &&
+                   dspic33_device_advance(cpu, 1u),
+               "enhanced overflow blocks receive");
+        expect(state, cpu->io.spi_rx_fifo[channel].count == 8u,
+               "enhanced blocked receive preserves depth");
+        dspic33_write_word(cpu, base,
+                           (uint16_t)(dspic33_read_word(cpu, base) & ~0x0040u));
+        expect(state, (dspic33_read_word(cpu, base) & 0x0040u) == 0u,
+               "enhanced overflow software clear");
+        expect(state, cpu->io.spi_rx_fifo[channel].count == 8u,
+               "enhanced clear preserves unread words");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0x3000u,
+               "enhanced first preserved word");
+        expect(state, cpu->io.spi_rx_fifo[channel].count == 7u,
+               "enhanced read frees receive slot");
+        expect(state,
+               dspic33_spi_receive(cpu, channel, 0x3dddu, 1u) &&
+                   dspic33_device_advance(cpu, 1u),
+               "enhanced receive resumes after clear");
+        expect(state, (dspic33_read_word(cpu, base) & 0x0040u) == 0u,
+               "enhanced recovered receive avoids overflow");
+        expect(state, cpu->io.spi_rx_fifo[channel].count == 8u,
+               "enhanced recovered receive fills slot");
+        for (index = 1u; index < 8u; index++) {
             expect(state,
                    dspic33_read_word(cpu, (uint16_t)(base + 8u)) ==
                        (uint16_t)(0x3000u + index),
                    "enhanced receive read order");
         }
+        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0x3dddu,
+               "enhanced recovered receive tail");
         expect(state, (dspic33_read_word(cpu, base) & 0x0021u) == 0x0020u,
                "enhanced receive empty status");
     }
