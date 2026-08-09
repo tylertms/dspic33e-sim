@@ -9,6 +9,9 @@ _move_conformance_group_complete = 0
 .global _run_move_conformance
 _run_move_conformance:
     begin_results
+    push w8
+    push w9
+    push w10
 
     set_status 0x0105
     mov #0xa55a, w2
@@ -310,4 +313,7 @@ _run_move_conformance:
     mov w9, XMODSRT
     mov w10, XMODEND
 
+    pop w10
+    pop w9
+    pop w8
     end_results

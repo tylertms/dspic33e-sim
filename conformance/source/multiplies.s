@@ -967,8 +967,8 @@ _run_multiply_conformance:
     mov #3, w4
     mov #4, w5
     mpy w4*w5, A, [w8]+=2, w4, [w10]-=2, w5
-    record_case 0x0797, w8, w8
-    record_case 0x0798, w10, w10
+    record_accumulator_case 0x079d, w8, w8, w8
+    record_accumulator_case 0x079e, w10, w10, w10
     pop w0
     mov w0, YMODEND
     pop w0
