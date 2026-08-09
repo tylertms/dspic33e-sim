@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 14
+_system_conformance_terminal_count = 20
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -38,6 +38,18 @@ _run_system_probe:
     bra z, _system_binary_address_error_probe
     cp w0, #14
     bra z, _system_multi_operand_control_probe
+    cp w0, #15
+    bra z, _system_data_limit_control_probe
+    cp w0, #16
+    bra z, _system_unimplemented_read_probe
+    cp w0, #17
+    bra z, _system_unimplemented_write_probe
+    cp w0, #18
+    bra z, _system_unimplemented_wrap_read_probe
+    cp w0, #19
+    bra z, _system_unimplemented_wrap_write_probe
+    cp w0, #20
+    bra z, _system_unused_sfr_probe
     return
 
 .global _system_sleep_probe
@@ -239,6 +251,86 @@ _system_multi_operand_control_probe:
 _system_multi_operand_control_complete:
     bra _system_multi_operand_control_complete
 
+.global _system_data_limit_control_probe
+_system_data_limit_control_probe:
+    mov #0xdffe, w1
+    mov #0xa5a5, w0
+    mov w0, [w1]
+    mov [w1++], w2
+    mov w1, _system_data_map_control_state
+    mov w2, _system_data_map_control_state+2
+    mov #0xdffe, w1
+    mov #0x5a5a, w2
+    mov w2, [w1++]
+    mov w1, _system_data_map_control_state+4
+    mov #0xdffe, w1
+    mov [w1], w0
+    mov w0, _system_data_map_control_state+6
+    mov INTCON1, w0
+    mov w0, _system_data_map_control_state+8
+    mov #0x3333, w3
+    mov w3, _system_data_map_control_state+10
+    bra _system_data_map_control_complete
+
+.global _system_unimplemented_read_probe
+_system_unimplemented_read_probe:
+    mov #0x5000, w15
+    mov #0xe000, w1
+    mov #0x5a5a, w2
+    clr w3
+    set_status 0x010f
+    mov [w1++], w2
+    mov #0x1111, w3
+    return
+
+.global _system_unimplemented_write_probe
+_system_unimplemented_write_probe:
+    mov #0x5000, w15
+    mov #0xe000, w1
+    mov #0xa5a5, w2
+    clr w3
+    set_status 0x010f
+    mov w2, [w1++]
+    mov #0x1111, w3
+    return
+
+.global _system_unimplemented_wrap_read_probe
+_system_unimplemented_wrap_read_probe:
+    mov #0x5000, w15
+    mov #0xfffe, w1
+    mov #0x5a5a, w2
+    clr w3
+    set_status 0x010f
+    mov [w1++], w2
+    mov #0x1111, w3
+    return
+
+.global _system_unimplemented_wrap_write_probe
+_system_unimplemented_wrap_write_probe:
+    mov #0x5000, w15
+    mov #0xfffe, w1
+    mov #0xa5a5, w2
+    clr w3
+    set_status 0x010f
+    mov w2, [w1++]
+    mov #0x1111, w3
+    return
+
+.global _system_unused_sfr_probe
+_system_unused_sfr_probe:
+    mov #0x0056, w1
+    mov #0x5a5a, w2
+    mov [w1++], w2
+    mov w1, _system_data_map_control_state
+    mov w2, _system_data_map_control_state+2
+    mov INTCON1, w0
+    mov w0, _system_data_map_control_state+4
+    mov #0x3333, w3
+    mov w3, _system_data_map_control_state+6
+.global _system_data_map_control_complete
+_system_data_map_control_complete:
+    bra _system_data_map_control_complete
+
 .global __AddressError
 __AddressError:
     mov w1, _system_address_trap_state
@@ -275,6 +367,24 @@ __AddressError:
     mov w0, _system_multi_operand_trap_state+16
     mov INTTREG, w0
     mov w0, _system_multi_operand_trap_state+18
+    mov w1, _system_data_map_trap_state
+    mov w2, _system_data_map_trap_state+2
+    mov w3, _system_data_map_trap_state+4
+    mov INTCON1, w0
+    mov w0, _system_data_map_trap_state+6
+    mov [w15-4], w0
+    mov w0, _system_data_map_trap_state+8
+    mov [w15-2], w0
+    mov w0, _system_data_map_trap_state+10
+    mov INTTREG, w0
+    mov w0, _system_data_map_trap_state+12
+    mov SR, w0
+    mov w0, _system_data_map_trap_state+14
+    mov w15, _system_data_map_trap_state+16
+    mov DSRPAG, w0
+    mov w0, _system_data_map_trap_state+18
+    mov DSWPAG, w0
+    mov w0, _system_data_map_trap_state+20
 .global _system_address_trap_complete
 _system_address_trap_complete:
     bra _system_address_trap_complete

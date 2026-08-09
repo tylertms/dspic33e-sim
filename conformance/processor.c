@@ -263,6 +263,104 @@ static void address_error_cases(ProcessorConformance* state, Dspic33* cpu) {
            "table pointer does not set ADDRERR");
 }
 
+static void data_map_address_error_cases(ProcessorConformance* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    dspic33_write_word(cpu, 0xdffeu, 0xa5a5u);
+    cpu->w[1] = 0xdffeu;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "last implemented word read completes");
+    expect(state, cpu->w[1] == 0xe000u && cpu->w[2] == 0xa5a5u,
+           "last implemented word read updates result and pointer");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W2_W1_POST_INCREMENT);
+    cpu->w[1] = 0xdffeu;
+    cpu->w[2] = 0x5a5au;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "last implemented word write completes");
+    expect(state, cpu->w[1] == 0xe000u && dspic33_read_word(cpu, 0xdffeu) == 0x5a5au,
+           "last implemented word write updates memory and pointer");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    dspic33_write_word(cpu, 0xe000u, 0xbeefu);
+    cpu->w[1] = 0xe000u;
+    cpu->w[2] = 0x5a5au;
+    expect_address_trap(state, cpu, "first unimplemented word read traps");
+    expect(state,
+           cpu->w[1] == 0xe002u && cpu->w[2] == 0u &&
+               dspic33_read_word(cpu, 0xe000u) == 0xbeefu,
+           "unimplemented read returns zero and preserves raw backing");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W2_W1_POST_INCREMENT);
+    dspic33_write_word(cpu, 0xe000u, 0xbeefu);
+    cpu->w[1] = 0xe000u;
+    cpu->w[2] = 0xa5a5u;
+    expect_address_trap(state, cpu, "first unimplemented word write traps");
+    expect(state,
+           cpu->w[1] == 0xe002u && cpu->w[2] == 0xa5a5u &&
+               dspic33_read_word(cpu, 0xe000u) == 0xbeefu,
+           "unimplemented write preserves source and raw backing");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    dspic33_write_word(cpu, 0xfffeu, 0xbeefu);
+    cpu->w[1] = 0xfffeu;
+    cpu->w[2] = 0x5a5au;
+    expect_address_trap(state, cpu, "last unimplemented word read traps");
+    expect(state,
+           cpu->w[1] == 0x8000u && cpu->w[2] == 0u && cpu->dsrpag == 2u &&
+               cpu->dswpag == 1u && dspic33_read_word(cpu, 0xfffeu) == 0xbeefu,
+           "unimplemented read advances EDS read page only");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W2_W1_POST_INCREMENT);
+    dspic33_write_word(cpu, 0xfffeu, 0xbeefu);
+    cpu->w[1] = 0xfffeu;
+    cpu->w[2] = 0xa5a5u;
+    expect_address_trap(state, cpu, "last unimplemented word write traps");
+    expect(state,
+           cpu->w[1] == 0x8000u && cpu->w[2] == 0xa5a5u && cpu->dsrpag == 1u &&
+               cpu->dswpag == 2u && dspic33_read_word(cpu, 0xfffeu) == 0xbeefu,
+           "unimplemented write advances EDS write page only");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_BYTE_W1_POST_INCREMENT_W2);
+    dspic33_write_byte(cpu, 0xe000u, 0x5au);
+    cpu->w[1] = 0xe000u;
+    cpu->w[2] = 0xa5a5u;
+    expect_address_trap(state, cpu, "unimplemented byte read traps");
+    expect(state,
+           cpu->w[1] == 0xe001u && cpu->w[2] == 0xa500u &&
+               dspic33_read_byte(cpu, 0xe000u) == 0x5au,
+           "unimplemented byte read returns zero and updates pointer");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    cpu->w[1] = 0x0056u;
+    cpu->w[2] = 0x5a5au;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "unused SFR hole read remains valid");
+    expect(state, cpu->w[1] == 0x0058u && cpu->w[2] == 0u,
+           "unused SFR hole reads zero and updates pointer");
+
+    dspic33_reset(cpu, 0u);
+    cpu->instruction_active = true;
+    cpu->io.dma_transfer_active = true;
+    dspic33_write_word(cpu, 0xe000u, 0x1234u);
+    expect(state, dspic33_read_word(cpu, 0xe000u) == 0x1234u && !cpu->address_error,
+           "DMA raw access bypasses CPU data map trap");
+    cpu->instruction_active = false;
+    cpu->io.dma_transfer_active = false;
+}
+
 static uint16_t active_pending_traps(const Dspic33* cpu) {
     uint16_t count = 0u;
     size_t index;
@@ -693,6 +791,7 @@ int main(void) {
     expect(&state, initialized, "initialize processor conformance");
     if (initialized) {
         address_error_cases(&state, &cpu);
+        data_map_address_error_cases(&state, &cpu);
         w15_write_cases(&state, &cpu);
         valid_stack_frame_cases(&state, &cpu);
         invalid_lnk_case(&state, &cpu);

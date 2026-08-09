@@ -18,6 +18,8 @@ volatile uint16_t system_address_trap_buffer[2] __attribute__((near));
 volatile uint16_t system_multi_operand_trap_state[10] __attribute__((near));
 volatile uint16_t system_multi_operand_control_state[6] __attribute__((near));
 volatile uint16_t system_multi_operand_buffer[2] __attribute__((near));
+volatile uint16_t system_data_map_trap_state[11] __attribute__((near));
+volatile uint16_t system_data_map_control_state[6] __attribute__((near));
 volatile uint16_t interrupt_count __attribute__((near));
 volatile uint16_t interrupt_mode __attribute__((near));
 volatile uint16_t interrupt_order[4] __attribute__((near));
