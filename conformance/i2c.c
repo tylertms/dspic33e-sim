@@ -386,6 +386,7 @@ static void slave_transmit_cases(I2cConformance* state, Dspic33* cpu) {
     uint8_t channel;
     for (channel = 0u; channel < DSPIC33_I2C_COUNT; channel++) {
         uint16_t base = bases[channel];
+        uint8_t channel_bit = (uint8_t)(1u << channel);
         Dspic33I2cTransfer transfer;
         dspic33_reset(cpu, 0u);
         dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x31u);
@@ -411,6 +412,10 @@ static void slave_transmit_cases(I2cConformance* state, Dspic33* cpu) {
                "slave transmit acknowledged");
         expect(state, interrupt_flag(cpu, slave_irqs[channel]),
                "slave transmit interrupt");
+        expect(state,
+               (cpu->io.i2c_slave_active & channel_bit) != 0u &&
+                   (cpu->io.i2c_slave_read & channel_bit) != 0u,
+               "slave acknowledge retains transmit state");
         expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) == 0u,
                "slave acknowledge stretches next byte");
         expect(state,
@@ -433,6 +438,10 @@ static void slave_transmit_cases(I2cConformance* state, Dspic33* cpu) {
                "slave nack output");
         expect(state, interrupt_flag(cpu, slave_irqs[channel]),
                "slave nack interrupts");
+        expect(state,
+               (cpu->io.i2c_slave_active & channel_bit) == 0u &&
+                   (cpu->io.i2c_slave_read & channel_bit) == 0u,
+               "slave nack resets transmit state");
         expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) != 0u,
                "slave nack does not stretch");
 
@@ -465,6 +474,7 @@ static void address_mode_cases(I2cConformance* state, Dspic33* cpu) {
     uint8_t channel;
     for (channel = 0u; channel < DSPIC33_I2C_COUNT; channel++) {
         uint16_t base = bases[channel];
+        uint8_t channel_bit = (uint8_t)(1u << channel);
         dspic33_reset(cpu, 0u);
         dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x02abu);
         enable(cpu, channel, 0x0440u, 0u);
@@ -517,6 +527,10 @@ static void address_mode_cases(I2cConformance* state, Dspic33* cpu) {
                !interrupt_flag(cpu, slave_irqs[channel]) &&
                    (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x8000u) != 0u,
                "ten bit slave nack omits interrupt");
+        expect(state,
+               (cpu->io.i2c_slave_active & channel_bit) == 0u &&
+                   (cpu->io.i2c_slave_read & channel_bit) == 0u,
+               "ten bit slave nack resets transmit state");
 
         dspic33_reset(cpu, 0u);
         enable(cpu, channel, 0x0080u, 0u);

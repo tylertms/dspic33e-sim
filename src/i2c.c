@@ -548,6 +548,7 @@ static void slave_read(Dspic33* cpu, uint8_t channel, bool acknowledge) {
     uint16_t control = raw_word(cpu, (uint16_t)(base + I2C_CON));
     uint16_t status = raw_word(cpu, (uint16_t)(base + I2C_STAT));
     uint8_t bit = (uint8_t)(1u << channel);
+    bool ten_bit = (status & I2C_TEN_BIT) != 0u;
     uint8_t value;
     if (!module_enabled(cpu, channel) || (cpu->io.i2c_slave_active & bit) == 0u ||
         (cpu->io.i2c_slave_read & bit) == 0u || (status & I2C_TBF) == 0u) {
@@ -572,7 +573,7 @@ static void slave_read(Dspic33* cpu, uint8_t channel, bool acknowledge) {
     raw_write_word(cpu, (uint16_t)(base + I2C_CON), control);
     raw_write_word(cpu, (uint16_t)(base + I2C_STAT), status);
     record_transfer(cpu, channel, DSPIC33_I2C_WRITE, value, acknowledge, false);
-    if (acknowledge || (status & I2C_TEN_BIT) == 0u) {
+    if (acknowledge || !ten_bit) {
         raise_slave(cpu, channel);
     }
 }
