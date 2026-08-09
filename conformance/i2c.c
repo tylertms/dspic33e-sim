@@ -372,13 +372,41 @@ static void slave_receive_cases(I2cConformance* state, Dspic33* cpu) {
         dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
         enable(cpu, channel, 0u, 0u);
         expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x52u, false, false, 0u) &&
+                   dspic33_device_advance(cpu, 0u),
+               "slave address without receive stretch");
+        expect(state,
+               interrupt_flag(cpu, slave_irqs[channel]) &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) == 0u,
+               "slave address always stretches");
+        dspic33_read_word(cpu, base);
+        clear_interrupt(cpu, slave_irqs[channel]);
+        expect(state,
+               dspic33_i2c_slave_write(cpu, channel, 0x44u, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   !interrupt_flag(cpu, slave_irqs[channel]),
+               "slave address hold delays data");
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9000u);
+        expect(state, dspic33_device_advance(cpu, 1u), "slave address hold release");
+        expect(state,
+               interrupt_flag(cpu, slave_irqs[channel]) &&
+                   dspic33_read_word(cpu, base) == 0x0044u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) != 0u,
+               "slave data does not stretch when disabled");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
+        enable(cpu, channel, 0u, 0u);
+        expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x51u, false, false, 0u) &&
                    dspic33_device_advance(cpu, 0u),
                "mismatched address event");
         expect(state, !interrupt_flag(cpu, slave_irqs[channel]),
                "mismatched address ignored");
-        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 8u) != 0u,
-               "mismatched start detected");
+        expect(state,
+               (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 8u) != 0u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) != 0u,
+               "mismatched start does not stretch");
     }
 }
 
@@ -533,6 +561,33 @@ static void address_mode_cases(I2cConformance* state, Dspic33* cpu) {
                "ten bit slave nack resets transmit state");
 
         dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x02abu);
+        enable(cpu, channel, 0x0400u, 0u);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
+                   dspic33_device_advance(cpu, 0u),
+               "ten bit address without receive stretch");
+        expect(state,
+               interrupt_flag(cpu, slave_irqs[channel]) &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) == 0u,
+               "ten bit first address always stretches");
+        dspic33_read_word(cpu, base);
+        clear_interrupt(cpu, slave_irqs[channel]);
+        expect(state,
+               dspic33_device_advance(cpu, 1u) &&
+                   !interrupt_flag(cpu, slave_irqs[channel]),
+               "ten bit second address waits for release");
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "ten bit second address after release");
+        expect(state,
+               interrupt_flag(cpu, slave_irqs[channel]) &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0100u) != 0u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) == 0u &&
+                   dspic33_read_word(cpu, base) == 0x00abu,
+               "ten bit second address always stretches");
+
+        dspic33_reset(cpu, 0u);
         enable(cpu, channel, 0x0080u, 0u);
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0u, false, false, 0u) &&
@@ -562,9 +617,15 @@ static void address_mode_cases(I2cConformance* state, Dspic33* cpu) {
                "ipmi accepts ten bit preamble");
         dspic33_read_word(cpu, base);
         clear_interrupt(cpu, slave_irqs[channel]);
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9800u);
         expect(state, dspic33_device_advance(cpu, 1u), "ipmi ten bit address event");
+        expect(state,
+               interrupt_flag(cpu, slave_irqs[channel]) &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) == 0u,
+               "ipmi ten bit address stretches");
         dspic33_read_word(cpu, base);
         clear_interrupt(cpu, slave_irqs[channel]);
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9800u);
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x02abu, true, true, 0u) &&
                    dspic33_device_advance(cpu, 0u),
@@ -617,7 +678,7 @@ static void address_rejection_cases(I2cConformance* state, Dspic33* cpu) {
                    dspic33_i2c_slave_start(cpu, channel, 0x52u, false, false, 0u) &&
                    dspic33_device_advance(cpu, 0u) &&
                    interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) != 0u,
+                   (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) == 0u,
                "seven bit stop restores matching");
 
         dspic33_reset(cpu, 0u);
@@ -645,9 +706,15 @@ static void address_rejection_cases(I2cConformance* state, Dspic33* cpu) {
         enable(cpu, channel, 0x0400u, 0u);
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x02acu, false, true, 0u) &&
-                   dspic33_device_advance(cpu, 1u),
-               "reject ten bit low mismatch");
+                   dspic33_device_advance(cpu, 0u),
+               "ten bit low mismatch first address");
+        dspic33_read_word(cpu, base);
         clear_interrupt(cpu, slave_irqs[channel]);
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+        expect(state,
+               dspic33_device_advance(cpu, 1u) &&
+                   !interrupt_flag(cpu, slave_irqs[channel]),
+               "reject ten bit low mismatch");
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
                    dspic33_device_advance(cpu, 0u) &&

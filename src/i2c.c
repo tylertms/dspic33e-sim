@@ -432,9 +432,7 @@ static void slave_start(Dspic33* cpu, uint8_t channel, uint16_t payload) {
                                : (uint16_t)((address << 1u) | read));
         status |= I2C_RBF;
     }
-    if ((read && !ten_bit) || (control & I2C_STREN) != 0u) {
-        control &= (uint16_t)~I2C_SCLREL;
-    }
+    control &= (uint16_t)~I2C_SCLREL;
     if (read && !ten_bit && (control & I2C_IPMIEN) != 0u) {
         cpu->io.i2c_slave_active &= (uint8_t)~bit;
         cpu->io.i2c_slave_read &= (uint8_t)~bit;
@@ -456,7 +454,7 @@ static void slave_ten_second(Dspic33* cpu, uint8_t channel, uint16_t address) {
         cpu->io.i2c_slave_address[channel] != address) {
         return;
     }
-    if ((control & I2C_STREN) != 0u && (control & I2C_SCLREL) == 0u) {
+    if ((control & I2C_SCLREL) == 0u) {
         schedule_external(cpu, channel, I2C_EVENT_SLAVE_TEN_SECOND, address, 1u);
         return;
     }
@@ -473,9 +471,7 @@ static void slave_ten_second(Dspic33* cpu, uint8_t channel, uint16_t address) {
         raw_write_word(cpu, (uint16_t)(base + I2C_RCV), address & 0x00ffu);
         status |= I2C_RBF;
     }
-    if ((control & I2C_STREN) != 0u) {
-        control &= (uint16_t)~I2C_SCLREL;
-    }
+    control &= (uint16_t)~I2C_SCLREL;
     raw_write_word(cpu, (uint16_t)(base + I2C_CON), control);
     raw_write_word(cpu, (uint16_t)(base + I2C_STAT), status);
     raise_slave(cpu, channel);
@@ -524,7 +520,7 @@ static void slave_write(Dspic33* cpu, uint8_t channel, uint8_t value) {
         (cpu->io.i2c_slave_read & bit) != 0u) {
         return;
     }
-    if ((control & I2C_STREN) != 0u && (control & I2C_SCLREL) == 0u) {
+    if ((control & I2C_SCLREL) == 0u) {
         schedule_external(cpu, channel, I2C_EVENT_SLAVE_WRITE, value, 1u);
         return;
     }
