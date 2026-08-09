@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 10
+_system_conformance_terminal_count = 14
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -30,6 +30,14 @@ _run_system_probe:
     bra z, _system_stack_limit_probe
     cp w0, #10
     bra z, _system_address_error_probe
+    cp w0, #11
+    bra z, _system_shift_address_error_probe
+    cp w0, #12
+    bra z, _system_unary_address_error_probe
+    cp w0, #13
+    bra z, _system_binary_address_error_probe
+    cp w0, #14
+    bra z, _system_multi_operand_control_probe
     return
 
 .global _system_sleep_probe
@@ -154,6 +162,83 @@ _system_address_error_probe:
     mov #0x1111, w3
     return
 
+_system_prepare_multi_operand_address_error:
+    mov #0x0008, w0
+    mov w0, T2CON
+    mov #0x5555, w0
+    mov w0, TMR3HLD
+    mov #0x1234, w0
+    mov w0, TMR2
+    mov #0xaaaa, w0
+    mov w0, TMR3HLD
+    mov #_system_multi_operand_buffer, w5
+    clr w0
+    clr [w5]
+    mov w0, [w5+2]
+    inc w5, w5
+    mov #0x0106, w4
+    clr w3
+    return
+
+.global _system_shift_address_error_probe
+_system_shift_address_error_probe:
+    mov #0x5000, w15
+    rcall _system_prepare_multi_operand_address_error
+    asr [w4++], [w5--]
+    mov #0x1111, w3
+    return
+
+.global _system_unary_address_error_probe
+_system_unary_address_error_probe:
+    mov #0x5000, w15
+    rcall _system_prepare_multi_operand_address_error
+    neg [w4++], [w5--]
+    mov #0x1111, w3
+    return
+
+.global _system_binary_address_error_probe
+_system_binary_address_error_probe:
+    mov #0x5000, w15
+    rcall _system_prepare_multi_operand_address_error
+    mov #2, w2
+    add w2, [w4++], [w5--]
+    mov #0x1111, w3
+    return
+
+.global _system_multi_operand_control_probe
+_system_multi_operand_control_probe:
+    mov #_system_multi_operand_buffer, w4
+    mov #0x8001, w0
+    mov w0, [w4]
+    clr w0
+    mov w0, [w4+2]
+    asr [w4++], [w4]
+    mov w4, _system_multi_operand_control_state
+    mov [w4], w0
+    mov w0, _system_multi_operand_control_state+2
+    mov #_system_multi_operand_buffer, w4
+    mov #1, w0
+    mov w0, [w4]
+    clr w0
+    mov w0, [w4+2]
+    neg [w4++], [w4]
+    mov w4, _system_multi_operand_control_state+4
+    mov [w4], w0
+    mov w0, _system_multi_operand_control_state+6
+    mov #_system_multi_operand_buffer, w4
+    mov #1, w0
+    mov w0, [w4]
+    clr w0
+    mov w0, [w4+2]
+    mov #2, w2
+    add w2, [w4++], [w4]
+    mov w4, _system_multi_operand_control_state+8
+    mov [w4], w0
+    mov w0, _system_multi_operand_control_state+10
+.global _system_multi_operand_control_complete
+_system_multi_operand_control_complete:
+    bra _system_multi_operand_control_complete
+
 .global __AddressError
 __AddressError:
     mov w1, _system_address_trap_state
@@ -173,6 +258,23 @@ __AddressError:
     mov SR, w0
     mov w0, _system_address_trap_state+16
     mov w15, _system_address_trap_state+18
+    mov TMR3HLD, w0
+    mov w0, _system_multi_operand_trap_state
+    mov w4, _system_multi_operand_trap_state+2
+    mov w5, _system_multi_operand_trap_state+4
+    mov _system_multi_operand_buffer, w0
+    mov w0, _system_multi_operand_trap_state+6
+    mov _system_multi_operand_buffer+2, w0
+    mov w0, _system_multi_operand_trap_state+8
+    mov w3, _system_multi_operand_trap_state+10
+    mov INTCON1, w0
+    mov w0, _system_multi_operand_trap_state+12
+    mov [w15-4], w0
+    mov w0, _system_multi_operand_trap_state+14
+    mov [w15-2], w0
+    mov w0, _system_multi_operand_trap_state+16
+    mov INTTREG, w0
+    mov w0, _system_multi_operand_trap_state+18
 .global _system_address_trap_complete
 _system_address_trap_complete:
     bra _system_address_trap_complete

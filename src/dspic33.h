@@ -410,6 +410,7 @@ typedef struct {
     uint32_t address_error_return;
     bool instruction_active;
     bool address_error;
+    bool address_error_source_completed;
     bool stop_on_trap;
     bool async_events_enabled;
     uint16_t interrupt_log_irq[16];

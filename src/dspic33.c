@@ -320,6 +320,20 @@ static bool validate_operand_alignment(Dspic33* cpu, uint16_t* registers, uint8_
     return true;
 }
 
+static bool validate_destination_after_source_execution(Dspic33* cpu, uint8_t mode,
+                                                        uint8_t reg, uint8_t width) {
+    uint16_t registers[16];
+    if (cpu->address_error) {
+        return false;
+    }
+    memcpy(registers, cpu->w, sizeof(registers));
+    if (validate_operand_alignment(cpu, registers, mode, reg, 0u, width, true, false)) {
+        return true;
+    }
+    cpu->address_error_source_completed = true;
+    return false;
+}
+
 static uint8_t read_operand_byte(Dspic33* cpu, uint8_t mode, uint8_t reg,
                                  uint8_t offset_reg) {
     uint32_t address;
@@ -597,6 +611,21 @@ static void update_subtract_flags(Dspic33* cpu, uint16_t left, uint16_t right,
     }
 }
 
+static void update_binary_flags(Dspic33* cpu, uint32_t operation, uint16_t left,
+                                uint16_t right, uint16_t borrow, uint16_t carry,
+                                uint32_t result, uint16_t value, bool byte_mode,
+                                bool with_carry) {
+    if (operation == 0x400000u || operation == 0x480000u) {
+        update_add_flags(cpu, left, right, operation == 0x480000u ? carry : 0u, result,
+                         byte_mode, operation == 0x480000u);
+    } else if (operation == 0x500000u || operation == 0x580000u ||
+               operation == 0x100000u || operation == 0x180000u) {
+        update_subtract_flags(cpu, left, right, borrow, value, byte_mode, with_carry);
+    } else {
+        update_logic_flags(cpu, value, byte_mode);
+    }
+}
+
 static bool execute_binary(Dspic33* cpu, uint32_t opcode, uint32_t operation) {
     uint8_t left_register = (uint8_t)((opcode >> 15u) & 0x0fu);
     uint8_t destination = (uint8_t)((opcode >> 7u) & 0x0fu);
@@ -646,6 +675,13 @@ static bool execute_binary(Dspic33* cpu, uint32_t opcode, uint32_t operation) {
         result = left | right;
     }
     value = (uint16_t)result;
+    if (!validate_destination_after_source_execution(
+            cpu, (uint8_t)((opcode >> 11u) & 0x07u), destination,
+            byte_mode ? 1u : 2u)) {
+        update_binary_flags(cpu, operation, left, right, borrow, carry, result, value,
+                            byte_mode, with_carry);
+        return true;
+    }
     if (byte_mode) {
         if (!write_operand_byte(cpu, (uint8_t)((opcode >> 11u) & 0x07u), destination,
                                 0u, (uint8_t)value)) {
@@ -655,15 +691,8 @@ static bool execute_binary(Dspic33* cpu, uint32_t opcode, uint32_t operation) {
                                    0u, value)) {
         return false;
     }
-    if (operation == 0x400000u || operation == 0x480000u) {
-        update_add_flags(cpu, left, right, operation == 0x480000u ? carry : 0u, result,
-                         byte_mode, operation == 0x480000u);
-    } else if (operation == 0x500000u || operation == 0x580000u ||
-               operation == 0x100000u || operation == 0x180000u) {
-        update_subtract_flags(cpu, left, right, borrow, value, byte_mode, with_carry);
-    } else {
-        update_logic_flags(cpu, value, byte_mode);
-    }
+    update_binary_flags(cpu, operation, left, right, borrow, carry, result, value,
+                        byte_mode, with_carry);
     return true;
 }
 
@@ -717,6 +746,22 @@ static bool execute_compare(Dspic33* cpu, uint32_t opcode) {
     return true;
 }
 
+static void update_unary_flags(Dspic33* cpu, uint8_t family, bool alternate,
+                               uint16_t source, uint16_t value, bool byte_mode,
+                               bool arithmetic) {
+    if (family == 0xe8u) {
+        update_add_flags(cpu, source, alternate ? 2u : 1u, 0u,
+                         (uint32_t)source + (alternate ? 2u : 1u), byte_mode, false);
+    } else if (family == 0xe9u) {
+        update_subtract_flags(cpu, source, alternate ? 2u : 1u, 0u, value, byte_mode,
+                              false);
+    } else if (family == 0xeau && arithmetic) {
+        update_subtract_flags(cpu, 0u, source, 0u, value, byte_mode, false);
+    } else if (family == 0xeau) {
+        update_logic_flags(cpu, value, byte_mode);
+    }
+}
+
 static bool execute_unary(Dspic33* cpu, uint32_t opcode) {
     uint8_t family = (uint8_t)(opcode >> 16u);
     bool byte_mode = (opcode & 0x004000u) != 0u;
@@ -743,6 +788,12 @@ static bool execute_unary(Dspic33* cpu, uint32_t opcode) {
     } else {
         return false;
     }
+    if (!validate_destination_after_source_execution(
+            cpu, destination_mode, destination_register, byte_mode ? 1u : 2u)) {
+        update_unary_flags(cpu, family, alternate, source, value, byte_mode,
+                           arithmetic);
+        return true;
+    }
     if (byte_mode) {
         if (!write_operand_byte(cpu, destination_mode, destination_register, 0u,
                                 (uint8_t)value)) {
@@ -752,17 +803,7 @@ static bool execute_unary(Dspic33* cpu, uint32_t opcode) {
                                    value)) {
         return false;
     }
-    if (family == 0xe8u) {
-        update_add_flags(cpu, source, alternate ? 2u : 1u, 0u,
-                         (uint32_t)source + (alternate ? 2u : 1u), byte_mode, false);
-    } else if (family == 0xe9u) {
-        update_subtract_flags(cpu, source, alternate ? 2u : 1u, 0u, value, byte_mode,
-                              false);
-    } else if (family == 0xeau && arithmetic) {
-        update_subtract_flags(cpu, 0u, source, 0u, value, byte_mode, false);
-    } else if (family == 0xeau) {
-        update_logic_flags(cpu, value, byte_mode);
-    }
+    update_unary_flags(cpu, family, alternate, source, value, byte_mode, arithmetic);
     return true;
 }
 
@@ -1276,6 +1317,10 @@ static bool execute_single_shift(Dspic33* cpu, uint32_t opcode) {
     update_logic_flags(cpu, value, byte_mode);
     if (carry_affected) {
         cpu->sr = (uint16_t)((cpu->sr & ~1u) | next_carry);
+    }
+    if (!validate_destination_after_source_execution(
+            cpu, destination_mode, destination_register, byte_mode ? 1u : 2u)) {
+        return true;
     }
     if (byte_mode) {
         return write_operand_byte(cpu, destination_mode, destination_register, 0u,
@@ -2475,6 +2520,7 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
     cpu->address_error_return = 0u;
     cpu->instruction_active = false;
     cpu->address_error = false;
+    cpu->address_error_source_completed = false;
     cpu->async_events_enabled = true;
     memset(cpu->interrupt_log_irq, 0xff, sizeof(cpu->interrupt_log_irq));
     memset(cpu->interrupt_log_entry, 0, sizeof(cpu->interrupt_log_entry));
@@ -2865,6 +2911,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     cpu->instructions++;
     cpu->instruction_active = true;
     cpu->address_error = false;
+    cpu->address_error_source_completed = false;
     if (!execute(cpu, opcode) && !cpu->address_error) {
         cpu->instruction_active = false;
         cpu->pc -= 2u;
@@ -2877,11 +2924,14 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     cpu->instruction_active = false;
     if (cpu->address_error) {
         uint32_t return_pc = cpu->address_error_return;
-        memcpy(cpu->w, working_registers, sizeof(working_registers));
+        if (!cpu->address_error_source_completed) {
+            memcpy(cpu->w, working_registers, sizeof(working_registers));
+            cpu->sr = status;
+        }
         memcpy(cpu->accumulator, accumulators, sizeof(accumulators));
-        cpu->sr = status;
         cpu->corcon = control;
         cpu->address_error = false;
+        cpu->address_error_source_completed = false;
         enter_trap(cpu, 1u, 0x000006u, 14u, 0x0008u, return_pc);
         advance_instruction(cpu, instruction_cycles(cpu, opcode));
         return cpu->stop_reason;

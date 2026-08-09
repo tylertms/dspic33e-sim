@@ -43,6 +43,9 @@ enum {
     OPCODE_MOV_BYTE_W1_POST_INCREMENT_W2 = 0x784131u,
     OPCODE_MOV_DOUBLE_W2_W1_POST_INCREMENT = 0xbe9882u,
     OPCODE_MOV_DOUBLE_W1_POST_INCREMENT_W2 = 0xbe0131u,
+    OPCODE_ADD_W2_W4_POST_INCREMENT_W5_POST_DECREMENT = 0x4112b4u,
+    OPCODE_NEG_W4_POST_INCREMENT_W5_POST_DECREMENT = 0xea12b4u,
+    OPCODE_ASR_W4_POST_INCREMENT_W5_POST_DECREMENT = 0xd192b4u,
     OPCODE_BSET_BYTE_W4_POST_DECREMENT = 0xa07424u,
     OPCODE_BSET_WORD_W4_POST_INCREMENT = 0xa09034u,
     OPCODE_TBLRDL_W2_W3 = 0xba0192u,
@@ -91,6 +94,36 @@ static void expect_address_trap(ProcessorConformance* state, Dspic33* cpu,
            "address error records status and priority");
 }
 
+static void prepare_timer_source(Dspic33* cpu) {
+    dspic33_write_word(cpu, 0x0110u, 0x0008u);
+    dspic33_write_word(cpu, 0x0108u, 0x5555u);
+    dspic33_write_word(cpu, 0x0106u, 0x1234u);
+    dspic33_write_word(cpu, 0x0108u, 0xaaaau);
+}
+
+static void completed_source_address_error_case(ProcessorConformance* state,
+                                                Dspic33* cpu, uint32_t opcode,
+                                                uint16_t stacked_flags,
+                                                const char* execution,
+                                                const char* completion) {
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, opcode);
+    prepare_timer_source(cpu);
+    dspic33_write_word(cpu, 0x1000u, 0x1122u);
+    dspic33_write_word(cpu, 0x1002u, 0x3344u);
+    cpu->w[2] = 2u;
+    cpu->w[4] = 0x0106u;
+    cpu->w[5] = 0x1001u;
+    expect_address_trap(state, cpu, execution);
+    expect(state,
+           dspic33_read_word(cpu, 0x0108u) == 0x5555u && cpu->w[4] == 0x0108u &&
+               cpu->w[5] == 0x1001u && dspic33_read_word(cpu, 0x1000u) == 0x1122u &&
+               dspic33_read_word(cpu, 0x1002u) == 0x3344u &&
+               (dspic33_read_word(cpu, 0x5002u) & 0xff00u) == stacked_flags,
+           completion);
+}
+
 static void address_error_cases(ProcessorConformance* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     prepare_address_trap(state, cpu);
@@ -125,6 +158,19 @@ static void address_error_cases(ProcessorConformance* state, Dspic33* cpu) {
     expect_address_trap(state, cpu, "odd destination prevalidates before source read");
     expect(state, dspic33_read_word(cpu, 0x0108u) == 0xaaaau,
            "odd destination inhibits side-effecting timer source read");
+
+    completed_source_address_error_case(
+        state, cpu, OPCODE_ASR_W4_POST_INCREMENT_W5_POST_DECREMENT, 0x0000u,
+        "odd shift destination traps after source execution",
+        "shift source read update and flags complete before destination trap");
+    completed_source_address_error_case(
+        state, cpu, OPCODE_NEG_W4_POST_INCREMENT_W5_POST_DECREMENT, 0x0800u,
+        "odd unary destination traps after source execution",
+        "unary source read update and flags complete before destination trap");
+    completed_source_address_error_case(
+        state, cpu, OPCODE_ADD_W2_W4_POST_INCREMENT_W5_POST_DECREMENT, 0x0000u,
+        "odd binary destination traps after source execution",
+        "binary source read update and flags complete before destination trap");
 
     dspic33_reset(cpu, 0u);
     prepare_address_trap(state, cpu);
