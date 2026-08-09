@@ -158,6 +158,24 @@ static uint64_t scenario_hash(const char* value) {
     return hash;
 }
 
+static bool scenario_supports_native_runner(const JsonValue* scenario) {
+    const JsonValue* runners = json_get(scenario, "runners");
+    size_t index;
+    if (runners == NULL) {
+        return true;
+    }
+    if (runners->type != JSON_ARRAY) {
+        return false;
+    }
+    for (index = 0u; index < runners->as.array.count; index++) {
+        const char* runner = json_string(runners->as.array.items[index]);
+        if (runner != NULL && strcmp(runner, "native") == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool scenario_selected(const Runner* runner, const JsonValue* scenario) {
     const char* id = json_string(json_get(scenario, "id"));
     const char* name = json_string(json_get(scenario, "name"));
@@ -165,7 +183,7 @@ static bool scenario_selected(const Runner* runner, const JsonValue* scenario) {
         runner->scenario_filter == NULL ||
         (id != NULL && wildcard_matches(runner->scenario_filter, id)) ||
         (name != NULL && wildcard_matches(runner->scenario_filter, name));
-    return filter_matches && id != NULL &&
+    return filter_matches && scenario_supports_native_runner(scenario) && id != NULL &&
            scenario_hash(id) % runner->shard_count == runner->shard_index;
 }
 
@@ -1192,8 +1210,13 @@ static bool part_has_async_stimuli(const JsonValue* part) {
     return false;
 }
 
-static bool parts_have_async_stimuli(const StepParts* parts) {
+static bool parts_enable_async_events(const StepParts* parts) {
+    const JsonValue* enabled = scalar_field(parts, "async_events");
+    bool explicitly_enabled = false;
     size_t index;
+    if (json_boolean(enabled, &explicitly_enabled) && explicitly_enabled) {
+        return true;
+    }
     for (index = 0u; index < parts->count; index++) {
         if (part_has_async_stimuli(parts->items[index])) {
             return true;
@@ -2433,7 +2456,7 @@ static bool execute_step(Runner* runner, const char* scenario_name,
         }
     }
     async_events_enabled =
-        call == NULL || stop != NULL || parts_have_async_stimuli(parts);
+        call == NULL || stop != NULL || parts_enable_async_events(parts);
     if (!run_pair(runner, call, stop, async_events_enabled, error, error_size,
                   &execution_failure)) {
         if (!execution_failure) {
