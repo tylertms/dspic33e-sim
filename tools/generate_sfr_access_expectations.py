@@ -32,6 +32,12 @@ EXPECTED_MUX_ACCESS_BITS = {
     "-": 12,
     "n": 244,
 }
+DOCUMENTED_SIDE_EFFECT_OVERRIDES = {
+    ("U1EIR", 0x04C4): 0x0040,
+}
+DOCUMENTED_SIDE_EFFECT_OVERRIDE_BITS = sum(
+    mask.bit_count() for mask in DOCUMENTED_SIDE_EFFECT_OVERRIDES.values()
+)
 MUX_SELECTOR_PATTERN = re.compile(
     r"^\(\$0x([0-9a-f]+) & 0x([0-9a-f]+)\) == 0x([0-9a-f]+)$"
 )
@@ -67,6 +73,28 @@ def pattern_mask(pattern, accepted):
         for index, character in enumerate(pattern)
         if character in accepted
     )
+
+
+def access_masks(register):
+    access = register["access"]
+    normal = pattern_mask(access, "n")
+    side_effect = pattern_mask(access, "cs")
+    address = int(register["address"], 16)
+    override = DOCUMENTED_SIDE_EFFECT_OVERRIDES.get(
+        (register["name"], address), 0
+    )
+    if override & ~normal:
+        raise ValueError(
+            f"documented side-effect override is not DFP-normal for "
+            f"{register['name']} at 0x{address:04x}"
+        )
+    return {
+        "normal": normal & ~override,
+        "read_only": pattern_mask(access, "r"),
+        "reserved": pattern_mask(access, "-"),
+        "write_only": pattern_mask(access, "w"),
+        "side_effect": side_effect | override,
+    }
 
 
 def load_inventory(path):
@@ -123,6 +151,16 @@ def load_inventory(path):
     if dict(sorted(alternate_access_bits.items())) != EXPECTED_MUX_ACCESS_BITS:
         raise ValueError(
             f"mux alternate access bits are {dict(sorted(alternate_access_bits.items()))}"
+        )
+    documented_overrides = {
+        (register["name"], int(register["address"], 16))
+        for register in defaults
+        if (register["name"], int(register["address"], 16))
+        in DOCUMENTED_SIDE_EFFECT_OVERRIDES
+    }
+    if documented_overrides != set(DOCUMENTED_SIDE_EFFECT_OVERRIDES):
+        raise ValueError(
+            f"documented side-effect overrides found are {sorted(documented_overrides)}"
         )
     muxes = []
     defaults_by_address = {
@@ -200,7 +238,7 @@ def render(defaults, muxes):
         "static const Dspic33SfrAccessExpectation dspic33_sfr_access_expectations[] = {",
     ]
     for register in defaults:
-        access = register["access"]
+        masks = access_masks(register)
         flags = 0
         if register["kind"] == "mux_variant":
             flags |= 1
@@ -209,11 +247,11 @@ def render(defaults, muxes):
         lines.append(
             "    {"
             f"{register['address']}u, "
-            f"0x{pattern_mask(access, 'n'):04x}u, "
-            f"0x{pattern_mask(access, 'r'):04x}u, "
-            f"0x{pattern_mask(access, '-'):04x}u, "
-            f"0x{pattern_mask(access, 'w'):04x}u, "
-            f"0x{pattern_mask(access, 'cs'):04x}u, "
+            f"0x{masks['normal']:04x}u, "
+            f"0x{masks['read_only']:04x}u, "
+            f"0x{masks['reserved']:04x}u, "
+            f"0x{masks['write_only']:04x}u, "
+            f"0x{masks['side_effect']:04x}u, "
             f"0x{flags:02x}u, "
             f"{len(register['aliases'])}u"
             "},"
@@ -227,7 +265,7 @@ def render(defaults, muxes):
     )
     for mux in muxes:
         register = mux["register"]
-        access = register["access"]
+        masks = access_masks(register)
         lines.append(
             "    {"
             f"{register['address']}u, "
@@ -235,11 +273,11 @@ def render(defaults, muxes):
             f"0x{mux['selector_mask']:04x}u, "
             f"0x{mux['selector_value']:04x}u, "
             f"0x{mux['selector_reset']:04x}u, "
-            f"0x{pattern_mask(access, 'n'):04x}u, "
-            f"0x{pattern_mask(access, 'r'):04x}u, "
-            f"0x{pattern_mask(access, '-'):04x}u, "
-            f"0x{pattern_mask(access, 'w'):04x}u,\n"
-            f"     0x{pattern_mask(access, 'cs'):04x}u"
+            f"0x{masks['normal']:04x}u, "
+            f"0x{masks['read_only']:04x}u, "
+            f"0x{masks['reserved']:04x}u, "
+            f"0x{masks['write_only']:04x}u,\n"
+            f"     0x{masks['side_effect']:04x}u"
             "},"
         )
     lines.extend(
@@ -252,11 +290,11 @@ def render(defaults, muxes):
             f"    DSPIC33_SFR_ACCESS_ALIAS_COUNT = {len(EXPECTED_ALIASES)}u,",
             f"    DSPIC33_SFR_ACCESS_MUX_DEFAULT_COUNT = {EXPECTED_MUX_DEFAULTS}u,",
             f"    DSPIC33_SFR_ACCESS_MUX_ALTERNATE_COUNT = {EXPECTED_MUX_ALTERNATES}u,",
-            f"    DSPIC33_SFR_ACCESS_NORMAL_BIT_COUNT = {EXPECTED_ACCESS_BITS['n']}u,",
+            f"    DSPIC33_SFR_ACCESS_NORMAL_BIT_COUNT = {EXPECTED_ACCESS_BITS['n'] - DOCUMENTED_SIDE_EFFECT_OVERRIDE_BITS}u,",
             f"    DSPIC33_SFR_ACCESS_READ_ONLY_BIT_COUNT = {EXPECTED_ACCESS_BITS['r']}u,",
             f"    DSPIC33_SFR_ACCESS_RESERVED_BIT_COUNT = {EXPECTED_ACCESS_BITS['-']}u,",
             f"    DSPIC33_SFR_ACCESS_WRITE_ONLY_BIT_COUNT = {EXPECTED_ACCESS_BITS['w']}u,",
-            f"    DSPIC33_SFR_ACCESS_SIDE_EFFECT_BIT_COUNT = {EXPECTED_ACCESS_BITS['c'] + EXPECTED_ACCESS_BITS['s']}u,",
+            f"    DSPIC33_SFR_ACCESS_SIDE_EFFECT_BIT_COUNT = {EXPECTED_ACCESS_BITS['c'] + EXPECTED_ACCESS_BITS['s'] + DOCUMENTED_SIDE_EFFECT_OVERRIDE_BITS}u,",
             f"    DSPIC33_SFR_MUX_ACCESS_NORMAL_BIT_COUNT = {EXPECTED_MUX_ACCESS_BITS.get('n', 0)}u,",
             f"    DSPIC33_SFR_MUX_ACCESS_READ_ONLY_BIT_COUNT = {EXPECTED_MUX_ACCESS_BITS.get('r', 0)}u,",
             f"    DSPIC33_SFR_MUX_ACCESS_RESERVED_BIT_COUNT = {EXPECTED_MUX_ACCESS_BITS.get('-', 0)}u,",

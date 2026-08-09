@@ -58,6 +58,13 @@ static bool interrupt_flag(Dspic33* cpu, uint8_t irq) {
     return (dspic33_read_word(cpu, address) & (uint16_t)(1u << (irq % 16u))) != 0u;
 }
 
+static void clear_interrupt(Dspic33* cpu, uint8_t irq) {
+    uint16_t address = (uint16_t)(0x0800u + (irq / 16u) * 2u);
+    uint16_t mask = (uint16_t)(1u << (irq % 16u));
+    dspic33_write_word(cpu, address,
+                       (uint16_t)(dspic33_read_word(cpu, address) & ~mask));
+}
+
 static uint32_t descriptor_address(uint8_t endpoint, uint8_t direction, uint8_t bank) {
     return BDT + ((uint32_t)endpoint * 4u + (uint32_t)direction * 2u + bank) * 8u;
 }
@@ -448,22 +455,98 @@ static void boundary_and_order_cases(UsbConformance* state, Dspic33* cpu) {
                dspic33_usb_transmit(cpu, &packet) &&
                packet.handshake == DSPIC33_USB_HANDSHAKE_TIMEOUT,
            "USB peripheral disable timeout");
-    configure_device(cpu);
-    dspic33_write_word(cpu, BDTP1, 0u);
-    dspic33_write_word(cpu, BDTP2, 0u);
-    dspic33_write_word(cpu, BDTP3, 1u);
-    expect(state,
-           dspic33_usb_request(cpu, 1u, 0u) && dspic33_device_advance(cpu, 0u) &&
-               dspic33_usb_transmit(cpu, &packet) &&
-               packet.handshake == DSPIC33_USB_HANDSHAKE_ERROR &&
-               (dspic33_read_word(cpu, EIR) & 0x0020u) != 0u,
-           "USB out-of-range BDT error");
     dspic33_reset(cpu, 0u);
     for (index = 0u; index < DSPIC33_USB_PENDING_COUNT; index++) {
         expect(state, dspic33_usb_request(cpu, 0u, index),
                "USB pending slot allocation");
     }
     expect(state, !dspic33_usb_request(cpu, 0u, 0u), "USB pending slot capacity");
+}
+
+static void bus_access_error_cases(UsbConformance* state, Dspic33* cpu) {
+    Dspic33UsbPacket packet;
+    uint8_t data = 0x5au;
+
+    configure_device(cpu);
+    dspic33_write_word(cpu, IE, 0x0002u);
+    dspic33_write_word(cpu, EIE, 0x0040u);
+    dspic33_write_word(cpu, BDTP1, 0u);
+    dspic33_write_word(cpu, BDTP2, 0u);
+    dspic33_write_word(cpu, BDTP3, 1u);
+    expect(state,
+           dspic33_usb_request(cpu, 1u, 0u) && dspic33_device_advance(cpu, 0u) &&
+               dspic33_usb_transmit(cpu, &packet) &&
+               packet.handshake == DSPIC33_USB_HANDSHAKE_ERROR,
+           "USB unimplemented BDT access");
+    expect(state, (dspic33_read_word(cpu, EIR) & 0x0060u) == 0x0040u,
+           "USB bus access flag without DMA error");
+    expect(state,
+           (dspic33_read_word(cpu, IR) & 0x0002u) != 0u && interrupt_flag(cpu, USB_IRQ),
+           "USB bus access aggregate interrupt");
+    dspic33_write_word(cpu, EIR, 0x0020u);
+    expect(state,
+           (dspic33_read_word(cpu, EIR) & 0x0060u) == 0x0040u &&
+               (dspic33_read_word(cpu, IR) & 0x0002u) != 0u &&
+               interrupt_flag(cpu, USB_IRQ),
+           "USB bus access write zero preservation");
+    dspic33_write_word(cpu, EIR, 0x0040u);
+    expect(state,
+           (dspic33_read_word(cpu, EIR) & 0x0060u) == 0u &&
+               (dspic33_read_word(cpu, IR) & 0x0002u) == 0u &&
+               interrupt_flag(cpu, USB_IRQ),
+           "USB bus access write one clear");
+    clear_interrupt(cpu, USB_IRQ);
+    expect(state, !interrupt_flag(cpu, USB_IRQ),
+           "USB bus access software interrupt clear");
+
+    configure_device(cpu);
+    write_descriptor(cpu, 1u, 1u, 0u, 0x0088u, 1u, DSPIC33_DATA_SIZE);
+    expect(state, dspic33_usb_request(cpu, 1u, 0u) && dspic33_device_advance(cpu, 0u),
+           "USB out-of-range IN buffer schedule");
+    expect(state,
+           dspic33_usb_transmit(cpu, &packet) &&
+               packet.handshake == DSPIC33_USB_HANDSHAKE_ERROR &&
+               (dspic33_read_word(cpu, EIR) & 0x0060u) == 0x0040u,
+           "USB out-of-range IN buffer access");
+
+    configure_device(cpu);
+    write_descriptor(cpu, 1u, 0u, 0u, 0x0088u, 1u, DSPIC33_DATA_SIZE);
+    expect(state,
+           dspic33_usb_receive(cpu, 1u, &data, 1u, 0u) &&
+               dspic33_device_advance(cpu, 0u),
+           "USB out-of-range OUT buffer schedule");
+    expect(state,
+           dspic33_usb_transmit(cpu, &packet) &&
+               packet.handshake == DSPIC33_USB_HANDSHAKE_ERROR &&
+               (dspic33_read_word(cpu, EIR) & 0x0060u) == 0x0040u,
+           "USB out-of-range OUT buffer access");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, PWRC, 1u);
+    dspic33_write_word(cpu, BDTP1, 0x0060u);
+    dspic33_write_word(cpu, CON, 0x0008u);
+    write_descriptor(cpu, 0u, 1u, 0u, 0x0088u, 1u, DSPIC33_DATA_SIZE);
+    dspic33_write_word(cpu, TOK, 0x0010u);
+    expect(state, !dspic33_usb_transmit(cpu, &packet),
+           "USB host out-of-range OUT buffer blocks token");
+    expect(state, (dspic33_read_word(cpu, EIR) & 0x0060u) == 0x0040u,
+           "USB host out-of-range OUT buffer access");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, PWRC, 1u);
+    dspic33_write_word(cpu, BDTP1, 0x0060u);
+    dspic33_write_word(cpu, CON, 0x0008u);
+    write_descriptor(cpu, 0u, 0u, 0u, 0x0088u, 1u, DSPIC33_DATA_SIZE);
+    dspic33_write_word(cpu, TOK, 0x0090u);
+    expect(state, dspic33_usb_transmit(cpu, &packet),
+           "USB host out-of-range IN buffer token");
+    expect(state,
+           dspic33_usb_host_response(cpu, DSPIC33_USB_HANDSHAKE_ACK, &data, 1u, false,
+                                     0u) &&
+               dspic33_device_advance(cpu, 0u),
+           "USB host out-of-range IN buffer response");
+    expect(state, (dspic33_read_word(cpu, EIR) & 0x0060u) == 0x0040u,
+           "USB host out-of-range IN buffer access");
 }
 
 static void interrupt_and_bus_cases(UsbConformance* state, Dspic33* cpu) {
@@ -652,6 +735,7 @@ int main(void) {
     descriptor_behavior_cases(&state, &cpu);
     status_fifo_cases(&state, &cpu);
     boundary_and_order_cases(&state, &cpu);
+    bus_access_error_cases(&state, &cpu);
     interrupt_and_bus_cases(&state, &cpu);
     host_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
