@@ -41,6 +41,9 @@ enum {
     OPCODE_MOV_W2_W1_PRE_DECREMENT = 0x782082u,
     OPCODE_MOV_W1_MEMORY_W2_MEMORY = 0x780911u,
     OPCODE_MOV_BYTE_W1_POST_INCREMENT_W2 = 0x784131u,
+    OPCODE_MOV_BYTE_W2_W1_POST_INCREMENT = 0x785882u,
+    OPCODE_MOV_W1_W4_LITERAL_2 = 0x980211u,
+    OPCODE_MOV_W4_LITERAL_2_W2 = 0x900114u,
     OPCODE_MOV_DOUBLE_W2_W1_POST_INCREMENT = 0xbe9882u,
     OPCODE_MOV_DOUBLE_W1_POST_INCREMENT_W2 = 0xbe0131u,
     OPCODE_ADD_W2_W4_POST_INCREMENT_W5_POST_DECREMENT = 0x4112b4u,
@@ -357,6 +360,114 @@ static void data_map_address_error_cases(ProcessorConformance* state, Dspic33* c
     dspic33_write_word(cpu, 0xe000u, 0x1234u);
     expect(state, dspic33_read_word(cpu, 0xe000u) == 0x1234u && !cpu->address_error,
            "DMA raw access bypasses CPU data map trap");
+    cpu->instruction_active = false;
+    cpu->io.dma_transfer_active = false;
+}
+
+static void page_zero_address_error_cases(ProcessorConformance* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    dspic33_write_word(cpu, 0x1000u, 0x5a5au);
+    cpu->dsrpag = 0u;
+    cpu->dswpag = 1u;
+    cpu->w[1] = 0x9000u;
+    cpu->w[2] = 0xa5a5u;
+    expect_address_trap(state, cpu, "page-zero word read traps");
+    expect(state,
+           cpu->w[1] == 0x9002u && cpu->w[2] == 0x5a5au &&
+               dspic33_read_word(cpu, 0x1000u) == 0x5a5au && cpu->dsrpag == 0u &&
+               cpu->dswpag == 1u,
+           "page-zero word read completes through DSRPAG alias");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W2_W1_POST_INCREMENT);
+    dspic33_write_word(cpu, 0x1000u, 0x5a5au);
+    cpu->dsrpag = 1u;
+    cpu->dswpag = 0u;
+    cpu->w[1] = 0x9000u;
+    cpu->w[2] = 0xa5a5u;
+    expect_address_trap(state, cpu, "page-zero word write traps");
+    expect(state,
+           cpu->w[1] == 0x9002u && cpu->w[2] == 0xa5a5u &&
+               dspic33_read_word(cpu, 0x1000u) == 0xa5a5u && cpu->dsrpag == 1u &&
+               cpu->dswpag == 0u,
+           "page-zero word write completes through DSWPAG alias");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_BYTE_W1_POST_INCREMENT_W2);
+    dspic33_write_word(cpu, 0x1000u, 0x5a5au);
+    cpu->dsrpag = 0u;
+    cpu->dswpag = 1u;
+    cpu->w[1] = 0x9001u;
+    cpu->w[2] = 0xa5a5u;
+    expect_address_trap(state, cpu, "page-zero byte read traps");
+    expect(state,
+           cpu->w[1] == 0x9002u && cpu->w[2] == 0xa55au &&
+               dspic33_read_word(cpu, 0x1000u) == 0x5a5au && cpu->dsrpag == 0u &&
+               cpu->dswpag == 1u,
+           "page-zero byte read completes through DSRPAG alias");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_BYTE_W2_W1_POST_INCREMENT);
+    dspic33_write_word(cpu, 0x1000u, 0x5a5au);
+    cpu->dsrpag = 1u;
+    cpu->dswpag = 0u;
+    cpu->w[1] = 0x9001u;
+    cpu->w[2] = 0xa5a5u;
+    expect_address_trap(state, cpu, "page-zero byte write traps");
+    expect(state,
+           cpu->w[1] == 0x9002u && cpu->w[2] == 0xa5a5u &&
+               dspic33_read_word(cpu, 0x1000u) == 0xa55au && cpu->dsrpag == 1u &&
+               cpu->dswpag == 0u,
+           "page-zero byte write completes through DSWPAG alias");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W4_LITERAL_2_W2);
+    dspic33_write_word(cpu, 0x1000u, 0x5a5au);
+    cpu->dsrpag = 0u;
+    cpu->w[2] = 0xa5a5u;
+    cpu->w[4] = 0x8ffeu;
+    expect_address_trap(state, cpu, "page-zero literal-offset read traps");
+    expect(state, cpu->w[2] == 0x5a5au && cpu->w[4] == 0x8ffeu,
+           "page-zero literal-offset read completes without pointer update");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_W4_LITERAL_2);
+    dspic33_write_word(cpu, 0x1000u, 0x5a5au);
+    cpu->dswpag = 0u;
+    cpu->w[1] = 0xa5a5u;
+    cpu->w[4] = 0x8ffeu;
+    expect_address_trap(state, cpu, "page-zero literal-offset write traps");
+    expect(state, dspic33_read_word(cpu, 0x1000u) == 0xa5a5u && cpu->w[4] == 0x8ffeu,
+           "page-zero literal-offset write completes without pointer update");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    prepare_timer_source(cpu);
+    cpu->dsrpag = 0u;
+    cpu->w[1] = 0x8106u;
+    cpu->w[2] = 0xbeefu;
+    expect_address_trap(state, cpu, "page-zero side-effecting SFR read traps");
+    expect(state,
+           cpu->w[1] == 0x8108u && cpu->w[2] == 0x1234u &&
+               dspic33_read_word(cpu, 0x0108u) == 0x5555u,
+           "page-zero SFR read completes value and latch side effect");
+
+    dspic33_reset(cpu, 0u);
+    cpu->dsrpag = 0u;
+    cpu->dswpag = 0u;
+    cpu->instruction_active = true;
+    cpu->io.dma_transfer_active = true;
+    dspic33_write_word(cpu, 0x9000u, 0x1234u);
+    expect(state, dspic33_read_word(cpu, 0x9000u) == 0x1234u && !cpu->address_error,
+           "DMA raw access bypasses page-zero CPU trap");
     cpu->instruction_active = false;
     cpu->io.dma_transfer_active = false;
 }
@@ -792,6 +903,7 @@ int main(void) {
     if (initialized) {
         address_error_cases(&state, &cpu);
         data_map_address_error_cases(&state, &cpu);
+        page_zero_address_error_cases(&state, &cpu);
         w15_write_cases(&state, &cpu);
         valid_stack_frame_cases(&state, &cpu);
         invalid_lnk_case(&state, &cpu);

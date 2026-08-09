@@ -27,6 +27,7 @@ __\name:
     add w0, w1, w0
     add w0, w1, w0
     mov SR, w2
+    and #0x00f0, w2
     mov w2, [w0]
     mov #_interrupt_handler_marker, w0
     add w0, w1, w0

@@ -28,6 +28,7 @@ static bool check_data_alignment(Dspic33* cpu, uint32_t address) {
         cpu->address_error = true;
         cpu->address_error_return = cpu->pc;
     }
+    cpu->address_error_access_allowed = false;
     return false;
 }
 
@@ -41,8 +42,18 @@ static bool check_data_implementation(Dspic33* cpu, uint32_t address, uint8_t wi
         cpu->address_error = true;
         cpu->address_error_return = cpu->pc;
     }
+    cpu->address_error_access_allowed = false;
     cpu->address_error_working_state_completed = true;
     return false;
+}
+
+static void raise_data_page_error(Dspic33* cpu) {
+    if (!cpu->address_error) {
+        cpu->address_error = true;
+        cpu->address_error_return = cpu->pc;
+        cpu->address_error_access_allowed = true;
+    }
+    cpu->address_error_working_state_completed = true;
 }
 
 static void write_working_register(Dspic33* cpu, uint8_t reg, uint16_t value) {
@@ -239,6 +250,7 @@ typedef struct {
     bool wrapped;
     bool updates_register;
     bool increments_data_page;
+    bool unimplemented_data_page;
 } OperandResolution;
 
 static bool resolve_operand_address(const Dspic33* cpu, const uint16_t* registers,
@@ -294,6 +306,7 @@ static bool resolve_operand_address(const Dspic33* cpu, const uint16_t* register
     if (resolution->address >= 0x8000u &&
         !((reg == 14u || reg == 15u) && (cpu->corcon & 0x0004u) != 0u)) {
         uint16_t page = write ? cpu->dswpag : cpu->dsrpag;
+        resolution->unimplemented_data_page = page == 0u;
         if (!write && page >= 0x0200u) {
             resolution->address =
                 PSV_ADDRESS | ((page & 0x0100u) != 0u ? PSV_HIGH_BYTE : 0u) |
@@ -328,6 +341,9 @@ static bool operand_address(Dspic33* cpu, uint8_t mode, uint8_t reg, uint8_t off
     if (resolution.updates_register) {
         write_working_register(cpu, reg, resolution.updated_register);
     }
+    if (resolution.unimplemented_data_page) {
+        raise_data_page_error(cpu);
+    }
     *address = resolution.address;
     return true;
 }
@@ -357,7 +373,7 @@ static bool validate_operand_alignment(Dspic33* cpu, uint16_t* registers, uint8_
 static bool validate_destination_after_source_execution(Dspic33* cpu, uint8_t mode,
                                                         uint8_t reg, uint8_t width) {
     uint16_t registers[16];
-    if (cpu->address_error) {
+    if (cpu->address_error && !cpu->address_error_access_allowed) {
         return false;
     }
     memcpy(registers, cpu->w, sizeof(registers));
@@ -469,6 +485,9 @@ static uint32_t indirect_literal_address(Dspic33* cpu, uint8_t reg, int16_t offs
     if (address >= 0x8000u &&
         !((reg == 14u || reg == 15u) && (cpu->corcon & 0x0004u) != 0u)) {
         uint16_t page = write ? cpu->dswpag : cpu->dsrpag;
+        if (page == 0u) {
+            raise_data_page_error(cpu);
+        }
         if (!write && page >= 0x0200u) {
             address = PSV_ADDRESS | ((page & 0x0100u) != 0u ? PSV_HIGH_BYTE : 0u) |
                       ((uint32_t)(page & 0x00ffu) << 15u) | (address & 0x7fffu);
@@ -893,7 +912,7 @@ static bool execute_table(Dspic33* cpu, uint32_t opcode) {
     if (write) {
         value = byte_mode ? read_operand_byte(cpu, source_mode, source_register, 0u)
                           : read_operand_word(cpu, source_mode, source_register, 0u);
-        if (cpu->address_error) {
+        if (cpu->address_error && !cpu->address_error_access_allowed) {
             return true;
         }
         table_offset = table_operand_address(cpu, destination_mode,
@@ -2554,6 +2573,7 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
     cpu->address_error_return = 0u;
     cpu->instruction_active = false;
     cpu->address_error = false;
+    cpu->address_error_access_allowed = false;
     cpu->address_error_working_state_completed = false;
     cpu->async_events_enabled = true;
     memset(cpu->interrupt_log_irq, 0xff, sizeof(cpu->interrupt_log_irq));
@@ -2649,8 +2669,8 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
     uint16_t previous;
     uint8_t accumulator;
     uint8_t accumulator_byte;
-    if (cpu->address_error || !check_data_implementation(cpu, address, 1u) ||
-        address >= DSPIC33_DATA_SIZE) {
+    if ((cpu->address_error && !cpu->address_error_access_allowed) ||
+        !check_data_implementation(cpu, address, 1u) || address >= DSPIC33_DATA_SIZE) {
         return;
     }
     if (!cpu->io.dma_transfer_active) {
@@ -2774,7 +2794,8 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
 void dspic33_write_word(Dspic33* cpu, uint32_t address, uint16_t value) {
     uint16_t previous;
     if (!check_data_alignment(cpu, address) ||
-        !check_data_implementation(cpu, address, 2u) || cpu->address_error ||
+        !check_data_implementation(cpu, address, 2u) ||
+        (cpu->address_error && !cpu->address_error_access_allowed) ||
         address + 1u >= DSPIC33_DATA_SIZE) {
         return;
     }
@@ -2809,7 +2830,8 @@ uint8_t dspic33_read_byte(Dspic33* cpu, uint32_t address) {
     uint16_t value;
     uint8_t accumulator;
     uint8_t accumulator_byte;
-    if (cpu->address_error || !check_data_implementation(cpu, address, 1u)) {
+    if ((cpu->address_error && !cpu->address_error_access_allowed) ||
+        !check_data_implementation(cpu, address, 1u)) {
         return 0u;
     }
     if ((address & PSV_ADDRESS) != 0u) {
@@ -2885,7 +2907,8 @@ uint8_t dspic33_read_byte(Dspic33* cpu, uint32_t address) {
 
 uint16_t dspic33_read_word(Dspic33* cpu, uint32_t address) {
     if (!check_data_alignment(cpu, address) ||
-        !check_data_implementation(cpu, address, 2u) || cpu->address_error) {
+        !check_data_implementation(cpu, address, 2u) ||
+        (cpu->address_error && !cpu->address_error_access_allowed)) {
         return 0u;
     }
     uint16_t low = dspic33_read_byte(cpu, address);
@@ -2948,6 +2971,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     cpu->instructions++;
     cpu->instruction_active = true;
     cpu->address_error = false;
+    cpu->address_error_access_allowed = false;
     cpu->address_error_working_state_completed = false;
     if (!execute(cpu, opcode) && !cpu->address_error) {
         cpu->instruction_active = false;
@@ -2968,6 +2992,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         memcpy(cpu->accumulator, accumulators, sizeof(accumulators));
         cpu->corcon = control;
         cpu->address_error = false;
+        cpu->address_error_access_allowed = false;
         cpu->address_error_working_state_completed = false;
         enter_trap(cpu, 1u, 0x000006u, 14u, 0x0008u, return_pc);
         advance_instruction(cpu, instruction_cycles(cpu, opcode));
