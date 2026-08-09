@@ -729,8 +729,9 @@ static void receive_flag_hardware_event_case(CanConformance* state, Dspic33* cpu
     uint16_t overflow_address = (uint16_t)(base + 0x28u + (target >= 16u ? 2u : 0u));
     uint16_t target_bit = (uint16_t)(1u << (target & 15u));
     uint32_t memory = (uint32_t)(0xf000u + channel * 0x400u);
+    uint16_t preserved_words[8];
     uint8_t buffer;
-    uint16_t preserved_payload;
+    uint8_t word;
     dspic33_reset(cpu, 0u);
     configure_receive(cpu, channel, memory, 6u, target);
     configure_filter(cpu, channel, 0u, 0x456u, false, 0x7ffu, true, 15u, 0u);
@@ -757,7 +758,9 @@ static void receive_flag_hardware_event_case(CanConformance* state, Dspic33* cpu
         expect(state, (dspic33_read_word(cpu, fifo_address) & 0x003fu) == target,
                "receive flag hardware preserves read pointer");
     }
-    preserved_payload = memory_word(cpu, memory + target * 16u + 6u);
+    for (word = 0u; word < 8u; word++) {
+        preserved_words[word] = memory_word(cpu, memory + target * 16u + word * 2u);
+    }
     expect(state, (dspic33_read_word(cpu, overflow_address) & target_bit) == 0u,
            "receive overflow flag initially clear");
     expect(state, (dspic33_read_word(cpu, interrupt_address) & 0x0004u) == 0u,
@@ -780,8 +783,12 @@ static void receive_flag_hardware_event_case(CanConformance* state, Dspic33* cpu
                "receive overflow advances write pointer");
         expect(state, (dspic33_read_word(cpu, fifo_address) & 0x003fu) == target,
                "receive overflow preserves read pointer");
-        expect(state, memory_word(cpu, memory + target * 16u + 6u) == preserved_payload,
-               "receive overflow loses message");
+        for (word = 0u; word < 8u; word++) {
+            expect(state,
+                   memory_word(cpu, memory + target * 16u + word * 2u) ==
+                       preserved_words[word],
+                   "receive overflow loses complete message");
+        }
     }
 }
 
