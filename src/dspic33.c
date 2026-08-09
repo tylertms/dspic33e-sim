@@ -17,7 +17,7 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory);
 static void enter_trap(Dspic33* cpu, uint16_t trap, uint32_t vector, uint8_t priority,
                        uint16_t status, uint32_t return_pc);
 static void schedule_soft_trap(Dspic33* cpu, uint16_t trap, uint32_t vector,
-                               uint8_t priority, uint16_t status);
+                               uint8_t priority, uint8_t delay);
 
 static bool accumulator_byte_location(uint32_t address, uint8_t* accumulator,
                                       uint8_t* byte) {
@@ -1214,7 +1214,9 @@ static bool execute_accumulator_shift(Dspic33* cpu, uint32_t opcode) {
             ? (int16_t)(encoded_amount >= 32u ? encoded_amount - 64u : encoded_amount)
             : (int16_t)cpu->w[opcode & 0x0fu];
     if (amount < -16 || amount > 16) {
-        schedule_soft_trap(cpu, 4u, 0x00000cu, 11u, 0x0090u);
+        dspic33_write_word(cpu, 0x08c0u,
+                           (uint16_t)(dspic33_read_word(cpu, 0x08c0u) | 0x0090u));
+        schedule_soft_trap(cpu, 4u, 0x00000cu, 11u, 2u);
         return true;
     }
     apply_accumulator_result(
@@ -1534,16 +1536,14 @@ static void enter_trap(Dspic33* cpu, uint16_t trap, uint32_t vector, uint8_t pri
 }
 
 static void schedule_soft_trap(Dspic33* cpu, uint16_t trap, uint32_t vector,
-                               uint8_t priority, uint16_t status) {
-    dspic33_write_word(cpu, 0x08c0u,
-                       (uint16_t)(dspic33_read_word(cpu, 0x08c0u) | status));
-    if (cpu->pending_soft_trap_delay != 0u) {
+                               uint8_t priority, uint8_t delay) {
+    if (cpu->pending_soft_trap_delay != 0u && cpu->pending_soft_trap_delay <= delay) {
         return;
     }
     cpu->pending_soft_trap = trap;
     cpu->pending_soft_trap_vector = vector;
     cpu->pending_soft_trap_priority = priority;
-    cpu->pending_soft_trap_delay = 2u;
+    cpu->pending_soft_trap_delay = delay;
 }
 
 static void advance_instruction(Dspic33* cpu, uint64_t cycles) {
@@ -1740,13 +1740,19 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         uint16_t count;
         int16_t displacement;
         uint8_t depth;
-        if (cpu->pc >= DSPIC33_PROGRAM_LIMIT || cpu->do_depth == 4u) {
+        if (cpu->pc >= DSPIC33_PROGRAM_LIMIT) {
             return false;
         }
         count = (opcode & 0xfffff0u) == 0x088000u ? cpu->w[opcode & 0x0fu]
                                                   : (uint16_t)(opcode & 0x7fffu);
         displacement = (int16_t)(cpu->program[cpu->pc / 2u] & 0xffffu);
         cpu->pc += 2u;
+        if (cpu->do_depth == 4u) {
+            dspic33_write_word(cpu, 0x08c4u,
+                               (uint16_t)(dspic33_read_word(cpu, 0x08c4u) | 0x0010u));
+            schedule_soft_trap(cpu, 6u, 0x000010u, 9u, 1u);
+            return true;
+        }
         depth = cpu->do_depth++;
         cpu->do_start[depth] = cpu->pc;
         cpu->do_end[depth] = (uint32_t)(cpu->pc + (int32_t)displacement * 2);

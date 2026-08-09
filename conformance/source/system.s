@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 6
+_system_conformance_terminal_count = 8
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -22,6 +22,10 @@ _run_system_probe:
     bra z, _system_sftac_probe
     cp w0, #6
     bra z, _system_sftac_consecutive_probe
+    cp w0, #7
+    bra z, _system_sftac_repeat_probe
+    cp w0, #8
+    bra z, _system_do_overflow_probe
     return
 
 .global _system_sleep_probe
@@ -72,6 +76,45 @@ _system_sftac_consecutive_probe:
     mov #0x2222, w2
     return
 
+.global _system_sftac_repeat_probe
+_system_sftac_repeat_probe:
+    mov #0x1234, w4
+    lac w4, A
+    set_status 0x010f
+    mov #17, w5
+    mov #0x1111, w1
+    repeat #1
+    sftac A, w5
+    mov #0x2222, w2
+    return
+
+.global _system_do_overflow_probe
+_system_do_overflow_probe:
+    set_status 0x010f
+    mov #0x1111, w1
+    do #1, system_do_outer_end
+    do #1, system_do_level_2_end
+    do #1, system_do_level_3_end
+    do #1, system_do_level_4_end
+    do #1, system_do_level_5_end
+    mov #0x2222, w1
+    nop
+system_do_level_5_end:
+    nop
+    nop
+system_do_level_4_end:
+    nop
+    nop
+system_do_level_3_end:
+    nop
+    nop
+system_do_level_2_end:
+    nop
+    nop
+system_do_outer_end:
+    nop
+    return
+
 .global __MathError
 __MathError:
     mov [w15-4], w0
@@ -95,6 +138,35 @@ __MathError:
 .global _system_math_trap_complete
 _system_math_trap_complete:
     bra _system_math_trap_complete
+
+.global __SoftTrapError
+__SoftTrapError:
+    mov [w15-4], w0
+    mov w0, _system_trap_state
+    mov [w15-2], w0
+    mov w0, _system_trap_state+2
+    mov INTCON3, w0
+    mov w0, _system_trap_state+4
+    mov INTTREG, w0
+    mov w0, _system_trap_state+6
+    mov CORCON, w0
+    mov w0, _system_trap_state+8
+    mov DCOUNT, w0
+    mov w0, _system_trap_state+10
+    mov DOSTARTL, w0
+    mov w0, _system_trap_state+12
+    mov DOSTARTH, w0
+    mov w0, _system_trap_state+14
+    mov DOENDL, w0
+    mov w0, _system_trap_state+16
+    mov DOENDH, w0
+    mov w0, _system_trap_state+18
+    mov w1, _system_trap_state+20
+    mov SR, w0
+    mov w0, _system_trap_state+22
+.global _system_soft_trap_complete
+_system_soft_trap_complete:
+    bra _system_soft_trap_complete
 
 .global _run_system_conformance
 _run_system_conformance:
