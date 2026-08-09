@@ -563,7 +563,7 @@ static bool can_register_write_mask(const Dspic33* cpu, uint16_t address,
         if (offset == 0u) {
             *writable = 0x3f09u;
         } else if (offset == 2u) {
-            *writable = 0x001fu;
+            *writable = 0u;
         } else if (offset == 4u || offset == 8u || offset == 0x0eu) {
             *writable = 0u;
         } else if (offset == 6u) {
