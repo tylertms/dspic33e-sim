@@ -1130,9 +1130,12 @@ static bool execute_multiply(Dspic33* cpu, uint32_t opcode) {
         cpu->accumulator[accumulator] = accumulator_value((uint64_t)product);
         return true;
     }
+    bool word_result = (destination & 1u) != 0u;
     destination &= 0x0eu;
     cpu->w[destination] = (uint16_t)product;
-    cpu->w[destination + 1u] = (uint16_t)((uint32_t)product >> 16u);
+    if (!word_result) {
+        cpu->w[destination + 1u] = (uint16_t)((uint32_t)product >> 16u);
+    }
     return true;
 }
 

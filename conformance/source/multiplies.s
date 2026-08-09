@@ -3,7 +3,7 @@
 .equ _conformance_y_scratch, 0x9000
 
 .global _multiply_conformance_cases
-_multiply_conformance_cases = 145
+_multiply_conformance_cases = 151
 .global _multiply_conformance_group_complete
 _multiply_conformance_group_complete = 1
 
@@ -74,6 +74,46 @@ _run_multiply_conformance:
     set_status 0x010f
     mul.uu w2, w3, w4
     record_double_case 0x0705, w4, w5
+
+    mov #-300, w2
+    mov #200, w1
+    mov #0x5a5a, w3
+    set_status 0x010f
+    mulw.ss w2, w1, w2
+    record_double_case 0x0797, w2, w3
+
+    mov #-300, w2
+    mov #400, w1
+    mov #0x5a5a, w3
+    set_status 0x010f
+    mulw.su w2, w1, w2
+    record_double_case 0x0798, w2, w3
+
+    mov #-300, w2
+    mov #0x5a5a, w3
+    set_status 0x010f
+    mulw.su w2, #31, w2
+    record_double_case 0x0799, w2, w3
+
+    mov #60000, w2
+    mov #-3, w1
+    mov #0x5a5a, w3
+    set_status 0x010f
+    mulw.us w2, w1, w2
+    record_double_case 0x079a, w2, w3
+
+    mov #50000, w2
+    mov #3, w1
+    mov #0x5a5a, w3
+    set_status 0x010f
+    mulw.uu w2, w1, w2
+    record_double_case 0x079b, w2, w3
+
+    mov #50000, w2
+    mov #0x5a5a, w3
+    set_status 0x010f
+    mulw.uu w2, #31, w2
+    record_double_case 0x079c, w2, w3
 
     mov #0x8000, w2
     set_status 0x010f
