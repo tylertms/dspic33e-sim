@@ -3056,15 +3056,26 @@ static uint8_t can_next_fifo_buffer(const Dspic33* cpu, uint8_t channel,
     return buffer >= can_fifo_end(cpu, channel) ? start : (uint8_t)(buffer + 1u);
 }
 
+static uint8_t can_advance_fifo_write(Dspic33* cpu, uint8_t channel, uint8_t buffer) {
+    uint8_t next = can_next_fifo_buffer(cpu, channel, buffer);
+    uint16_t address = (uint16_t)(can_bases[channel] + 8u);
+    uint16_t fifo = raw_word(cpu, address);
+    cpu->io.can_fifo_write[channel] = next;
+    raw_write_word(cpu, address, (uint16_t)((fifo & 0x003fu) | ((uint16_t)next << 8u)));
+    return next;
+}
+
 static bool can_select_receive_buffer(Dspic33* cpu, uint8_t channel,
                                       const Dspic33CanFrame* frame, uint8_t* buffer,
                                       uint8_t* matched_filter) {
     uint16_t enabled = raw_word(cpu, (uint16_t)(can_bases[channel] + 0x14u));
     uint8_t first_buffer = 0u;
     uint8_t first_filter = 0u;
+    bool first_fifo = false;
     bool matched = false;
     uint8_t filter;
     for (filter = 0u; filter < 16u; filter++) {
+        bool fifo;
         uint8_t target;
         uint16_t control;
         if ((enabled & (uint16_t)(1u << filter)) == 0u ||
@@ -3072,13 +3083,15 @@ static bool can_select_receive_buffer(Dspic33* cpu, uint8_t channel,
             continue;
         }
         target = can_filter_buffer(cpu, channel, filter);
-        if (target == 15u) {
+        fifo = target == 15u;
+        if (fifo) {
             target = cpu->io.can_fifo_write[channel];
         }
         if (!matched) {
             matched = true;
             first_buffer = target;
             first_filter = filter;
+            first_fifo = fifo;
         }
         if (target >= can_buffer_count(cpu, channel) || target > 31u) {
             continue;
@@ -3105,6 +3118,9 @@ static bool can_select_receive_buffer(Dspic33* cpu, uint8_t channel,
         can_set_buffer_flag(cpu, channel, first_buffer, true);
         can_raise_event(cpu, channel, CAN_INTERRUPT_OVERFLOW, first_buffer,
                         first_filter);
+        if (first_fifo) {
+            can_advance_fifo_write(cpu, channel, first_buffer);
+        }
     }
     return false;
 }
@@ -3213,16 +3229,24 @@ static void can_receive_start(Dspic33* cpu, uint8_t channel) {
         return;
     }
     if (can_mode(cpu, channel) == CAN_MODE_LISTEN_ALL) {
+        bool fifo;
+        bool transmit;
         filter = 0u;
         buffer = can_filter_buffer(cpu, channel, filter);
-        if (buffer == 15u) {
+        fifo = buffer == 15u;
+        if (fifo) {
             buffer = cpu->io.can_fifo_write[channel];
         }
-        if (buffer >= can_buffer_count(cpu, channel) ||
+        transmit = buffer < 8u && (can_buffer_control(cpu, channel, buffer) &
+                                   CAN_BUFFER_TRANSMIT) != 0u;
+        if (buffer >= can_buffer_count(cpu, channel) || transmit ||
             can_buffer_flag(cpu, channel, buffer, false)) {
             if (buffer < 32u) {
                 can_set_buffer_flag(cpu, channel, buffer, true);
                 can_raise_event(cpu, channel, CAN_INTERRUPT_OVERFLOW, buffer, filter);
+                if (fifo) {
+                    can_advance_fifo_write(cpu, channel, buffer);
+                }
             }
             return;
         }
@@ -3265,11 +3289,8 @@ static void can_receive_finish(Dspic33* cpu, uint8_t channel) {
     uint16_t fifo;
     can_set_buffer_flag(cpu, channel, buffer, false);
     if (can_filter_buffer(cpu, channel, filter) == 15u) {
-        next = can_next_fifo_buffer(cpu, channel, buffer);
-        cpu->io.can_fifo_write[channel] = next;
+        next = can_advance_fifo_write(cpu, channel, buffer);
         fifo = raw_word(cpu, (uint16_t)(can_bases[channel] + 8u));
-        fifo = (uint16_t)((fifo & 0x003fu) | ((uint16_t)next << 8u));
-        raw_write_word(cpu, (uint16_t)(can_bases[channel] + 8u), fifo);
         if ((fifo & 0x003fu) == next + 1u ||
             (((fifo & 0x003fu) == (control & 0x001fu)) &&
              next == can_fifo_end(cpu, channel))) {

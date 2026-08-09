@@ -466,6 +466,94 @@ static void fifo_cases(CanConformance* state, Dspic33* cpu) {
     }
 }
 
+static void select_transmit_buffer(Dspic33* cpu, uint8_t channel, uint8_t buffer) {
+    uint16_t address = (uint16_t)(bases[channel] + 0x30u + (buffer / 2u) * 2u);
+    uint8_t shift = (uint8_t)((buffer & 1u) * 8u);
+    uint16_t value = dspic33_read_word(cpu, address);
+    value =
+        (uint16_t)((value & ~(uint16_t)(0xffu << shift)) | (uint16_t)(0x80u << shift));
+    dspic33_write_word(cpu, address, value);
+}
+
+static bool transmit_buffer_selected(Dspic33* cpu, uint8_t channel, uint8_t buffer) {
+    uint16_t address = (uint16_t)(bases[channel] + 0x30u + (buffer / 2u) * 2u);
+    uint8_t shift = (uint8_t)((buffer & 1u) * 8u);
+    return ((dspic33_read_word(cpu, address) >> shift) & 0x80u) != 0u;
+}
+
+static void fifo_overflow_advancement_case(CanConformance* state, Dspic33* cpu,
+                                           uint8_t channel, bool listen_all, bool full,
+                                           bool wrap) {
+    uint16_t base = bases[channel];
+    uint32_t memory = (uint32_t)(0xf000u + channel * 0x100u);
+    Dspic33CanFrame input = frame(0x456u, false, false, 1u, 0x80u);
+    uint8_t buffer = wrap ? 3u : 2u;
+    uint8_t expected_next = wrap ? 2u : 3u;
+    uint16_t flag = (uint16_t)(1u << buffer);
+    uint16_t fnrb;
+    dspic33_reset(cpu, 0u);
+    configure_receive(cpu, channel, memory, 0u, 2u);
+    configure_filter(cpu, channel, 0u, input.identifier, false, 0x7ffu, true, 15u, 0u);
+    enable_filter(cpu, channel, 1u);
+    select_window(cpu, channel, false);
+    set_mode(cpu, channel, listen_all ? 7u : 0u);
+    if (wrap) {
+        expect(state,
+               dspic33_can_receive(cpu, channel, &input, 0u) &&
+                   dspic33_device_advance(cpu, 32u),
+               "FIFO overflow wrap preparation");
+        expect(state,
+               ((dspic33_read_word(cpu, (uint16_t)(base + 8u)) >> 8u) & 0x3fu) ==
+                   buffer,
+               "FIFO overflow wrap pointer preparation");
+        clear_receive_flag(cpu, channel, 2u);
+    }
+    if (full) {
+        write_memory_word(cpu, (uint16_t)(base + 0x20u), flag);
+    } else {
+        select_transmit_buffer(cpu, channel, buffer);
+    }
+    write_memory_word(cpu, memory + buffer * 16u, 0xa55au);
+    fnrb = (uint16_t)(dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x003fu);
+    expect(state,
+           dspic33_can_receive(cpu, channel, &input, 0u) &&
+               dspic33_device_advance(cpu, 2u),
+           "FIFO overflow receive attempt");
+    expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 0x28u)) & flag) != 0u,
+           "FIFO overflow buffer flag");
+    expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 4u) != 0u,
+           "FIFO overflow event flag");
+    expect(state,
+           ((dspic33_read_word(cpu, (uint16_t)(base + 8u)) >> 8u) & 0x3fu) ==
+               expected_next,
+           "FIFO overflow advances write pointer");
+    expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x003fu) == fnrb,
+           "FIFO overflow preserves next read pointer");
+    expect(state, memory_word(cpu, memory + buffer * 16u) == 0xa55au,
+           "FIFO overflow loses message");
+    expect(state, receive_full(cpu, channel, buffer) == full,
+           "FIFO overflow preserves selected buffer state");
+    expect(state, full || transmit_buffer_selected(cpu, channel, buffer),
+           "FIFO overflow preserves transmit selection");
+}
+
+static void fifo_overflow_advancement_cases(CanConformance* state, Dspic33* cpu) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint8_t mode;
+        for (mode = 0u; mode < 2u; mode++) {
+            uint8_t cause;
+            for (cause = 0u; cause < 2u; cause++) {
+                uint8_t wrap;
+                for (wrap = 0u; wrap < 2u; wrap++) {
+                    fifo_overflow_advancement_case(state, cpu, channel, mode != 0u,
+                                                   cause == 0u, wrap != 0u);
+                }
+            }
+        }
+    }
+}
+
 static void overflow_and_fallback_cases(CanConformance* state, Dspic33* cpu) {
     Dspic33CanFrame input = frame(0x123u, false, false, 2u, 0x40u);
     dspic33_reset(cpu, 0u);
@@ -905,6 +993,7 @@ int main(void) {
     devicenet_cases(&state, &cpu);
     direct_buffer_cases(&state, &cpu);
     fifo_cases(&state, &cpu);
+    fifo_overflow_advancement_cases(&state, &cpu);
     overflow_and_fallback_cases(&state, &cpu);
     transmission_cases(&state, &cpu);
     priority_and_abort_cases(&state, &cpu);
