@@ -67,6 +67,7 @@ typedef struct {
     uint32_t reference_expected;
     uint32_t candidate_expected;
     uint32_t mask;
+    bool relative;
 } MappedField;
 
 typedef struct {
@@ -354,6 +355,18 @@ static size_t values_count(const Runner* runner, const JsonValue* specification)
     return stride > 0 && end >= start ? (size_t)((end - start) / stride + 1) : 0u;
 }
 
+static size_t matrix_dimension_count(const Runner* runner, const JsonValue* dimension) {
+    const JsonValue* rows;
+    if (dimension->type == JSON_ARRAY) {
+        return dimension->as.array.count;
+    }
+    rows = json_get(dimension, "rows");
+    if (rows != NULL) {
+        return rows->type == JSON_ARRAY ? rows->as.array.count : 0u;
+    }
+    return values_count(runner, dimension);
+}
+
 static size_t matrix_count(const Runner* runner, const JsonValue* matrix) {
     const JsonValue* dimensions = json_get(matrix, "dimensions");
     const char* strategy = json_string(json_get(matrix, "strategy"));
@@ -366,8 +379,7 @@ static size_t matrix_count(const Runner* runner, const JsonValue* matrix) {
     }
     for (index = 0u; index < dimensions->as.array.count; index++) {
         const JsonValue* dimension = dimensions->as.array.items[index];
-        counts[index] = dimension->type == JSON_ARRAY ? dimension->as.array.count
-                                                      : values_count(runner, dimension);
+        counts[index] = matrix_dimension_count(runner, dimension);
         if (counts[index] == 0u) {
             return 0u;
         }
@@ -1565,6 +1577,10 @@ static bool load_mapped_fields(Runner* runner, const JsonValue* item,
         const JsonValue* specification = values->as.array.items[index];
         const JsonValue* expected_location =
             json_get(specification, "expected_location");
+        const JsonValue* relative_location =
+            json_get(specification, "relative_location");
+        const JsonValue* mapped_location =
+            expected_location != NULL ? expected_location : relative_location;
         int64_t offset;
         int64_t size;
         int64_t expected_offset = 0;
@@ -1574,11 +1590,13 @@ static bool load_mapped_fields(Runner* runner, const JsonValue* item,
             !parse_number(json_get(specification, "offset"), &offset) || offset < 0 ||
             !parse_number(json_get(specification, "size"), &size) || size < 1 ||
             size > 4 || (uint64_t)offset + (uint64_t)size > observation_size ||
-            expected_location == NULL ||
-            !mapped_address(runner, expected_location, false,
-                            &field->reference_expected, error, error_size) ||
-            !mapped_address(runner, expected_location, true, &field->candidate_expected,
+            (expected_location == NULL) == (relative_location == NULL) ||
+            !mapped_address(runner, mapped_location, false, &field->reference_expected,
                             error, error_size) ||
+            !mapped_address(runner, mapped_location, true, &field->candidate_expected,
+                            error, error_size) ||
+            (relative_location != NULL &&
+             json_get(specification, "expected_location_offset") != NULL) ||
             (json_get(specification, "expected_location_offset") != NULL &&
              !parse_number(json_get(specification, "expected_location_offset"),
                            &expected_offset)) ||
@@ -1595,6 +1613,7 @@ static bool load_mapped_fields(Runner* runner, const JsonValue* item,
         field->candidate_expected =
             (uint32_t)(field->candidate_expected + expected_offset);
         field->mask = (uint32_t)mask;
+        field->relative = relative_location != NULL;
         result->count++;
     }
     return true;
@@ -1679,10 +1698,15 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item, size_t* f
         uint32_t candidate_value =
             read_memory_value(&runner->candidate, space,
                               candidate_address + (uint32_t)field->offset, field->size);
-        if ((reference_value & field->mask) !=
-                (field->reference_expected & field->mask) ||
-            (candidate_value & field->mask) !=
-                (field->candidate_expected & field->mask)) {
+        bool field_matches =
+            field->relative
+                ? ((reference_value - field->reference_expected) & field->mask) ==
+                      ((candidate_value - field->candidate_expected) & field->mask)
+                : (reference_value & field->mask) ==
+                          (field->reference_expected & field->mask) &&
+                      (candidate_value & field->mask) ==
+                          (field->candidate_expected & field->mask);
+        if (!field_matches) {
             matched = false;
             if (failed_mapped_field == NULL) {
                 failed_mapped_field = field;
@@ -2202,6 +2226,116 @@ static bool apply_generated_value(Runner* runner, const JsonValue* specification
     return true;
 }
 
+static bool matrix_table_value_type(const char* type, int64_t* minimum,
+                                    int64_t* maximum, bool* word) {
+    if (type != NULL && strcmp(type, "u8") == 0) {
+        *minimum = 0;
+        *maximum = UINT8_MAX;
+        *word = false;
+        return true;
+    }
+    if (type != NULL && strcmp(type, "i8") == 0) {
+        *minimum = INT8_MIN;
+        *maximum = INT8_MAX;
+        *word = false;
+        return true;
+    }
+    if (type != NULL && strcmp(type, "u16") == 0) {
+        *minimum = 0;
+        *maximum = UINT16_MAX;
+        *word = true;
+        return true;
+    }
+    if (type != NULL && strcmp(type, "i16") == 0) {
+        *minimum = INT16_MIN;
+        *maximum = INT16_MAX;
+        *word = true;
+        return true;
+    }
+    return false;
+}
+
+static bool apply_matrix_table_selection(Runner* runner,
+                                         const MatrixSelection* selection, char* error,
+                                         size_t error_size) {
+    const JsonValue* columns = json_get(selection->specification, "columns");
+    const JsonValue* values = json_get(selection->explicit_case, "values");
+    size_t index;
+    if (columns == NULL || columns->type != JSON_ARRAY || values == NULL ||
+        values->type != JSON_ARRAY ||
+        values->as.array.count > columns->as.array.count) {
+        snprintf(error, error_size, "invalid matrix table row");
+        return false;
+    }
+    for (index = 0u; index < values->as.array.count; index++) {
+        const JsonValue* value_entry = values->as.array.items[index];
+        const JsonValue* column = columns->as.array.items[index];
+        const char* type;
+        int64_t minimum;
+        int64_t maximum;
+        int64_t count = 1;
+        int64_t value;
+        uint32_t reference_address;
+        uint32_t candidate_address;
+        bool word;
+        size_t item;
+        if (value_entry->type == JSON_NULL) {
+            continue;
+        }
+        type = json_string(json_get(column, "type"));
+        if (column->type != JSON_OBJECT || !parse_number(value_entry, &value) ||
+            (json_get(column, "count") != NULL &&
+             !parse_number(json_get(column, "count"), &count)) ||
+            count < 1 ||
+            !mapped_address(runner, column, false, &reference_address, error,
+                            error_size) ||
+            !mapped_address(runner, column, true, &candidate_address, error,
+                            error_size)) {
+            snprintf(error, error_size, "invalid matrix table value");
+            return false;
+        }
+        if (type != NULL && strcmp(type, "pointer") == 0) {
+            const JsonValue* source = json_get(column, "value_location");
+            uint32_t reference_value;
+            uint32_t candidate_value;
+            if (source == NULL || count != 1 || value < 0 ||
+                !mapped_address(runner, source, false, &reference_value, error,
+                                error_size) ||
+                !mapped_address(runner, source, true, &candidate_value, error,
+                                error_size)) {
+                snprintf(error, error_size, "invalid matrix table pointer");
+                return false;
+            }
+            dspic33_write_word(&runner->reference, reference_address,
+                               (uint16_t)(reference_value + value));
+            dspic33_write_word(&runner->candidate, candidate_address,
+                               (uint16_t)(candidate_value + value));
+            continue;
+        }
+        if (!matrix_table_value_type(type, &minimum, &maximum, &word) ||
+            value < minimum || value > maximum) {
+            snprintf(error, error_size, "invalid matrix table value");
+            return false;
+        }
+        for (item = 0u; item < (size_t)count; item++) {
+            if (word) {
+                dspic33_write_word(&runner->reference,
+                                   reference_address + (uint32_t)item * 2u,
+                                   (uint16_t)value);
+                dspic33_write_word(&runner->candidate,
+                                   candidate_address + (uint32_t)item * 2u,
+                                   (uint16_t)value);
+            } else {
+                dspic33_write_byte(&runner->reference,
+                                   reference_address + (uint32_t)item, (uint8_t)value);
+                dspic33_write_byte(&runner->candidate,
+                                   candidate_address + (uint32_t)item, (uint8_t)value);
+            }
+        }
+    }
+    return true;
+}
+
 static bool execute_step(Runner* runner, const char* scenario_name,
                          const char* generated_name, const StepParts* parts,
                          const JsonValue* scenario_call,
@@ -2251,10 +2385,14 @@ static bool execute_step(Runner* runner, const char* scenario_name,
         return false;
     }
     for (index = 0u; index < matrix_selection_count; index++) {
-        if (matrix_selections[index].generated &&
-            !apply_generated_value(runner, matrix_selections[index].specification,
-                                   matrix_selections[index].value, false, error,
-                                   error_size)) {
+        const MatrixSelection* selection = &matrix_selections[index];
+        if (json_get(selection->specification, "columns") != NULL) {
+            if (!apply_matrix_table_selection(runner, selection, error, error_size)) {
+                return false;
+            }
+        } else if (selection->generated &&
+                   !apply_generated_value(runner, selection->specification,
+                                          selection->value, false, error, error_size)) {
             return false;
         }
     }
@@ -2425,6 +2563,7 @@ static bool execute_range(Runner* runner, const JsonValue* scenario,
 
 static bool select_matrix_case(const Runner* runner, const JsonValue* dimension,
                                size_t index, MatrixSelection* selection) {
+    const JsonValue* rows;
     memset(selection, 0, sizeof(*selection));
     selection->specification = dimension;
     if (dimension->type == JSON_ARRAY) {
@@ -2432,6 +2571,14 @@ static bool select_matrix_case(const Runner* runner, const JsonValue* dimension,
             return false;
         }
         selection->explicit_case = dimension->as.array.items[index];
+        return true;
+    }
+    rows = json_get(dimension, "rows");
+    if (rows != NULL) {
+        if (rows->type != JSON_ARRAY || index >= rows->as.array.count) {
+            return false;
+        }
+        selection->explicit_case = rows->as.array.items[index];
         return true;
     }
     selection->generated = true;
@@ -2486,7 +2633,8 @@ static bool execute_matrix_selection(Runner* runner, const JsonValue* scenario,
         return false;
     }
     for (index = 0u; index < selection_count; index++) {
-        if (!add_part(&parts, selections[index].explicit_case, error, error_size)) {
+        if (json_get(selections[index].specification, "columns") == NULL &&
+            !add_part(&parts, selections[index].explicit_case, error, error_size)) {
             return false;
         }
     }
@@ -2505,8 +2653,7 @@ static bool execute_product_matrix(Runner* runner, const JsonValue* scenario,
     size_t dimension;
     for (dimension = 0u; dimension < dimensions->as.array.count; dimension++) {
         const JsonValue* value = dimensions->as.array.items[dimension];
-        counts[dimension] = value->type == JSON_ARRAY ? value->as.array.count
-                                                      : values_count(runner, value);
+        counts[dimension] = matrix_dimension_count(runner, value);
     }
     for (;;) {
         for (dimension = 0u; dimension < dimensions->as.array.count; dimension++) {
@@ -2548,8 +2695,7 @@ static bool execute_pairwise_matrix(Runner* runner, const JsonValue* scenario,
     size_t other;
     for (index = 0u; index < dimensions->as.array.count; index++) {
         const JsonValue* dimension = dimensions->as.array.items[index];
-        counts[index] = dimension->type == JSON_ARRAY ? dimension->as.array.count
-                                                      : values_count(runner, dimension);
+        counts[index] = matrix_dimension_count(runner, dimension);
         if (!select_matrix_case(runner, dimension, 0u, &selections[index])) {
             return false;
         }
