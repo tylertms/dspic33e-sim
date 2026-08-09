@@ -721,6 +721,80 @@ static void fifo_interrupt_boundary_cases(CanConformance* state, Dspic33* cpu) {
     }
 }
 
+static void receive_flag_hardware_event_case(CanConformance* state, Dspic33* cpu,
+                                             uint8_t channel, uint8_t target) {
+    uint16_t base = bases[channel];
+    uint16_t fifo_address = (uint16_t)(base + 8u);
+    uint16_t interrupt_address = (uint16_t)(base + 0x0au);
+    uint16_t overflow_address = (uint16_t)(base + 0x28u + (target >= 16u ? 2u : 0u));
+    uint16_t target_bit = (uint16_t)(1u << (target & 15u));
+    uint32_t memory = (uint32_t)(0xf000u + channel * 0x400u);
+    uint8_t buffer;
+    uint16_t preserved_payload;
+    dspic33_reset(cpu, 0u);
+    configure_receive(cpu, channel, memory, 6u, target);
+    configure_filter(cpu, channel, 0u, 0x456u, false, 0x7ffu, true, 15u, 0u);
+    enable_filter(cpu, channel, 1u);
+    select_window(cpu, channel, false);
+    set_mode(cpu, channel, 0u);
+    for (buffer = target; buffer < 32u; buffer++) {
+        Dspic33CanFrame input =
+            frame(0x456u, false, false, 1u, (uint8_t)(0x20u + buffer));
+        uint8_t expected_fbp = buffer == 31u ? target : (uint8_t)(buffer + 1u);
+        expect(state,
+               dspic33_can_receive(cpu, channel, &input, 0u) &&
+                   dspic33_device_advance(cpu, 32u),
+               "receive flag hardware fill event");
+        expect(state, receive_full(cpu, channel, buffer),
+               "receive flag hardware sets RXFUL");
+        expect(state,
+               memory_word(cpu, memory + buffer * 16u + 6u) ==
+                   (uint8_t)(0x20u + buffer),
+               "receive flag hardware stores message");
+        expect(state,
+               ((dspic33_read_word(cpu, fifo_address) >> 8u) & 0x003fu) == expected_fbp,
+               "receive flag hardware advances write pointer");
+        expect(state, (dspic33_read_word(cpu, fifo_address) & 0x003fu) == target,
+               "receive flag hardware preserves read pointer");
+    }
+    preserved_payload = memory_word(cpu, memory + target * 16u + 6u);
+    expect(state, (dspic33_read_word(cpu, overflow_address) & target_bit) == 0u,
+           "receive overflow flag initially clear");
+    expect(state, (dspic33_read_word(cpu, interrupt_address) & 0x0004u) == 0u,
+           "receive overflow interrupt initially clear");
+    {
+        Dspic33CanFrame overflow = frame(0x456u, false, false, 1u, 0xe0u);
+        uint8_t expected_fbp = target == 31u ? target : (uint8_t)(target + 1u);
+        expect(state,
+               dspic33_can_receive(cpu, channel, &overflow, 0u) &&
+                   dspic33_device_advance(cpu, 2u),
+               "receive overflow hardware event");
+        expect(state, receive_full(cpu, channel, target),
+               "receive overflow preserves RXFUL");
+        expect(state, (dspic33_read_word(cpu, overflow_address) & target_bit) != 0u,
+               "receive overflow hardware sets RXOVF");
+        expect(state, (dspic33_read_word(cpu, interrupt_address) & 0x0004u) != 0u,
+               "receive overflow hardware sets RBOVIF");
+        expect(state,
+               ((dspic33_read_word(cpu, fifo_address) >> 8u) & 0x003fu) == expected_fbp,
+               "receive overflow advances write pointer");
+        expect(state, (dspic33_read_word(cpu, fifo_address) & 0x003fu) == target,
+               "receive overflow preserves read pointer");
+        expect(state, memory_word(cpu, memory + target * 16u + 6u) == preserved_payload,
+               "receive overflow loses message");
+    }
+}
+
+static void receive_flag_hardware_event_cases(CanConformance* state, Dspic33* cpu) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint8_t target;
+        for (target = 0u; target < 32u; target++) {
+            receive_flag_hardware_event_case(state, cpu, channel, target);
+        }
+    }
+}
+
 static void overflow_and_fallback_cases(CanConformance* state, Dspic33* cpu) {
     Dspic33CanFrame input = frame(0x123u, false, false, 2u, 0x40u);
     dspic33_reset(cpu, 0u);
@@ -1165,6 +1239,7 @@ int main(void) {
     receive_overflow_write_zero_prior_domain(&state, &cpu);
     receive_flag_read_pointer_cases(&state, &cpu);
     fifo_interrupt_boundary_cases(&state, &cpu);
+    receive_flag_hardware_event_cases(&state, &cpu);
     overflow_and_fallback_cases(&state, &cpu);
     transmission_cases(&state, &cpu);
     priority_and_abort_cases(&state, &cpu);
