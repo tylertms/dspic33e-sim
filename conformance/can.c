@@ -18,6 +18,17 @@ static const uint8_t event_irqs[DSPIC33_CAN_COUNT] = {35u, 56u};
 static const uint8_t receive_requests[DSPIC33_CAN_COUNT] = {34u, 55u};
 static const uint8_t transmit_requests[DSPIC33_CAN_COUNT] = {70u, 71u};
 
+enum {
+    CAN_INTERRUPT_ERROR = 0x0020u,
+    CAN_ERROR_WARNING = 0x0100u,
+    CAN_RECEIVE_WARNING = 0x0200u,
+    CAN_TRANSMIT_WARNING = 0x0400u,
+    CAN_RECEIVE_PASSIVE = 0x0800u,
+    CAN_TRANSMIT_PASSIVE = 0x1000u,
+    CAN_BUS_OFF = 0x2000u,
+    CAN_ERROR_STATUS_MASK = 0x3f00u
+};
+
 static void expect(CanConformance* state, bool condition, const char* name) {
     state->cases++;
     if (condition) {
@@ -31,6 +42,13 @@ static void expect(CanConformance* state, bool condition, const char* name) {
 static bool interrupt_flag(Dspic33* cpu, uint8_t irq) {
     uint16_t address = (uint16_t)(0x0800u + (irq / 16u) * 2u);
     return (dspic33_read_word(cpu, address) & (uint16_t)(1u << (irq % 16u))) != 0u;
+}
+
+static void clear_interrupt_flag(Dspic33* cpu, uint8_t irq) {
+    uint16_t address = (uint16_t)(0x0800u + (irq / 16u) * 2u);
+    uint16_t flag = (uint16_t)(1u << (irq % 16u));
+    dspic33_write_word(cpu, address,
+                       (uint16_t)(dspic33_read_word(cpu, address) & ~flag));
 }
 
 static uint16_t dma_base(uint8_t channel) {
@@ -622,37 +640,222 @@ static void mode_and_power_cases(CanConformance* state, Dspic33* cpu) {
     }
 }
 
-static void interrupt_and_error_cases(CanConformance* state, Dspic33* cpu) {
-    static const uint8_t increments[] = {1u, 95u, 1u, 31u, 1u, 126u, 128u};
-    uint8_t index;
-    dspic33_reset(cpu, 0u);
-    set_mode(cpu, 0u, 0u);
-    dspic33_write_word(cpu, 0x040cu, 0x0020u);
-    for (index = 0u; index < sizeof(increments); index++) {
-        bool transmit = index >= 4u;
-        expect(state,
-               dspic33_can_error(cpu, 0u, transmit, increments[index], 0u) &&
-                   dspic33_device_advance(cpu, 1u),
-               "error event schedule");
-        expect(state, (dspic33_read_word(cpu, 0x040au) & 0x0020u) != 0u,
-               "error event flag");
-        expect(state, (dspic33_read_word(cpu, 0x0404u) & 0x007fu) == 0x41u,
-               "error vector code");
-        expect(state, interrupt_flag(cpu, event_irqs[0]), "error event interrupt");
-        dspic33_write_word(cpu, 0x040au,
-                           (uint16_t)(dspic33_read_word(cpu, 0x040au) & ~0x0020u));
+static uint16_t expected_error_status(bool transmit, uint16_t count, bool bus_off) {
+    uint16_t status = 0u;
+    if (count >= 96u) {
+        status |= CAN_ERROR_WARNING;
+        if (transmit) {
+            if (count < 128u) {
+                status |= CAN_TRANSMIT_WARNING;
+            } else if (!bus_off) {
+                status |= CAN_TRANSMIT_PASSIVE;
+            }
+        } else {
+            if (count < 128u) {
+                status |= CAN_RECEIVE_WARNING;
+            } else {
+                status |= CAN_RECEIVE_PASSIVE;
+            }
+        }
     }
-    expect(state, (dspic33_read_word(cpu, 0x040eu) & 0x00ffu) == 128u,
-           "receive error count");
-    expect(state, (dspic33_read_word(cpu, 0x040au) & 0x0b00u) == 0x0b00u,
-           "receive passive state");
-    expect(state, (dspic33_read_word(cpu, 0x040eu) >> 8u) == 0xffu,
-           "transmit error saturation");
-    expect(state, (dspic33_read_word(cpu, 0x040au) & 0x3500u) == 0x3500u,
-           "transmit bus off state");
-    set_mode(cpu, 0u, 4u);
-    expect(state, dspic33_read_word(cpu, 0x040eu) == 0u,
-           "configuration clears error counts");
+    if (bus_off) {
+        status |= CAN_BUS_OFF;
+    }
+    return status;
+}
+
+static void configure_error_test(Dspic33* cpu, uint8_t channel) {
+    dspic33_reset(cpu, 0u);
+    set_mode(cpu, channel, 0u);
+    dspic33_write_word(cpu, (uint16_t)(bases[channel] + 0x0cu), CAN_INTERRUPT_ERROR);
+}
+
+static void expect_error_step(CanConformance* state, Dspic33* cpu, uint8_t channel,
+                              bool transmit, uint8_t increment,
+                              uint16_t expected_counts, uint16_t expected_status,
+                              bool expected_interrupt) {
+    uint16_t status_address = (uint16_t)(bases[channel] + 0x0au);
+    uint16_t status;
+    expect(state,
+           dspic33_can_error(cpu, channel, transmit, increment, 0u) &&
+               dspic33_device_advance(cpu, 1u),
+           "error counter event schedule");
+    status = dspic33_read_word(cpu, status_address);
+    expect(state,
+           dspic33_read_word(cpu, (uint16_t)(bases[channel] + 0x0eu)) ==
+               expected_counts,
+           "error counter result");
+    expect(state, (status & CAN_ERROR_STATUS_MASK) == expected_status,
+           "error state result");
+    expect(state, ((status & CAN_INTERRUPT_ERROR) != 0u) == expected_interrupt,
+           "error transition flag");
+    expect(state, interrupt_flag(cpu, event_irqs[channel]) == expected_interrupt,
+           "error transition interrupt");
+    expect(state,
+           (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 4u)) & 0x007fu) ==
+               (expected_interrupt ? 0x41u : 0x40u),
+           "error transition vector");
+}
+
+static void clear_error_interrupt(CanConformance* state, Dspic33* cpu,
+                                  uint8_t channel) {
+    uint16_t address = (uint16_t)(bases[channel] + 0x0au);
+    dspic33_write_word(
+        cpu, address,
+        (uint16_t)(dspic33_read_word(cpu, address) & ~CAN_INTERRUPT_ERROR));
+    clear_interrupt_flag(cpu, event_irqs[channel]);
+    expect(state, (dspic33_read_word(cpu, address) & CAN_INTERRUPT_ERROR) == 0u,
+           "error flag clear");
+    expect(state, !interrupt_flag(cpu, event_irqs[channel]), "error interrupt clear");
+    expect(state,
+           (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 4u)) & 0x007fu) == 0x40u,
+           "error vector clear");
+}
+
+static void error_threshold_domain(CanConformance* state, Dspic33* cpu) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint8_t direction;
+        for (direction = 0u; direction < 2u; direction++) {
+            bool transmit = direction != 0u;
+            uint16_t count;
+            for (count = 1u; count <= UINT8_MAX; count++) {
+                uint16_t counts = transmit ? (uint16_t)(count << 8u) : count;
+                configure_error_test(cpu, channel);
+                expect_error_step(state, cpu, channel, transmit, (uint8_t)count, counts,
+                                  expected_error_status(transmit, count, false),
+                                  count >= 96u);
+            }
+        }
+    }
+}
+
+static void receive_error_transition_cases(CanConformance* state, Dspic33* cpu,
+                                           uint8_t channel) {
+    configure_error_test(cpu, channel);
+    expect_error_step(state, cpu, channel, false, 95u, 0x005fu, 0u, false);
+    expect_error_step(state, cpu, channel, false, 1u, 0x0060u,
+                      CAN_ERROR_WARNING | CAN_RECEIVE_WARNING, true);
+    clear_error_interrupt(state, cpu, channel);
+    expect_error_step(state, cpu, channel, false, 1u, 0x0061u,
+                      CAN_ERROR_WARNING | CAN_RECEIVE_WARNING, false);
+    expect_error_step(state, cpu, channel, false, 31u, 0x0080u,
+                      CAN_ERROR_WARNING | CAN_RECEIVE_PASSIVE, true);
+    clear_error_interrupt(state, cpu, channel);
+    expect_error_step(state, cpu, channel, false, 1u, 0x0081u,
+                      CAN_ERROR_WARNING | CAN_RECEIVE_PASSIVE, false);
+    expect_error_step(state, cpu, channel, false, 126u, 0x00ffu,
+                      CAN_ERROR_WARNING | CAN_RECEIVE_PASSIVE, false);
+    expect_error_step(state, cpu, channel, false, 1u, 0x00ffu,
+                      CAN_ERROR_WARNING | CAN_RECEIVE_PASSIVE, false);
+    set_mode(cpu, channel, 4u);
+    expect(state, dspic33_read_word(cpu, (uint16_t)(bases[channel] + 0x0eu)) == 0u,
+           "configuration clears receive error counter");
+    expect(state,
+           (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 0x0au)) &
+            CAN_ERROR_STATUS_MASK) == 0u,
+           "configuration clears receive error state");
+    set_mode(cpu, channel, 0u);
+    expect_error_step(state, cpu, channel, false, 96u, 0x0060u,
+                      CAN_ERROR_WARNING | CAN_RECEIVE_WARNING, true);
+}
+
+static void transmit_error_transition_cases(CanConformance* state, Dspic33* cpu,
+                                            uint8_t channel) {
+    configure_error_test(cpu, channel);
+    expect_error_step(state, cpu, channel, true, 95u, 0x5f00u, 0u, false);
+    expect_error_step(state, cpu, channel, true, 1u, 0x6000u,
+                      CAN_ERROR_WARNING | CAN_TRANSMIT_WARNING, true);
+    clear_error_interrupt(state, cpu, channel);
+    expect_error_step(state, cpu, channel, true, 1u, 0x6100u,
+                      CAN_ERROR_WARNING | CAN_TRANSMIT_WARNING, false);
+    expect_error_step(state, cpu, channel, true, 31u, 0x8000u,
+                      CAN_ERROR_WARNING | CAN_TRANSMIT_PASSIVE, true);
+    clear_error_interrupt(state, cpu, channel);
+    expect_error_step(state, cpu, channel, true, 1u, 0x8100u,
+                      CAN_ERROR_WARNING | CAN_TRANSMIT_PASSIVE, false);
+    expect_error_step(state, cpu, channel, true, 126u, 0xff00u,
+                      CAN_ERROR_WARNING | CAN_TRANSMIT_PASSIVE, false);
+    expect_error_step(state, cpu, channel, true, 1u, 0xff00u,
+                      CAN_ERROR_WARNING | CAN_BUS_OFF, true);
+    clear_error_interrupt(state, cpu, channel);
+    expect_error_step(state, cpu, channel, true, 1u, 0xff00u,
+                      CAN_ERROR_WARNING | CAN_BUS_OFF, false);
+    set_mode(cpu, channel, 4u);
+    expect(state, dspic33_read_word(cpu, (uint16_t)(bases[channel] + 0x0eu)) == 0u,
+           "configuration clears transmit error counter");
+    expect(state,
+           (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 0x0au)) &
+            CAN_ERROR_STATUS_MASK) == 0u,
+           "configuration clears bus off state");
+    set_mode(cpu, channel, 0u);
+    expect_error_step(state, cpu, channel, true, 96u, 0x6000u,
+                      CAN_ERROR_WARNING | CAN_TRANSMIT_WARNING, true);
+}
+
+static void complete_error_test_transmission(CanConformance* state, Dspic33* cpu,
+                                             uint8_t channel) {
+    uint32_t memory = (uint32_t)(0xe000u + channel * 0x100u);
+    Dspic33CanFrame output;
+    uint8_t word;
+    configure_transmit(cpu, channel, memory);
+    for (word = 0u; word < 8u; word++) {
+        write_memory_word(cpu, memory + word * 2u, 0u);
+    }
+    select_window(cpu, channel, false);
+    dspic33_write_word(cpu, (uint16_t)(bases[channel] + 0x30u), 0x008bu);
+    expect(state, dspic33_device_advance(cpu, 32u),
+           "error recovery transmission advance");
+    expect(state, dspic33_can_transmit(cpu, channel, &output),
+           "error recovery transmission output");
+}
+
+static void transmit_error_descending_entry_cases(CanConformance* state, Dspic33* cpu,
+                                                  uint8_t channel) {
+    uint16_t status_address = (uint16_t)(bases[channel] + 0x0au);
+    configure_error_test(cpu, channel);
+    expect_error_step(state, cpu, channel, true, 128u, 0x8000u,
+                      CAN_ERROR_WARNING | CAN_TRANSMIT_PASSIVE, true);
+    clear_error_interrupt(state, cpu, channel);
+    complete_error_test_transmission(state, cpu, channel);
+    expect(state, dspic33_read_word(cpu, (uint16_t)(bases[channel] + 0x0eu)) == 0x7f00u,
+           "successful transmission decrements error counter");
+    expect(state,
+           (dspic33_read_word(cpu, status_address) & CAN_ERROR_STATUS_MASK) ==
+               (CAN_ERROR_WARNING | CAN_TRANSMIT_WARNING),
+           "successful transmission enters error warning");
+    expect(state, (dspic33_read_word(cpu, status_address) & CAN_INTERRUPT_ERROR) != 0u,
+           "descending error transition flag");
+    expect(state, interrupt_flag(cpu, event_irqs[channel]),
+           "descending error transition interrupt");
+    expect(state,
+           (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 4u)) & 0x007fu) == 0x41u,
+           "descending error transition vector");
+    clear_error_interrupt(state, cpu, channel);
+    complete_error_test_transmission(state, cpu, channel);
+    expect(state, dspic33_read_word(cpu, (uint16_t)(bases[channel] + 0x0eu)) == 0x7e00u,
+           "within-warning transmission decrements error counter");
+    expect(state,
+           (dspic33_read_word(cpu, status_address) & CAN_ERROR_STATUS_MASK) ==
+               (CAN_ERROR_WARNING | CAN_TRANSMIT_WARNING),
+           "within-warning transmission preserves error state");
+    expect(state, (dspic33_read_word(cpu, status_address) & CAN_INTERRUPT_ERROR) == 0u,
+           "within-warning transmission does not set error flag");
+    expect(state, !interrupt_flag(cpu, event_irqs[channel]),
+           "within-warning transmission does not raise error interrupt");
+    expect(state,
+           (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 4u)) & 0x007fu) == 0x40u,
+           "within-warning transmission keeps default vector");
+}
+
+static void interrupt_and_error_cases(CanConformance* state, Dspic33* cpu) {
+    uint8_t channel;
+    error_threshold_domain(state, cpu);
+    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        receive_error_transition_cases(state, cpu, channel);
+        transmit_error_transition_cases(state, cpu, channel);
+        transmit_error_descending_entry_cases(state, cpu, channel);
+    }
 }
 
 static void copy_and_reset_cases(CanConformance* state, Dspic33* cpu) {
