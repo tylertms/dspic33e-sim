@@ -34,6 +34,18 @@ enum {
     OPCODE_MOV_BYTE_W15_PRE_DECREMENT_W3 = 0x7841cfu,
     OPCODE_MOV_DOUBLE_W14_W2 = 0xbe010eu,
     OPCODE_MOV_DOUBLE_W15_W2 = 0xbe011fu,
+    OPCODE_MOV_W2_W1_POST_INCREMENT = 0x781882u,
+    OPCODE_MOV_W1_POST_INCREMENT_W2 = 0x780131u,
+    OPCODE_MOV_W1_PRE_INCREMENT_W2 = 0x780151u,
+    OPCODE_MOV_W2_W1_POST_DECREMENT = 0x781082u,
+    OPCODE_MOV_W2_W1_PRE_DECREMENT = 0x782082u,
+    OPCODE_MOV_W1_MEMORY_W2_MEMORY = 0x780911u,
+    OPCODE_MOV_BYTE_W1_POST_INCREMENT_W2 = 0x784131u,
+    OPCODE_MOV_DOUBLE_W2_W1_POST_INCREMENT = 0xbe9882u,
+    OPCODE_MOV_DOUBLE_W1_POST_INCREMENT_W2 = 0xbe0131u,
+    OPCODE_BSET_BYTE_W4_POST_DECREMENT = 0xa07424u,
+    OPCODE_BSET_WORD_W4_POST_INCREMENT = 0xa09034u,
+    OPCODE_TBLRDL_W2_W3 = 0xba0192u,
     OPCODE_MOV_W0_SPLIM = 0x880100u,
     OPCODE_MOV_SENTINEL_W1 = 0x211111u
 };
@@ -59,6 +71,150 @@ static void prepare_trap_vectors(ProcessorConformance* state, Dspic33* cpu) {
     load_instruction(state, cpu, 0x00000cu, 0x000120u);
     load_instruction(state, cpu, 0x000100u, OPCODE_RETFIE);
     load_instruction(state, cpu, 0x000120u, OPCODE_NOP);
+}
+
+static void prepare_address_trap(ProcessorConformance* state, Dspic33* cpu) {
+    load_instruction(state, cpu, 0x000006u, 0x000140u);
+    cpu->w[15] = 0x5000u;
+    cpu->stop_on_trap = true;
+}
+
+static void expect_address_trap(ProcessorConformance* state, Dspic33* cpu,
+                                const char* execution) {
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED, execution);
+    expect(state,
+           cpu->last_trap == 1u && cpu->last_trap_return == 2u && cpu->pc == 0x000140u,
+           "address error enters hard trap");
+    expect(state,
+           (dspic33_read_word(cpu, 0x08c0u) & 0x0008u) != 0u &&
+               dspic33_read_word(cpu, 0x08c8u) == 0x0e01u,
+           "address error records status and priority");
+}
+
+static void address_error_cases(ProcessorConformance* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W2_W1_POST_INCREMENT);
+    dspic33_write_word(cpu, 0x1000u, 0x1122u);
+    dspic33_write_word(cpu, 0x1002u, 0x3344u);
+    cpu->w[1] = 0x1001u;
+    cpu->w[2] = 0xa5a5u;
+    expect_address_trap(state, cpu, "odd post-increment word write traps");
+    expect(state,
+           cpu->w[1] == 0x1001u && dspic33_read_word(cpu, 0x1000u) == 0x1122u &&
+               dspic33_read_word(cpu, 0x1002u) == 0x3344u,
+           "odd word write inhibits data and address update");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    cpu->w[1] = 0x1001u;
+    cpu->w[2] = 0xbeefu;
+    expect_address_trap(state, cpu, "odd post-increment word read traps");
+    expect(state, cpu->w[1] == 0x1001u && cpu->w[2] == 0xbeefu,
+           "odd word read preserves pointer and destination");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_MEMORY_W2_MEMORY);
+    dspic33_write_word(cpu, 0x0108u, 0xaaaau);
+    dspic33_write_word(cpu, 0x010au, 0x5555u);
+    dspic33_write_word(cpu, 0x0110u, 0x0008u);
+    cpu->w[1] = 0x0106u;
+    cpu->w[2] = 0x1001u;
+    expect_address_trap(state, cpu, "odd destination prevalidates before source read");
+    expect(state, dspic33_read_word(cpu, 0x0108u) == 0xaaaau,
+           "odd destination inhibits side-effecting timer source read");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_PRE_INCREMENT_W2);
+    cpu->w[1] = 0x1001u;
+    cpu->w[2] = 0xbeefu;
+    expect_address_trap(state, cpu, "odd pre-increment word read traps");
+    expect(state, cpu->w[1] == 0x1001u && cpu->w[2] == 0xbeefu,
+           "odd pre-increment read inhibits address update");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W2_W1_POST_DECREMENT);
+    cpu->w[1] = 0x1001u;
+    cpu->w[2] = 0xa5a5u;
+    expect_address_trap(state, cpu, "odd post-decrement word write traps");
+    expect(state, cpu->w[1] == 0x1001u,
+           "odd post-decrement write inhibits address update");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W2_W1_PRE_DECREMENT);
+    cpu->w[1] = 0x1003u;
+    cpu->w[2] = 0xa5a5u;
+    expect_address_trap(state, cpu, "odd pre-decrement word write traps");
+    expect(state, cpu->w[1] == 0x1003u,
+           "odd pre-decrement write inhibits address update");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_DOUBLE_W2_W1_POST_INCREMENT);
+    dspic33_write_word(cpu, 0x1000u, 0x1122u);
+    dspic33_write_word(cpu, 0x1002u, 0x3344u);
+    cpu->w[1] = 0x1001u;
+    cpu->w[2] = 0xa5a5u;
+    cpu->w[3] = 0x5a5au;
+    expect_address_trap(state, cpu, "odd MOV.D destination traps");
+    expect(state,
+           cpu->w[1] == 0x1001u && dspic33_read_word(cpu, 0x1000u) == 0x1122u &&
+               dspic33_read_word(cpu, 0x1002u) == 0x3344u,
+           "odd MOV.D inhibits both writes and pointer update");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_DOUBLE_W1_POST_INCREMENT_W2);
+    cpu->w[1] = 0x1001u;
+    cpu->w[2] = 0x1122u;
+    cpu->w[3] = 0x3344u;
+    expect_address_trap(state, cpu, "odd MOV.D source traps");
+    expect(state, cpu->w[1] == 0x1001u && cpu->w[2] == 0x1122u && cpu->w[3] == 0x3344u,
+           "odd MOV.D preserves destination and pointer");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_BSET_WORD_W4_POST_INCREMENT);
+    dspic33_write_word(cpu, 0x1000u, 0x1111u);
+    cpu->w[4] = 0x1001u;
+    expect_address_trap(state, cpu, "odd indirect word bit operation traps");
+    expect(state, cpu->w[4] == 0x1001u && dspic33_read_word(cpu, 0x1000u) == 0x1111u,
+           "odd indirect bit operation inhibits data and address update");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_BSET_BYTE_W4_POST_DECREMENT);
+    dspic33_write_byte(cpu, 0x1001u, 0x11u);
+    cpu->w[4] = 0x1001u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "odd indirect byte bit operation remains valid");
+    expect(state, cpu->w[4] == 0x1000u && dspic33_read_byte(cpu, 0x1001u) == 0x91u,
+           "odd indirect byte bit operation updates data and pointer");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_BYTE_W1_POST_INCREMENT_W2);
+    dspic33_write_byte(cpu, 0x1001u, 0x5au);
+    cpu->w[1] = 0x1001u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "odd ordinary byte access remains valid");
+    expect(state, cpu->w[1] == 0x1002u && (cpu->w[2] & 0x00ffu) == 0x005au,
+           "odd ordinary byte access reads and updates pointer");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_TBLRDL_W2_W3);
+    load_instruction(state, cpu, 0x0200u, 0xabcdefu);
+    cpu->tblpag = 0u;
+    cpu->w[2] = 0x0201u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "odd table pointer remains valid");
+    expect(state, cpu->w[2] == 0x0201u && cpu->w[3] == 0xcdefu,
+           "table word read masks table pointer bit zero");
+    expect(state, (dspic33_read_word(cpu, 0x08c0u) & 0x0008u) == 0u,
+           "table pointer does not set ADDRERR");
 }
 
 static uint16_t active_pending_traps(const Dspic33* cpu) {
@@ -490,6 +646,7 @@ int main(void) {
     bool initialized = dspic33_initialize(&cpu);
     expect(&state, initialized, "initialize processor conformance");
     if (initialized) {
+        address_error_cases(&state, &cpu);
         w15_write_cases(&state, &cpu);
         valid_stack_frame_cases(&state, &cpu);
         invalid_lnk_case(&state, &cpu);

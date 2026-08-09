@@ -407,6 +407,9 @@ typedef struct {
     uint16_t reset_interrupt;
     uint16_t last_trap;
     Dspic33PendingSoftTrap pending_soft_traps[4];
+    uint32_t address_error_return;
+    bool instruction_active;
+    bool address_error;
     bool stop_on_trap;
     bool async_events_enabled;
     uint16_t interrupt_log_irq[16];

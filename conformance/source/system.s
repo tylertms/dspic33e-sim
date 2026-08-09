@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 9
+_system_conformance_terminal_count = 10
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -28,6 +28,8 @@ _run_system_probe:
     bra z, _system_do_overflow_probe
     cp w0, #9
     bra z, _system_stack_limit_probe
+    cp w0, #10
+    bra z, _system_address_error_probe
     return
 
 .global _system_sleep_probe
@@ -136,6 +138,44 @@ _system_stack_limit_probe:
     mov #0x2222, w2
     mov #0x3333, w3
     return
+
+.global _system_address_error_probe
+_system_address_error_probe:
+    mov #0x5000, w15
+    mov #_system_address_trap_buffer, w1
+    clr w0
+    mov w0, [w1]
+    mov w0, [w1+2]
+    inc w1, w1
+    mov #0xa5a5, w2
+    clr w3
+    set_status 0x010f
+    mov w2, [w1++]
+    mov #0x1111, w3
+    return
+
+.global __AddressError
+__AddressError:
+    mov w1, _system_address_trap_state
+    mov _system_address_trap_buffer, w0
+    mov w0, _system_address_trap_state+2
+    mov _system_address_trap_buffer+2, w0
+    mov w0, _system_address_trap_state+4
+    mov INTCON1, w0
+    mov w0, _system_address_trap_state+6
+    mov [w15-4], w0
+    mov w0, _system_address_trap_state+8
+    mov [w15-2], w0
+    mov w0, _system_address_trap_state+10
+    mov w3, _system_address_trap_state+12
+    mov INTTREG, w0
+    mov w0, _system_address_trap_state+14
+    mov SR, w0
+    mov w0, _system_address_trap_state+16
+    mov w15, _system_address_trap_state+18
+.global _system_address_trap_complete
+_system_address_trap_complete:
+    bra _system_address_trap_complete
 
 .global __StackError
 __StackError:

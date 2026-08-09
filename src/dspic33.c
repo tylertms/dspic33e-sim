@@ -20,6 +20,17 @@ static void schedule_soft_trap(Dspic33* cpu, uint16_t trap, uint32_t vector,
                                uint8_t priority, uint8_t delay);
 static void check_stack_address(Dspic33* cpu, int32_t address, bool wrapped);
 
+static bool check_data_alignment(Dspic33* cpu, uint32_t address) {
+    if (!cpu->instruction_active || (address & 1u) == 0u) {
+        return true;
+    }
+    if (!cpu->address_error) {
+        cpu->address_error = true;
+        cpu->address_error_return = cpu->pc;
+    }
+    return false;
+}
+
 static void write_working_register(Dspic33* cpu, uint8_t reg, uint16_t value) {
     cpu->w[reg] = reg == 15u ? (uint16_t)(value & 0xfffeu) : value;
 }
@@ -201,61 +212,110 @@ static uint16_t bit_reversed_address(const Dspic33* cpu, uint16_t address) {
     return result;
 }
 
-static bool operand_address(Dspic33* cpu, uint8_t mode, uint8_t reg, uint8_t offset_reg,
-                            uint8_t width, bool write, uint32_t* address) {
+typedef struct {
+    uint32_t address;
+    int32_t effective_address;
+    uint16_t updated_register;
+    bool wrapped;
+    bool updates_register;
+} OperandResolution;
+
+static bool resolve_operand_address(const Dspic33* cpu, const uint16_t* registers,
+                                    uint8_t mode, uint8_t reg, uint8_t offset_reg,
+                                    uint8_t width, bool write,
+                                    OperandResolution* resolution) {
     int32_t delta = 0;
     int32_t effective_address;
     int32_t adjusted_address = 0;
-    bool wrapped = false;
-    bool uses_stack_pointer;
     bool bit_reversed = bit_reversed_addressing_enabled(cpu, mode, reg, width, write);
+    memset(resolution, 0, sizeof(*resolution));
     if (mode == 0u) {
         return false;
     }
     if (mode == 1u) {
-        effective_address = cpu->w[reg];
-        *address = (uint16_t)effective_address;
+        effective_address = registers[reg];
+        resolution->address = (uint16_t)effective_address;
     } else if (mode == 2u || mode == 3u) {
-        effective_address = cpu->w[reg];
-        *address = (uint16_t)effective_address;
+        effective_address = registers[reg];
+        resolution->address = (uint16_t)effective_address;
         delta = mode == 3u ? width : -(int32_t)width;
-        adjusted_address = (int32_t)cpu->w[reg] + delta;
-        wrapped = adjusted_address < 0 || adjusted_address > UINT16_MAX;
-        write_working_register(
-            cpu, reg,
-            bit_reversed ? bit_reversed_address(cpu, cpu->w[reg])
-                         : modulo_address(cpu, reg, adjusted_address, delta, false));
+        adjusted_address = (int32_t)registers[reg] + delta;
+        resolution->wrapped = adjusted_address < 0 || adjusted_address > UINT16_MAX;
+        resolution->updated_register =
+            bit_reversed ? bit_reversed_address(cpu, registers[reg])
+                         : modulo_address(cpu, reg, adjusted_address, delta, false);
+        resolution->updates_register = true;
     } else if (mode == 4u || mode == 5u) {
         delta = mode == 5u ? width : -(int32_t)width;
-        adjusted_address = (int32_t)cpu->w[reg] + delta;
-        wrapped = adjusted_address < 0 || adjusted_address > UINT16_MAX;
-        effective_address = bit_reversed ? cpu->w[reg] : adjusted_address;
-        write_working_register(
-            cpu, reg,
-            bit_reversed ? bit_reversed_address(cpu, cpu->w[reg])
-                         : modulo_address(cpu, reg, adjusted_address, delta, false));
-        *address = bit_reversed ? (uint16_t)effective_address
-                   : reg == 15u ? (uint16_t)adjusted_address
-                                : cpu->w[reg];
+        adjusted_address = (int32_t)registers[reg] + delta;
+        resolution->wrapped = adjusted_address < 0 || adjusted_address > UINT16_MAX;
+        effective_address = bit_reversed ? registers[reg] : adjusted_address;
+        resolution->updated_register =
+            bit_reversed ? bit_reversed_address(cpu, registers[reg])
+                         : modulo_address(cpu, reg, adjusted_address, delta, false);
+        resolution->updates_register = true;
+        resolution->address = bit_reversed ? (uint16_t)effective_address
+                              : reg == 15u ? (uint16_t)adjusted_address
+                                           : resolution->updated_register;
     } else {
-        delta = (int16_t)cpu->w[offset_reg];
-        effective_address = (int32_t)cpu->w[reg] + delta;
-        wrapped = effective_address < 0 || effective_address > UINT16_MAX;
-        *address = modulo_address(cpu, reg, effective_address, delta, false);
+        delta = (int16_t)registers[offset_reg];
+        effective_address = (int32_t)registers[reg] + delta;
+        resolution->wrapped = effective_address < 0 || effective_address > UINT16_MAX;
+        resolution->address = modulo_address(cpu, reg, effective_address, delta, false);
     }
-    uses_stack_pointer = reg == 15u || (mode >= 6u && offset_reg == 15u);
-    if (uses_stack_pointer) {
-        check_stack_address(cpu, effective_address, wrapped);
-    }
-    if (*address >= 0x8000u &&
+    resolution->effective_address = effective_address;
+    if (resolution->address >= 0x8000u &&
         !((reg == 14u || reg == 15u) && (cpu->corcon & 0x0004u) != 0u)) {
         uint16_t page = write ? cpu->dswpag : cpu->dsrpag;
         if (!write && page >= 0x0200u) {
-            *address = PSV_ADDRESS | ((page & 0x0100u) != 0u ? PSV_HIGH_BYTE : 0u) |
-                       ((uint32_t)(page & 0x00ffu) << 15u) | (*address & 0x7fffu);
+            resolution->address =
+                PSV_ADDRESS | ((page & 0x0100u) != 0u ? PSV_HIGH_BYTE : 0u) |
+                ((uint32_t)(page & 0x00ffu) << 15u) | (resolution->address & 0x7fffu);
         } else {
-            *address = ((uint32_t)page << 15u) | (*address & 0x7fffu);
+            resolution->address =
+                ((uint32_t)page << 15u) | (resolution->address & 0x7fffu);
         }
+    }
+    return true;
+}
+
+static bool operand_address(Dspic33* cpu, uint8_t mode, uint8_t reg, uint8_t offset_reg,
+                            uint8_t width, bool write, uint32_t* address) {
+    OperandResolution resolution;
+    bool uses_stack_pointer;
+    if (!resolve_operand_address(cpu, cpu->w, mode, reg, offset_reg, width, write,
+                                 &resolution)) {
+        return false;
+    }
+    uses_stack_pointer = reg == 15u || (mode >= 6u && offset_reg == 15u);
+    if (uses_stack_pointer) {
+        check_stack_address(cpu, resolution.effective_address, resolution.wrapped);
+    }
+    if (resolution.updates_register) {
+        write_working_register(cpu, reg, resolution.updated_register);
+    }
+    *address = resolution.address;
+    return true;
+}
+
+static bool validate_operand_alignment(Dspic33* cpu, uint16_t* registers, uint8_t mode,
+                                       uint8_t reg, uint8_t offset_reg, uint8_t width,
+                                       bool write, bool indirect_bit) {
+    OperandResolution resolution;
+    if (mode == 0u) {
+        return true;
+    }
+    if (!resolve_operand_address(cpu, registers, mode, reg, offset_reg, width, write,
+                                 &resolution)) {
+        return false;
+    }
+    if ((width != 1u || indirect_bit) &&
+        !check_data_alignment(cpu, resolution.address)) {
+        return false;
+    }
+    if (resolution.updates_register) {
+        registers[reg] = reg == 15u ? (uint16_t)(resolution.updated_register & 0xfffeu)
+                                    : resolution.updated_register;
     }
     return true;
 }
@@ -326,6 +386,17 @@ static bool execute_move(Dspic33* cpu, uint32_t opcode) {
     uint8_t destination_mode = (uint8_t)((opcode >> 11u) & 0x07u);
     uint8_t offset_register = (uint8_t)((opcode >> 15u) & 0x0fu);
     bool byte_mode = (opcode & 0x004000u) != 0u;
+    uint16_t registers[16];
+
+    memcpy(registers, cpu->w, sizeof(registers));
+    if (!validate_operand_alignment(cpu, registers, source_mode, source_register,
+                                    offset_register, byte_mode ? 1u : 2u, false,
+                                    false) ||
+        !validate_operand_alignment(cpu, registers, destination_mode,
+                                    destination_register, offset_register,
+                                    byte_mode ? 1u : 2u, true, false)) {
+        return true;
+    }
 
     if (byte_mode) {
         uint8_t value =
@@ -415,6 +486,14 @@ static bool execute_move_double(Dspic33* cpu, uint32_t opcode) {
     uint16_t high;
     uint32_t address;
     uint32_t high_address;
+    uint16_t registers[16];
+    memcpy(registers, cpu->w, sizeof(registers));
+    if (!validate_operand_alignment(cpu, registers, source_mode, source_register, 0u,
+                                    4u, false, false) ||
+        !validate_operand_alignment(cpu, registers, destination_mode,
+                                    destination_register, 0u, 4u, true, false)) {
+        return true;
+    }
     if (source_mode == 0u) {
         source_register &= 0x0eu;
         low = cpu->w[source_register];
@@ -739,6 +818,9 @@ static bool execute_table(Dspic33* cpu, uint32_t opcode) {
     if (write) {
         value = byte_mode ? read_operand_byte(cpu, source_mode, source_register, 0u)
                           : read_operand_word(cpu, source_mode, source_register, 0u);
+        if (cpu->address_error) {
+            return true;
+        }
         table_offset = table_operand_address(cpu, destination_mode,
                                              destination_register, byte_mode ? 1u : 2u);
     } else {
@@ -911,6 +993,12 @@ static bool execute_bit(Dspic33* cpu, uint32_t opcode) {
         if (mode == 0u) {
             value = byte_mode ? (uint8_t)cpu->w[reg] : cpu->w[reg];
         } else {
+            uint16_t registers[16];
+            memcpy(registers, cpu->w, sizeof(registers));
+            if (!validate_operand_alignment(cpu, registers, mode, reg, 0u,
+                                            byte_mode ? 1u : 2u, false, !byte_mode)) {
+                return true;
+            }
             if (!operand_address(cpu, mode, reg, 0u, byte_mode ? 1u : 2u, false,
                                  &address)) {
                 return false;
@@ -1397,6 +1485,30 @@ static int64_t dsp_multiply_operand(const Dspic33* cpu, uint8_t register_index,
     return unsigned_operand ? cpu->w[register_index] : (int16_t)cpu->w[register_index];
 }
 
+static bool validate_dsp_prefetch_alignment(Dspic33* cpu, uint8_t operation,
+                                            bool y_space) {
+    uint8_t base_register;
+    uint16_t address;
+    if (operation == 4u) {
+        return true;
+    }
+    base_register = (uint8_t)((y_space ? 10u : 8u) + (operation >= 8u ? 1u : 0u));
+    address = cpu->w[base_register];
+    if (operation == 12u) {
+        int32_t delta = (int16_t)cpu->w[12];
+        address = modulo_address(cpu, base_register, (int32_t)address + delta, delta,
+                                 y_space);
+    }
+    return check_data_alignment(cpu, address);
+}
+
+static bool validate_dsp_alignments(Dspic33* cpu, uint8_t x_operation,
+                                    uint8_t y_operation, bool memory_write_back) {
+    return validate_dsp_prefetch_alignment(cpu, x_operation, false) &&
+           validate_dsp_prefetch_alignment(cpu, y_operation, true) &&
+           (!memory_write_back || check_data_alignment(cpu, cpu->w[13]));
+}
+
 static bool dsp_prefetch_value(Dspic33* cpu, uint8_t operation, bool y_space,
                                uint16_t* value) {
     static const int8_t updates[16] = {
@@ -1447,17 +1559,22 @@ static bool execute_dsp_clear_or_move(Dspic33* cpu, uint32_t opcode) {
     bool clear = (opcode & 0xff0000u) == 0xc30000u;
     uint8_t accumulator = (uint8_t)((opcode >> 15u) & 1u);
     uint8_t write_back = (uint8_t)(opcode & 3u);
+    uint8_t x_operation = (uint8_t)((opcode >> 6u) & 0x0fu);
+    uint8_t y_operation = (uint8_t)((opcode >> 2u) & 0x0fu);
     if (write_back == 3u) {
         return false;
+    }
+    if (!validate_dsp_alignments(cpu, x_operation, y_operation, write_back == 1u)) {
+        return true;
     }
     if (clear) {
         cpu->accumulator[accumulator] = 0;
         clear_accumulator_status(cpu, accumulator);
     }
-    execute_dsp_prefetch(cpu, (uint8_t)((opcode >> 6u) & 0x0fu),
-                         (uint8_t)(4u + ((opcode >> 12u) & 3u)), false);
-    execute_dsp_prefetch(cpu, (uint8_t)((opcode >> 2u) & 0x0fu),
-                         (uint8_t)(4u + ((opcode >> 10u) & 3u)), true);
+    execute_dsp_prefetch(cpu, x_operation, (uint8_t)(4u + ((opcode >> 12u) & 3u)),
+                         false);
+    execute_dsp_prefetch(cpu, y_operation, (uint8_t)(4u + ((opcode >> 10u) & 3u)),
+                         true);
     if (write_back < 2u) {
         execute_dsp_write_back(cpu, accumulator, write_back);
     }
@@ -1478,6 +1595,9 @@ static bool execute_euclidean_distance(Dspic33* cpu, uint32_t opcode) {
     int64_t product;
     if (operation < 2u || x_operation == 4u || y_operation == 4u || sign_mode == 3u) {
         return false;
+    }
+    if (!validate_dsp_alignments(cpu, x_operation, y_operation, false)) {
+        return true;
     }
     operand = dsp_multiply_operand(cpu, source_register, sign_mode);
     product = operand * operand;
@@ -1506,11 +1626,17 @@ static bool execute_dsp_multiply(Dspic33* cpu, uint32_t opcode) {
     int64_t result;
     bool square = (opcode & 0xfc0000u) == 0xf00000u;
     uint8_t write_back = (uint8_t)(opcode & 3u);
+    uint8_t x_operation = (uint8_t)((opcode >> 6u) & 0x0fu);
+    uint8_t y_operation = (uint8_t)((opcode >> 2u) & 0x0fu);
     bool replace = square ? write_back == 1u : write_back == 3u;
     bool subtract = (opcode & 0x004000u) != 0u;
     if (!dsp_multiply_registers(opcode, &left_register, &right_register) ||
         sign_mode == 3u) {
         return false;
+    }
+    if (!validate_dsp_alignments(cpu, x_operation, y_operation,
+                                 !square && !replace && write_back == 1u)) {
+        return true;
     }
     left = dsp_multiply_operand(cpu, left_register, sign_mode);
     right = dsp_multiply_operand(cpu, right_register, sign_mode);
@@ -1524,10 +1650,10 @@ static bool execute_dsp_multiply(Dspic33* cpu, uint32_t opcode) {
         result = cpu->accumulator[accumulator] + (subtract ? -product : product);
     }
     apply_accumulator_result(cpu, accumulator, result);
-    execute_dsp_prefetch(cpu, (uint8_t)((opcode >> 6u) & 0x0fu),
-                         (uint8_t)(4u + ((opcode >> 12u) & 3u)), false);
-    execute_dsp_prefetch(cpu, (uint8_t)((opcode >> 2u) & 0x0fu),
-                         (uint8_t)(4u + ((opcode >> 10u) & 3u)), true);
+    execute_dsp_prefetch(cpu, x_operation, (uint8_t)(4u + ((opcode >> 12u) & 3u)),
+                         false);
+    execute_dsp_prefetch(cpu, y_operation, (uint8_t)(4u + ((opcode >> 10u) & 3u)),
+                         true);
     if (!square && !replace && write_back < 2u) {
         execute_dsp_write_back(cpu, accumulator, write_back);
     }
@@ -2346,6 +2472,9 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
     cpu->reset_interrupt = UINT16_MAX;
     cpu->last_trap = UINT16_MAX;
     memset(cpu->pending_soft_traps, 0, sizeof(cpu->pending_soft_traps));
+    cpu->address_error_return = 0u;
+    cpu->instruction_active = false;
+    cpu->address_error = false;
     cpu->async_events_enabled = true;
     memset(cpu->interrupt_log_irq, 0xff, sizeof(cpu->interrupt_log_irq));
     memset(cpu->interrupt_log_entry, 0, sizeof(cpu->interrupt_log_entry));
@@ -2440,7 +2569,7 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
     uint16_t previous;
     uint8_t accumulator;
     uint8_t accumulator_byte;
-    if (address >= DSPIC33_DATA_SIZE) {
+    if (cpu->address_error || address >= DSPIC33_DATA_SIZE) {
         return;
     }
     if (!cpu->io.dma_transfer_active) {
@@ -2563,7 +2692,8 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
 
 void dspic33_write_word(Dspic33* cpu, uint32_t address, uint16_t value) {
     uint16_t previous;
-    if (address + 1u >= DSPIC33_DATA_SIZE) {
+    if (!check_data_alignment(cpu, address) || cpu->address_error ||
+        address + 1u >= DSPIC33_DATA_SIZE) {
         return;
     }
     if (!cpu->io.dma_transfer_active) {
@@ -2597,6 +2727,9 @@ uint8_t dspic33_read_byte(Dspic33* cpu, uint32_t address) {
     uint16_t value;
     uint8_t accumulator;
     uint8_t accumulator_byte;
+    if (cpu->address_error) {
+        return 0u;
+    }
     if ((address & PSV_ADDRESS) != 0u) {
         uint32_t program_address = address & PSV_ADDRESS_MASK;
         uint32_t word;
@@ -2669,12 +2802,19 @@ uint8_t dspic33_read_byte(Dspic33* cpu, uint32_t address) {
 }
 
 uint16_t dspic33_read_word(Dspic33* cpu, uint32_t address) {
+    if (!check_data_alignment(cpu, address) || cpu->address_error) {
+        return 0u;
+    }
     uint16_t low = dspic33_read_byte(cpu, address);
     uint16_t high = dspic33_read_byte(cpu, address + 1u);
     return (uint16_t)(low | (high << 8u));
 }
 
 Dspic33StopReason dspic33_step(Dspic33* cpu) {
+    uint16_t working_registers[16];
+    int64_t accumulators[2];
+    uint16_t status;
+    uint16_t control;
     uint32_t opcode;
     uint32_t instruction_pc;
     if (cpu->power_state != DSPIC33_POWER_ACTIVE) {
@@ -2717,14 +2857,33 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         advance_instruction(cpu, cycles);
         return cpu->stop_reason;
     }
+    memcpy(working_registers, cpu->w, sizeof(working_registers));
+    memcpy(accumulators, cpu->accumulator, sizeof(accumulators));
+    status = cpu->sr;
+    control = cpu->corcon;
     cpu->pc += 2u;
     cpu->instructions++;
-    if (!execute(cpu, opcode)) {
+    cpu->instruction_active = true;
+    cpu->address_error = false;
+    if (!execute(cpu, opcode) && !cpu->address_error) {
+        cpu->instruction_active = false;
         cpu->pc -= 2u;
         if (cpu->stop_reason == DSPIC33_RUNNING) {
             cpu->unsupported_opcode = opcode;
             cpu->stop_reason = DSPIC33_UNSUPPORTED_INSTRUCTION;
         }
+        return cpu->stop_reason;
+    }
+    cpu->instruction_active = false;
+    if (cpu->address_error) {
+        uint32_t return_pc = cpu->address_error_return;
+        memcpy(cpu->w, working_registers, sizeof(working_registers));
+        memcpy(cpu->accumulator, accumulators, sizeof(accumulators));
+        cpu->sr = status;
+        cpu->corcon = control;
+        cpu->address_error = false;
+        enter_trap(cpu, 1u, 0x000006u, 14u, 0x0008u, return_pc);
+        advance_instruction(cpu, instruction_cycles(cpu, opcode));
         return cpu->stop_reason;
     }
     if (cpu->repeat_active != 0u && instruction_pc == cpu->repeat_pc) {

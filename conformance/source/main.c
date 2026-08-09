@@ -13,6 +13,8 @@ volatile uint16_t system_probe_selector __attribute__((near));
 volatile uint16_t system_reset_state __attribute__((near));
 volatile uint16_t system_trap_state[12] __attribute__((near));
 volatile uint16_t system_stack_trap_state[12] __attribute__((near));
+volatile uint16_t system_address_trap_state[10] __attribute__((near));
+volatile uint16_t system_address_trap_buffer[2] __attribute__((near));
 volatile uint16_t interrupt_count __attribute__((near));
 volatile uint16_t interrupt_mode __attribute__((near));
 volatile uint16_t interrupt_order[4] __attribute__((near));

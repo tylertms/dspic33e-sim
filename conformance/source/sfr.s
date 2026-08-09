@@ -276,6 +276,8 @@ _run_sfr_conformance:
     mov w1, [w7++]
 
     sfr_write_case 0x0e9d, 0x0020
+    setm w0
+    mov w0, SPLIM
     sfr_write_case 0x0e9e, 0x0032
     sfr_write_case 0x0e9f, 0x0034
     sfr_write_case 0x0ea0, 0x0036
