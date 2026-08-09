@@ -9,7 +9,15 @@ from pathlib import Path
 
 EXPECTED_DEFINITIONS = 993
 EXPECTED_ADDRESSES = 977
-EXPECTED_ALIASES = 7
+EXPECTED_ALIASES = (
+    ("CRCDATL", "CRCDAT", "LegacyAlias"),
+    ("CRCWDATL", "CRCWDAT", "LegacyAlias"),
+    ("PMADDR", "PMDOUT1", "MigrationAlias"),
+    ("QEI1GECH", "QEI1ICH", "LegacyAlias"),
+    ("QEI1GECL", "QEI1ICL", "LegacyAlias"),
+    ("QEI2GECH", "QEI2ICH", "LegacyAlias"),
+    ("QEI2GECL", "QEI2ICL", "LegacyAlias"),
+)
 EXPECTED_MUX_DEFAULTS = 16
 EXPECTED_MUX_ALTERNATES = 16
 EXPECTED_ACCESS_BITS = {
@@ -95,10 +103,16 @@ def load_inventory(path):
     )
     if dict(sorted(access_bits.items())) != EXPECTED_ACCESS_BITS:
         raise ValueError(f"default access bits are {dict(sorted(access_bits.items()))}")
-    alias_count = sum(len(register["aliases"]) for register in defaults)
+    aliases = tuple(
+        sorted(
+            (register["name"], alias["name"], alias["kind"])
+            for register in registers
+            for alias in register["aliases"]
+        )
+    )
     mux_defaults = sum(register["kind"] == "mux_variant" for register in defaults)
-    if alias_count != EXPECTED_ALIASES:
-        raise ValueError(f"manifest has {alias_count} default aliases")
+    if aliases != EXPECTED_ALIASES:
+        raise ValueError(f"manifest aliases are {aliases}")
     if mux_defaults != EXPECTED_MUX_DEFAULTS:
         raise ValueError(f"manifest has {mux_defaults} mux defaults")
     if len(alternates) != EXPECTED_MUX_ALTERNATES:
@@ -123,12 +137,16 @@ def load_inventory(path):
         )
         selector_address = (address & 0xFF00) + selector_offset
         if selector_address not in (0x0400, 0x0500):
-            raise ValueError(f"unexpected mux selector address 0x{selector_address:04x}")
+            raise ValueError(
+                f"unexpected mux selector address 0x{selector_address:04x}"
+            )
         selector_register = defaults_by_address[selector_address]
         selector_known = pattern_mask(selector_register["por"], "01")
         selector_reset = pattern_mask(selector_register["por"], "1")
         if selector_mask & ~selector_known:
-            raise ValueError(f"mux selector reset is unknown at 0x{selector_address:04x}")
+            raise ValueError(
+                f"mux selector reset is unknown at 0x{selector_address:04x}"
+            )
         if selector_reset & selector_mask == selector_value:
             raise ValueError(f"mux alternate is selected at reset for 0x{address:04x}")
         muxes.append(
@@ -231,7 +249,7 @@ def render(defaults, muxes):
             "enum {",
             f"    DSPIC33_SFR_ACCESS_DEFINITION_COUNT = {EXPECTED_DEFINITIONS}u,",
             f"    DSPIC33_SFR_ACCESS_ADDRESS_COUNT = {EXPECTED_ADDRESSES}u,",
-            f"    DSPIC33_SFR_ACCESS_ALIAS_COUNT = {EXPECTED_ALIASES}u,",
+            f"    DSPIC33_SFR_ACCESS_ALIAS_COUNT = {len(EXPECTED_ALIASES)}u,",
             f"    DSPIC33_SFR_ACCESS_MUX_DEFAULT_COUNT = {EXPECTED_MUX_DEFAULTS}u,",
             f"    DSPIC33_SFR_ACCESS_MUX_ALTERNATE_COUNT = {EXPECTED_MUX_ALTERNATES}u,",
             f"    DSPIC33_SFR_ACCESS_NORMAL_BIT_COUNT = {EXPECTED_ACCESS_BITS['n']}u,",
