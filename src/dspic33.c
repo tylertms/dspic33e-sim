@@ -175,6 +175,32 @@ static uint16_t modulo_address(const Dspic33* cpu, uint8_t reg, int32_t address,
     return (uint16_t)address;
 }
 
+static bool bit_reversed_addressing_enabled(const Dspic33* cpu, uint8_t mode,
+                                            uint8_t reg, uint8_t width, bool write) {
+    uint16_t modcon = stored_word(cpu, 0x0046u);
+    uint16_t xbrev = stored_word(cpu, 0x0050u);
+    uint8_t selector = (uint8_t)((modcon >> 8u) & 0x0fu);
+    return write && width == 2u && (mode == 3u || mode == 5u) &&
+           (xbrev & 0x8000u) != 0u && selector != 15u && selector == reg;
+}
+
+static uint16_t bit_reversed_address(const Dspic33* cpu, uint16_t address) {
+    uint16_t modifier = (uint16_t)(stored_word(cpu, 0x0050u) << 1u);
+    uint16_t result = (uint16_t)(address & 1u);
+    uint8_t carry = 0u;
+    uint8_t bit;
+    for (bit = 15u; bit != 0u; bit--) {
+        uint16_t mask = (uint16_t)(1u << bit);
+        uint8_t sum = (uint8_t)(((address & mask) != 0u ? 1u : 0u) +
+                                ((modifier & mask) != 0u ? 1u : 0u) + carry);
+        if ((sum & 1u) != 0u) {
+            result |= mask;
+        }
+        carry = (uint8_t)(sum >> 1u);
+    }
+    return result;
+}
+
 static bool operand_address(Dspic33* cpu, uint8_t mode, uint8_t reg, uint8_t offset_reg,
                             uint8_t width, bool write, uint32_t* address) {
     int32_t delta = 0;
@@ -182,6 +208,7 @@ static bool operand_address(Dspic33* cpu, uint8_t mode, uint8_t reg, uint8_t off
     int32_t adjusted_address = 0;
     bool wrapped = false;
     bool uses_stack_pointer;
+    bool bit_reversed = bit_reversed_addressing_enabled(cpu, mode, reg, width, write);
     if (mode == 0u) {
         return false;
     }
@@ -195,15 +222,21 @@ static bool operand_address(Dspic33* cpu, uint8_t mode, uint8_t reg, uint8_t off
         adjusted_address = (int32_t)cpu->w[reg] + delta;
         wrapped = adjusted_address < 0 || adjusted_address > UINT16_MAX;
         write_working_register(
-            cpu, reg, modulo_address(cpu, reg, adjusted_address, delta, false));
+            cpu, reg,
+            bit_reversed ? bit_reversed_address(cpu, cpu->w[reg])
+                         : modulo_address(cpu, reg, adjusted_address, delta, false));
     } else if (mode == 4u || mode == 5u) {
         delta = mode == 5u ? width : -(int32_t)width;
         adjusted_address = (int32_t)cpu->w[reg] + delta;
         wrapped = adjusted_address < 0 || adjusted_address > UINT16_MAX;
+        effective_address = bit_reversed ? cpu->w[reg] : adjusted_address;
         write_working_register(
-            cpu, reg, modulo_address(cpu, reg, adjusted_address, delta, false));
-        effective_address = adjusted_address;
-        *address = reg == 15u ? (uint16_t)adjusted_address : cpu->w[reg];
+            cpu, reg,
+            bit_reversed ? bit_reversed_address(cpu, cpu->w[reg])
+                         : modulo_address(cpu, reg, adjusted_address, delta, false));
+        *address = bit_reversed ? (uint16_t)effective_address
+                   : reg == 15u ? (uint16_t)adjusted_address
+                                : cpu->w[reg];
     } else {
         delta = (int16_t)cpu->w[offset_reg];
         effective_address = (int32_t)cpu->w[reg] + delta;

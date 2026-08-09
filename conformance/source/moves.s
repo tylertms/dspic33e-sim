@@ -2,7 +2,7 @@
 .include "conformance.inc"
 
 .global _move_conformance_cases
-_move_conformance_cases = 45
+_move_conformance_cases = 59
 .global _move_conformance_group_complete
 _move_conformance_group_complete = 0
 
@@ -12,6 +12,7 @@ _run_move_conformance:
     push w8
     push w9
     push w10
+    push w11
 
     set_status 0x0105
     mov #0xa55a, w2
@@ -313,7 +314,122 @@ _run_move_conformance:
     mov w9, XMODSRT
     mov w10, XMODEND
 
+    mov XBREV, w11
+    mov #0x8008, w0
+    mov w0, XBREV
+    mov #0x01ff, w0
+    mov w0, MODCON
+    nop
+
+    mov #_move_bit_reverse_buffer, w1
+    mov #0x1111, w2
+    mov w2, [w1++]
+    mov #0x2222, w2
+    mov w2, [w1++]
+    mov #0x3333, w2
+    mov w2, [w1++]
+    mov #0x4444, w2
+    mov w2, [w1++]
+    mov _move_bit_reverse_buffer, w2
+    record_case 0x052d, w2, w1
+    mov _move_bit_reverse_buffer+16, w2
+    mov _move_bit_reverse_buffer+8, w3
+    record_case 0x052e, w2, w3
+    mov _move_bit_reverse_buffer+24, w2
+    record_case 0x052f, w2, w11
+
+    mov #_move_bit_reverse_buffer, w1
+    mov #0xaaaa, w2
+    mov w2, [++w1]
+    mov w1, w4
+    mov #0xbbbb, w2
+    mov w2, [++w1]
+    mov _move_bit_reverse_buffer, w2
+    record_case 0x0530, w2, w4
+    mov _move_bit_reverse_buffer+16, w2
+    record_case 0x0531, w2, w1
+
+    mov #_move_bit_reverse_buffer, w1
+    mov #0x00bb, w2
+    mov.b w2, [w1++]
+    mov _move_bit_reverse_buffer, w2
+    record_case 0x0532, w2, w1
+
+    mov #_move_bit_reverse_buffer, w1
+    mov [w1++], w2
+    record_case 0x0533, w2, w1
+
+    mov #_move_bit_reverse_buffer, w1
+    mov #0x5555, w2
+    mov #0x6666, w3
+    mov.d w2, [w1++]
+    mov _move_bit_reverse_buffer, w2
+    mov _move_bit_reverse_buffer+2, w3
+    record_double_case 0x0534, w2, w3
+    record_case 0x0535, w1, w1
+
+    mov #_move_bit_reverse_buffer, w0
+    mov w0, XMODSRT
+    mov #_move_bit_reverse_buffer+6, w0
+    mov w0, XMODEND
+    mov #0x81f1, w0
+    mov w0, MODCON
+    nop
+    mov #_move_bit_reverse_buffer, w1
+    mov #0x7777, w2
+    mov w2, [w1++]
+    mov _move_bit_reverse_buffer, w2
+    record_case 0x0536, w2, w1
+    mov #_move_bit_reverse_buffer+6, w1
+    mov [w1++], w2
+    record_case 0x0537, w2, w1
+    mov #_move_bit_reverse_buffer+6, w1
+    mov [++w1], w2
+    record_case 0x0538, w2, w1
+
+    mov #0x0008, w0
+    mov w0, XBREV
+    mov #0x01ff, w0
+    mov w0, MODCON
+    nop
+    mov #_move_bit_reverse_buffer, w1
+    mov #0x8888, w2
+    mov w2, [w1++]
+    mov w1, w4
+    mov #0x8008, w0
+    mov w0, XBREV
+    mov #0x02ff, w0
+    mov w0, MODCON
+    nop
+    mov #_move_bit_reverse_buffer, w1
+    mov #0x9999, w2
+    mov w2, [w1++]
+    record_case 0x0539, w4, w1
+
+    mov #0x01ff, w0
+    mov w0, MODCON
+    nop
+    mov #_move_bit_reverse_buffer, w1
+    mov #0xabcd, w2
+    mov w2, [w1--]
+    mov w1, w4
+    mov #_move_bit_reverse_buffer, w1
+    mov w2, [w1]
+    record_case 0x053a, w4, w1
+
+    mov w11, XBREV
+    mov w8, MODCON
+    mov w9, XMODSRT
+    mov w10, XMODEND
+    nop
+
+    pop w11
     pop w10
     pop w9
     pop w8
     end_results
+
+.section .bss,bss,near
+.align 32
+_move_bit_reverse_buffer:
+.space 32
