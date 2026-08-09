@@ -26,7 +26,10 @@ enum {
     CAN_RECEIVE_PASSIVE = 0x0800u,
     CAN_TRANSMIT_PASSIVE = 0x1000u,
     CAN_BUS_OFF = 0x2000u,
-    CAN_ERROR_STATUS_MASK = 0x3f00u
+    CAN_ERROR_STATUS_MASK = 0x3f00u,
+    FIFO_RELATION_THRESHOLD = 0u,
+    FIFO_RELATION_EQUAL = 1u,
+    FIFO_RELATION_DISTANT = 2u
 };
 
 static void expect(CanConformance* state, bool condition, const char* name) {
@@ -665,7 +668,7 @@ static void receive_flag_read_pointer_cases(CanConformance* state, Dspic33* cpu)
 }
 
 static void fifo_interrupt_boundary_case(CanConformance* state, Dspic33* cpu,
-                                         uint8_t channel, bool wrap, bool asserted) {
+                                         uint8_t channel, bool wrap, uint8_t relation) {
     uint16_t base = bases[channel];
     uint16_t fifo_address = (uint16_t)(base + 8u);
     uint16_t interrupt_address = (uint16_t)(base + 0x0au);
@@ -674,7 +677,15 @@ static void fifo_interrupt_boundary_case(CanConformance* state, Dspic33* cpu,
     uint8_t preparation = wrap ? 2u : 0u;
     uint8_t index;
     uint8_t expected_fbp = wrap ? 5u : 3u;
-    uint8_t fnrb = wrap ? (asserted ? 2u : 3u) : (asserted ? 4u : 5u);
+    uint8_t fnrb;
+    bool asserted = relation == FIFO_RELATION_THRESHOLD;
+    if (asserted) {
+        fnrb = wrap ? 2u : 4u;
+    } else if (relation == FIFO_RELATION_EQUAL) {
+        fnrb = expected_fbp;
+    } else {
+        fnrb = wrap ? 3u : 5u;
+    }
     dspic33_reset(cpu, 0u);
     configure_receive(cpu, channel, memory, 1u, 2u);
     configure_filter(cpu, channel, 0u, input.identifier, false, 0x7ffu, true, 15u, 0u);
@@ -693,6 +704,8 @@ static void fifo_interrupt_boundary_case(CanConformance* state, Dspic33* cpu,
     dspic33_write_word(
         cpu, interrupt_address,
         (uint16_t)(dspic33_read_word(cpu, interrupt_address) & ~0x000au));
+    dspic33_write_word(cpu, (uint16_t)(base + 0x0cu), 0x0008u);
+    clear_interrupt_flag(cpu, event_irqs[channel]);
     expect(state,
            dspic33_can_receive(cpu, channel, &input, 0u) &&
                dspic33_device_advance(cpu, 32u),
@@ -705,6 +718,12 @@ static void fifo_interrupt_boundary_case(CanConformance* state, Dspic33* cpu,
     expect(state,
            ((dspic33_read_word(cpu, interrupt_address) & 0x0008u) != 0u) == asserted,
            "FIFO interrupt boundary result");
+    expect(state, interrupt_flag(cpu, event_irqs[channel]) == asserted,
+           "FIFO interrupt boundary IFS result");
+    expect(state,
+           (dspic33_read_word(cpu, (uint16_t)(base + 4u)) & 0x007fu) ==
+               (asserted ? 0x44u : 0x40u),
+           "FIFO interrupt boundary vector result");
 }
 
 static void fifo_interrupt_boundary_cases(CanConformance* state, Dspic33* cpu) {
@@ -712,10 +731,10 @@ static void fifo_interrupt_boundary_cases(CanConformance* state, Dspic33* cpu) {
     for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
         uint8_t wrap;
         for (wrap = 0u; wrap < 2u; wrap++) {
-            uint8_t asserted;
-            for (asserted = 0u; asserted < 2u; asserted++) {
-                fifo_interrupt_boundary_case(state, cpu, channel, wrap != 0u,
-                                             asserted != 0u);
+            uint8_t relation;
+            for (relation = FIFO_RELATION_THRESHOLD; relation <= FIFO_RELATION_DISTANT;
+                 relation++) {
+                fifo_interrupt_boundary_case(state, cpu, channel, wrap != 0u, relation);
             }
         }
     }
