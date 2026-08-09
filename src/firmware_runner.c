@@ -50,6 +50,8 @@ typedef struct {
     FirmwareImage candidate_image;
     Dspic33 reference;
     Dspic33 candidate;
+    Dspic33 reference_pristine;
+    Dspic33 candidate_pristine;
     Dspic33 reference_baseline;
     Dspic33 candidate_baseline;
     bool restore_baseline;
@@ -87,6 +89,10 @@ typedef struct {
     MappedField items[MAX_MAPPED_FIELDS];
     size_t count;
 } MappedFields;
+
+static void reset_pair(Runner* runner);
+static bool save_pristine_pair(Runner* runner, char* error, size_t error_size);
+static bool restore_pristine_pair(Runner* runner, char* error, size_t error_size);
 
 static bool parse_number(const JsonValue* value, int64_t* result) {
     const char* string;
@@ -586,6 +592,8 @@ static bool open_images(Runner* runner, char* error, size_t error_size) {
     }
     if (!dspic33_initialize(&runner->reference) ||
         !dspic33_initialize(&runner->candidate) ||
+        !dspic33_initialize(&runner->reference_pristine) ||
+        !dspic33_initialize(&runner->candidate_pristine) ||
         !dspic33_initialize(&runner->reference_baseline) ||
         !dspic33_initialize(&runner->candidate_baseline) ||
         !firmware_image_load_program(&runner->reference_image, &runner->reference,
@@ -596,12 +604,15 @@ static bool open_images(Runner* runner, char* error, size_t error_size) {
     }
     runner->reference.stop_on_trap = true;
     runner->candidate.stop_on_trap = true;
-    return true;
+    reset_pair(runner);
+    return save_pristine_pair(runner, error, error_size);
 }
 
 static void close_images(Runner* runner) {
     dspic33_destroy(&runner->reference);
     dspic33_destroy(&runner->candidate);
+    dspic33_destroy(&runner->reference_pristine);
+    dspic33_destroy(&runner->candidate_pristine);
     dspic33_destroy(&runner->reference_baseline);
     dspic33_destroy(&runner->candidate_baseline);
     firmware_image_close(&runner->reference_image);
@@ -1239,6 +1250,24 @@ static void reset_pair(Runner* runner) {
     dspic33_reset(&runner->candidate, 0u);
     dspic33_gpio_input(&runner->reference, 1u, 1u);
     dspic33_gpio_input(&runner->candidate, 1u, 1u);
+}
+
+static bool save_pristine_pair(Runner* runner, char* error, size_t error_size) {
+    if (!dspic33_copy(&runner->reference_pristine, &runner->reference) ||
+        !dspic33_copy(&runner->candidate_pristine, &runner->candidate)) {
+        snprintf(error, error_size, "cannot save pristine simulator images");
+        return false;
+    }
+    return true;
+}
+
+static bool restore_pristine_pair(Runner* runner, char* error, size_t error_size) {
+    if (!dspic33_copy(&runner->reference, &runner->reference_pristine) ||
+        !dspic33_copy(&runner->candidate, &runner->candidate_pristine)) {
+        snprintf(error, error_size, "cannot restore pristine simulator images");
+        return false;
+    }
+    return true;
 }
 
 static bool save_baseline(Runner* runner, char* error, size_t error_size) {
@@ -2926,7 +2955,9 @@ static bool execute_scenario(const char* path, const JsonValue* scenario, void* 
     start_failed = runner->failed;
     start_comparisons = runner->comparisons;
     runner->restore_baseline = false;
-    reset_pair(runner);
+    if (!restore_pristine_pair(runner, error, error_size)) {
+        return false;
+    }
     printf("[scenario] %zu/%zu %s\n", runner->current_scenario, runner->scenarios,
            name);
     fflush(stdout);
