@@ -599,59 +599,141 @@ static void address_mode_cases(I2cConformance* state, Dspic33* cpu) {
                "general call status");
 
         dspic33_reset(cpu, 0u);
-        enable(cpu, channel, 0x0800u, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x12u);
+        enable(cpu, channel, 0x0c80u, 0u);
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x67u, false, false, 0u) &&
                    dspic33_device_advance(cpu, 0u),
                "ipmi address event");
-        expect(state, interrupt_flag(cpu, slave_irqs[channel]),
+        expect(state,
+               interrupt_flag(cpu, slave_irqs[channel]) &&
+                   (cpu->io.i2c_slave_active & channel_bit) != 0u &&
+                   (cpu->io.i2c_slave_read & channel_bit) == 0u &&
+                   dspic33_read_word(cpu, base) == 0x00ceu,
                "ipmi accepts all addresses");
 
         dspic33_reset(cpu, 0u);
-        enable(cpu, channel, 0x0800u, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x0155u);
+        enable(cpu, channel, 0x0080u, 0u);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
+                   dspic33_device_advance(cpu, 0u),
+               "non-ipmi ten bit preamble without address mode");
+        expect(state,
+               !interrupt_flag(cpu, slave_irqs[channel]) &&
+                   (cpu->io.i2c_slave_rejected & channel_bit) != 0u &&
+                   (cpu->io.i2c_slave_active & channel_bit) == 0u,
+               "non-ipmi address mode controls preamble matching");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x0155u);
+        enable(cpu, channel, 0x0400u, 0u);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
+                   dspic33_device_advance(cpu, 0u),
+               "non-ipmi mismatched ten bit preamble");
+        expect(state,
+               !interrupt_flag(cpu, slave_irqs[channel]) &&
+                   (cpu->io.i2c_slave_rejected & channel_bit) != 0u &&
+                   (cpu->io.i2c_slave_active & channel_bit) == 0u,
+               "non-ipmi address controls preamble matching");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x0155u);
+        enable(cpu, channel, 0x0c00u, 0u);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
+                   dspic33_device_advance(cpu, 0u),
+               "ipmi ten bit preamble with address mode");
+        expect(state,
+               interrupt_flag(cpu, slave_irqs[channel]) &&
+                   (cpu->io.i2c_slave_rejected & channel_bit) == 0u &&
+                   (cpu->io.i2c_slave_active & channel_bit) != 0u &&
+                   dspic33_read_word(cpu, base) == 0x00f4u,
+               "ipmi bypasses enabled ten bit address matching");
+        clear_interrupt(cpu, slave_irqs[channel]);
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9c00u);
+        expect(state,
+               dspic33_device_advance(cpu, 1u) &&
+                   interrupt_flag(cpu, slave_irqs[channel]) &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0100u) != 0u &&
+                   (cpu->io.i2c_slave_rejected & channel_bit) == 0u &&
+                   (cpu->io.i2c_slave_active & channel_bit) != 0u &&
+                   dspic33_read_word(cpu, base) == 0x00abu,
+               "ipmi bypasses enabled ten bit address low matching");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x0155u);
+        enable(cpu, channel, 0x0880u, 0u);
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
                    dspic33_device_advance(cpu, 0u),
                "ipmi ten bit preamble event");
-        expect(state, interrupt_flag(cpu, slave_irqs[channel]),
+        expect(state,
+               interrupt_flag(cpu, slave_irqs[channel]) &&
+                   (cpu->io.i2c_slave_rejected & channel_bit) == 0u &&
+                   (cpu->io.i2c_slave_active & channel_bit) != 0u &&
+                   (cpu->io.i2c_slave_read & channel_bit) == 0u &&
+                   dspic33_read_word(cpu, base) == 0x00f4u,
                "ipmi accepts ten bit preamble");
-        dspic33_read_word(cpu, base);
         clear_interrupt(cpu, slave_irqs[channel]);
-        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9800u);
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9880u);
         expect(state, dspic33_device_advance(cpu, 1u), "ipmi ten bit address event");
         expect(state,
                interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) == 0u,
+                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0100u) != 0u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) == 0u &&
+                   (cpu->io.i2c_slave_active & channel_bit) != 0u &&
+                   (cpu->io.i2c_slave_read & channel_bit) == 0u &&
+                   dspic33_read_word(cpu, base) == 0x00abu,
                "ipmi ten bit address stretches");
-        dspic33_read_word(cpu, base);
         clear_interrupt(cpu, slave_irqs[channel]);
-        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9800u);
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9880u);
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x02abu, true, true, 0u) &&
                    dspic33_device_advance(cpu, 0u),
                "ipmi ten bit read event");
         expect(state,
                interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 4u) != 0u &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) != 0u,
+                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x4107u) ==
+                       0x0106u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) != 0u &&
+                   (cpu->io.i2c_slave_active & channel_bit) == 0u &&
+                   (cpu->io.i2c_slave_read & channel_bit) == 0u &&
+                   (cpu->io.i2c_slave_rejected & channel_bit) == 0u &&
+                   dspic33_read_word(cpu, base) == 0x00f5u,
                "ipmi ten bit read aborts without stretching");
+        clear_interrupt(cpu, slave_irqs[channel]);
+        expect(state,
+               dspic33_i2c_slave_write(cpu, channel, 0x45u, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   !interrupt_flag(cpu, slave_irqs[channel]) &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 2u) == 0u,
+               "ipmi ten bit read aborts slave transfer");
 
         dspic33_reset(cpu, 0u);
-        enable(cpu, channel, 0x0800u, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x12u);
+        enable(cpu, channel, 0x0c80u, 0u);
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x67u, true, false, 0u) &&
                    dspic33_device_advance(cpu, 0u),
                "ipmi read address event");
         expect(state,
                interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) != 0u,
+                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x4007u) ==
+                       0x0006u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) != 0u &&
+                   (cpu->io.i2c_slave_active & channel_bit) == 0u &&
+                   (cpu->io.i2c_slave_read & channel_bit) == 0u &&
+                   dspic33_read_word(cpu, base) == 0x00cfu,
                "ipmi read interrupts without stretching");
-        dspic33_read_word(cpu, base);
         clear_interrupt(cpu, slave_irqs[channel]);
         expect(state,
                dspic33_i2c_slave_write(cpu, channel, 0x44u, 0u) &&
                    dspic33_device_advance(cpu, 0u) &&
-                   !interrupt_flag(cpu, slave_irqs[channel]),
+                   !interrupt_flag(cpu, slave_irqs[channel]) &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 2u) == 0u &&
+                   dspic33_read_word(cpu, base) == 0x00cfu,
                "ipmi read aborts slave transfer");
     }
 }
