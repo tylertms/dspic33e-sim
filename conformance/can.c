@@ -221,17 +221,25 @@ static void register_cases(CanConformance* state, Dspic33* cpu) {
 }
 
 static void interrupt_flag_write_zero_cases(CanConformance* state, Dspic33* cpu) {
+    static const uint16_t previous_words[] = {0x00efu, 0x0000u, 0x00a5u};
     uint8_t channel;
     for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
         uint16_t address = (uint16_t)(bases[channel] + 0x0au);
-        uint32_t requested;
+        uint8_t previous_index;
         dspic33_reset(cpu, 0u);
-        for (requested = 0u; requested <= UINT16_MAX; requested++) {
-            write_memory_word(cpu, address, 0x00efu);
-            dspic33_write_word(cpu, address, (uint16_t)requested);
-            expect(state,
-                   dspic33_read_word(cpu, address) == (uint16_t)(0x00efu & requested),
-                   "interrupt flag write-zero clear domain");
+        for (previous_index = 0u;
+             previous_index < sizeof(previous_words) / sizeof(previous_words[0]);
+             previous_index++) {
+            uint16_t previous = previous_words[previous_index];
+            uint32_t requested;
+            for (requested = 0u; requested <= UINT16_MAX; requested++) {
+                write_memory_word(cpu, address, previous);
+                dspic33_write_word(cpu, address, (uint16_t)requested);
+                expect(state,
+                       dspic33_read_word(cpu, address) ==
+                           (uint16_t)(previous & requested),
+                       "interrupt flag write-zero clear domain");
+            }
         }
     }
 }
