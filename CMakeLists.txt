@@ -9,7 +9,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     )
 endif()
 
-add_library(opentec_simulator_core STATIC src/device.c src/dspic33.c)
+add_library(opentec_simulator_core STATIC src/device.c src/dspic33.c src/i2c.c)
 
 add_executable(
     opentec_firmware_simulator
@@ -34,6 +34,7 @@ add_executable(opentec_simulator_spi_conformance conformance/spi.c)
 add_executable(opentec_simulator_can_conformance conformance/can.c)
 add_executable(opentec_simulator_usb_conformance conformance/usb.c)
 add_executable(opentec_simulator_uart_conformance conformance/uart.c)
+add_executable(opentec_simulator_i2c_conformance conformance/i2c.c)
 
 target_include_directories(opentec_simulator_core PUBLIC src)
 target_link_libraries(opentec_firmware_simulator PRIVATE opentec_simulator_core)
@@ -64,6 +65,9 @@ target_link_libraries(
 target_link_libraries(
     opentec_simulator_uart_conformance PRIVATE opentec_simulator_core
 )
+target_link_libraries(
+    opentec_simulator_i2c_conformance PRIVATE opentec_simulator_core
+)
 
 set(opentec_simulator_targets
     opentec_simulator_core
@@ -77,6 +81,7 @@ set(opentec_simulator_targets
     opentec_simulator_can_conformance
     opentec_simulator_usb_conformance
     opentec_simulator_uart_conformance
+    opentec_simulator_i2c_conformance
 )
 
 foreach(target IN LISTS opentec_simulator_targets)

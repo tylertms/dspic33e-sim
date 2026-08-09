@@ -24,6 +24,8 @@
 #define DSPIC33_UART_FIFO_SIZE 4u
 #define DSPIC33_UART_QUEUE_SIZE 1024u
 #define DSPIC33_SPI_COUNT 4u
+#define DSPIC33_I2C_COUNT 2u
+#define DSPIC33_I2C_QUEUE_SIZE 64u
 #define DSPIC33_CAN_COUNT 2u
 #define DSPIC33_TIMER_COUNT 9u
 #define DSPIC33_DMA_COUNT 15u
@@ -51,6 +53,7 @@ typedef enum {
     DSPIC33_EVENT_UART,
     DSPIC33_EVENT_SPI,
     DSPIC33_EVENT_SPI_SELECT,
+    DSPIC33_EVENT_I2C,
     DSPIC33_EVENT_CAN,
     DSPIC33_EVENT_USB,
     DSPIC33_EVENT_NVM,
@@ -114,6 +117,41 @@ typedef struct {
     uint8_t head;
     uint8_t count;
 } Dspic33WordQueue;
+
+typedef enum {
+    DSPIC33_I2C_START,
+    DSPIC33_I2C_RESTART,
+    DSPIC33_I2C_STOP,
+    DSPIC33_I2C_WRITE,
+    DSPIC33_I2C_READ,
+    DSPIC33_I2C_ACKNOWLEDGE,
+    DSPIC33_I2C_COLLISION
+} Dspic33I2cTransferType;
+
+typedef struct {
+    Dspic33I2cTransferType type;
+    uint16_t value;
+    bool acknowledge;
+    bool master;
+} Dspic33I2cTransfer;
+
+typedef struct {
+    Dspic33I2cTransfer transfers[DSPIC33_I2C_QUEUE_SIZE];
+    uint8_t head;
+    uint8_t count;
+} Dspic33I2cQueue;
+
+typedef struct {
+    uint64_t cycle;
+    uint8_t value;
+    bool acknowledge;
+} Dspic33I2cResponse;
+
+typedef struct {
+    Dspic33I2cResponse responses[DSPIC33_I2C_QUEUE_SIZE];
+    uint8_t head;
+    uint8_t count;
+} Dspic33I2cResponseQueue;
 
 typedef struct {
     uint32_t identifier;
@@ -196,6 +234,13 @@ typedef struct {
     Dspic33ByteQueue spi_tx[DSPIC33_SPI_COUNT];
     Dspic33WordQueue spi_tx_fifo[DSPIC33_SPI_COUNT];
     Dspic33WordQueue spi_rx_fifo[DSPIC33_SPI_COUNT];
+    Dspic33I2cQueue i2c_tx[DSPIC33_I2C_COUNT];
+    Dspic33I2cResponseQueue i2c_response[DSPIC33_I2C_COUNT];
+    uint16_t i2c_slave_address[DSPIC33_I2C_COUNT];
+    uint8_t i2c_generation[DSPIC33_I2C_COUNT];
+    uint8_t i2c_master_active;
+    uint8_t i2c_slave_active;
+    uint8_t i2c_slave_read;
     Dspic33CanQueue can_rx[DSPIC33_CAN_COUNT];
     Dspic33CanQueue can_tx[DSPIC33_CAN_COUNT];
     uint16_t can_filter_window[DSPIC33_CAN_COUNT][48];
@@ -388,6 +433,17 @@ bool dspic33_uart_set_cts(Dspic33* cpu, uint8_t channel, bool clear, uint64_t de
 bool dspic33_uart_transmit(Dspic33* cpu, uint8_t channel, Dspic33UartFrame* frame);
 bool dspic33_spi_receive(Dspic33* cpu, uint8_t channel, uint16_t value, uint64_t delay);
 bool dspic33_spi_select(Dspic33* cpu, uint8_t channel, bool selected, uint64_t delay);
+bool dspic33_i2c_respond(Dspic33* cpu, uint8_t channel, uint8_t value, bool acknowledge,
+                         uint64_t delay);
+bool dspic33_i2c_slave_start(Dspic33* cpu, uint8_t channel, uint16_t address, bool read,
+                             bool ten_bit, uint64_t delay);
+bool dspic33_i2c_slave_write(Dspic33* cpu, uint8_t channel, uint8_t value,
+                             uint64_t delay);
+bool dspic33_i2c_slave_read(Dspic33* cpu, uint8_t channel, bool acknowledge,
+                            uint64_t delay);
+bool dspic33_i2c_slave_stop(Dspic33* cpu, uint8_t channel, uint64_t delay);
+bool dspic33_i2c_collision(Dspic33* cpu, uint8_t channel, uint64_t delay);
+bool dspic33_i2c_transmit(Dspic33* cpu, uint8_t channel, Dspic33I2cTransfer* transfer);
 bool dspic33_dma_request(Dspic33* cpu, uint8_t request, uint16_t indirect_address,
                          uint64_t delay);
 bool dspic33_timer_pulse(Dspic33* cpu, uint8_t timer, uint32_t pulses, uint64_t delay);

@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "i2c.h"
+
 static const uint16_t timer_registers[DSPIC33_TIMER_COUNT] = {
     0x0100u, 0x0106u, 0x010au, 0x0114u, 0x0118u, 0x0122u, 0x0126u, 0x0130u, 0x0134u};
 static const uint16_t timer_periods[DSPIC33_TIMER_COUNT] = {
@@ -4129,6 +4131,9 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
         run_spi_select(cpu, (uint8_t)event->source,
                        (event->value & SPI_SELECT_ACTIVE) != 0u);
         break;
+    case DSPIC33_EVENT_I2C:
+        dspic33_i2c_process_event(cpu, (uint8_t)event->source, event->value);
+        break;
     case DSPIC33_EVENT_CAN:
         run_can(cpu, (uint8_t)event->source, event->value);
         break;
@@ -5033,6 +5038,9 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
         raw_write_word(cpu, base, previous);
         return;
     }
+    if (dspic33_i2c_write_register(cpu, address, previous, requested)) {
+        return;
+    }
     if (register_write_mask(base, &writable) ||
         adc_register_write_mask(base, &writable) ||
         pwm_register_write_mask(base, &writable) ||
@@ -5112,6 +5120,9 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
     uint8_t port;
     uint8_t channel;
     uint8_t timer;
+    if (dspic33_i2c_read_register(cpu, address, &value)) {
+        return value;
+    }
     if (address == 0x08c3u) {
         return cpu->disicnt != 0u ? (uint8_t)(value | 0x40u)
                                   : (uint8_t)(value & ~0x40u);
@@ -5479,6 +5490,7 @@ void dspic33_device_reset(Dspic33* cpu) {
     for (index = 0u; index < sizeof(reset_values) / sizeof(reset_values[0]); index++) {
         raw_write_word(cpu, reset_values[index].address, reset_values[index].value);
     }
+    dspic33_i2c_reset(cpu);
     usb_reset_registers(cpu);
     raw_write_word(cpu, USB_PWRC, 0u);
     raw_write_word(cpu, 0x0742u, 0x3020u);
