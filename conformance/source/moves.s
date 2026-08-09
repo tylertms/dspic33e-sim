@@ -4,7 +4,7 @@
 .global _move_conformance_cases
 _move_conformance_cases = 33
 .global _move_conformance_group_complete
-_move_conformance_group_complete = 1
+_move_conformance_group_complete = 0
 
 .global _run_move_conformance
 _run_move_conformance:
