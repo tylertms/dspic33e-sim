@@ -554,6 +554,165 @@ static void fifo_overflow_advancement_cases(CanConformance* state, Dspic33* cpu)
     }
 }
 
+static void receive_flag_write_zero_domain(CanConformance* state, Dspic33* cpu) {
+    static const uint8_t offsets[] = {0x20u, 0x22u, 0x28u, 0x2au};
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint8_t index;
+        dspic33_reset(cpu, 0u);
+        select_window(cpu, channel, false);
+        for (index = 0u; index < sizeof(offsets); index++) {
+            uint16_t address = (uint16_t)(bases[channel] + offsets[index]);
+            uint32_t requested;
+            for (requested = 0u; requested <= UINT16_MAX; requested++) {
+                write_memory_word(cpu, address, UINT16_MAX);
+                dspic33_write_word(cpu, address, (uint16_t)requested);
+                expect(state, dspic33_read_word(cpu, address) == requested,
+                       "receive flag write-zero domain");
+            }
+        }
+    }
+}
+
+static void receive_overflow_write_zero_prior_domain(CanConformance* state,
+                                                     Dspic33* cpu) {
+    static const uint8_t offsets[] = {0x28u, 0x2au};
+    static const uint16_t previous_words[] = {0x0000u, 0x5a5au};
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint8_t index;
+        dspic33_reset(cpu, 0u);
+        select_window(cpu, channel, false);
+        for (index = 0u; index < sizeof(offsets); index++) {
+            uint16_t address = (uint16_t)(bases[channel] + offsets[index]);
+            uint8_t previous_index;
+            for (previous_index = 0u;
+                 previous_index < sizeof(previous_words) / sizeof(previous_words[0]);
+                 previous_index++) {
+                uint16_t previous = previous_words[previous_index];
+                uint32_t requested;
+                for (requested = 0u; requested <= UINT16_MAX; requested++) {
+                    write_memory_word(cpu, address, previous);
+                    dspic33_write_word(cpu, address, (uint16_t)requested);
+                    expect(state,
+                           dspic33_read_word(cpu, address) ==
+                               (uint16_t)(previous & requested),
+                           "receive overflow write-zero prior domain");
+                }
+            }
+        }
+    }
+}
+
+static void receive_flag_read_pointer_cases(CanConformance* state, Dspic33* cpu) {
+    static const uint8_t sizes[] = {4u, 6u, 8u, 12u, 16u, 24u, 32u};
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint8_t selection;
+        for (selection = 0u; selection < sizeof(sizes); selection++) {
+            uint8_t size = sizes[selection];
+            uint8_t start = (uint8_t)(size / 2u);
+            uint8_t buffer;
+            for (buffer = start; buffer < size; buffer++) {
+                uint16_t address =
+                    (uint16_t)(bases[channel] + 0x20u + (buffer >= 16u ? 2u : 0u));
+                uint16_t bit = (uint16_t)(1u << (buffer & 15u));
+                uint16_t fifo_address = (uint16_t)(bases[channel] + 8u);
+                uint8_t expected = buffer + 1u == size ? start : (uint8_t)(buffer + 1u);
+                dspic33_reset(cpu, 0u);
+                configure_receive(cpu, channel, 0xf800u, selection, start);
+                select_window(cpu, channel, false);
+                write_memory_word(cpu, address, bit);
+                write_memory_word(cpu, fifo_address,
+                                  (uint16_t)(((uint16_t)start << 8u) | 0x003fu));
+                dspic33_write_word(cpu, address, (uint16_t)~bit);
+                expect(state, dspic33_read_word(cpu, address) == 0u,
+                       "FIFO receive flag clear");
+                expect(state,
+                       (dspic33_read_word(cpu, fifo_address) & 0x003fu) == expected,
+                       "FIFO receive flag advances read pointer");
+                expect(state,
+                       (dspic33_read_word(cpu, fifo_address) & 0x3f00u) ==
+                           (uint16_t)((uint16_t)start << 8u),
+                       "FIFO receive flag preserves write pointer");
+            }
+            if (start != 0u) {
+                uint8_t buffer = (uint8_t)(start - 1u);
+                uint16_t address = (uint16_t)(bases[channel] + 0x20u);
+                uint16_t bit = (uint16_t)(1u << buffer);
+                uint16_t fifo_address = (uint16_t)(bases[channel] + 8u);
+                dspic33_reset(cpu, 0u);
+                configure_receive(cpu, channel, 0xf800u, selection, start);
+                select_window(cpu, channel, false);
+                write_memory_word(cpu, address, bit);
+                write_memory_word(cpu, fifo_address,
+                                  (uint16_t)(((uint16_t)start << 8u) | 0x003eu));
+                dspic33_write_word(cpu, address, (uint16_t)~bit);
+                expect(state,
+                       (dspic33_read_word(cpu, fifo_address) & 0x003fu) == 0x003eu,
+                       "direct receive flag preserves FIFO read pointer");
+            }
+        }
+    }
+}
+
+static void fifo_interrupt_boundary_case(CanConformance* state, Dspic33* cpu,
+                                         uint8_t channel, bool wrap, bool asserted) {
+    uint16_t base = bases[channel];
+    uint16_t fifo_address = (uint16_t)(base + 8u);
+    uint16_t interrupt_address = (uint16_t)(base + 0x0au);
+    uint32_t memory = (uint32_t)(0xf800u + channel * 0x100u);
+    Dspic33CanFrame input = frame(0x456u, false, false, 1u, 0x90u);
+    uint8_t preparation = wrap ? 2u : 0u;
+    uint8_t index;
+    uint8_t expected_fbp = wrap ? 5u : 3u;
+    uint8_t fnrb = wrap ? (asserted ? 2u : 3u) : (asserted ? 4u : 5u);
+    dspic33_reset(cpu, 0u);
+    configure_receive(cpu, channel, memory, 1u, 2u);
+    configure_filter(cpu, channel, 0u, input.identifier, false, 0x7ffu, true, 15u, 0u);
+    enable_filter(cpu, channel, 1u);
+    select_window(cpu, channel, false);
+    set_mode(cpu, channel, 0u);
+    for (index = 0u; index < preparation; index++) {
+        expect(state,
+               dspic33_can_receive(cpu, channel, &input, 0u) &&
+                   dspic33_device_advance(cpu, 32u),
+               "FIFO interrupt boundary preparation");
+    }
+    write_memory_word(
+        cpu, fifo_address,
+        (uint16_t)((dspic33_read_word(cpu, fifo_address) & 0x3f00u) | fnrb));
+    dspic33_write_word(
+        cpu, interrupt_address,
+        (uint16_t)(dspic33_read_word(cpu, interrupt_address) & ~0x000au));
+    expect(state,
+           dspic33_can_receive(cpu, channel, &input, 0u) &&
+               dspic33_device_advance(cpu, 32u),
+           "FIFO interrupt boundary receive");
+    expect(state,
+           ((dspic33_read_word(cpu, fifo_address) >> 8u) & 0x003fu) == expected_fbp,
+           "FIFO interrupt uses updated write pointer");
+    expect(state, (dspic33_read_word(cpu, fifo_address) & 0x003fu) == fnrb,
+           "FIFO interrupt preserves read pointer");
+    expect(state,
+           ((dspic33_read_word(cpu, interrupt_address) & 0x0008u) != 0u) == asserted,
+           "FIFO interrupt boundary result");
+}
+
+static void fifo_interrupt_boundary_cases(CanConformance* state, Dspic33* cpu) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint8_t wrap;
+        for (wrap = 0u; wrap < 2u; wrap++) {
+            uint8_t asserted;
+            for (asserted = 0u; asserted < 2u; asserted++) {
+                fifo_interrupt_boundary_case(state, cpu, channel, wrap != 0u,
+                                             asserted != 0u);
+            }
+        }
+    }
+}
+
 static void overflow_and_fallback_cases(CanConformance* state, Dspic33* cpu) {
     Dspic33CanFrame input = frame(0x123u, false, false, 2u, 0x40u);
     dspic33_reset(cpu, 0u);
@@ -994,6 +1153,10 @@ int main(void) {
     direct_buffer_cases(&state, &cpu);
     fifo_cases(&state, &cpu);
     fifo_overflow_advancement_cases(&state, &cpu);
+    receive_flag_write_zero_domain(&state, &cpu);
+    receive_overflow_write_zero_prior_domain(&state, &cpu);
+    receive_flag_read_pointer_cases(&state, &cpu);
+    fifo_interrupt_boundary_cases(&state, &cpu);
     overflow_and_fallback_cases(&state, &cpu);
     transmission_cases(&state, &cpu);
     priority_and_abort_cases(&state, &cpu);
