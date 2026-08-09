@@ -40,7 +40,9 @@ enum {
     PWMCON = 0x0582u,
     BDT = 0x6000u,
     BUFFER = 0x8000u,
-    USB_IRQ = 86u
+    USB_IRQ = 86u,
+    USB_INTERRUPT_PRIORITY = 3u,
+    USB_VECTOR_ADDRESS = 0x1200u
 };
 
 static void expect(UsbConformance* state, bool condition, const char* name) {
@@ -63,6 +65,30 @@ static void clear_interrupt(Dspic33* cpu, uint8_t irq) {
     uint16_t mask = (uint16_t)(1u << (irq % 16u));
     dspic33_write_word(cpu, address,
                        (uint16_t)(dspic33_read_word(cpu, address) & ~mask));
+}
+
+static void enable_usb_interrupt(Dspic33* cpu) {
+    uint16_t enable_address = (uint16_t)(0x0820u + (USB_IRQ / 16u) * 2u);
+    uint16_t enable_mask = (uint16_t)(1u << (USB_IRQ % 16u));
+    uint16_t priority_address = (uint16_t)(0x0840u + (USB_IRQ / 4u) * 2u);
+    uint16_t priority_shift = (uint16_t)((USB_IRQ % 4u) * 4u);
+    uint16_t priority_mask = (uint16_t)(7u << priority_shift);
+    dspic33_write_word(
+        cpu, enable_address,
+        (uint16_t)(dspic33_read_word(cpu, enable_address) | enable_mask));
+    dspic33_write_word(
+        cpu, priority_address,
+        (uint16_t)((dspic33_read_word(cpu, priority_address) & ~priority_mask) |
+                   (USB_INTERRUPT_PRIORITY << priority_shift)));
+    cpu->program[(0x0014u + USB_IRQ * 2u) / 2u] = USB_VECTOR_ADDRESS;
+}
+
+static bool service_usb_interrupt(Dspic33* cpu) {
+    return dspic33_device_interrupt_pending(cpu) &&
+           dspic33_device_service_interrupt(cpu) && cpu->last_interrupt == USB_IRQ &&
+           cpu->pc == USB_VECTOR_ADDRESS &&
+           dspic33_read_word(cpu, 0x08c8u) ==
+               (uint16_t)((USB_INTERRUPT_PRIORITY << 8u) | (USB_IRQ + 8u));
 }
 
 static uint32_t descriptor_address(uint8_t endpoint, uint8_t direction, uint8_t bank) {
@@ -98,6 +124,13 @@ static void configure_device(Dspic33* cpu) {
                            endpoint == 0u ? 0x000du : 0x001du);
     }
     dspic33_write_word(cpu, CON, 1u);
+}
+
+static void configure_host(Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, PWRC, 1u);
+    dspic33_write_word(cpu, BDTP1, 0x0060u);
+    dspic33_write_word(cpu, CON, 0x0008u);
 }
 
 static void clear_transaction(Dspic33* cpu) { dspic33_write_word(cpu, IR, 0x0008u); }
@@ -601,6 +634,215 @@ static void interrupt_and_bus_cases(UsbConformance* state, Dspic33* cpu) {
     expect(state, dspic33_read_word(cpu, OTGIR) == 0u, "USB OTG W1C");
 }
 
+static void host_interrupt_cases(UsbConformance* state, Dspic33* cpu) {
+    Dspic33UsbPacket packet;
+    uint8_t data[8] = {0u};
+
+    configure_host(cpu);
+    dspic33_write_word(cpu, IE, 0x0040u);
+    enable_usb_interrupt(cpu);
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_ATTACH, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u),
+           "USB host attach interrupt schedule");
+    expect(state,
+           (dspic33_read_word(cpu, IR) & 0x0040u) != 0u && interrupt_flag(cpu, USB_IRQ),
+           "USB host attach interrupt state");
+    expect(state, service_usb_interrupt(cpu), "USB host attach interrupt vector");
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_OTG_STATE, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u),
+           "USB host attach voltage-state perturbation");
+    dspic33_write_word(cpu, IR, 0x0040u);
+    expect(state,
+           (dspic33_read_word(cpu, IR) & 0x0040u) != 0u && interrupt_flag(cpu, USB_IRQ),
+           "USB host attach persistent W1C");
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_DETACH, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u),
+           "USB host attach cause release");
+    dspic33_write_word(cpu, IR, 0x0040u);
+    expect(state,
+           (dspic33_read_word(cpu, IR) & 0x0040u) == 0u && interrupt_flag(cpu, USB_IRQ),
+           "USB host attach W1C after detach");
+    clear_interrupt(cpu, USB_IRQ);
+    expect(state, !interrupt_flag(cpu, USB_IRQ), "USB host attach IFS clear");
+
+    configure_host(cpu);
+    dspic33_write_word(cpu, IE, 0x0001u);
+    enable_usb_interrupt(cpu);
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_ATTACH, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u),
+           "USB host attach schedule");
+    expect(state,
+           (dspic33_read_word(cpu, OTGSTAT) & 0x0009u) == 0x0009u &&
+               (dspic33_read_word(cpu, IR) & 0x0040u) != 0u,
+           "USB host attach state");
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_DETACH, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u),
+           "USB host detach schedule");
+    expect(state,
+           (dspic33_read_word(cpu, OTGSTAT) & 0x0009u) == 0u &&
+               (dspic33_read_word(cpu, OTGIR) & 0x0020u) != 0u &&
+               (dspic33_read_word(cpu, IR) & 0x0001u) != 0u &&
+               interrupt_flag(cpu, USB_IRQ),
+           "USB host detach interrupt state");
+    expect(state, service_usb_interrupt(cpu), "USB host detach interrupt vector");
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_OTG_STATE, 0x0009u, 0u) &&
+               dspic33_device_advance(cpu, 0u),
+           "USB host detach voltage-state perturbation");
+    dspic33_write_word(cpu, IR, 0x0001u);
+    expect(state,
+           (dspic33_read_word(cpu, IR) & 0x0001u) != 0u && interrupt_flag(cpu, USB_IRQ),
+           "USB host detach persistent W1C");
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_ATTACH, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u),
+           "USB host detach cause release");
+    dspic33_write_word(cpu, IR, 0x0001u);
+    expect(state,
+           (dspic33_read_word(cpu, IR) & 0x0001u) == 0u && interrupt_flag(cpu, USB_IRQ),
+           "USB host detach W1C after attach");
+    clear_interrupt(cpu, USB_IRQ);
+    expect(state, !interrupt_flag(cpu, USB_IRQ), "USB host detach IFS clear");
+
+    configure_host(cpu);
+    dspic33_write_word(cpu, IE, 0x0001u);
+    enable_usb_interrupt(cpu);
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_RESET, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u),
+           "USB host reset schedule");
+    expect(state,
+           (dspic33_read_word(cpu, IR) & 0x0001u) == 0u &&
+               !interrupt_flag(cpu, USB_IRQ) && !dspic33_device_interrupt_pending(cpu),
+           "USB host reset does not assert detach interrupt");
+
+    configure_host(cpu);
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_ATTACH, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               (dspic33_read_word(cpu, IR) & 0x0040u) != 0u,
+           "USB host attach before device transition");
+    dspic33_write_word(cpu, CON, 0x0001u);
+    expect(state,
+           (dspic33_read_word(cpu, IR) & 0x0041u) == 0u && !cpu->io.usb_host_attached,
+           "USB device transition clears host interrupt state");
+
+    configure_device(cpu);
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_RESET, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               (dspic33_read_word(cpu, IR) & 0x0001u) != 0u,
+           "USB device reset before host transition");
+    dspic33_write_word(cpu, CON, 0x0008u);
+    expect(state,
+           (dspic33_read_word(cpu, IR) & 0x0041u) == 0u && !cpu->io.usb_host_attached,
+           "USB host transition clears device interrupt state");
+
+    configure_device(cpu);
+    write_memory_word(cpu, IR, 0x0040u);
+    expect(state, (dspic33_read_word(cpu, IR) & 0x0040u) == 0u,
+           "USB device attach bit reads unimplemented");
+
+    configure_host(cpu);
+    dspic33_write_word(cpu, IE, 0x0080u);
+    enable_usb_interrupt(cpu);
+    write_descriptor(cpu, 0u, 0u, 0u, 0x0088u, 1u, BUFFER);
+    dspic33_write_word(cpu, TOK, 0x0090u);
+    expect(state, dspic33_usb_transmit(cpu, &packet), "USB host STALL token");
+    expect(state,
+           dspic33_usb_host_response(cpu, DSPIC33_USB_HANDSHAKE_STALL, NULL, 0u, false,
+                                     0u) &&
+               dspic33_device_advance(cpu, 0u),
+           "USB host STALL response schedule");
+    expect(state,
+           memory_word(cpu, descriptor_address(0u, 0u, 0u)) == 0x0038u &&
+               (dspic33_read_word(cpu, IR) & 0x0080u) != 0u &&
+               interrupt_flag(cpu, USB_IRQ),
+           "USB host STALL interrupt state");
+    expect(state, service_usb_interrupt(cpu), "USB host STALL interrupt vector");
+    dspic33_write_word(cpu, IR, 0x0080u);
+    expect(state,
+           (dspic33_read_word(cpu, IR) & 0x0080u) == 0u && interrupt_flag(cpu, USB_IRQ),
+           "USB host STALL W1C and sticky IFS");
+    clear_interrupt(cpu, USB_IRQ);
+    expect(state, !interrupt_flag(cpu, USB_IRQ), "USB host STALL IFS clear");
+
+    configure_host(cpu);
+    dspic33_write_word(cpu, IE, 0x0080u);
+    enable_usb_interrupt(cpu);
+    write_descriptor(cpu, 0u, 0u, 0u, 0x0088u, 1u, BUFFER);
+    dspic33_write_word(cpu, TOK, 0x0090u);
+    expect(state, dspic33_usb_transmit(cpu, &packet), "USB host NAK token");
+    expect(state,
+           dspic33_usb_host_response(cpu, DSPIC33_USB_HANDSHAKE_NAK, NULL, 0u, false,
+                                     0u) &&
+               dspic33_device_advance(cpu, 0u),
+           "USB host NAK response schedule");
+    expect(state,
+           memory_word(cpu, descriptor_address(0u, 0u, 0u)) == 0x0028u &&
+               (dspic33_read_word(cpu, IR) & 0x0080u) == 0u &&
+               !interrupt_flag(cpu, USB_IRQ),
+           "USB host NAK does not assert STALL interrupt");
+
+    configure_device(cpu);
+    dspic33_write_word(cpu, IE, 0x0001u);
+    enable_usb_interrupt(cpu);
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_RESET, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u),
+           "USB device reset schedule");
+    expect(state,
+           (dspic33_read_word(cpu, IR) & 0x0001u) != 0u && interrupt_flag(cpu, USB_IRQ),
+           "USB device reset interrupt state");
+    expect(state, service_usb_interrupt(cpu), "USB device reset interrupt vector");
+    dspic33_write_word(cpu, IR, 0x0001u);
+    expect(state,
+           (dspic33_read_word(cpu, IR) & 0x0001u) == 0u && interrupt_flag(cpu, USB_IRQ),
+           "USB device reset W1C and sticky IFS");
+    clear_interrupt(cpu, USB_IRQ);
+    expect(state, !interrupt_flag(cpu, USB_IRQ), "USB device reset IFS clear");
+
+    configure_device(cpu);
+    dspic33_write_word(cpu, IE, 0x0001u);
+    enable_usb_interrupt(cpu);
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_DETACH, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u),
+           "USB device detach schedule");
+    expect(state,
+           (dspic33_read_word(cpu, OTGIR) & 0x0020u) != 0u &&
+               (dspic33_read_word(cpu, IR) & 0x0001u) == 0u &&
+               !interrupt_flag(cpu, USB_IRQ) && !dspic33_device_interrupt_pending(cpu),
+           "USB device detach does not assert reset interrupt");
+
+    configure_device(cpu);
+    dspic33_write_word(cpu, IE, 0x0080u);
+    enable_usb_interrupt(cpu);
+    write_descriptor(cpu, 4u, 0u, 0u, 0x008cu, sizeof(data), BUFFER);
+    expect(state,
+           dspic33_usb_receive(cpu, 4u, data, sizeof(data), 0u) &&
+               dspic33_device_advance(cpu, 0u),
+           "USB device STALL schedule");
+    expect(state,
+           dspic33_usb_transmit(cpu, &packet) &&
+               packet.handshake == DSPIC33_USB_HANDSHAKE_STALL &&
+               (dspic33_read_word(cpu, IR) & 0x0080u) != 0u &&
+               interrupt_flag(cpu, USB_IRQ),
+           "USB device STALL interrupt state");
+    expect(state, service_usb_interrupt(cpu), "USB device STALL interrupt vector");
+    dspic33_write_word(cpu, IR, 0x0080u);
+    expect(state,
+           (dspic33_read_word(cpu, IR) & 0x0080u) == 0u && interrupt_flag(cpu, USB_IRQ),
+           "USB device STALL W1C and sticky IFS");
+    clear_interrupt(cpu, USB_IRQ);
+    expect(state, !interrupt_flag(cpu, USB_IRQ), "USB device STALL IFS clear");
+}
+
 static void host_cases(UsbConformance* state, Dspic33* cpu) {
     Dspic33UsbPacket packet;
     uint8_t input[4] = {0x11u, 0x22u, 0x33u, 0x44u};
@@ -737,6 +979,7 @@ int main(void) {
     boundary_and_order_cases(&state, &cpu);
     bus_access_error_cases(&state, &cpu);
     interrupt_and_bus_cases(&state, &cpu);
+    host_interrupt_cases(&state, &cpu);
     host_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
     printf("[usb-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",

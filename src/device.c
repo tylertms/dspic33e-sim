@@ -220,11 +220,13 @@ enum {
     USB_PACKET_DISABLE = 0x0020u,
     USB_TOKEN_BUSY = 0x0020u,
     USB_STALL_INTERRUPT = 0x0080u,
+    USB_ATTACH_INTERRUPT = 0x0040u,
     USB_RESUME_INTERRUPT = 0x0020u,
     USB_IDLE_INTERRUPT = 0x0010u,
     USB_TRANSACTION_INTERRUPT = 0x0008u,
     USB_SOF_INTERRUPT = 0x0004u,
     USB_ERROR_INTERRUPT = 0x0002u,
+    USB_DETACH_INTERRUPT = 0x0001u,
     USB_RESET_INTERRUPT = 0x0001u,
     USB_ENDPOINT_CONTROL_DISABLED = 0x0010u,
     USB_ENDPOINT_RX_ENABLE = 0x0008u,
@@ -239,6 +241,7 @@ enum {
     USB_DESCRIPTOR_STALL = 0x0004u,
     USB_DESCRIPTOR_PID_MASK = 0x003cu,
     USB_DESCRIPTOR_COUNT_MASK = 0x03ffu,
+    USB_OTG_VOLTAGE_STATUS = 0x0009u,
     USB_ERROR_BUS_ACCESS = 0x0040u,
     USB_ERROR_DMA = 0x0020u,
     USB_ERROR_BTO = 0x0010u,
@@ -3777,6 +3780,7 @@ static void usb_reset_runtime(Dspic33* cpu) {
     cpu->io.usb_last_endpoint = 0u;
     cpu->io.usb_last_handshake = DSPIC33_USB_HANDSHAKE_NONE;
     cpu->io.usb_host_pending = false;
+    cpu->io.usb_host_attached = false;
     usb_reset_ping_pong(cpu);
 }
 
@@ -4088,6 +4092,8 @@ static void usb_run_host_response(Dspic33* cpu, const Dspic33UsbPacket* response
         pid = 0x0au;
         complete = true;
     } else if (response != NULL && response->handshake == DSPIC33_USB_HANDSHAKE_STALL) {
+        raw_write_word(cpu, USB_IR,
+                       (uint16_t)(raw_word(cpu, USB_IR) | USB_STALL_INTERRUPT));
         pid = 0x0eu;
         complete = true;
     } else if (response != NULL &&
@@ -4119,8 +4125,10 @@ static void usb_run_bus_event(Dspic33* cpu, Dspic33UsbBusEvent event, uint16_t v
         cpu->io.usb_status_head = 0u;
         cpu->io.usb_status_count = 0u;
         usb_reset_ping_pong(cpu);
-        raw_write_word(cpu, USB_IR,
-                       (uint16_t)(raw_word(cpu, USB_IR) | USB_RESET_INTERRUPT));
+        if ((raw_word(cpu, USB_CON) & USB_HOST_ENABLE) == 0u) {
+            raw_write_word(cpu, USB_IR,
+                           (uint16_t)(raw_word(cpu, USB_IR) | USB_RESET_INTERRUPT));
+        }
         usb_refresh_transaction_status(cpu);
         break;
     case DSPIC33_USB_BUS_SOF:
@@ -4151,16 +4159,24 @@ static void usb_run_bus_event(Dspic33* cpu, Dspic33UsbBusEvent event, uint16_t v
         break;
     case DSPIC33_USB_BUS_ATTACH:
         raw_write_word(cpu, USB_OTGSTAT,
-                       (uint16_t)(raw_word(cpu, USB_OTGSTAT) | 0x0009u));
+                       (uint16_t)(raw_word(cpu, USB_OTGSTAT) | USB_OTG_VOLTAGE_STATUS));
         if ((raw_word(cpu, USB_CON) & USB_HOST_ENABLE) != 0u) {
-            raw_write_word(cpu, USB_IR, (uint16_t)(raw_word(cpu, USB_IR) | 0x0040u));
+            cpu->io.usb_host_attached = true;
+            raw_write_word(cpu, USB_IR,
+                           (uint16_t)(raw_word(cpu, USB_IR) | USB_ATTACH_INTERRUPT));
         }
         usb_refresh_interrupt(cpu);
         break;
     case DSPIC33_USB_BUS_DETACH:
-        raw_write_word(cpu, USB_OTGSTAT,
-                       (uint16_t)(raw_word(cpu, USB_OTGSTAT) & ~0x0009u));
+        cpu->io.usb_host_attached = false;
+        raw_write_word(
+            cpu, USB_OTGSTAT,
+            (uint16_t)(raw_word(cpu, USB_OTGSTAT) & ~USB_OTG_VOLTAGE_STATUS));
         raw_write_word(cpu, USB_OTGIR, (uint16_t)(raw_word(cpu, USB_OTGIR) | 0x0020u));
+        if ((raw_word(cpu, USB_CON) & USB_HOST_ENABLE) != 0u) {
+            raw_write_word(cpu, USB_IR,
+                           (uint16_t)(raw_word(cpu, USB_IR) | USB_DETACH_INTERRUPT));
+        }
         usb_refresh_interrupt(cpu);
         break;
     case DSPIC33_USB_BUS_ERROR:
@@ -5098,8 +5114,17 @@ static void update_usb_register(Dspic33* cpu, uint16_t address, uint16_t previou
     }
     if (address == USB_IR) {
         uint16_t cleared = requested & 0x00fdu;
-        raw_write_word(cpu, address,
-                       (uint16_t)(previous & ~(cleared & ~USB_TRANSACTION_INTERRUPT)));
+        uint16_t remaining =
+            (uint16_t)(previous & ~(cleared & ~USB_TRANSACTION_INTERRUPT));
+        if ((raw_word(cpu, USB_CON) & USB_HOST_ENABLE) != 0u) {
+            if ((previous & USB_ATTACH_INTERRUPT) != 0u && cpu->io.usb_host_attached) {
+                remaining |= USB_ATTACH_INTERRUPT;
+            }
+            if ((previous & USB_DETACH_INTERRUPT) != 0u && !cpu->io.usb_host_attached) {
+                remaining |= USB_DETACH_INTERRUPT;
+            }
+        }
+        raw_write_word(cpu, address, remaining);
         if ((cleared & USB_TRANSACTION_INTERRUPT) != 0u) {
             usb_pop_transaction_status(cpu);
         } else {
@@ -5114,10 +5139,19 @@ static void update_usb_register(Dspic33* cpu, uint16_t address, uint16_t previou
         return;
     }
     if (address == USB_CON) {
+        bool previous_host = (previous & USB_HOST_ENABLE) != 0u;
+        bool current_host = (current & USB_HOST_ENABLE) != 0u;
         if ((current & USB_PING_PONG_RESET) != 0u) {
             usb_reset_ping_pong(cpu);
         }
-        if ((previous & USB_HOST_ENABLE) != 0u && (current & USB_HOST_ENABLE) == 0u) {
+        if (previous_host != current_host) {
+            raw_write_word(cpu, USB_IR,
+                           (uint16_t)(raw_word(cpu, USB_IR) &
+                                      ~(USB_ATTACH_INTERRUPT | USB_DETACH_INTERRUPT)));
+            cpu->io.usb_host_attached = false;
+            usb_refresh_interrupt(cpu);
+        }
+        if (previous_host && !current_host) {
             cpu->io.usb_host_pending = false;
         }
         if ((current & (USB_HOST_ENABLE | USB_ENABLE)) ==
@@ -5237,6 +5271,9 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
     }
     if ((address & 0xfffeu) == 0x072eu) {
         return 0u;
+    }
+    if (address == USB_IR && (raw_word(cpu, USB_CON) & USB_HOST_ENABLE) == 0u) {
+        return (uint8_t)(value & ~USB_ATTACH_INTERRUPT);
     }
     if ((address & 0xfffeu) >= 0x0298u && (address & 0xfffeu) <= 0x029eu) {
         return 0u;

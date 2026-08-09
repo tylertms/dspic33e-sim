@@ -331,6 +331,7 @@ typedef struct {
     uint8_t usb_host_endpoint;
     Dspic33UsbHandshake usb_last_handshake;
     bool usb_host_pending;
+    bool usb_host_attached;
     uint8_t oscillator_unlock;
 } Dspic33Io;
 
