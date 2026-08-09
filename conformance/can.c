@@ -202,6 +202,22 @@ static void register_cases(CanConformance* state, Dspic33* cpu) {
     }
 }
 
+static void interrupt_flag_write_zero_cases(CanConformance* state, Dspic33* cpu) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint16_t address = (uint16_t)(bases[channel] + 0x0au);
+        uint32_t requested;
+        dspic33_reset(cpu, 0u);
+        for (requested = 0u; requested <= UINT16_MAX; requested++) {
+            write_memory_word(cpu, address, 0x00efu);
+            dspic33_write_word(cpu, address, (uint16_t)requested);
+            expect(state,
+                   dspic33_read_word(cpu, address) == (uint16_t)(0x00efu & requested),
+                   "interrupt flag write-zero clear domain");
+        }
+    }
+}
+
 static void standard_filter_domain(CanConformance* state, Dspic33* cpu) {
     uint16_t identifier;
     uint16_t expected = 0x5a0u;
@@ -679,6 +695,7 @@ int main(void) {
         return 2;
     }
     register_cases(&state, &cpu);
+    interrupt_flag_write_zero_cases(&state, &cpu);
     standard_filter_domain(&state, &cpu);
     extended_filter_cases(&state, &cpu);
     payload_and_remote_cases(&state, &cpu);

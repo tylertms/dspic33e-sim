@@ -4933,7 +4933,9 @@ static void update_can_register(Dspic33* cpu, uint16_t address, uint16_t previou
             return;
         }
         if (offset == 0x0au) {
-            raw_write_word(cpu, address, (uint16_t)(previous & ~(requested & 0x00efu)));
+            raw_write_word(
+                cpu, address,
+                (uint16_t)((previous & ~0x00efu) | (previous & requested & 0x00efu)));
             can_refresh_error_status(cpu, channel);
             can_update_vector(cpu, channel);
             return;
