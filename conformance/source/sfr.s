@@ -2,7 +2,7 @@
 .include "conformance.inc"
 
 .global _sfr_conformance_cases
-_sfr_conformance_cases = 188
+_sfr_conformance_cases = 189
 .global _sfr_conformance_group_complete
 _sfr_conformance_group_complete = 0
 
@@ -269,6 +269,7 @@ _run_sfr_conformance:
     sfr_write_case 0x0ea8, 0x004a
     sfr_write_case 0x0ea9, 0x004c
     sfr_write_case 0x0eaa, 0x004e
+    sfr_write_case 0x0efc, 0x0740
     sfr_write_case 0x0eab, 0x0050
     sfr_write_case 0x0eac, 0x0054
     sfr_write_case 0x0ead, 0x075a

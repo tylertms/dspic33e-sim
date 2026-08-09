@@ -93,12 +93,16 @@ _run_system_conformance:
     .pword 0xffffff
     record_case 0x0c05, w1, w1
 
+    mov #0x0003, w0
+    mov w0, RCON
     bset RCON, #4
     set_status 0x0000
     clrwdt
     mov RCON, w1
     record_case 0x0c06, w1, w1
 
+    mov #0x0003, w0
+    mov w0, RCON
     bset RCON, #4
     set_status 0x010f
     clrwdt

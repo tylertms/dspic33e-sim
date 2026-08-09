@@ -1996,8 +1996,6 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         return true;
     }
     if (opcode == 0xfe6000u) {
-        dspic33_write_word(cpu, 0x0740u,
-                           (uint16_t)(dspic33_read_word(cpu, 0x0740u) & ~0x0010u));
         return true;
     }
     if (opcode == 0x000000u || opcode == 0x00075au ||
