@@ -57,13 +57,22 @@ enum {
     OPCODE_MOV_BYTE_W15_PRE_DECREMENT_W3 = 0x7841cfu,
     OPCODE_MOV_DOUBLE_W14_W2 = 0xbe010eu,
     OPCODE_MOV_DOUBLE_W15_W2 = 0xbe011fu,
+    OPCODE_MOV_DOUBLE_W1_W2 = 0xbe0111u,
+    OPCODE_MOV_DOUBLE_W2_W1 = 0xbe8882u,
     OPCODE_MOV_W2_W1_POST_INCREMENT = 0x781882u,
     OPCODE_MOV_W1_POST_INCREMENT_W2 = 0x780131u,
+    OPCODE_MOV_W1_POST_DECREMENT_W2 = 0x780121u,
+    OPCODE_MOV_W1_PRE_DECREMENT_W2 = 0x780141u,
     OPCODE_MOV_W1_PRE_INCREMENT_W2 = 0x780151u,
+    OPCODE_MOV_W1_W0_OFFSET_W2 = 0x780161u,
     OPCODE_MOV_W2_W1_POST_DECREMENT = 0x781082u,
+    OPCODE_MOV_W2_W1_PRE_INCREMENT = 0x782882u,
     OPCODE_MOV_W2_W1_PRE_DECREMENT = 0x782082u,
     OPCODE_MOV_W1_MEMORY_W2_MEMORY = 0x780911u,
     OPCODE_MOV_BYTE_W1_POST_INCREMENT_W2 = 0x784131u,
+    OPCODE_MOV_BYTE_W1_POST_DECREMENT_W2 = 0x784121u,
+    OPCODE_MOV_BYTE_W1_PRE_DECREMENT_W2 = 0x784141u,
+    OPCODE_MOV_BYTE_W1_PRE_INCREMENT_W2 = 0x784151u,
     OPCODE_MOV_BYTE_W2_W1_POST_INCREMENT = 0x785882u,
     OPCODE_MOV_W1_W4_LITERAL_2 = 0x980211u,
     OPCODE_MOV_W4_LITERAL_2_W2 = 0x900114u,
@@ -71,6 +80,7 @@ enum {
     OPCODE_MOV_W2_0X9000 = 0x8c8002u,
     OPCODE_MOV_DOUBLE_W2_W1_POST_INCREMENT = 0xbe9882u,
     OPCODE_MOV_DOUBLE_W1_POST_INCREMENT_W2 = 0xbe0131u,
+    OPCODE_MOV_DOUBLE_W1_PRE_INCREMENT_W2 = 0xbe0151u,
     OPCODE_MOV_DOUBLE_W4_W6 = 0xbe0314u,
     OPCODE_MOV_W0_IFS0 = 0x884000u,
     OPCODE_MOV_IFS0_W2 = 0x804002u,
@@ -1318,6 +1328,279 @@ static void data_map_address_error_cases(ProcessorConformance* state, Dspic33* c
            "DMA raw access bypasses CPU data map trap");
     cpu->instruction_active = false;
     cpu->io.dma_transfer_active = false;
+}
+
+static void pseudo_linear_page_cases(ProcessorConformance* state, Dspic33* cpu) {
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_BYTE_W1_PRE_INCREMENT_W2);
+    expect(state, dspic33_load_program_word(cpu, 0x8000u, 0x00005au),
+           "load pre-increment PSV byte");
+    cpu->w[1] = 0xffffu;
+    cpu->w[2] = 0x1200u;
+    cpu->dsrpag = 0x0200u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "execute byte pre-increment page transition");
+    expect(state,
+           cpu->w[1] == 0x8000u && cpu->w[2] == 0x125au && cpu->dsrpag == 0x0201u,
+           "byte pre-increment reads the new PSV page");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_BYTE_W1_POST_INCREMENT_W2);
+    expect(state, dspic33_load_program_word(cpu, 0x7ffeu, 0x00a500u),
+           "load post-increment PSV byte");
+    cpu->w[1] = 0xffffu;
+    cpu->w[2] = 0x1200u;
+    cpu->dsrpag = 0x0200u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "execute byte post-increment page transition");
+    expect(state,
+           cpu->w[1] == 0x8000u && cpu->w[2] == 0x12a5u && cpu->dsrpag == 0x0201u,
+           "byte post-increment reads the original PSV page");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_BYTE_W1_PRE_DECREMENT_W2);
+    expect(state, dspic33_load_program_word(cpu, 0x7ffeu, 0x00a500u),
+           "load pre-decrement PSV byte");
+    cpu->w[1] = 0x8000u;
+    cpu->w[2] = 0x1200u;
+    cpu->dsrpag = 0x0201u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "execute byte pre-decrement page transition");
+    expect(state,
+           cpu->w[1] == 0xffffu && cpu->w[2] == 0x12a5u && cpu->dsrpag == 0x0200u,
+           "byte pre-decrement reads the new PSV page");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_BYTE_W1_POST_DECREMENT_W2);
+    expect(state, dspic33_load_program_word(cpu, 0x8000u, 0x00005au),
+           "load post-decrement PSV byte");
+    cpu->w[1] = 0x8000u;
+    cpu->w[2] = 0x1200u;
+    cpu->dsrpag = 0x0201u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "execute byte post-decrement page transition");
+    expect(state,
+           cpu->w[1] == 0xffffu && cpu->w[2] == 0x125au && cpu->dsrpag == 0x0200u,
+           "byte post-decrement reads the original PSV page");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_PRE_INCREMENT_W2);
+    expect(state, dspic33_load_program_word(cpu, 0x8000u, 0x005566u),
+           "load word pre-increment PSV value");
+    cpu->w[1] = 0xfffeu;
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x8000u &&
+               cpu->w[2] == 0x5566u && cpu->dsrpag == 0x0201u,
+           "word pre-increment reads after the page transition");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    expect(state, dspic33_load_program_word(cpu, 0x7ffeu, 0x002233u),
+           "load word post-increment PSV value");
+    cpu->w[1] = 0xfffeu;
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x8000u &&
+               cpu->w[2] == 0x2233u && cpu->dsrpag == 0x0201u,
+           "word post-increment reads before the page transition");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_PRE_INCREMENT_W2);
+    cpu->w[0] = 0x1111u;
+    cpu->w[1] = 0xfffeu;
+    cpu->dsrpag = 0x01ffu;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0u &&
+               cpu->w[2] == 0x1111u && cpu->dsrpag == 0x01ffu,
+           "last EDS read page overflows into base data space");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_PRE_INCREMENT_W2);
+    cpu->w[0] = 0x2222u;
+    cpu->w[1] = 0xfffeu;
+    cpu->dsrpag = 0x03ffu;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0u &&
+               cpu->w[2] == 0x2222u && cpu->dsrpag == 0x03ffu,
+           "last PSV read page overflows into base data space");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_PRE_INCREMENT_W2);
+    cpu->w[0] = 0x5555u;
+    cpu->w[1] = 0xfffeu;
+    cpu->dsrpag = 0u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0u &&
+               cpu->w[2] == 0x5555u && cpu->dsrpag == 0u && !cpu->address_error,
+           "page zero pre-increment wraps into base data space");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_PRE_DECREMENT_W2);
+    dspic33_write_word(cpu, 0x7ffeu, 0x3333u);
+    cpu->w[1] = 0x8000u;
+    cpu->dsrpag = 0x0001u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x7ffeu &&
+               cpu->w[2] == 0x3333u && cpu->dsrpag == 0x0001u,
+           "first EDS read page underflows into base data space");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_PRE_DECREMENT_W2);
+    dspic33_write_word(cpu, 0x7ffeu, 0x4444u);
+    cpu->w[1] = 0x8000u;
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x7ffeu &&
+               cpu->w[2] == 0x4444u && cpu->dsrpag == 0x0200u,
+           "first PSV read page underflows into base data space");
+
+    reset_processor_conformance(cpu, 0x0100u);
+    load_instruction(state, cpu, 0x0100u, OPCODE_MOV_W1_PRE_INCREMENT_W2);
+    expect(state, dspic33_load_program_word(cpu, 0u, 0x5a0000u),
+           "load high-byte PSV transition value");
+    cpu->w[1] = 0xfffeu;
+    cpu->dsrpag = 0x02ffu;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x8000u &&
+               cpu->w[2] == 0x005au && cpu->dsrpag == 0x0300u,
+           "PSV low-word page transitions into high-byte page");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_PRE_DECREMENT_W2);
+    cpu->w[1] = 0x8000u;
+    cpu->dsrpag = 0x0300u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0xfffeu &&
+               cpu->w[2] == 0u && cpu->dsrpag == 0x02ffu,
+           "PSV high-byte page underflows into low-word page");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W2_W1_PRE_INCREMENT);
+    cpu->w[1] = 0xfffeu;
+    cpu->w[2] = 0x6666u;
+    cpu->dswpag = 0x01ffu;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[0] == 0x6666u &&
+               cpu->w[1] == 0u && cpu->dswpag == 0x01ffu,
+           "last EDS write page overflows into base data space");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W2_W1_PRE_DECREMENT);
+    dspic33_write_word(cpu, 0x7ffeu, 0xaaaau);
+    cpu->w[1] = 0x8000u;
+    cpu->w[2] = 0x7777u;
+    cpu->dswpag = 0x0001u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x7ffeu &&
+               cpu->dswpag == 0x0001u && dspic33_read_word(cpu, 0x7ffeu) == 0x7777u,
+           "first EDS write page underflows into base data space");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    expect(state, dspic33_load_program_word(cpu, 0x7ffeu, 0x006666u),
+           "load modulo boundary PSV value");
+    dspic33_write_word(cpu, 0x0048u, 0xfff8u);
+    dspic33_write_word(cpu, 0x004au, 0xffffu);
+    dspic33_write_word(cpu, 0x0046u, 0x8001u);
+    cpu->w[1] = 0xfffeu;
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0xfff8u &&
+               cpu->w[2] == 0x6666u && cpu->dsrpag == 0x0200u,
+           "modulo wrap leaves the PSV page unchanged");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_W0_OFFSET_W2);
+    cpu->w[0] = 2u;
+    cpu->w[1] = 0xfffeu;
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0xfffeu &&
+               cpu->w[2] == 2u && cpu->dsrpag == 0x0200u,
+           "indexed wrap leaves the PSV page unchanged");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W2_W1_PRE_DECREMENT);
+    cpu->w[1] = 0x8000u;
+    cpu->w[2] = 0xa5a5u;
+    cpu->dswpag = 0x0002u;
+    expect_address_trap(state, cpu, "pre-decrement write page transition traps");
+    expect(state,
+           cpu->w[1] == 0xfffeu && cpu->w[2] == 0xa5a5u && cpu->dswpag == 0x0001u,
+           "write page transition completes pointer and DSWPAG before trap");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_DOUBLE_W1_PRE_INCREMENT_W2);
+    expect(state,
+           dspic33_load_program_word(cpu, 0x8000u, 0x005566u) &&
+               dspic33_load_program_word(cpu, 0x8002u, 0x007788u),
+           "load pre-increment MOV.D PSV values");
+    cpu->w[1] = 0xfffcu;
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x8000u &&
+               cpu->w[2] == 0x5566u && cpu->w[3] == 0x7788u && cpu->dsrpag == 0x0201u &&
+               !cpu->address_error,
+           "MOV.D pre-increment reads both words from the new page");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_DOUBLE_W1_POST_INCREMENT_W2);
+    expect(state,
+           dspic33_load_program_word(cpu, 0x7ffeu, 0x002233u) &&
+               dspic33_load_program_word(cpu, 0x8000u, 0x005566u),
+           "load post-increment MOV.D straddle values");
+    cpu->w[1] = 0xfffeu;
+    cpu->dsrpag = 0x0200u;
+    expect_address_trap(state, cpu, "MOV.D post-increment page straddle traps");
+    expect(state,
+           cpu->w[1] == 0x8002u && cpu->w[2] == 0x2233u && cpu->w[3] == 0u &&
+               cpu->dsrpag == 0x0201u,
+           "MOV.D straddle completes low word and page state before trap");
+
+    reset_processor_conformance(cpu, 0x0100u);
+    load_instruction(state, cpu, 0x0100u, OPCODE_MOV_DOUBLE_W1_W2);
+    dspic33_write_word(cpu, 0x7ffeu, 0x1111u);
+    expect(state, dspic33_load_program_word(cpu, 0u, 0x002222u),
+           "load split base and PSV MOV.D values");
+    cpu->w[1] = 0x7ffeu;
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x7ffeu &&
+               cpu->w[2] == 0x1111u && cpu->w[3] == 0x2222u && cpu->dsrpag == 0x0200u &&
+               !cpu->address_error,
+           "MOV.D independently maps the high word into the PSV window");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_DOUBLE_W2_W1);
+    dspic33_write_word(cpu, 0x7ffeu, 0xaaaau);
+    dspic33_write_word(cpu, 0x8000u, 0xbbbbu);
+    cpu->w[1] = 0x7ffeu;
+    cpu->w[2] = 0x1111u;
+    cpu->w[3] = 0x2222u;
+    cpu->dswpag = 0x0002u;
+    expect_address_trap(state, cpu, "split base and EDS MOV.D write traps");
+    expect(state,
+           cpu->w[1] == 0x7ffeu && cpu->dswpag == 0x0002u &&
+               dspic33_read_word(cpu, 0x7ffeu) == 0x1111u &&
+               dspic33_read_word(cpu, 0x8000u) == 0xbbbbu,
+           "MOV.D completes base low write and inhibits EDS high write");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_DOUBLE_W1_W2);
+    dspic33_write_word(cpu, 0x7ffeu, 0x1111u);
+    cpu->w[0] = 0xabcdu;
+    cpu->w[1] = 0x7ffeu;
+    cpu->dsrpag = 0u;
+    expect_address_trap(state, cpu, "MOV.D derived page-zero read traps");
+    expect(state,
+           cpu->w[1] == 0x7ffeu && cpu->w[2] == 0x1111u && cpu->w[3] == 0xabcdu &&
+               cpu->dsrpag == 0u,
+           "MOV.D page-zero high word completes through base alias");
 }
 
 static void page_zero_address_error_cases(ProcessorConformance* state, Dspic33* cpu) {
@@ -2921,6 +3204,7 @@ int main(void) {
         skip_boundary_cases(&state, &cpu);
         address_error_cases(&state, &cpu);
         data_map_address_error_cases(&state, &cpu);
+        pseudo_linear_page_cases(&state, &cpu);
         page_zero_address_error_cases(&state, &cpu);
         unimplemented_data_page_address_error_cases(&state, &cpu);
         w15_write_cases(&state, &cpu);

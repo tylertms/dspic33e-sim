@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 61
+_system_conformance_terminal_count = 63
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -132,6 +132,10 @@ _run_system_probe:
     bra z, _system_sfr_wait_move_probe
     cp w0, #61
     bra z, _system_sfr_wait_move_double_probe
+    cp w0, #62
+    bra z, _system_pseudo_linear_probe
+    cp w0, #63
+    bra z, _system_pseudo_linear_move_double_probe
     return
 
 .global _system_sleep_probe
@@ -274,6 +278,65 @@ _system_sfr_wait_move_double_probe:
 _system_sfr_wait_move_double_repeat:
     repeat #2
     nop
+    return
+
+.global _system_pseudo_linear_probe
+_system_pseudo_linear_probe:
+    mov #0x0200, w0
+    mov w0, DSRPAG
+    mov #0xffff, w1
+    mov #0x1200, w2
+    .pword 0x784151
+    mov w1, _system_pseudo_linear_state
+    mov w2, _system_pseudo_linear_state+2
+    mov DSRPAG, w0
+    mov w0, _system_pseudo_linear_state+4
+    mov #0x0200, w0
+    mov w0, DSRPAG
+    mov #0xffff, w1
+    mov #0x1200, w2
+    .pword 0x784131
+    mov w1, _system_pseudo_linear_state+6
+    mov w2, _system_pseudo_linear_state+8
+    mov DSRPAG, w0
+    mov w0, _system_pseudo_linear_state+10
+    mov #0x0201, w0
+    mov w0, DSRPAG
+    mov #0x8000, w1
+    mov #0x1200, w2
+    .pword 0x784141
+    mov w1, _system_pseudo_linear_state+12
+    mov w2, _system_pseudo_linear_state+14
+    mov DSRPAG, w0
+    mov w0, _system_pseudo_linear_state+16
+    mov #0x0201, w0
+    mov w0, DSRPAG
+    mov #0x8000, w1
+    mov #0x1200, w2
+    .pword 0x784121
+    mov w1, _system_pseudo_linear_state+18
+    mov w2, _system_pseudo_linear_state+20
+    mov DSRPAG, w0
+    mov w0, _system_pseudo_linear_state+22
+.global _system_pseudo_linear_complete
+_system_pseudo_linear_complete:
+    bra _system_pseudo_linear_complete
+
+.global _system_pseudo_linear_move_double_probe
+_system_pseudo_linear_move_double_probe:
+    mov #0x5000, w15
+    clr INTCON1
+    bset INTCON2, #15
+    mov #0x0200, w0
+    mov w0, DSRPAG
+    mov #0xfffe, w1
+    clr w2
+    clr w3
+    mov #0x4444, w4
+    mov #0x5555, w5
+.global _system_pseudo_linear_move_double
+_system_pseudo_linear_move_double:
+    .pword 0xbe0131
     return
 
 .global _system_sftac_probe

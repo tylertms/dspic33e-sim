@@ -330,11 +330,36 @@ typedef struct {
     uint32_t address;
     int32_t effective_address;
     uint16_t updated_register;
+    uint16_t access_register;
+    uint16_t access_data_page;
+    uint16_t updated_data_page;
     bool wrapped;
     bool updates_register;
-    bool increments_data_page;
+    bool paged_addressing_enabled;
+    bool updates_data_page;
     bool unimplemented_data_page;
 } OperandResolution;
+
+static bool pseudo_linear_addressing_enabled(const Dspic33* cpu, uint8_t mode,
+                                             uint8_t reg, bool bit_reversed) {
+    return mode >= 2u && mode <= 5u && reg < 14u && !bit_reversed &&
+           !modulo_addressing_enabled(cpu, reg, false);
+}
+
+static bool pseudo_linear_terminal_page(uint16_t page, bool increment, bool write) {
+    if (increment) {
+        return page == 0x01ffu || (!write && page == 0x03ffu);
+    }
+    return page == 0x0001u || (!write && page == 0x0200u);
+}
+
+static uint32_t mapped_data_address(uint16_t address, uint16_t page, bool write) {
+    if (!write && page >= 0x0200u) {
+        return PSV_ADDRESS | ((page & 0x0100u) != 0u ? PSV_HIGH_BYTE : 0u) |
+               ((uint32_t)(page & 0x00ffu) << 15u) | (address & 0x7fffu);
+    }
+    return ((uint32_t)page << 15u) | (address & 0x7fffu);
+}
 
 static bool resolve_operand_address(const Dspic33* cpu, const uint16_t* registers,
                                     uint8_t mode, uint8_t reg, uint8_t offset_reg,
@@ -344,6 +369,7 @@ static bool resolve_operand_address(const Dspic33* cpu, const uint16_t* register
     int32_t effective_address;
     int32_t adjusted_address = 0;
     bool bit_reversed = bit_reversed_addressing_enabled(cpu, mode, reg, width, write);
+    uint16_t data_page = write ? cpu->dswpag : cpu->dsrpag;
     memset(resolution, 0, sizeof(*resolution));
     if (mode == 0u) {
         return false;
@@ -361,12 +387,6 @@ static bool resolve_operand_address(const Dspic33* cpu, const uint16_t* register
             bit_reversed ? bit_reversed_address(cpu, registers[reg])
                          : modulo_address(cpu, reg, adjusted_address, delta, false);
         resolution->updates_register = true;
-        if (mode == 3u && reg < 14u && !bit_reversed &&
-            !modulo_addressing_enabled(cpu, reg, false) && registers[reg] >= 0x8000u &&
-            adjusted_address > UINT16_MAX && resolution->updated_register == 0u) {
-            resolution->updated_register = 0x8000u;
-            resolution->increments_data_page = true;
-        }
     } else if (mode == 4u || mode == 5u) {
         delta = mode == 5u ? width : -(int32_t)width;
         adjusted_address = (int32_t)registers[reg] + delta;
@@ -386,18 +406,65 @@ static bool resolve_operand_address(const Dspic33* cpu, const uint16_t* register
         resolution->address = modulo_address(cpu, reg, effective_address, delta, false);
     }
     resolution->effective_address = effective_address;
-    if (resolution->address >= 0x8000u &&
-        !((reg == 14u || reg == 15u) && (cpu->corcon & 0x0004u) != 0u)) {
-        uint16_t page = write ? cpu->dswpag : cpu->dsrpag;
-        resolution->unimplemented_data_page = page == 0u;
-        if (!write && page >= 0x0200u) {
-            resolution->address =
-                PSV_ADDRESS | ((page & 0x0100u) != 0u ? PSV_HIGH_BYTE : 0u) |
-                ((uint32_t)(page & 0x00ffu) << 15u) | (resolution->address & 0x7fffu);
-        } else {
-            resolution->address =
-                ((uint32_t)page << 15u) | (resolution->address & 0x7fffu);
+    resolution->access_register = (uint16_t)resolution->address;
+    resolution->access_data_page = data_page;
+    if (data_page != 0u && resolution->updates_register && registers[reg] >= 0x8000u &&
+        pseudo_linear_addressing_enabled(cpu, mode, reg, bit_reversed)) {
+        bool increment = mode == 3u || mode == 5u;
+        bool transition =
+            increment ? adjusted_address > UINT16_MAX : adjusted_address < 0x8000;
+        if (transition) {
+            uint16_t offset = (uint16_t)adjusted_address & 0x7fffu;
+            bool terminal = pseudo_linear_terminal_page(data_page, increment, write);
+            resolution->updated_register =
+                terminal ? offset : (uint16_t)(offset | 0x8000u);
+            resolution->updated_data_page =
+                terminal ? data_page
+                         : (uint16_t)(increment ? data_page + 1u : data_page - 1u);
+            resolution->updates_data_page = !terminal;
+            if (mode == 4u || mode == 5u) {
+                resolution->access_register = resolution->updated_register;
+                resolution->access_data_page = resolution->updated_data_page;
+            }
         }
+    }
+    resolution->address = resolution->access_register;
+    resolution->paged_addressing_enabled =
+        !((reg == 14u || reg == 15u) && (cpu->corcon & 0x0004u) != 0u);
+    if (resolution->access_register >= 0x8000u &&
+        resolution->paged_addressing_enabled) {
+        resolution->unimplemented_data_page = resolution->access_data_page == 0u;
+        resolution->address = mapped_data_address(resolution->access_register,
+                                                  resolution->access_data_page, write);
+    }
+    return true;
+}
+
+static bool operand_resolution(Dspic33* cpu, uint8_t mode, uint8_t reg,
+                               uint8_t offset_reg, uint8_t width, bool write,
+                               OperandResolution* resolution) {
+    bool uses_stack_pointer;
+    if (!address_register_initialized(cpu, reg) ||
+        !resolve_operand_address(cpu, cpu->w, mode, reg, offset_reg, width, write,
+                                 resolution)) {
+        return false;
+    }
+    uses_stack_pointer = reg == 15u || (mode >= 6u && offset_reg == 15u);
+    if (uses_stack_pointer) {
+        check_stack_address(cpu, resolution->effective_address, resolution->wrapped);
+    }
+    if (resolution->updates_data_page) {
+        if (write) {
+            cpu->dswpag = resolution->updated_data_page & 0x01ffu;
+        } else {
+            cpu->dsrpag = resolution->updated_data_page & 0x03ffu;
+        }
+    }
+    if (resolution->updates_register) {
+        write_working_register(cpu, reg, resolution->updated_register);
+    }
+    if (resolution->unimplemented_data_page) {
+        raise_data_page_error(cpu);
     }
     return true;
 }
@@ -405,30 +472,28 @@ static bool resolve_operand_address(const Dspic33* cpu, const uint16_t* register
 static bool operand_address(Dspic33* cpu, uint8_t mode, uint8_t reg, uint8_t offset_reg,
                             uint8_t width, bool write, uint32_t* address) {
     OperandResolution resolution;
-    bool uses_stack_pointer;
-    if (!address_register_initialized(cpu, reg) ||
-        !resolve_operand_address(cpu, cpu->w, mode, reg, offset_reg, width, write,
-                                 &resolution)) {
+    if (!operand_resolution(cpu, mode, reg, offset_reg, width, write, &resolution)) {
         return false;
     }
-    uses_stack_pointer = reg == 15u || (mode >= 6u && offset_reg == 15u);
-    if (uses_stack_pointer) {
-        check_stack_address(cpu, resolution.effective_address, resolution.wrapped);
-    }
-    if (resolution.increments_data_page) {
-        if (write) {
-            cpu->dswpag = (uint16_t)((cpu->dswpag + 1u) & 0x01ffu);
-        } else {
-            cpu->dsrpag = (uint16_t)((cpu->dsrpag + 1u) & 0x03ffu);
-        }
-    }
-    if (resolution.updates_register) {
-        write_working_register(cpu, reg, resolution.updated_register);
-    }
-    if (resolution.unimplemented_data_page) {
-        raise_data_page_error(cpu);
-    }
     *address = resolution.address;
+    return true;
+}
+
+static bool following_operand_address(Dspic33* cpu, const OperandResolution* resolution,
+                                      bool write, uint32_t* address) {
+    uint32_t next = (uint32_t)resolution->access_register + 2u;
+    if (next > UINT16_MAX) {
+        raise_data_page_error(cpu);
+        return false;
+    }
+    *address = (uint16_t)next;
+    if (resolution->paged_addressing_enabled && next >= 0x8000u) {
+        if (resolution->access_data_page == 0u) {
+            raise_data_page_error(cpu);
+        }
+        *address =
+            mapped_data_address((uint16_t)next, resolution->access_data_page, write);
+    }
     return true;
 }
 
@@ -649,6 +714,7 @@ static bool execute_move_double(Dspic33* cpu, uint32_t opcode) {
     uint16_t high;
     uint32_t address;
     uint32_t high_address;
+    OperandResolution resolution;
     uint16_t registers[16];
     memcpy(registers, cpu->w, sizeof(registers));
     if (!validate_operand_alignment(cpu, registers, source_mode, source_register, 0u,
@@ -662,13 +728,20 @@ static bool execute_move_double(Dspic33* cpu, uint32_t opcode) {
         low = cpu->w[source_register];
         high = cpu->w[source_register + 1u];
     } else {
-        if (!operand_address(cpu, source_mode, source_register, 0u, 4u, false,
-                             &address)) {
+        if (!operand_resolution(cpu, source_mode, source_register, 0u, 4u, false,
+                                &resolution)) {
             return false;
         }
-        high_address = source_register == 15u ? (uint16_t)(address + 2u) : address + 2u;
+        address = resolution.address;
         low = read_data_word(cpu, address);
-        high = read_data_word(cpu, high_address);
+        if (source_register == 15u) {
+            high_address = (uint16_t)(address + 2u);
+            high = read_data_word(cpu, high_address);
+        } else if (following_operand_address(cpu, &resolution, false, &high_address)) {
+            high = read_data_word(cpu, high_address);
+        } else {
+            high = 0u;
+        }
     }
     if (destination_mode == 0u) {
         destination_register &= 0x0eu;
@@ -676,14 +749,18 @@ static bool execute_move_double(Dspic33* cpu, uint32_t opcode) {
         write_working_register(cpu, (uint8_t)(destination_register + 1u), high);
         return true;
     }
-    if (!operand_address(cpu, destination_mode, destination_register, 0u, 4u, true,
-                         &address)) {
+    if (!operand_resolution(cpu, destination_mode, destination_register, 0u, 4u, true,
+                            &resolution)) {
         return false;
     }
-    high_address =
-        destination_register == 15u ? (uint16_t)(address + 2u) : address + 2u;
+    address = resolution.address;
     write_word(cpu, address, low);
-    write_word(cpu, high_address, high);
+    if (destination_register == 15u) {
+        high_address = (uint16_t)(address + 2u);
+        write_word(cpu, high_address, high);
+    } else if (following_operand_address(cpu, &resolution, true, &high_address)) {
+        write_word(cpu, high_address, high);
+    }
     return true;
 }
 
@@ -1069,7 +1146,7 @@ static bool execute_table(Dspic33* cpu, uint32_t opcode) {
         value = (uint16_t)word;
     }
     if (unimplemented_read) {
-        uint32_t destination_address;
+        uint32_t destination_address = 0u;
         if (destination_mode == 0u) {
             if (byte_mode) {
                 write_working_register_byte(cpu, destination_register, false,
@@ -1085,8 +1162,10 @@ static bool execute_table(Dspic33* cpu, uint32_t opcode) {
                 }
                 return true;
             }
-            operand_address(cpu, destination_mode, destination_register, 0u,
-                            byte_mode ? 1u : 2u, true, &destination_address);
+            if (!operand_address(cpu, destination_mode, destination_register, 0u,
+                                 byte_mode ? 1u : 2u, true, &destination_address)) {
+                return true;
+            }
             if (byte_mode) {
                 dspic33_write_byte(cpu, destination_address, (uint8_t)value);
             } else {
