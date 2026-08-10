@@ -210,6 +210,7 @@ typedef struct {
     uint16_t active_rs[DSPIC33_OUTPUT_COMPARE_COUNT];
     uint16_t generation[DSPIC33_OUTPUT_COMPARE_COUNT];
     uint16_t output_high;
+    uint64_t activation_cycle[DSPIC33_OUTPUT_COMPARE_COUNT];
 } Dspic33OutputCompare;
 
 typedef enum {

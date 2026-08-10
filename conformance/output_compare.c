@@ -19,6 +19,7 @@ enum {
     COMPARE_BASE = 0x0900u,
     COMPARE_STRIDE = 0x000au,
     COMPARE_FP_EDGE_PWM = 0x1c06u,
+    COMPARE_NO_SYNC = 0x0000u,
     COMPARE_SELF_SYNC = 0x001fu,
     COMPARE_VECTOR = 0x0240u
 };
@@ -61,8 +62,8 @@ static bool pin_is(const Dspic33* cpu, uint8_t pin, bool expected) {
     return dspic33_output_compare_pin(cpu, pin, &high) && high == expected;
 }
 
-static void configure_compare(Dspic33* cpu, uint8_t channel, uint16_t period,
-                              uint16_t duty) {
+static void configure_compare_source(Dspic33* cpu, uint8_t channel, uint16_t period,
+                                     uint16_t duty, uint16_t synchronization) {
     uint16_t base = compare_base(channel);
     dspic33_write_word(cpu, base, 0u);
     dspic33_write_word(cpu, (uint16_t)(base + 2u), 0u);
@@ -70,7 +71,12 @@ static void configure_compare(Dspic33* cpu, uint8_t channel, uint16_t period,
     dspic33_write_word(cpu, (uint16_t)(base + 6u), duty);
     clear_interrupt(cpu, channel);
     dspic33_write_word(cpu, base, COMPARE_FP_EDGE_PWM);
-    dspic33_write_word(cpu, (uint16_t)(base + 2u), COMPARE_SELF_SYNC);
+    dspic33_write_word(cpu, (uint16_t)(base + 2u), synchronization);
+}
+
+static void configure_compare(Dspic33* cpu, uint8_t channel, uint16_t period,
+                              uint16_t duty) {
+    configure_compare_source(cpu, channel, period, duty, COMPARE_SELF_SYNC);
 }
 
 static void configure_interrupt(Dspic33* cpu, uint8_t channel) {
@@ -217,6 +223,132 @@ static void buffering_cases(OutputCompareConformance* state, Dspic33* cpu) {
            "new period rolls over at new RS plus one");
 }
 
+static void free_running_cases(OutputCompareConformance* state, Dspic33* cpu) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_OUTPUT_COMPARE_COUNT; channel++) {
+        uint16_t base = compare_base(channel);
+        dspic33_reset(cpu, 0u);
+        configure_compare_source(cpu, channel, 4u, 2u, COMPARE_NO_SYNC);
+        expect(state,
+               output_is(cpu, channel, true) &&
+                   dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0u,
+               "free-running PWM starts at timer zero");
+        expect(state, dspic33_device_advance(cpu, 5u),
+               "advance free-running PWM beyond RS");
+        expect(state,
+               output_is(cpu, channel, false) &&
+                   dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 5u &&
+                   !interrupt_flag(cpu, channel),
+               "free-running PWM ignores RS after duty match");
+        expect(state, dspic33_device_advance(cpu, UINT16_MAX - 5u),
+               "advance free-running PWM to timer maximum");
+        expect(state,
+               output_is(cpu, channel, false) &&
+                   dspic33_read_word(cpu, (uint16_t)(base + 8u)) == UINT16_MAX &&
+                   !interrupt_flag(cpu, channel),
+               "free-running PWM holds low through timer maximum");
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "advance free-running PWM rollover");
+        expect(state,
+               output_is(cpu, channel, true) &&
+                   dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0u &&
+                   interrupt_flag(cpu, channel),
+               "free-running rollover starts a new PWM cycle");
+    }
+}
+
+static void instruction_transition_cases(OutputCompareConformance* state,
+                                         Dspic33* cpu) {
+    static const uint32_t program[] = {
+        0xef2900u, 0xef2902u, 0x200040u, 0x884820u, 0x200020u, 0x884830u,
+        0x21c060u, 0x884800u, 0x000000u, 0x2001f0u, 0x884810u, 0x000000u,
+        0x000000u, 0x200000u, 0x884810u, 0x000000u, 0x000000u, 0x000000u,
+    };
+    bool loaded = true;
+    bool ran = true;
+    size_t index;
+    dspic33_reset(cpu, 0u);
+    for (index = 0u; index < sizeof(program) / sizeof(program[0]); index++) {
+        loaded = loaded &&
+                 dspic33_load_program_word(cpu, (uint32_t)(index * 2u), program[index]);
+    }
+    expect(state, loaded, "load exact OC synchronization transition sequence");
+    for (index = 0u; index < 7u; index++) {
+        ran = ran && dspic33_step(cpu) == DSPIC33_RUNNING;
+    }
+    expect(state, ran, "execute OC synchronization setup sequence");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_read_word(cpu, 0x0908u) == 0u && output_is(cpu, 0u, true),
+           "OC enable takes effect after its instruction cycle");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_read_word(cpu, 0x0908u) == 1u && output_is(cpu, 0u, true),
+           "SYNCSEL zero advances on the next instruction");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_read_word(cpu, 0x0908u) == 2u && output_is(cpu, 0u, false),
+           "SYNCSEL literal instruction preserves free-running phase");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_read_word(cpu, 0x0902u) == COMPARE_SELF_SYNC &&
+               dspic33_read_word(cpu, 0x0908u) == 3u,
+           "zero to self synchronization preserves timer phase");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_read_word(cpu, 0x0908u) == 4u && !interrupt_flag(cpu, 0u),
+           "self synchronization waits through the RS timer value");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_read_word(cpu, 0x0908u) == 0u && output_is(cpu, 0u, true) &&
+               interrupt_flag(cpu, 0u),
+           "self synchronization resets on the next increment");
+    clear_interrupt(cpu, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_read_word(cpu, 0x0908u) == 1u,
+           "no-sync literal instruction advances self-running timer");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_read_word(cpu, 0x0902u) == COMPARE_NO_SYNC &&
+               dspic33_read_word(cpu, 0x0908u) == 2u && output_is(cpu, 0u, false),
+           "self to zero synchronization preserves timer phase");
+    ran = true;
+    for (index = 0u; index < 3u; index++) {
+        ran = ran && dspic33_step(cpu) == DSPIC33_RUNNING;
+    }
+    expect(state,
+           ran && dspic33_read_word(cpu, 0x0908u) == 5u && output_is(cpu, 0u, false) &&
+               !interrupt_flag(cpu, 0u),
+           "removed self synchronization advances beyond RS");
+}
+
+static void free_running_buffer_cases(OutputCompareConformance* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    configure_compare_source(cpu, 0u, 4u, 2u, COMPARE_NO_SYNC);
+    expect(state, dspic33_device_advance(cpu, 5u),
+           "advance before free-running buffered writes");
+    dspic33_write_word(cpu, 0x0904u, 6u);
+    dspic33_write_word(cpu, 0x0906u, 3u);
+    expect(state,
+           cpu->io.output_compare.active_rs[0] == 4u &&
+               cpu->io.output_compare.active_r[0] == 2u,
+           "free-running compare writes remain buffered");
+    expect(state, dspic33_device_advance(cpu, UINT16_MAX - 4u),
+           "advance free-running buffered rollover");
+    expect(state,
+           dspic33_read_word(cpu, 0x0908u) == 0u && output_is(cpu, 0u, true) &&
+               cpu->io.output_compare.active_rs[0] == 6u &&
+               cpu->io.output_compare.active_r[0] == 3u && interrupt_flag(cpu, 0u),
+           "free-running rollover loads both compare buffers");
+    clear_interrupt(cpu, 0u);
+    expect(state, dspic33_device_advance(cpu, 3u), "advance new free-running duty");
+    expect(state,
+           dspic33_read_word(cpu, 0x0908u) == 3u && output_is(cpu, 0u, false) &&
+               !interrupt_flag(cpu, 0u),
+           "new free-running duty controls the next cycle");
+}
+
 static void pps_case(OutputCompareConformance* state, Dspic33* cpu, uint8_t channel,
                      uint8_t pin, uint16_t address, uint8_t shift, uint8_t function) {
     uint16_t mapping = (uint16_t)(function << shift);
@@ -291,8 +423,8 @@ static void unsupported_cases(OutputCompareConformance* state, Dspic33* cpu) {
                      "non-FP clock is excluded");
     unsupported_case(state, cpu, 0x1c05u, COMPARE_SELF_SYNC,
                      "non-edge PWM mode is excluded");
-    unsupported_case(state, cpu, COMPARE_FP_EDGE_PWM, 0u,
-                     "non-self synchronization is excluded");
+    unsupported_case(state, cpu, COMPARE_FP_EDGE_PWM, 0x001cu,
+                     "reserved synchronization source is excluded");
     unsupported_case(state, cpu, COMPARE_FP_EDGE_PWM, 0x011fu,
                      "32-bit mode is excluded");
     unsupported_case(state, cpu, COMPARE_FP_EDGE_PWM, 0x009fu,
@@ -434,6 +566,9 @@ int main(void) {
         waveform_cases(&state, &cpu);
         boundary_cases(&state, &cpu);
         buffering_cases(&state, &cpu);
+        free_running_cases(&state, &cpu);
+        instruction_transition_cases(&state, &cpu);
+        free_running_buffer_cases(&state, &cpu);
         pps_cases(&state, &cpu);
         interrupt_cases(&state, &cpu);
         unsupported_cases(&state, &cpu);

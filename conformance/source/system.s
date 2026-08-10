@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 75
+_system_conformance_terminal_count = 76
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -160,6 +160,8 @@ _run_system_probe:
     bra z, _system_move_file_store_fault_probe
     cp w0, #75
     bra z, _system_crc_lane_probe
+    cp w0, #76
+    bra z, _system_output_compare_sync_probe
     return
 
 .global _system_sleep_probe
@@ -673,6 +675,23 @@ _system_crc_lane_probe:
 .global _system_crc_lane_complete
 _system_crc_lane_complete:
     bra _system_crc_lane_complete
+
+.global _system_output_compare_sync_probe
+_system_output_compare_sync_probe:
+    clr 0x0900
+    clr 0x0902
+    mov #4, w0
+    mov w0, 0x0904
+    mov #2, w0
+    mov w0, 0x0906
+    mov #0x1c06, w0
+    mov w0, 0x0900
+    nop
+    mov #0x001f, w0
+    mov w0, 0x0902
+.global _system_output_compare_sync_complete
+_system_output_compare_sync_complete:
+    bra _system_output_compare_sync_complete
 _system_move_file_load_fault_execute:
     set_status 0x010d
     mov #0xa5a5, w0
