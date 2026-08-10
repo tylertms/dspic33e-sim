@@ -198,6 +198,26 @@ enum {
     OUTPUT_COMPARE_EVENT_DUTY = 0u,
     OUTPUT_COMPARE_EVENT_PERIOD = 1u,
     OUTPUT_COMPARE_EVENT_GENERATION_SHIFT = 1u,
+    COMPARATOR_STATUS = 0x0a80u,
+    COMPARATOR_REFERENCE = 0x0a82u,
+    COMPARATOR_BASE = 0x0a84u,
+    COMPARATOR_STRIDE = 0x0008u,
+    COMPARATOR_CONTROL_WRITABLE = 0xe2d3u,
+    COMPARATOR_ENABLE = 0x8000u,
+    COMPARATOR_OUTPUT_ENABLE = 0x4000u,
+    COMPARATOR_POLARITY = 0x2000u,
+    COMPARATOR_EVENT = 0x0200u,
+    COMPARATOR_OUTPUT = 0x0100u,
+    COMPARATOR_EVENT_POLARITY_MASK = 0x00c0u,
+    COMPARATOR_REFERENCE_INTERNAL = 0x0010u,
+    COMPARATOR_CHANNEL_MASK = 0x0003u,
+    COMPARATOR_STOP_IDLE = 0x8000u,
+    COMPARATOR_FILTER_ENABLE = 0x0008u,
+    COMPARATOR_PMD_ADDRESS = 0x0764u,
+    COMPARATOR_PMD = 0x0400u,
+    COMPARATOR_IRQ = 18u,
+    COMPARATOR_PPS_FUNCTION = 0x18u,
+    COMPARATOR_EVENT_PMD_SOURCE = UINT16_MAX,
     UART_MODE_ENABLE = 0x8000u,
     UART_MODE_IREN = 0x1000u,
     UART_MODE_UEN_MASK = 0x0300u,
@@ -581,6 +601,40 @@ static bool output_compare_register_write_mask(uint16_t address, uint16_t* writa
     }
     if (offset == 8u) {
         *writable = 0u;
+        return true;
+    }
+    return false;
+}
+
+static bool comparator_register_write_mask(uint16_t address, uint16_t* writable) {
+    uint16_t offset;
+    if (address == COMPARATOR_STATUS) {
+        *writable = COMPARATOR_STOP_IDLE;
+        return true;
+    }
+    if (address == COMPARATOR_REFERENCE) {
+        *writable = 0x07ffu;
+        return true;
+    }
+    if (address < COMPARATOR_BASE ||
+        address >= COMPARATOR_BASE + DSPIC33_COMPARATOR_COUNT * COMPARATOR_STRIDE) {
+        return false;
+    }
+    offset = (uint16_t)((address - COMPARATOR_BASE) % COMPARATOR_STRIDE);
+    if (offset == 0u) {
+        *writable = COMPARATOR_CONTROL_WRITABLE;
+        return true;
+    }
+    if (offset == 2u) {
+        *writable = 0x0fffu;
+        return true;
+    }
+    if (offset == 4u) {
+        *writable = 0xbfffu;
+        return true;
+    }
+    if (offset == 6u) {
+        *writable = 0x007fu;
         return true;
     }
     return false;
@@ -1709,6 +1763,207 @@ static bool output_compare_pin_channel(const Dspic33* cpu, uint8_t pin,
                                           pps_outputs[index].shift) &
                                          0x003fu);
             return output_compare_function_channel(function, channel);
+        }
+    }
+    return false;
+}
+
+static uint16_t comparator_base(uint8_t comparator) {
+    return (uint16_t)(COMPARATOR_BASE + comparator * COMPARATOR_STRIDE);
+}
+
+static bool comparator_configuration_supported(const Dspic33* cpu, uint8_t comparator) {
+    uint16_t base = comparator_base(comparator);
+    uint16_t control = raw_word(cpu, base);
+    return (control & COMPARATOR_ENABLE) != 0u &&
+           (control & COMPARATOR_REFERENCE_INTERNAL) == 0u &&
+           (control & COMPARATOR_CHANNEL_MASK) != COMPARATOR_CHANNEL_MASK &&
+           raw_word(cpu, (uint16_t)(base + 4u)) == 0u &&
+           (raw_word(cpu, (uint16_t)(base + 6u)) & COMPARATOR_FILTER_ENABLE) == 0u;
+}
+
+static bool comparator_operating(const Dspic33* cpu, uint8_t comparator) {
+    if (cpu->io.comparator.pmd_disabled ||
+        !comparator_configuration_supported(cpu, comparator)) {
+        return false;
+    }
+    return cpu->power_state != DSPIC33_POWER_IDLE ||
+           (raw_word(cpu, COMPARATOR_STATUS) & COMPARATOR_STOP_IDLE) == 0u;
+}
+
+static void comparator_refresh_status(Dspic33* cpu) {
+    uint16_t status = raw_word(cpu, COMPARATOR_STATUS) & COMPARATOR_STOP_IDLE;
+    uint8_t comparator;
+    for (comparator = 0u; comparator < DSPIC33_COMPARATOR_COUNT; comparator++) {
+        uint16_t control = raw_word(cpu, comparator_base(comparator));
+        if ((control & COMPARATOR_EVENT) != 0u) {
+            status |= (uint16_t)(0x0100u << comparator);
+        }
+        if ((control & COMPARATOR_OUTPUT) != 0u) {
+            status |= (uint16_t)(1u << comparator);
+        }
+    }
+    raw_write_word(cpu, COMPARATOR_STATUS, status);
+}
+
+static void comparator_set_output(Dspic33* cpu, uint8_t comparator, bool high) {
+    uint16_t base = comparator_base(comparator);
+    uint16_t control = raw_word(cpu, base);
+    uint8_t bit = (uint8_t)(1u << comparator);
+    if (high) {
+        control |= COMPARATOR_OUTPUT;
+        cpu->io.comparator.output_high |= bit;
+    } else {
+        control &= (uint16_t)~COMPARATOR_OUTPUT;
+        cpu->io.comparator.output_high &= (uint8_t)~bit;
+    }
+    raw_write_word(cpu, base, control);
+    comparator_refresh_status(cpu);
+}
+
+static void comparator_raise_event(Dspic33* cpu, uint8_t comparator) {
+    uint16_t base = comparator_base(comparator);
+    raw_write_word(cpu, base, (uint16_t)(raw_word(cpu, base) | COMPARATOR_EVENT));
+    comparator_refresh_status(cpu);
+    dspic33_raise_interrupt(cpu, COMPARATOR_IRQ);
+}
+
+static bool comparator_transition_matches(uint16_t control, bool previous,
+                                          bool current) {
+    uint16_t polarity = control & COMPARATOR_EVENT_POLARITY_MASK;
+    bool rising = !previous && current;
+    bool falling = previous && !current;
+    if (polarity == COMPARATOR_EVENT_POLARITY_MASK) {
+        return rising || falling;
+    }
+    if (polarity == 0x0040u) {
+        return rising;
+    }
+    if (polarity == 0x0080u) {
+        return falling;
+    }
+    return false;
+}
+
+static void comparator_evaluate(Dspic33* cpu, uint8_t comparator) {
+    uint16_t base = comparator_base(comparator);
+    uint16_t control = raw_word(cpu, base);
+    uint8_t negative = (uint8_t)((control & COMPARATOR_CHANNEL_MASK) + 1u);
+    bool previous =
+        (cpu->io.comparator.last_read_cout & (uint8_t)(1u << comparator)) != 0u;
+    bool current;
+    if (!comparator_operating(cpu, comparator)) {
+        if (!comparator_configuration_supported(cpu, comparator) ||
+            cpu->io.comparator.pmd_disabled) {
+            comparator_set_output(cpu, comparator, false);
+        }
+        return;
+    }
+    current = cpu->io.comparator.input[comparator][DSPIC33_COMPARATOR_INPUT_POSITIVE] >
+              cpu->io.comparator.input[comparator][negative];
+    if ((control & COMPARATOR_POLARITY) != 0u) {
+        current = !current;
+    }
+    comparator_set_output(cpu, comparator, current);
+    if ((control & COMPARATOR_EVENT) == 0u &&
+        cpu->device_cycles >= cpu->io.comparator.rearm_cycle[comparator] &&
+        comparator_transition_matches(control, previous, current)) {
+        comparator_raise_event(cpu, comparator);
+    }
+}
+
+static void comparator_evaluate_all(Dspic33* cpu) {
+    uint8_t comparator;
+    for (comparator = 0u; comparator < DSPIC33_COMPARATOR_COUNT; comparator++) {
+        comparator_evaluate(cpu, comparator);
+    }
+}
+
+static void run_comparator(Dspic33* cpu, uint16_t source, uint32_t value) {
+    if (source == COMPARATOR_EVENT_PMD_SOURCE) {
+        uint16_t generation = (uint16_t)(value >> 1u);
+        if (generation != cpu->io.comparator.pmd_generation) {
+            return;
+        }
+        cpu->io.comparator.pmd_disabled = (value & 1u) != 0u;
+        comparator_evaluate_all(cpu);
+        return;
+    }
+    if (source < DSPIC33_COMPARATOR_COUNT * DSPIC33_COMPARATOR_INPUT_COUNT) {
+        uint8_t comparator = (uint8_t)(source / DSPIC33_COMPARATOR_INPUT_COUNT);
+        uint8_t input = (uint8_t)(source % DSPIC33_COMPARATOR_INPUT_COUNT);
+        cpu->io.comparator.input[comparator][input] = (uint16_t)value;
+        comparator_evaluate(cpu, comparator);
+    }
+}
+
+static void update_comparator_pmd(Dspic33* cpu, uint16_t previous) {
+    bool disabled = (raw_word(cpu, COMPARATOR_PMD_ADDRESS) & COMPARATOR_PMD) != 0u;
+    if (((previous & COMPARATOR_PMD) != 0u) == disabled) {
+        return;
+    }
+    cpu->io.comparator.pmd_generation++;
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_COMPARATOR, COMPARATOR_EVENT_PMD_SOURCE,
+                          ((uint32_t)cpu->io.comparator.pmd_generation << 1u) |
+                              (disabled ? 1u : 0u),
+                          1u)) {
+        raw_write_word(cpu, COMPARATOR_PMD_ADDRESS, previous);
+        cpu->io.comparator.pmd_generation++;
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    }
+}
+
+static void update_comparator_register(Dspic33* cpu, uint16_t address,
+                                       uint16_t previous, uint16_t requested) {
+    uint16_t offset;
+    uint8_t comparator;
+    if (address == COMPARATOR_PMD_ADDRESS) {
+        update_comparator_pmd(cpu, previous);
+        return;
+    }
+    if (!comparator_register_write_mask(address, &offset)) {
+        return;
+    }
+    if (cpu->io.comparator.pmd_disabled) {
+        raw_write_word(cpu, address, previous);
+        return;
+    }
+    if (address == COMPARATOR_STATUS) {
+        comparator_evaluate_all(cpu);
+        return;
+    }
+    if (address == COMPARATOR_REFERENCE) {
+        return;
+    }
+    comparator = (uint8_t)((address - COMPARATOR_BASE) / COMPARATOR_STRIDE);
+    offset = (uint16_t)((address - COMPARATOR_BASE) % COMPARATOR_STRIDE);
+    if (offset == 0u) {
+        bool previous_event = (previous & COMPARATOR_EVENT) != 0u;
+        bool requested_event = (requested & COMPARATOR_EVENT) != 0u;
+        if (!previous_event && requested_event) {
+            comparator_raise_event(cpu, comparator);
+        } else if (previous_event && !requested_event) {
+            cpu->io.comparator.rearm_cycle[comparator] = cpu->device_cycles + 1u;
+            comparator_refresh_status(cpu);
+        }
+    }
+    comparator_evaluate(cpu, comparator);
+}
+
+static bool comparator_pin_channel(const Dspic33* cpu, uint8_t pin,
+                                   uint8_t* comparator) {
+    size_t index;
+    for (index = 0u; index < sizeof(pps_outputs) / sizeof(pps_outputs[0]); index++) {
+        if (pps_outputs[index].pin == pin) {
+            uint8_t function = (uint8_t)((raw_word(cpu, pps_outputs[index].address) >>
+                                          pps_outputs[index].shift) &
+                                         0x003fu);
+            if (function >= COMPARATOR_PPS_FUNCTION &&
+                function < COMPARATOR_PPS_FUNCTION + DSPIC33_COMPARATOR_COUNT) {
+                *comparator = (uint8_t)(function - COMPARATOR_PPS_FUNCTION);
+                return true;
+            }
+            return false;
         }
     }
     return false;
@@ -5336,6 +5591,9 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
     case DSPIC33_EVENT_OUTPUT_COMPARE:
         run_output_compare(cpu, event->source, event->value);
         break;
+    case DSPIC33_EVENT_COMPARATOR:
+        run_comparator(cpu, event->source, event->value);
+        break;
     case DSPIC33_EVENT_NVM:
         complete_nvm_event(cpu);
         break;
@@ -5381,6 +5639,7 @@ static void advance_device_cycles(Dspic33* cpu, uint64_t cycles) {
     advance_pwm(cpu, cycles);
     advance_input_capture(cpu, cycles);
     advance_output_compare(cpu, cycles);
+    comparator_evaluate_all(cpu);
 }
 
 bool dspic33_device_advance(Dspic33* cpu, uint64_t cycles) {
@@ -6472,6 +6731,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     if (register_write_mask(base, &writable) ||
         input_capture_register_write_mask(base, &writable) ||
         output_compare_register_write_mask(base, &writable) ||
+        comparator_register_write_mask(base, &writable) ||
         adc_register_write_mask(base, &writable) ||
         pwm_register_write_mask(base, &writable) ||
         uart_register_write_mask(cpu, base, &writable) ||
@@ -6527,6 +6787,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     update_pmp_register(cpu, address, previous);
     update_input_capture_register(cpu, base, previous);
     update_output_compare_register(cpu, base, previous);
+    update_comparator_register(cpu, base, previous, requested);
     update_oscillator(cpu, base);
     update_uart_register(cpu, base, previous, requested);
     if (base == NVM_KEY && (cpu->io.cpu_write_width == 2u || address == NVM_KEY)) {
@@ -6563,6 +6824,17 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
     }
     if ((address & 0xfffeu) >= 0x0298u && (address & 0xfffeu) <= 0x029eu) {
         return 0u;
+    }
+    if (!cpu->io.comparator.pmd_disabled && address >= COMPARATOR_BASE + 1u &&
+        address < COMPARATOR_BASE + DSPIC33_COMPARATOR_COUNT * COMPARATOR_STRIDE &&
+        ((address - COMPARATOR_BASE) % COMPARATOR_STRIDE) == 1u) {
+        uint8_t comparator = (uint8_t)((address - COMPARATOR_BASE) / COMPARATOR_STRIDE);
+        uint8_t bit = (uint8_t)(1u << comparator);
+        if ((value & 1u) != 0u) {
+            cpu->io.comparator.last_read_cout |= bit;
+        } else {
+            cpu->io.comparator.last_read_cout &= (uint8_t)~bit;
+        }
     }
     if (address >= INPUT_CAPTURE_BASE &&
         address <
@@ -6753,6 +7025,37 @@ bool dspic33_output_compare_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
         return false;
     }
     return dspic33_output_compare_output(cpu, channel, high);
+}
+
+bool dspic33_comparator_input(Dspic33* cpu, uint8_t comparator,
+                              Dspic33ComparatorInput input, uint16_t level,
+                              uint64_t delay) {
+    uint16_t source;
+    if (comparator >= DSPIC33_COMPARATOR_COUNT ||
+        input >= DSPIC33_COMPARATOR_INPUT_COUNT) {
+        return false;
+    }
+    source = (uint16_t)(comparator * DSPIC33_COMPARATOR_INPUT_COUNT + input);
+    return dspic33_schedule(cpu, DSPIC33_EVENT_COMPARATOR, source, level, delay);
+}
+
+bool dspic33_comparator_output(const Dspic33* cpu, uint8_t comparator, bool* high) {
+    if (comparator >= DSPIC33_COMPARATOR_COUNT || high == NULL ||
+        cpu->io.comparator.pmd_disabled ||
+        !comparator_configuration_supported(cpu, comparator)) {
+        return false;
+    }
+    *high = (cpu->io.comparator.output_high & (uint8_t)(1u << comparator)) != 0u;
+    return true;
+}
+
+bool dspic33_comparator_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
+    uint8_t comparator;
+    if (high == NULL || !comparator_pin_channel(cpu, pin, &comparator) ||
+        (raw_word(cpu, comparator_base(comparator)) & COMPARATOR_OUTPUT_ENABLE) == 0u) {
+        return false;
+    }
+    return dspic33_comparator_output(cpu, comparator, high);
 }
 
 bool dspic33_timer_pulse(Dspic33* cpu, uint8_t timer, uint32_t pulses, uint64_t delay) {

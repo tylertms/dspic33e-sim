@@ -2797,6 +2797,7 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, bool illegal) {
         preserved_values[sizeof(preserved_addresses) / sizeof(preserved_addresses[0])];
     uint16_t adc[DSPIC33_ADC_CHANNEL_COUNT];
     uint16_t gpio[DSPIC33_GPIO_PORT_COUNT];
+    uint16_t comparator_input[DSPIC33_COMPARATOR_COUNT][DSPIC33_COMPARATOR_INPUT_COUNT];
     uint64_t instructions = cpu->instructions;
     uint64_t cycles = cpu->cycles;
     uint64_t device_cycles = cpu->device_cycles;
@@ -2826,6 +2827,7 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, bool illegal) {
     }
     memcpy(adc, cpu->io.adc, sizeof(adc));
     memcpy(gpio, cpu->io.gpio, sizeof(gpio));
+    memcpy(comparator_input, cpu->io.comparator.input, sizeof(comparator_input));
     reset_processor(cpu, 0u, false);
     for (index = 0u;
          index < sizeof(preserved_addresses) / sizeof(preserved_addresses[0]);
@@ -2836,6 +2838,7 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, bool illegal) {
     }
     memcpy(cpu->io.adc, adc, sizeof(adc));
     memcpy(cpu->io.gpio, gpio, sizeof(gpio));
+    memcpy(cpu->io.comparator.input, comparator_input, sizeof(comparator_input));
     cpu->io.uart_cts = uart_cts;
     cpu->io.spi_selected = spi_selected;
     cpu->io.timer_gate = timer_gate;

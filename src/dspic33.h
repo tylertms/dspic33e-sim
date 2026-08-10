@@ -44,6 +44,8 @@
 #define DSPIC33_INPUT_CAPTURE_COUNT 16u
 #define DSPIC33_INPUT_CAPTURE_FIFO_SIZE 4u
 #define DSPIC33_OUTPUT_COMPARE_COUNT 16u
+#define DSPIC33_COMPARATOR_COUNT 3u
+#define DSPIC33_COMPARATOR_INPUT_COUNT 4u
 
 typedef enum {
     DSPIC33_EVENT_INTERRUPT,
@@ -66,6 +68,7 @@ typedef enum {
     DSPIC33_EVENT_PMP,
     DSPIC33_EVENT_INPUT_CAPTURE,
     DSPIC33_EVENT_OUTPUT_COMPARE,
+    DSPIC33_EVENT_COMPARATOR,
     DSPIC33_EVENT_AUX_PLL
 } Dspic33EventType;
 
@@ -191,6 +194,22 @@ typedef struct {
     uint16_t generation[DSPIC33_OUTPUT_COMPARE_COUNT];
     uint16_t output_high;
 } Dspic33OutputCompare;
+
+typedef enum {
+    DSPIC33_COMPARATOR_INPUT_POSITIVE,
+    DSPIC33_COMPARATOR_INPUT_NEGATIVE_2,
+    DSPIC33_COMPARATOR_INPUT_NEGATIVE_1,
+    DSPIC33_COMPARATOR_INPUT_NEGATIVE_3
+} Dspic33ComparatorInput;
+
+typedef struct {
+    uint16_t input[DSPIC33_COMPARATOR_COUNT][DSPIC33_COMPARATOR_INPUT_COUNT];
+    uint64_t rearm_cycle[DSPIC33_COMPARATOR_COUNT];
+    uint16_t pmd_generation;
+    uint8_t output_high;
+    uint8_t last_read_cout;
+    bool pmd_disabled;
+} Dspic33Comparator;
 
 typedef enum {
     DSPIC33_I2C_START,
@@ -399,6 +418,7 @@ typedef struct {
     Dspic33Pmp pmp;
     Dspic33InputCapture input_capture;
     Dspic33OutputCompare output_compare;
+    Dspic33Comparator comparator;
     Dspic33UsbPending usb_pending[DSPIC33_USB_PENDING_COUNT];
     Dspic33UsbQueue usb_tx;
     uint8_t usb_next_bank[DSPIC33_USB_ENDPOINT_COUNT][2];
@@ -569,6 +589,11 @@ bool dspic33_input_capture_input(Dspic33* cpu, uint8_t channel, bool high,
 bool dspic33_input_capture_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t delay);
 bool dspic33_output_compare_output(const Dspic33* cpu, uint8_t channel, bool* high);
 bool dspic33_output_compare_pin(const Dspic33* cpu, uint8_t pin, bool* high);
+bool dspic33_comparator_input(Dspic33* cpu, uint8_t comparator,
+                              Dspic33ComparatorInput input, uint16_t level,
+                              uint64_t delay);
+bool dspic33_comparator_output(const Dspic33* cpu, uint8_t comparator, bool* high);
+bool dspic33_comparator_pin(const Dspic33* cpu, uint8_t pin, bool* high);
 bool dspic33_timer_pulse(Dspic33* cpu, uint8_t timer, uint32_t pulses, uint64_t delay);
 bool dspic33_timer_gate(Dspic33* cpu, uint8_t timer, bool high, uint64_t delay);
 bool dspic33_adc_trigger(Dspic33* cpu, uint8_t module, uint8_t source, uint64_t delay);
