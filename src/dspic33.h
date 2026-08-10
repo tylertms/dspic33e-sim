@@ -175,8 +175,21 @@ typedef struct {
 } Dspic33PmpQueue;
 
 typedef struct {
+    uint64_t cycle;
+    uint16_t value;
+} Dspic33PmpResponse;
+
+typedef struct {
+    Dspic33PmpResponse responses[DSPIC33_PMP_QUEUE_SIZE];
+    uint16_t head;
+    uint16_t count;
+} Dspic33PmpResponseQueue;
+
+typedef struct {
     Dspic33PmpQueue output;
+    Dspic33PmpResponseQueue input;
     Dspic33PmpTransfer completing;
+    Dspic33PmpTransfer last_read;
     uint16_t address;
     uint16_t control;
     uint16_t mode;
@@ -186,6 +199,9 @@ typedef struct {
     uint8_t width;
     bool active;
     bool completing_active;
+    bool reading;
+    bool completing_reading;
+    bool last_read_valid;
 } Dspic33Pmp;
 
 typedef struct {
@@ -725,6 +741,7 @@ bool dspic33_i2c_collision(Dspic33* cpu, uint8_t channel, uint64_t delay);
 bool dspic33_i2c_transmit(Dspic33* cpu, uint8_t channel, Dspic33I2cTransfer* transfer);
 bool dspic33_dma_request(Dspic33* cpu, uint8_t request, uint16_t indirect_address,
                          uint64_t delay);
+bool dspic33_pmp_respond(Dspic33* cpu, uint16_t value, uint64_t delay);
 bool dspic33_pmp_transmit(Dspic33* cpu, Dspic33PmpTransfer* transfer);
 bool dspic33_input_capture_input(Dspic33* cpu, uint8_t channel, bool high,
                                  uint64_t delay);

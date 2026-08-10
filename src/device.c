@@ -1421,7 +1421,7 @@ static uint64_t pmp_transfer_cycles(uint16_t control, uint16_t mode) {
                (beginning + 1u + middle + (mode & PMP_WAIT_END_MASK) + 1u);
 }
 
-static bool pmp_master_write_enabled(const Dspic33* cpu) {
+static bool pmp_master_enabled(const Dspic33* cpu) {
     uint16_t control = raw_word(cpu, PMP_CONTROL);
     uint16_t mode = raw_word(cpu, PMP_MODE);
     uint16_t master = mode & PMP_MASTER_MODE_MASK;
@@ -1463,6 +1463,8 @@ static void pmp_abort(Dspic33* cpu) {
     cpu->io.pmp.generation++;
     cpu->io.pmp.active = false;
     cpu->io.pmp.completing_active = false;
+    cpu->io.pmp.reading = false;
+    cpu->io.pmp.completing_reading = false;
     raw_write_word(cpu, PMP_MODE, (uint16_t)(raw_word(cpu, PMP_MODE) & ~PMP_BUSY));
 }
 
@@ -1488,15 +1490,56 @@ static bool pmp_output_pop(Dspic33PmpQueue* queue, Dspic33PmpTransfer* transfer)
     return true;
 }
 
-static void pmp_start_write(Dspic33* cpu) {
+static bool pmp_response_push(Dspic33PmpResponseQueue* queue,
+                              const Dspic33PmpResponse* response) {
+    uint16_t index;
+    uint16_t logical;
+    if (queue->count == DSPIC33_PMP_QUEUE_SIZE) {
+        return false;
+    }
+    index = (uint16_t)((queue->head + queue->count) % DSPIC33_PMP_QUEUE_SIZE);
+    queue->responses[index] = *response;
+    queue->count++;
+    logical = (uint16_t)(queue->count - 1u);
+    while (logical != 0u) {
+        uint16_t current = (uint16_t)((queue->head + logical) % DSPIC33_PMP_QUEUE_SIZE);
+        uint16_t prior =
+            (uint16_t)((queue->head + logical - 1u) % DSPIC33_PMP_QUEUE_SIZE);
+        Dspic33PmpResponse temporary;
+        if (queue->responses[prior].cycle <= queue->responses[current].cycle) {
+            break;
+        }
+        temporary = queue->responses[prior];
+        queue->responses[prior] = queue->responses[current];
+        queue->responses[current] = temporary;
+        logical--;
+    }
+    return true;
+}
+
+static bool pmp_response_pop(Dspic33PmpResponseQueue* queue, uint64_t cycle,
+                             Dspic33PmpResponse* response) {
+    if (queue->count == 0u || queue->responses[queue->head].cycle > cycle) {
+        return false;
+    }
+    *response = queue->responses[queue->head];
+    queue->head = (uint16_t)((queue->head + 1u) % DSPIC33_PMP_QUEUE_SIZE);
+    queue->count--;
+    return true;
+}
+
+static void pmp_start_transfer(Dspic33* cpu, bool reading) {
     uint64_t delay;
     cpu->io.pmp.generation++;
     cpu->io.pmp.address = raw_word(cpu, PMP_ADDRESS);
     cpu->io.pmp.control = raw_word(cpu, PMP_CONTROL);
     cpu->io.pmp.mode = (uint16_t)(raw_word(cpu, PMP_MODE) & ~PMP_BUSY);
     cpu->io.pmp.width = pmp_transfer_width(cpu->io.pmp.mode);
-    cpu->io.pmp.value = (uint16_t)(raw_word(cpu, PMP_DATA) &
-                                   (cpu->io.pmp.width == 2u ? 0xffffu : 0x00ffu));
+    cpu->io.pmp.value = reading
+                            ? 0u
+                            : (uint16_t)(raw_word(cpu, PMP_DATA) &
+                                         (cpu->io.pmp.width == 2u ? 0xffffu : 0x00ffu));
+    cpu->io.pmp.reading = reading;
     cpu->io.pmp.active = true;
     delay = pmp_transfer_cycles(cpu->io.pmp.control, cpu->io.pmp.mode);
     if (delay > 1u) {
@@ -1521,34 +1564,57 @@ static void pmp_clear_busy(Dspic33* cpu, uint16_t generation) {
     cpu->io.pmp.completing.value = cpu->io.pmp.value;
     cpu->io.pmp.completing.width = cpu->io.pmp.width;
     cpu->io.pmp.completing_generation = generation;
+    cpu->io.pmp.completing_reading = cpu->io.pmp.reading;
     cpu->io.pmp.completing_active = true;
     cpu->io.pmp.active = false;
+    cpu->io.pmp.reading = false;
     pmp_update_address(cpu, cpu->io.pmp.control, cpu->io.pmp.mode);
     raw_write_word(cpu, PMP_MODE, (uint16_t)(raw_word(cpu, PMP_MODE) & ~PMP_BUSY));
 }
 
 static void run_pmp(Dspic33* cpu, uint16_t generation) {
+    Dspic33PmpResponse response;
     Dspic33PmpTransfer transfer;
+    bool reading;
     if (cpu->io.pmp.completing_active &&
         generation == cpu->io.pmp.completing_generation) {
         transfer = cpu->io.pmp.completing;
+        reading = cpu->io.pmp.completing_reading;
         cpu->io.pmp.completing_active = false;
+        cpu->io.pmp.completing_reading = false;
     } else if (cpu->io.pmp.active && generation == cpu->io.pmp.generation) {
         transfer.address = cpu->io.pmp.address;
         transfer.control = cpu->io.pmp.control;
         transfer.mode = cpu->io.pmp.mode;
         transfer.value = cpu->io.pmp.value;
         transfer.width = cpu->io.pmp.width;
+        reading = cpu->io.pmp.reading;
         cpu->io.pmp.active = false;
+        cpu->io.pmp.reading = false;
         pmp_update_address(cpu, cpu->io.pmp.control, cpu->io.pmp.mode);
         raw_write_word(cpu, PMP_MODE, (uint16_t)(raw_word(cpu, PMP_MODE) & ~PMP_BUSY));
     } else {
         return;
     }
     transfer.cycle = cpu->device_cycles;
-    if (!pmp_output_push(&cpu->io.pmp.output, &transfer)) {
-        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
-        return;
+    if (reading) {
+        transfer.value = 0u;
+        if (pmp_response_pop(&cpu->io.pmp.input, cpu->device_cycles, &response)) {
+            transfer.value = response.value;
+        }
+        transfer.value &= transfer.width == 2u ? 0xffffu : 0x00ffu;
+        raw_write_word(
+            cpu, PMP_DATA,
+            transfer.width == 2u
+                ? transfer.value
+                : (uint16_t)((raw_word(cpu, PMP_DATA) & 0xff00u) | transfer.value));
+        cpu->io.pmp.last_read = transfer;
+        cpu->io.pmp.last_read_valid = true;
+    } else {
+        if (!pmp_output_push(&cpu->io.pmp.output, &transfer)) {
+            cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+            return;
+        }
     }
     if ((transfer.mode & PMP_INTERRUPT_MODE_MASK) == PMP_INTERRUPT_EACH) {
         dspic33_raise_interrupt(cpu, PMP_IRQ);
@@ -1562,6 +1628,12 @@ static bool pmp_initiating_write(const Dspic33* cpu, uint16_t address) {
     return address == PMP_DATA ||
            (address == PMP_DATA + 1u && cpu->io.cpu_write_valid &&
             cpu->io.cpu_write_width == 2u && cpu->io.cpu_write_address == PMP_DATA);
+}
+
+static void pmp_read_register(Dspic33* cpu, uint16_t address) {
+    if (address == PMP_DATA && !cpu->io.pmp.active && pmp_master_enabled(cpu)) {
+        pmp_start_transfer(cpu, true);
+    }
 }
 
 static void update_pmp_register(Dspic33* cpu, uint16_t address, uint16_t previous) {
@@ -1584,8 +1656,8 @@ static void update_pmp_register(Dspic33* cpu, uint16_t address, uint16_t previou
         raw_write_word(cpu, PMP_DATA, previous);
         return;
     }
-    if (pmp_master_write_enabled(cpu)) {
-        pmp_start_write(cpu);
+    if (pmp_master_enabled(cpu)) {
+        pmp_start_transfer(cpu, false);
     }
 }
 
@@ -9589,6 +9661,7 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
     if (cpu->io.crc.pmd_disabled && base >= CRC_CONTROL && base <= CRC_SHIFT_HIGH) {
         return 0u;
     }
+    pmp_read_register(cpu, address);
     if (dspic33_i2c_read_register(cpu, address, &value)) {
         return value;
     }
@@ -9782,6 +9855,16 @@ bool dspic33_dma_request(Dspic33* cpu, uint8_t request, uint16_t indirect_addres
 
 bool dspic33_pmp_transmit(Dspic33* cpu, Dspic33PmpTransfer* transfer) {
     return transfer != NULL && pmp_output_pop(&cpu->io.pmp.output, transfer);
+}
+
+bool dspic33_pmp_respond(Dspic33* cpu, uint16_t value, uint64_t delay) {
+    Dspic33PmpResponse response;
+    if (delay > UINT64_MAX - cpu->device_cycles) {
+        return false;
+    }
+    response.cycle = cpu->device_cycles + delay;
+    response.value = value;
+    return pmp_response_push(&cpu->io.pmp.input, &response);
 }
 
 bool dspic33_input_capture_input(Dspic33* cpu, uint8_t channel, bool high,
