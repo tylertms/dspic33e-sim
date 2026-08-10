@@ -144,6 +144,19 @@ enum {
     OPCODE_MOV_W1_W2 = 0x780111u,
     OPCODE_MOV_W15_W2 = 0x78011fu,
     OPCODE_MOV_W2_W1 = 0x780882u,
+    OPCODE_MOV_LITERAL_0X1000_W2 = 0x210002u,
+    OPCODE_MOV_LITERAL_0X1000_W8 = 0x210008u,
+    OPCODE_MOV_LITERAL_0X8100_W2 = 0x281002u,
+    OPCODE_MOV_LITERAL_2_W4 = 0x200024u,
+    OPCODE_MOV_W2_W3 = 0x780182u,
+    OPCODE_MOV_W2_W2 = 0x780102u,
+    OPCODE_MOV_W2_INDIRECT_W3 = 0x780192u,
+    OPCODE_MOV_W2_INDIRECT_W4 = 0x780212u,
+    OPCODE_MOV_W2_POST_INCREMENT_W3 = 0x7801b2u,
+    OPCODE_MOV_W3_W2_INDIRECT = 0x780903u,
+    OPCODE_MOV_W3_W2_POST_INCREMENT = 0x781903u,
+    OPCODE_MOV_W2_W4_OFFSET_W3 = 0x7a01e2u,
+    OPCODE_RETLW_0X10_W2 = 0x050102u,
     OPCODE_MOV_BYTE_LITERAL_W1 = 0xb3c001u,
     OPCODE_MOVPAG_TBL_LITERAL = 0xfec8a5u,
     OPCODE_MOVPAG_INVALID_LITERAL = 0xfecc00u,
@@ -196,6 +209,15 @@ static void load_instruction(ProcessorConformance* state, Dspic33* cpu,
                              uint32_t address, uint32_t opcode) {
     expect(state, dspic33_load_program_word(cpu, address, opcode),
            "load processor instruction");
+}
+
+static void expect_step_cycles(ProcessorConformance* state, Dspic33* cpu,
+                               uint64_t expected_cycles, const char* name) {
+    uint64_t before = cpu->cycles;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               cpu->cycles - before == expected_cycles,
+           name);
 }
 
 static void reset_processor_conformance(Dspic33* cpu, uint32_t entry) {
@@ -449,7 +471,7 @@ static void program_target_address_error_cases(ProcessorConformance* state,
                cpu->cycles == 4u && cpu->sequential_program_hole_pc == 0u,
            "boundary CALL prepares explicit return to program hole");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 9u &&
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 10u &&
                cpu->last_trap == 1u && cpu->last_trap_return == 0x102u &&
                cpu->call_depth == 0u && cpu->w[15] == 0x5004u &&
                cpu->sequential_program_hole_pc == 0u,
@@ -3214,6 +3236,216 @@ static void psv_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
     expect(state, !cpu->psv_read, "reset clears PSV timing state");
 }
 
+static void address_register_dependency_cases(ProcessorConformance* state,
+                                              Dspic33* cpu) {
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_LITERAL_0X1000_W2);
+    load_instruction(state, cpu, 2u, OPCODE_MOV_W2_INDIRECT_W3);
+    load_instruction(state, cpu, 4u, OPCODE_MOV_W2_W3);
+    dspic33_write_word(cpu, 0x1000u, 0x4567u);
+    expect_step_cycles(state, cpu, 1u, "direct pointer write uses one cycle");
+    expect_step_cycles(state, cpu, 2u, "direct write to indirect source stalls");
+    expect(state, cpu->w[3] == 0x4567u, "dependency stall preserves source value");
+    expect_step_cycles(state, cpu, 1u, "direct source does not calculate an address");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W2_W2);
+    load_instruction(state, cpu, 2u, OPCODE_MOV_W2_INDIRECT_W3);
+    dspic33_set_working_register(cpu, 2u, 0x1000u);
+    dspic33_write_word(cpu, 0x1000u, 0x1234u);
+    expect_step_cycles(state, cpu, 1u, "same-value direct write uses one cycle");
+    expect_step_cycles(state, cpu, 2u,
+                       "same-value direct write still creates dependency");
+    expect(state, cpu->w[3] == 0x1234u, "same-value dependency preserves source value");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_LITERAL_0X1000_W2);
+    load_instruction(state, cpu, 2u, OPCODE_NOP);
+    load_instruction(state, cpu, 4u, OPCODE_MOV_W2_INDIRECT_W3);
+    dspic33_write_word(cpu, 0x1000u, 0x2345u);
+    expect_step_cycles(state, cpu, 1u,
+                       "intervening-control pointer setup uses one cycle");
+    expect_step_cycles(state, cpu, 1u,
+                       "intervening instruction consumes dependency window");
+    expect_step_cycles(state, cpu, 1u,
+                       "source after intervening instruction does not stall");
+    expect(state, cpu->w[3] == 0x2345u, "intervening instruction control reads value");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W3_W2_INDIRECT);
+    load_instruction(state, cpu, 2u, OPCODE_MOV_W2_INDIRECT_W4);
+    dspic33_set_working_register(cpu, 2u, 0x1000u);
+    dspic33_set_working_register(cpu, 3u, 0xa55au);
+    expect_step_cycles(state, cpu, 1u, "indirect destination preserves pointer timing");
+    expect_step_cycles(state, cpu, 1u,
+                       "unmodified indirect destination does not create dependency");
+    expect(state, cpu->w[4] == 0xa55au, "unmodified pointer reads stored value");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W3_W2_POST_INCREMENT);
+    load_instruction(state, cpu, 2u, OPCODE_MOV_W2_INDIRECT_W4);
+    dspic33_set_working_register(cpu, 2u, 0x1000u);
+    dspic33_set_working_register(cpu, 3u, 0x1111u);
+    dspic33_write_word(cpu, 0x1002u, 0x2222u);
+    expect_step_cycles(state, cpu, 1u, "destination postincrement uses one cycle");
+    expect_step_cycles(state, cpu, 2u,
+                       "destination postincrement creates pointer dependency");
+    expect(state, cpu->w[2] == 0x1002u && cpu->w[4] == 0x2222u,
+           "destination dependency uses updated pointer");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W2_POST_INCREMENT_W3);
+    load_instruction(state, cpu, 2u, OPCODE_MOV_W2_INDIRECT_W4);
+    dspic33_set_working_register(cpu, 2u, 0x1000u);
+    dspic33_write_word(cpu, 0x1000u, 0x3333u);
+    dspic33_write_word(cpu, 0x1002u, 0x4444u);
+    expect_step_cycles(state, cpu, 1u, "source postincrement uses one cycle");
+    expect_step_cycles(state, cpu, 2u,
+                       "source postincrement creates pointer dependency");
+    expect(state, cpu->w[3] == 0x3333u && cpu->w[4] == 0x4444u,
+           "source dependency preserves both reads");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_LITERAL_0X1000_W2);
+    load_instruction(state, cpu, 2u, OPCODE_MOV_W3_W2_INDIRECT);
+    dspic33_set_working_register(cpu, 3u, 0x5a5au);
+    expect_step_cycles(state, cpu, 1u, "destination pointer setup uses one cycle");
+    expect_step_cycles(state, cpu, 1u,
+                       "destination address calculation does not create source stall");
+    expect(state, dspic33_read_word(cpu, 0x1000u) == 0x5a5au,
+           "destination-only dependency control stores value");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_LITERAL_0X1000_W2);
+    load_instruction(state, cpu, 2u, OPCODE_MOV_W2_W4_OFFSET_W3);
+    dspic33_set_working_register(cpu, 4u, 2u);
+    dspic33_write_word(cpu, 0x1002u, 0x6789u);
+    expect_step_cycles(state, cpu, 1u, "indexed base setup uses one cycle");
+    expect_step_cycles(state, cpu, 2u, "indexed source depends on base register");
+    expect(state, cpu->w[3] == 0x6789u, "indexed base dependency reads value");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_LITERAL_2_W4);
+    load_instruction(state, cpu, 2u, OPCODE_MOV_W2_W4_OFFSET_W3);
+    dspic33_set_working_register(cpu, 2u, 0x1000u);
+    dspic33_write_word(cpu, 0x1002u, 0x789au);
+    expect_step_cycles(state, cpu, 1u, "indexed offset setup uses one cycle");
+    expect_step_cycles(state, cpu, 2u, "indexed source depends on offset register");
+    expect(state, cpu->w[3] == 0x789au, "indexed offset dependency reads value");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_LITERAL_0X1000_W2);
+    load_instruction(state, cpu, 2u, OPCODE_TBLRDL_W2_W3);
+    expect(state, dspic33_load_program_word(cpu, 0x1000u, 0x00abcdefu),
+           "load table dependency value");
+    expect_step_cycles(state, cpu, 1u, "table pointer setup uses one cycle");
+    expect_step_cycles(state, cpu, 6u, "table read source pointer dependency stalls");
+    expect(state, cpu->w[3] == 0xcdefu, "table dependency preserves read value");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_LITERAL_0X8100_W2);
+    load_instruction(state, cpu, 2u, OPCODE_MOV_W2_INDIRECT_W3);
+    expect(state, dspic33_load_program_word(cpu, 0x0100u, 0x00123456u),
+           "load PSV dependency value");
+    cpu->dsrpag = 0x0200u;
+    expect_step_cycles(state, cpu, 1u, "PSV pointer setup uses one cycle");
+    expect_step_cycles(state, cpu, 6u, "PSV access composes with dependency stall");
+    expect(state, cpu->w[3] == 0x3456u, "PSV dependency preserves read value");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_LITERAL_0X1000_W8);
+    load_instruction(state, cpu, 2u, OPCODE_DSP_X_NO_UPDATE_Y_W10_DECREMENT);
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 5u, 4u);
+    dspic33_set_working_register(cpu, 10u, 0x9002u);
+    dspic33_write_word(cpu, 0x1000u, 0x1357u);
+    dspic33_write_word(cpu, 0x9002u, 0x2468u);
+    cpu->corcon = 0x0021u;
+    expect_step_cycles(state, cpu, 1u, "DSP source pointer setup uses one cycle");
+    expect_step_cycles(state, cpu, 2u, "DSP prefetch source dependency stalls");
+    expect(state, cpu->w[4] == 0x1357u && cpu->w[5] == 0x2468u,
+           "DSP dependency preserves both prefetches");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 2u, 0u);
+    load_instruction(state, cpu, 4u, OPCODE_MOV_W2_INDIRECT_W3);
+    load_instruction(state, cpu, 0x0100u, OPCODE_RETURN);
+    cpu->w[15] = 0x5000u;
+    dspic33_set_working_register(cpu, 2u, 0x1000u);
+    dspic33_write_word(cpu, 0x1000u, 0x3579u);
+    expect_step_cycles(state, cpu, 4u, "CALL writes stack pointer");
+    expect_step_cycles(state, cpu, 7u, "RETURN source depends on CALL stack write");
+    expect_step_cycles(state, cpu, 1u, "RETURN does not create following dependency");
+    expect(state, cpu->w[3] == 0x3579u, "post-RETURN source completes without stall");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 2u, 0u);
+    load_instruction(state, cpu, 4u, OPCODE_MOV_W2_INDIRECT_W3);
+    load_instruction(state, cpu, 0x0100u, OPCODE_RETLW_0X10_W2);
+    cpu->w[15] = 0x5000u;
+    dspic33_set_working_register(cpu, 8u, 0x5000u);
+    expect_step_cycles(state, cpu, 4u, "RETLW caller writes stack pointer");
+    expect_step_cycles(state, cpu, 7u, "RETLW source depends on CALL stack write");
+    expect_step_cycles(state, cpu, 2u, "RETLW destination creates dependency");
+    expect(state, cpu->w[3] == 0x5000u, "RETLW dependency reads literal pointer");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_LITERAL_0X1000_W2);
+    load_instruction(state, cpu, 2u, OPCODE_MOV_W2_INDIRECT_W3);
+    load_instruction(state, cpu, 0x0014u, 0x000100u);
+    load_instruction(state, cpu, 0x0100u, OPCODE_RETFIE);
+    dspic33_write_word(cpu, 0x1000u, 0x9abcu);
+    cpu->w[15] = 0x5000u;
+    expect_step_cycles(state, cpu, 1u, "interrupt dependency writer completes");
+    dspic33_write_word(cpu, 0x0820u, 0x0001u);
+    dspic33_write_word(cpu, 0x0840u, 0x0004u);
+    dspic33_raise_interrupt(cpu, 0u);
+    expect_step_cycles(state, cpu, 5u, "interrupt dispatch flushes pending dependency");
+    dspic33_write_word(cpu, 0x0800u, 0u);
+    expect_step_cycles(state, cpu, 1u,
+                       "source after interrupt does not retain prior dependency");
+    expect(state, cpu->w[3] == 0x9abcu, "post-interrupt source preserves value");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_REPEAT_2);
+    load_instruction(state, cpu, 2u, OPCODE_MOV_W2_POST_INCREMENT_W3);
+    dspic33_set_working_register(cpu, 2u, 0x1000u);
+    dspic33_write_word(cpu, 0x1000u, 0x1111u);
+    dspic33_write_word(cpu, 0x1002u, 0x2222u);
+    dspic33_write_word(cpu, 0x1004u, 0x3333u);
+    expect_step_cycles(state, cpu, 1u, "REPEAT setup uses one cycle");
+    expect_step_cycles(state, cpu, 1u, "first repeated pointer read has no dependency");
+    expect_step_cycles(state, cpu, 2u, "middle repeated pointer read stalls");
+    expect_step_cycles(state, cpu, 2u, "last repeated pointer read stalls");
+    expect(state, cpu->w[2] == 0x1006u && cpu->w[3] == 0x3333u,
+           "REPEAT dependency advances every iteration");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_DO_1);
+    load_instruction(state, cpu, 2u, 0u);
+    load_instruction(state, cpu, 4u, OPCODE_MOV_W2_POST_INCREMENT_W3);
+    dspic33_set_working_register(cpu, 2u, 0x1000u);
+    dspic33_write_word(cpu, 0x1000u, 0x5555u);
+    dspic33_write_word(cpu, 0x1002u, 0xaaaau);
+    expect_step_cycles(state, cpu, 2u, "DO setup uses two cycles");
+    expect_step_cycles(state, cpu, 1u, "first DO pointer read has no dependency");
+    expect_step_cycles(state, cpu, 2u, "looped DO pointer read stalls");
+    expect(state, cpu->w[2] == 0x1004u && cpu->w[3] == 0xaaaau && cpu->do_depth == 0u,
+           "DO dependency completes loop state");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_LITERAL_0X1000_W2);
+    load_instruction(state, cpu, 2u, OPCODE_MOV_W2_INDIRECT_W3);
+    expect_step_cycles(state, cpu, 1u, "reset dependency writer completes");
+    dspic33_reset(cpu, 2u);
+    dspic33_set_working_register(cpu, 2u, 0x1000u);
+    dspic33_write_word(cpu, 0x1000u, 0xabcdu);
+    expect_step_cycles(state, cpu, 1u, "reset clears pending dependency");
+    expect(state, cpu->w[3] == 0xabcdu, "post-reset source preserves value");
+}
+
 static void expect_dsp_x_page_transition(ProcessorConformance* state, Dspic33* cpu,
                                          uint32_t opcode, uint16_t pointer,
                                          uint16_t page, uint32_t program_address,
@@ -4415,6 +4647,7 @@ int main(void) {
         move_double_mode_cases(&state, &cpu);
         non_cpu_sfr_timing_cases(&state, &cpu);
         psv_timing_cases(&state, &cpu);
+        address_register_dependency_cases(&state, &cpu);
         dsp_x_prefetch_page_cases(&state, &cpu);
         dsp_prefetch_address_error_cases(&state, &cpu);
         dsp_program_hole_prefetch_cases(&state, &cpu);

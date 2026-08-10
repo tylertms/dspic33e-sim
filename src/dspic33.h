@@ -615,6 +615,9 @@ typedef struct {
     uint32_t address_error_return;
     bool instruction_active;
     uint8_t current_instruction_cycles;
+    uint16_t instruction_working_register_writes;
+    uint16_t instruction_source_address_registers;
+    uint16_t previous_working_register_writes;
     bool non_cpu_sfr_read;
     bool psv_read;
     bool address_error;

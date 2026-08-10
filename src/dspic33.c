@@ -103,6 +103,9 @@ static void raise_data_page_error(Dspic33* cpu) {
 static void write_working_register(Dspic33* cpu, uint8_t reg, uint16_t value) {
     cpu->w[reg] = reg == 15u ? (uint16_t)(value & 0xfffeu) : value;
     cpu->initialized_working_registers |= (uint16_t)(1u << reg);
+    if (cpu->instruction_active) {
+        cpu->instruction_working_register_writes |= (uint16_t)(1u << reg);
+    }
 }
 
 static void write_working_register_byte(Dspic33* cpu, uint8_t reg, bool high,
@@ -112,6 +115,15 @@ static void write_working_register_byte(Dspic33* cpu, uint8_t reg, bool high,
     cpu->w[reg] = (uint16_t)((cpu->w[reg] & mask) | ((uint16_t)value << shift));
     if (reg == 15u) {
         cpu->w[reg] &= 0xfffeu;
+    }
+    if (cpu->instruction_active) {
+        cpu->instruction_working_register_writes |= (uint16_t)(1u << reg);
+    }
+}
+
+static void record_source_address_register(Dspic33* cpu, uint8_t reg) {
+    if (cpu->instruction_active) {
+        cpu->instruction_source_address_registers |= (uint16_t)(1u << reg);
     }
 }
 
@@ -539,6 +551,12 @@ static bool operand_resolution(Dspic33* cpu, uint8_t mode, uint8_t reg,
                                  resolution)) {
         return false;
     }
+    if (!write) {
+        record_source_address_register(cpu, reg);
+        if (mode >= 6u) {
+            record_source_address_register(cpu, offset_reg);
+        }
+    }
     uses_stack_pointer = reg == 15u || (mode >= 6u && offset_reg == 15u);
     if (uses_stack_pointer) {
         check_stack_address(cpu, resolution->effective_address, resolution->wrapped);
@@ -722,6 +740,9 @@ static bool indirect_literal_address(Dspic33* cpu, uint8_t reg, int16_t offset,
     uint32_t address;
     if (!address_register_initialized(cpu, reg)) {
         return false;
+    }
+    if (!write) {
+        record_source_address_register(cpu, reg);
     }
     effective_address = (int32_t)cpu->w[reg] + delta;
     address = modulo_address(cpu, reg, effective_address, delta, false);
@@ -1151,11 +1172,14 @@ static uint16_t table_adjust_pointer(uint16_t pointer, int16_t adjustment) {
 }
 
 static uint16_t table_operand_address(Dspic33* cpu, uint8_t mode, uint8_t reg,
-                                      uint8_t width) {
+                                      uint8_t width, bool source) {
     uint16_t address = cpu->w[reg];
     int32_t adjusted_address = cpu->w[reg];
     int32_t effective_address = address;
     bool wrapped = false;
+    if (source) {
+        record_source_address_register(cpu, reg);
+    }
     if (mode == 2u || mode == 3u) {
         adjusted_address += mode == 3u ? width : -(int32_t)width;
         wrapped = adjusted_address < 0 || adjusted_address > UINT16_MAX;
@@ -1206,11 +1230,11 @@ static bool execute_table(Dspic33* cpu, uint32_t opcode) {
         if (cpu->address_error && !cpu->address_error_access_allowed) {
             return true;
         }
-        table_offset = table_operand_address(cpu, destination_mode,
-                                             destination_register, byte_mode ? 1u : 2u);
+        table_offset = table_operand_address(
+            cpu, destination_mode, destination_register, byte_mode ? 1u : 2u, false);
     } else {
         table_offset = table_operand_address(cpu, source_mode, source_register,
-                                             byte_mode ? 1u : 2u);
+                                             byte_mode ? 1u : 2u, true);
         value = 0u;
     }
     address = ((((uint32_t)cpu->tblpag & 0x01ffu) << 16u) | table_offset) & 0x01fffffeu;
@@ -1662,6 +1686,7 @@ static void push_program_counter(Dspic33* cpu, uint32_t address) {
 static uint32_t pop_program_counter(Dspic33* cpu) {
     uint32_t high;
     uint32_t low;
+    record_source_address_register(cpu, 15u);
     check_stack_address(cpu, (int32_t)cpu->w[15] - 2, cpu->w[15] < 2u);
     write_working_register(cpu, 15u, (uint16_t)(cpu->w[15] - 2u));
     high = read_word(cpu, cpu->w[15]) & 0x007fu;
@@ -2141,6 +2166,18 @@ static bool execute_dsp_prefetches(Dspic33* cpu, uint8_t x_operation,
         !resolve_dsp_prefetch(cpu, y_operation, true, &y)) {
         return false;
     }
+    if (x.present) {
+        record_source_address_register(cpu, x.base_register);
+        if (x_operation == 12u) {
+            record_source_address_register(cpu, 12u);
+        }
+    }
+    if (y.present) {
+        record_source_address_register(cpu, y.base_register);
+        if (y_operation == 12u) {
+            record_source_address_register(cpu, 12u);
+        }
+    }
     if (x.present && (x.address & PSV_ADDRESS) != 0u) {
         cpu->psv_read = true;
     }
@@ -2360,6 +2397,7 @@ static void update_divide_flags(Dspic33* cpu, int64_t remainder, bool overflow) 
 static void enter_trap(Dspic33* cpu, uint16_t trap, uint32_t vector, uint8_t priority,
                        uint16_t status, uint32_t return_pc) {
     uint16_t stacked_high;
+    cpu->previous_working_register_writes = 0u;
     cpu->sequential_program_hole_pc = 0u;
     check_stack_address(cpu, cpu->w[15], cpu->w[15] > 0xfffdu);
     write_word(cpu, cpu->w[15],
@@ -2728,6 +2766,7 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         write_working_register(cpu, 15u, cpu->w[14]);
         check_stack_address(cpu, (int32_t)cpu->w[15] - 2, cpu->w[15] < 2u);
         write_working_register(cpu, 15u, (uint16_t)(cpu->w[15] - 2u));
+        record_source_address_register(cpu, 15u);
         write_working_register(cpu, 14u, read_word(cpu, cpu->w[15]));
         cpu->corcon &= (uint16_t)~0x0004u;
         return true;
@@ -2740,6 +2779,7 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     if (opcode == 0xfe8000u) {
         memcpy(cpu->w, cpu->shadow_w, sizeof(cpu->shadow_w));
         cpu->sr = (uint16_t)((cpu->sr & ~0x010fu) | cpu->shadow_status);
+        cpu->instruction_working_register_writes |= UINT16_C(0x000f);
         return true;
     }
     if ((opcode & 0xffe000u) == 0xf80000u) {
@@ -2751,6 +2791,7 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     if ((opcode & 0xffe000u) == 0xf90000u) {
         check_stack_address(cpu, (int32_t)cpu->w[15] - 2, cpu->w[15] < 2u);
         write_working_register(cpu, 15u, (uint16_t)(cpu->w[15] - 2u));
+        record_source_address_register(cpu, 15u);
         write_word(cpu, opcode & 0x1fffu, read_word(cpu, cpu->w[15]));
         return true;
     }
@@ -3130,6 +3171,7 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         uint8_t destination = (uint8_t)(opcode & 0x0fu);
         uint32_t return_pc = cpu->pc;
         uint32_t target = pop_program_counter(cpu);
+        cpu->instruction_working_register_writes &= UINT16_C(0x7fff);
         cpu->pc = target;
         if ((opcode & 0x004000u) != 0u) {
             write_working_register_byte(cpu, destination, false, (uint8_t)literal);
@@ -3288,6 +3330,9 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
     cpu->address_error_return = 0u;
     cpu->instruction_active = false;
     cpu->current_instruction_cycles = 0u;
+    cpu->instruction_working_register_writes = 0u;
+    cpu->instruction_source_address_registers = 0u;
+    cpu->previous_working_register_writes = 0u;
     cpu->non_cpu_sfr_read = false;
     cpu->psv_read = false;
     cpu->address_error = false;
@@ -3866,6 +3911,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
                                    : DSPIC33_IDLING;
             return cpu->stop_reason;
         }
+        cpu->previous_working_register_writes = 0u;
         cpu->power_state = DSPIC33_POWER_ACTIVE;
         cpu->stop_reason = DSPIC33_RUNNING;
     } else {
@@ -3877,6 +3923,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         }
         if (exception_dispatched) {
             cpu->sequential_program_hole_pc = 0u;
+            cpu->previous_working_register_writes = 0u;
         }
     }
     sequential_hole_fetch = cpu->sequential_program_hole_pc == cpu->pc &&
@@ -3892,6 +3939,8 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     cpu->sequential_program_hole_pc = 0u;
     if (opcode == 0x064000u) {
         uint64_t cycles;
+        bool dependency_stall =
+            (cpu->previous_working_register_writes & UINT16_C(0x8000)) != 0u;
         dspic33_device_return_interrupt(cpu);
         if (program_target_requires_address_error(cpu->pc)) {
             enter_address_trap(cpu, instruction_pc + 2u);
@@ -3899,12 +3948,16 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         } else {
             cycles = exception_pending(cpu) ? 5u : 6u;
         }
+        cycles += dependency_stall ? 1u : 0u;
+        cpu->previous_working_register_writes = 0u;
         cpu->instructions++;
         advance_instruction(cpu, cycles, false);
         return cpu->stop_reason;
     }
     if (opcode == 0x060000u) {
         uint64_t cycles;
+        bool dependency_stall =
+            (cpu->previous_working_register_writes & UINT16_C(0x8000)) != 0u;
         if (cpu->call_depth == 0u) {
             cpu->stop_reason = DSPIC33_RETURNED;
             return cpu->stop_reason;
@@ -3916,6 +3969,8 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         } else {
             cycles = exception_pending(cpu) ? 5u : 6u;
         }
+        cycles += dependency_stall ? 1u : 0u;
+        cpu->previous_working_register_writes = 0u;
         cpu->instructions++;
         advance_instruction(cpu, cycles, false);
         return cpu->stop_reason;
@@ -3929,6 +3984,8 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     cpu->instructions++;
     cpu->non_cpu_sfr_read = false;
     cpu->psv_read = false;
+    cpu->instruction_working_register_writes = 0u;
+    cpu->instruction_source_address_registers = 0u;
     cpu->current_instruction_cycles =
         (uint8_t)instruction_cycles(cpu, opcode, instruction_pc);
     cpu->instruction_active = true;
@@ -3940,6 +3997,8 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     if (!execute(cpu, opcode) && !cpu->address_error && !cpu->illegal_reset) {
         cpu->instruction_active = false;
         cpu->current_instruction_cycles = 0u;
+        cpu->instruction_working_register_writes = 0u;
+        cpu->instruction_source_address_registers = 0u;
         cpu->non_cpu_sfr_read = false;
         cpu->psv_read = false;
         cpu->pc -= 2u;
@@ -3955,6 +4014,10 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     }
     base_cycles = instruction_cycles(cpu, opcode, instruction_pc);
     cycles = cpu->psv_read ? 5u : base_cycles + (cpu->non_cpu_sfr_read ? 1u : 0u);
+    if ((cpu->previous_working_register_writes &
+         cpu->instruction_source_address_registers) != 0u) {
+        cycles++;
+    }
     non_cpu_sfr_wait = cpu->non_cpu_sfr_read;
     cpu->current_instruction_cycles = 0u;
     cpu->non_cpu_sfr_read = false;
@@ -3978,6 +4041,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         cpu->address_error_working_state_completed = false;
         cpu->address_error_accumulator_state_completed = false;
         cpu->address_error_control_state_completed = false;
+        cpu->previous_working_register_writes = 0u;
         if (control_state_completed) {
             enter_address_trap(cpu, return_pc);
         } else {
@@ -3986,6 +4050,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         advance_instruction(cpu, cycles, non_cpu_sfr_wait);
         return cpu->stop_reason;
     }
+    cpu->previous_working_register_writes = cpu->instruction_working_register_writes;
     if (cpu->repeat_active != 0u && instruction_pc == cpu->repeat_pc) {
         if (cpu->rcount != 0u) {
             cpu->rcount--;
