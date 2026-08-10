@@ -8478,6 +8478,9 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
     if (address == USB_IR && (raw_word(cpu, USB_CON) & USB_HOST_ENABLE) == 0u) {
         return (uint8_t)(value & ~USB_ATTACH_INTERRUPT);
     }
+    if (address == USB_IE && (raw_word(cpu, USB_CON) & USB_HOST_ENABLE) == 0u) {
+        return (uint8_t)(value & ~USB_ATTACH_INTERRUPT);
+    }
     if (!cpu->io.comparator.pmd_disabled && address >= COMPARATOR_BASE + 1u &&
         address < COMPARATOR_BASE + DSPIC33_COMPARATOR_COUNT * COMPARATOR_STRIDE &&
         ((address - COMPARATOR_BASE) % COMPARATOR_STRIDE) == 1u) {

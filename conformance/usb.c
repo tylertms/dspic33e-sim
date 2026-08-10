@@ -179,6 +179,18 @@ static void register_cases(UsbConformance* state, Dspic33* cpu) {
     dspic33_write_word(cpu, IE, 0xffffu);
     expect(state, dspic33_read_word(cpu, IE) == 0x00ffu,
            "USB host interrupt enable mask");
+    dspic33_write_word(cpu, IE, 0x0040u);
+    expect(state, dspic33_read_word(cpu, IE) == 0x0040u,
+           "USB host attach interrupt enable visible");
+    dspic33_write_word(cpu, CON, 0x0001u);
+    expect(state, dspic33_read_word(cpu, IE) == 0u,
+           "USB device mode hides host attach interrupt enable");
+    dspic33_write_word(cpu, IE, 0u);
+    expect(state, dspic33_read_word(cpu, IE) == 0u,
+           "USB device mode ignores host attach interrupt enable write");
+    dspic33_write_word(cpu, CON, 0x0008u);
+    expect(state, dspic33_read_word(cpu, IE) == 0x0040u,
+           "USB host mode restores hidden attach interrupt enable");
     configure_device(cpu);
     dspic33_write_word(cpu, ADDR, 0x005au);
     dspic33_write_word(cpu, CNFG1, 0x00d0u);
