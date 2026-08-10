@@ -20,6 +20,9 @@ EXPECTED_ALIASES = (
 )
 EXPECTED_MUX_DEFAULTS = 16
 EXPECTED_MUX_ALTERNATES = 16
+EXPECTED_CONDITIONALS = 68
+EXPECTED_CONDITIONAL_NORMAL_BITS = 1024
+EXPECTED_CONDITIONAL_RESERVED_BITS = 64
 EXPECTED_IMPLEMENTED_WORDS = 977
 EXPECTED_ABSENT_WORDS = 1071
 EXPECTED_ABSENT_RANGES = 77
@@ -84,6 +87,23 @@ DOCUMENTED_WRITE_ONLY_OVERRIDE_BITS = sum(
 MUX_SELECTOR_PATTERN = re.compile(
     r"^\(\$0x([0-9a-f]+) & 0x([0-9a-f]+)\) == 0x([0-9a-f]+)$"
 )
+
+
+def can_window_registers():
+    registers = [
+        (0x24, "BUFPNT3"),
+        (0x26, "BUFPNT4"),
+        (0x38, "RXM2SID"),
+        (0x3A, "RXM2EID"),
+    ]
+    for filter_index in range(1, 16):
+        registers.extend(
+            (
+                (0x40 + filter_index * 4, f"RXF{filter_index}SID"),
+                (0x42 + filter_index * 4, f"RXF{filter_index}EID"),
+            )
+        )
+    return tuple(registers)
 
 
 def default_manifest():
@@ -281,7 +301,52 @@ def load_inventory(path):
                 "selector_reset": selector_reset & selector_mask,
             }
         )
-    return defaults, muxes
+    conditionals = []
+    for channel, selector_address in enumerate((0x0400, 0x0500), start=1):
+        selector_register = defaults_by_address[selector_address]
+        selector_known = pattern_mask(selector_register["por"], "01")
+        selector_reset = pattern_mask(selector_register["por"], "1") & 0x0001
+        if selector_known & 0x0001 == 0 or selector_reset != 0:
+            raise ValueError(
+                f"CAN window selector reset is invalid at 0x{selector_address:04x}"
+            )
+        for offset, suffix in can_window_registers():
+            address = selector_address + offset
+            register = defaults_by_address[address]
+            expected_name = f"C{channel}{suffix}"
+            if register["name"] != expected_name or register["kind"] != "direct":
+                raise ValueError(
+                    f"conditional register at 0x{address:04x} is "
+                    f"{register['name']} ({register['kind']})"
+                )
+            conditionals.append(
+                {
+                    "register": register,
+                    "selector_address": selector_address,
+                    "selector_mask": 0x0001,
+                    "selector_value": 0x0001,
+                    "selector_reset": selector_reset,
+                }
+            )
+    conditional_normal_bits = sum(
+        access_masks(conditional["register"])["normal"].bit_count()
+        for conditional in conditionals
+    )
+    conditional_reserved_bits = sum(
+        access_masks(conditional["register"])["reserved"].bit_count()
+        for conditional in conditionals
+    )
+    if len(conditionals) != EXPECTED_CONDITIONALS:
+        raise ValueError(f"manifest has {len(conditionals)} conditional registers")
+    if conditional_normal_bits != EXPECTED_CONDITIONAL_NORMAL_BITS:
+        raise ValueError(
+            f"conditional registers have {conditional_normal_bits} normal bits"
+        )
+    if conditional_reserved_bits != EXPECTED_CONDITIONAL_RESERVED_BITS:
+        raise ValueError(
+            f"conditional registers have {conditional_reserved_bits} reserved bits"
+        )
+    return defaults, muxes, conditionals
 
 
 def implementation_bitmap(defaults):
@@ -335,7 +400,11 @@ def render_map(defaults):
     return "\n".join(lines).encode("ascii")
 
 
-def render(defaults, muxes):
+def render(defaults, muxes, conditionals):
+    conditional_identities = {
+        (conditional["register"]["name"], conditional["register"]["address"])
+        for conditional in conditionals
+    }
     lines = [
         "#ifndef DSPIC33EP512MU810_SFR_ACCESS_H",
         "#define DSPIC33EP512MU810_SFR_ACCESS_H",
@@ -368,9 +437,24 @@ def render(defaults, muxes):
         "    uint16_t side_effect;",
         "} Dspic33SfrMuxAccessExpectation;",
         "",
+        "typedef struct {",
+        "    uint16_t address;",
+        "    uint16_t selector_address;",
+        "    uint16_t selector_mask;",
+        "    uint16_t selector_value;",
+        "    uint16_t selector_reset;",
+        "    uint16_t normal;",
+        "    uint16_t read_only;",
+        "    uint16_t dependent_read_only;",
+        "    uint16_t reserved;",
+        "    uint16_t write_only;",
+        "    uint16_t side_effect;",
+        "} Dspic33SfrConditionalAccessExpectation;",
+        "",
         "enum {",
         "    DSPIC33_SFR_ACCESS_MUX_DEFAULT = 0x01u,",
         "    DSPIC33_SFR_ACCESS_HAS_ALIAS = 0x02u,",
+        "    DSPIC33_SFR_ACCESS_CONDITIONAL = 0x04u,",
         "};",
         "",
         "static const Dspic33SfrAccessExpectation dspic33_sfr_access_expectations[] = {",
@@ -382,6 +466,8 @@ def render(defaults, muxes):
             flags |= 1
         if register["aliases"]:
             flags |= 2
+        if (register["name"], register["address"]) in conditional_identities:
+            flags |= 4
         lines.append(
             "    {"
             f"{register['address']}u, "
@@ -424,12 +510,39 @@ def render(defaults, muxes):
         [
             "};",
             "",
+            "static const Dspic33SfrConditionalAccessExpectation",
+            "    dspic33_sfr_conditional_access_expectations[] = {",
+        ]
+    )
+    for conditional in conditionals:
+        register = conditional["register"]
+        masks = access_masks(register)
+        lines.append(
+            "        {"
+            f"{register['address']}u, "
+            f"0x{conditional['selector_address']:04x}u, "
+            f"0x{conditional['selector_mask']:04x}u, "
+            f"0x{conditional['selector_value']:04x}u, "
+            f"0x{conditional['selector_reset']:04x}u, "
+            f"0x{masks['normal']:04x}u, "
+            f"0x{masks['read_only']:04x}u, "
+            f"0x{masks['dependent_read_only']:04x}u,\n"
+            f"         0x{masks['reserved']:04x}u, "
+            f"0x{masks['write_only']:04x}u, "
+            f"0x{masks['side_effect']:04x}u"
+            "},"
+        )
+    lines.extend(
+        [
+            "};",
+            "",
             "enum {",
             f"    DSPIC33_SFR_ACCESS_DEFINITION_COUNT = {EXPECTED_DEFINITIONS}u,",
             f"    DSPIC33_SFR_ACCESS_ADDRESS_COUNT = {EXPECTED_ADDRESSES}u,",
             f"    DSPIC33_SFR_ACCESS_ALIAS_COUNT = {len(EXPECTED_ALIASES)}u,",
             f"    DSPIC33_SFR_ACCESS_MUX_DEFAULT_COUNT = {EXPECTED_MUX_DEFAULTS}u,",
             f"    DSPIC33_SFR_ACCESS_MUX_ALTERNATE_COUNT = {EXPECTED_MUX_ALTERNATES}u,",
+            f"    DSPIC33_SFR_ACCESS_CONDITIONAL_COUNT = {EXPECTED_CONDITIONALS}u,",
             f"    DSPIC33_SFR_ACCESS_NORMAL_BIT_COUNT = {EXPECTED_ACCESS_BITS['n'] + DOCUMENTED_NORMAL_OVERRIDE_BITS - DOCUMENTED_SIDE_EFFECT_OVERRIDE_BITS - DOCUMENTED_READ_ONLY_OVERRIDE_BITS - DOCUMENTED_WRITE_ONLY_OVERRIDE_BITS}u,",
             f"    DSPIC33_SFR_ACCESS_READ_ONLY_BIT_COUNT = {EXPECTED_ACCESS_BITS['r'] + DOCUMENTED_READ_ONLY_OVERRIDE_BITS}u,",
             f"    DSPIC33_SFR_ACCESS_DEPENDENT_READ_ONLY_BIT_COUNT = {DOCUMENTED_DEPENDENT_READ_ONLY_OVERRIDE_BITS}u,",
@@ -441,6 +554,11 @@ def render(defaults, muxes):
             f"    DSPIC33_SFR_MUX_ACCESS_RESERVED_BIT_COUNT = {EXPECTED_MUX_ACCESS_BITS.get('-', 0)}u,",
             f"    DSPIC33_SFR_MUX_ACCESS_WRITE_ONLY_BIT_COUNT = {EXPECTED_MUX_ACCESS_BITS.get('w', 0)}u,",
             f"    DSPIC33_SFR_MUX_ACCESS_SIDE_EFFECT_BIT_COUNT = {EXPECTED_MUX_ACCESS_BITS.get('c', 0) + EXPECTED_MUX_ACCESS_BITS.get('s', 0)}u,",
+            f"    DSPIC33_SFR_CONDITIONAL_ACCESS_NORMAL_BIT_COUNT = {EXPECTED_CONDITIONAL_NORMAL_BITS}u,",
+            "    DSPIC33_SFR_CONDITIONAL_ACCESS_READ_ONLY_BIT_COUNT = 0u,",
+            f"    DSPIC33_SFR_CONDITIONAL_ACCESS_RESERVED_BIT_COUNT = {EXPECTED_CONDITIONAL_RESERVED_BITS}u,",
+            "    DSPIC33_SFR_CONDITIONAL_ACCESS_WRITE_ONLY_BIT_COUNT = 0u,",
+            "    DSPIC33_SFR_CONDITIONAL_ACCESS_SIDE_EFFECT_BIT_COUNT = 0u,",
             "};",
             "",
             "#endif",
@@ -452,8 +570,8 @@ def render(defaults, muxes):
 
 def main():
     arguments = parse_arguments()
-    defaults, muxes = load_inventory(arguments.manifest)
-    rendered = render(defaults, muxes)
+    defaults, muxes, conditionals = load_inventory(arguments.manifest)
+    rendered = render(defaults, muxes, conditionals)
     rendered_map = render_map(defaults)
     if arguments.check:
         if not arguments.output.exists() or arguments.output.read_bytes() != rendered:

@@ -45,6 +45,18 @@ typedef struct {
 } SfrMuxCensus;
 
 typedef struct {
+    SfrAccessCensus access;
+    uint32_t addresses;
+    uint32_t unresolved_addresses;
+    uint32_t selector_reset_addresses;
+    uint32_t selector_reset_bits;
+    uint32_t selector_switch_addresses;
+    uint32_t selector_switch_bits;
+    uint32_t absence_addresses;
+    uint32_t isolation_addresses;
+} SfrConditionalCensus;
+
+typedef struct {
     uint32_t implemented_words;
     uint32_t absent_words;
     uint32_t absent_ranges;
@@ -215,40 +227,39 @@ static bool access_is_unresolved(const SfrAccessDifference* difference) {
            difference->reserved != 0u || difference->write_only != 0u;
 }
 
-static void select_mux(Dspic33* cpu,
-                       const Dspic33SfrMuxAccessExpectation* expectation) {
-    uint16_t selector = dspic33_read_word(cpu, expectation->selector_address);
-    selector = (uint16_t)((selector & ~expectation->selector_mask) |
-                          expectation->selector_value);
-    dspic33_write_word(cpu, expectation->selector_address, selector);
+static void select_register(Dspic33* cpu, uint16_t selector_address,
+                            uint16_t selector_mask, uint16_t selector_value) {
+    uint16_t selector = dspic33_read_word(cpu, selector_address);
+    selector =
+        (uint16_t)((selector & ~selector_mask) | (selector_value & selector_mask));
+    dspic33_write_word(cpu, selector_address, selector);
 }
 
-static void prepare_register(Dspic33* cpu,
-                             const Dspic33SfrMuxAccessExpectation* mux_expectation) {
+static void prepare_register(Dspic33* cpu, uint16_t selector_address,
+                             uint16_t selector_mask, uint16_t selector_value) {
     dspic33_reset(cpu, 0u);
-    if (mux_expectation != NULL) {
-        select_mux(cpu, mux_expectation);
+    if (selector_mask != 0u) {
+        select_register(cpu, selector_address, selector_mask, selector_value);
     }
 }
 
-static SfrAccessDifference
-inspect_access(Dspic33* cpu, uint16_t address, uint16_t normal_mask,
-               uint16_t read_only_mask, uint16_t reserved_mask,
-               uint16_t write_only_mask, uint16_t dependent_read_only_mask,
-               const Dspic33SfrMuxAccessExpectation* mux_expectation) {
+static SfrAccessDifference inspect_access(
+    Dspic33* cpu, uint16_t address, uint16_t normal_mask, uint16_t read_only_mask,
+    uint16_t reserved_mask, uint16_t write_only_mask, uint16_t dependent_read_only_mask,
+    uint16_t selector_address, uint16_t selector_mask, uint16_t selector_value) {
     SfrAccessDifference difference;
-    prepare_register(cpu, mux_expectation);
+    prepare_register(cpu, selector_address, selector_mask, selector_value);
     difference.initial = dspic33_read_word(cpu, address);
     dspic33_write_word(cpu, address, 0xffffu);
     difference.ones = dspic33_read_word(cpu, address);
-    prepare_register(cpu, mux_expectation);
+    prepare_register(cpu, selector_address, selector_mask, selector_value);
     dspic33_write_word(cpu, address, 0u);
     difference.zeroes = dspic33_read_word(cpu, address);
-    prepare_register(cpu, mux_expectation);
+    prepare_register(cpu, selector_address, selector_mask, selector_value);
     dspic33_write_word(cpu, address,
                        (uint16_t)(UINT16_MAX & ~dependent_read_only_mask));
     difference.ones_without_dependent = dspic33_read_word(cpu, address);
-    prepare_register(cpu, mux_expectation);
+    prepare_register(cpu, selector_address, selector_mask, selector_value);
     dspic33_write_word(cpu, address, dependent_read_only_mask);
     difference.zeroes_with_dependent = dspic33_read_word(cpu, address);
     difference.normal =
@@ -284,14 +295,17 @@ static void record_access(SfrAccessCensus* census,
 
 static void inspect_register(SfrAccessCensus* census, Dspic33* cpu,
                              const Dspic33SfrAccessExpectation* expectation) {
-    SfrAccessDifference difference =
-        inspect_access(cpu, expectation->address, expectation->normal,
-                       expectation->read_only, expectation->reserved,
-                       expectation->write_only, expectation->dependent_read_only, NULL);
-    record_access(census, &difference);
     census->aliases += expectation->aliases;
     census->mux_defaults += (expectation->flags & DSPIC33_SFR_ACCESS_MUX_DEFAULT) != 0u;
     census->dependent_read_only_bits += bit_count(expectation->dependent_read_only);
+    if ((expectation->flags & DSPIC33_SFR_ACCESS_CONDITIONAL) != 0u) {
+        return;
+    }
+    SfrAccessDifference difference = inspect_access(
+        cpu, expectation->address, expectation->normal, expectation->read_only,
+        expectation->reserved, expectation->write_only,
+        expectation->dependent_read_only, 0u, 0u, 0u);
+    record_access(census, &difference);
     if (access_is_unresolved(&difference)) {
         printf("[sfr-access-unresolved] address=0x%04x initial=0x%04x "
                "ones=0x%04x zeroes=0x%04x normal=0x%04x "
@@ -315,15 +329,17 @@ static void inspect_mux_register(SfrMuxCensus* census, Dspic33* cpu,
     selector_reset = (uint16_t)((dspic33_read_word(cpu, expectation->selector_address) ^
                                  expectation->selector_reset) &
                                 expectation->selector_mask);
-    select_mux(cpu, expectation);
+    select_register(cpu, expectation->selector_address, expectation->selector_mask,
+                    expectation->selector_value);
     selector_switch =
         (uint16_t)((dspic33_read_word(cpu, expectation->selector_address) ^
                     expectation->selector_value) &
                    expectation->selector_mask);
-    difference = inspect_access(cpu, expectation->address, expectation->normal,
-                                expectation->read_only, expectation->reserved,
-                                expectation->write_only,
-                                expectation->dependent_read_only, expectation);
+    difference = inspect_access(
+        cpu, expectation->address, expectation->normal, expectation->read_only,
+        expectation->reserved, expectation->write_only,
+        expectation->dependent_read_only, expectation->selector_address,
+        expectation->selector_mask, expectation->selector_value);
     unresolved = selector_reset != 0u || selector_switch != 0u ||
                  access_is_unresolved(&difference);
     census->addresses++;
@@ -342,6 +358,65 @@ static void inspect_mux_register(SfrMuxCensus* census, Dspic33* cpu,
                (unsigned)selector_reset, (unsigned)selector_switch,
                (unsigned)difference.initial, (unsigned)difference.ones,
                (unsigned)difference.zeroes, (unsigned)difference.normal,
+               (unsigned)difference.read_only, (unsigned)difference.reserved,
+               (unsigned)difference.write_only);
+    }
+}
+
+static void inspect_conditional_register(
+    SfrConditionalCensus* census, Dspic33* cpu,
+    const Dspic33SfrConditionalAccessExpectation* expectation) {
+    SfrAccessDifference difference = inspect_access(
+        cpu, expectation->address, expectation->normal, expectation->read_only,
+        expectation->reserved, expectation->write_only,
+        expectation->dependent_read_only, expectation->selector_address,
+        expectation->selector_mask, expectation->selector_value);
+    uint16_t selected_value = (uint16_t)(0xa55au & expectation->normal);
+    uint16_t selector_reset;
+    uint16_t selector_switch;
+    bool absence;
+    bool isolation;
+    bool unresolved;
+    record_access(&census->access, &difference);
+    dspic33_reset(cpu, 0u);
+    selector_reset = (uint16_t)((dspic33_read_word(cpu, expectation->selector_address) ^
+                                 expectation->selector_reset) &
+                                expectation->selector_mask);
+    select_register(cpu, expectation->selector_address, expectation->selector_mask,
+                    expectation->selector_value);
+    selector_switch =
+        (uint16_t)((dspic33_read_word(cpu, expectation->selector_address) ^
+                    expectation->selector_value) &
+                   expectation->selector_mask);
+    dspic33_write_word(cpu, expectation->address, selected_value);
+    isolation = dspic33_read_word(cpu, expectation->address) != selected_value;
+    select_register(cpu, expectation->selector_address, expectation->selector_mask,
+                    expectation->selector_reset);
+    absence = dspic33_read_word(cpu, expectation->address) != 0u;
+    dspic33_write_word(cpu, expectation->address, 0xffffu);
+    absence = absence || dspic33_read_word(cpu, expectation->address) != 0u;
+    select_register(cpu, expectation->selector_address, expectation->selector_mask,
+                    expectation->selector_value);
+    isolation =
+        isolation || dspic33_read_word(cpu, expectation->address) != selected_value;
+    unresolved = selector_reset != 0u || selector_switch != 0u || absence ||
+                 isolation || access_is_unresolved(&difference);
+    census->addresses++;
+    census->unresolved_addresses += unresolved;
+    census->selector_reset_addresses += selector_reset != 0u;
+    census->selector_reset_bits += bit_count(selector_reset);
+    census->selector_switch_addresses += selector_switch != 0u;
+    census->selector_switch_bits += bit_count(selector_switch);
+    census->absence_addresses += absence;
+    census->isolation_addresses += isolation;
+    if (unresolved) {
+        printf("[sfr-conditional-unresolved] address=0x%04x selector=0x%04x "
+               "selector-reset=0x%04x selector-switch=0x%04x absence=%u "
+               "isolation=%u normal=0x%04x read-only=0x%04x reserved=0x%04x "
+               "write-only=0x%04x\n",
+               (unsigned)expectation->address, (unsigned)expectation->selector_address,
+               (unsigned)selector_reset, (unsigned)selector_switch, absence ? 1u : 0u,
+               isolation ? 1u : 0u, (unsigned)difference.normal,
                (unsigned)difference.read_only, (unsigned)difference.reserved,
                (unsigned)difference.write_only);
     }
@@ -400,6 +475,29 @@ static void print_mux_summary(const SfrMuxCensus* census) {
            census->access.write_only_bits);
 }
 
+static void print_conditional_summary(const SfrConditionalCensus* census) {
+    printf("[sfr-conditional-summary] addresses=%" PRIu32
+           " normal-bits=%u read-only-bits=%u reserved-bits=%u write-only-bits=%u "
+           "side-effect-bits=%u unresolved-addresses=%" PRIu32
+           " selector-reset-addresses=%" PRIu32 " selector-reset-bits=%" PRIu32
+           " selector-switch-addresses=%" PRIu32 " selector-switch-bits=%" PRIu32
+           " absence-addresses=%" PRIu32 " isolation-addresses=%" PRIu32
+           " access-unresolved-addresses=%" PRIu32 " access-normal-bits=%" PRIu32
+           " access-read-only-bits=%" PRIu32 " access-reserved-bits=%" PRIu32
+           " access-write-only-bits=%" PRIu32 "\n",
+           census->addresses, DSPIC33_SFR_CONDITIONAL_ACCESS_NORMAL_BIT_COUNT,
+           DSPIC33_SFR_CONDITIONAL_ACCESS_READ_ONLY_BIT_COUNT,
+           DSPIC33_SFR_CONDITIONAL_ACCESS_RESERVED_BIT_COUNT,
+           DSPIC33_SFR_CONDITIONAL_ACCESS_WRITE_ONLY_BIT_COUNT,
+           DSPIC33_SFR_CONDITIONAL_ACCESS_SIDE_EFFECT_BIT_COUNT,
+           census->unresolved_addresses, census->selector_reset_addresses,
+           census->selector_reset_bits, census->selector_switch_addresses,
+           census->selector_switch_bits, census->absence_addresses,
+           census->isolation_addresses, census->access.unresolved_addresses,
+           census->access.normal_bits, census->access.read_only_bits,
+           census->access.reserved_bits, census->access.write_only_bits);
+}
+
 static void print_map_summary(const SfrMapCensus* census) {
     printf("[sfr-map-summary] words=%u implemented=%" PRIu32 " absent=%" PRIu32
            " absent-ranges=%" PRIu32 " direct-byte-checks=%" PRIu32
@@ -417,6 +515,7 @@ int main(void) {
     Dspic33 cpu;
     SfrAccessCensus census = {0u};
     SfrMuxCensus mux_census = {0u};
+    SfrConditionalCensus conditional_census = {0u};
     SfrMapCensus map_census;
     uint32_t index;
     _Static_assert(sizeof(dspic33_sfr_access_expectations) /
@@ -427,6 +526,10 @@ int main(void) {
                            sizeof(dspic33_sfr_mux_access_expectations[0]) ==
                        DSPIC33_SFR_ACCESS_MUX_ALTERNATE_COUNT,
                    "SFR mux access expectation count");
+    _Static_assert(sizeof(dspic33_sfr_conditional_access_expectations) /
+                           sizeof(dspic33_sfr_conditional_access_expectations[0]) ==
+                       DSPIC33_SFR_ACCESS_CONDITIONAL_COUNT,
+                   "SFR conditional access expectation count");
     _Static_assert(sizeof(dspic33_sfr_implementation_bitmap) ==
                        DSPIC33_SFR_IMPLEMENTATION_BITMAP_SIZE,
                    "SFR implementation bitmap size");
@@ -441,20 +544,28 @@ int main(void) {
         inspect_mux_register(&mux_census, &cpu,
                              &dspic33_sfr_mux_access_expectations[index]);
     }
+    for (index = 0u; index < DSPIC33_SFR_ACCESS_CONDITIONAL_COUNT; index++) {
+        inspect_conditional_register(
+            &conditional_census, &cpu,
+            &dspic33_sfr_conditional_access_expectations[index]);
+    }
     map_census = inspect_sfr_map(&cpu);
     dspic33_destroy(&cpu);
     print_inventory(&census);
     print_access_summary(&census);
     print_mux_summary(&mux_census);
+    print_conditional_summary(&conditional_census);
     print_map_summary(&map_census);
     if (census.aliases != DSPIC33_SFR_ACCESS_ALIAS_COUNT ||
         census.mux_defaults != DSPIC33_SFR_ACCESS_MUX_DEFAULT_COUNT ||
         census.dependent_read_only_bits !=
             DSPIC33_SFR_ACCESS_DEPENDENT_READ_ONLY_BIT_COUNT ||
-        mux_census.addresses != DSPIC33_SFR_ACCESS_MUX_ALTERNATE_COUNT) {
+        mux_census.addresses != DSPIC33_SFR_ACCESS_MUX_ALTERNATE_COUNT ||
+        conditional_census.addresses != DSPIC33_SFR_ACCESS_CONDITIONAL_COUNT) {
         return 2;
     }
     return census.unresolved_addresses == 0u && mux_census.unresolved_addresses == 0u &&
+                   conditional_census.unresolved_addresses == 0u &&
                    map_census.failures == 0u
                ? 0
                : 1;
