@@ -3865,6 +3865,7 @@ void dspic33_device_return_interrupt(Dspic33* cpu) {
     cpu->corcon = (uint16_t)((cpu->corcon & ~0x0004u) | ((low & 1u) << 2u));
     cpu->repeat_active = (cpu->sr & 0x0010u) != 0u;
     cpu->repeat_pc = cpu->repeat_active != 0u ? cpu->pc : 0u;
+    cpu->repeat_psv_reentry = cpu->repeat_active != 0u;
     if (cpu->interrupt_depth != 0u) {
         cpu->interrupt_depth--;
     }

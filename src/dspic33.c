@@ -574,6 +574,10 @@ static bool operand_resolution(Dspic33* cpu, uint8_t mode, uint8_t reg,
     if (resolution->unimplemented_data_page) {
         raise_data_page_error(cpu);
     }
+    if (!write && cpu->repeat_active != 0u && width == 2u &&
+        (mode == 2u || mode == 3u) && (resolution->address & PSV_ADDRESS) != 0u) {
+        cpu->psv_repeat_optimized = true;
+    }
     return true;
 }
 
@@ -2180,6 +2184,10 @@ static bool execute_dsp_prefetches(Dspic33* cpu, uint8_t x_operation,
     }
     if (x.present && (x.address & PSV_ADDRESS) != 0u) {
         cpu->psv_read = true;
+        if (cpu->repeat_active != 0u && (dsp_prefetch_updates[x_operation] == 2 ||
+                                         dsp_prefetch_updates[x_operation] == -2)) {
+            cpu->psv_repeat_optimized = true;
+        }
     }
     *x_value = x.present && x.access_valid ? read_data_word(cpu, x.address) : 0u;
     *y_value = y.present && y.access_valid ? read_data_word(cpu, y.address) : 0u;
@@ -2911,6 +2919,8 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     }
     if ((opcode & 0xff8000u) == 0x090000u) {
         cpu->rcount = (uint16_t)(opcode & 0x007fffu);
+        cpu->repeat_psv_started = false;
+        cpu->repeat_psv_reentry = false;
         if (cpu->rcount != 0u) {
             cpu->repeat_active = 1u;
             cpu->repeat_pc = cpu->pc;
@@ -2960,6 +2970,8 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     }
     if ((opcode & 0xfffff0u) == 0x098000u) {
         cpu->rcount = cpu->w[opcode & 0x0fu];
+        cpu->repeat_psv_started = false;
+        cpu->repeat_psv_reentry = false;
         if (cpu->rcount != 0u) {
             cpu->repeat_active = 1u;
             cpu->repeat_pc = cpu->pc;
@@ -3307,6 +3319,8 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
     cpu->call_depth = 0u;
     cpu->interrupt_depth = 0u;
     cpu->repeat_active = 0u;
+    cpu->repeat_psv_started = false;
+    cpu->repeat_psv_reentry = false;
     cpu->do_depth = 0u;
     cpu->repeat_pc = 0u;
     memset(cpu->do_start, 0, sizeof(cpu->do_start));
@@ -3335,6 +3349,7 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
     cpu->previous_working_register_writes = 0u;
     cpu->non_cpu_sfr_read = false;
     cpu->psv_read = false;
+    cpu->psv_repeat_optimized = false;
     cpu->address_error = false;
     cpu->address_error_access_allowed = false;
     cpu->address_error_working_state_completed = false;
@@ -3900,6 +3915,8 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     bool sequential_hole_fetch;
     bool non_cpu_sfr_wait;
     bool power_save_next;
+    bool psv_repeat_access;
+    bool psv_repeat_exit_latency;
     uint64_t base_cycles;
     cpu->illegal_reset = false;
     if (cpu->nvm.active) {
@@ -3988,6 +4005,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     cpu->instructions++;
     cpu->non_cpu_sfr_read = false;
     cpu->psv_read = false;
+    cpu->psv_repeat_optimized = false;
     cpu->instruction_working_register_writes = 0u;
     cpu->instruction_source_address_registers = 0u;
     cpu->current_instruction_cycles =
@@ -4005,6 +4023,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         cpu->instruction_source_address_registers = 0u;
         cpu->non_cpu_sfr_read = false;
         cpu->psv_read = false;
+        cpu->psv_repeat_optimized = false;
         cpu->pc -= 2u;
         if (cpu->stop_reason == DSPIC33_RUNNING) {
             cpu->unsupported_opcode = opcode;
@@ -4017,15 +4036,31 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         return cpu->stop_reason;
     }
     base_cycles = instruction_cycles(cpu, opcode, instruction_pc);
-    cycles = cpu->psv_read ? 5u : base_cycles + (cpu->non_cpu_sfr_read ? 1u : 0u);
-    if ((cpu->previous_working_register_writes &
-         cpu->instruction_source_address_registers) != 0u) {
+    psv_repeat_access = cpu->psv_read && cpu->repeat_active != 0u;
+    if (cpu->psv_repeat_optimized) {
+        if (cpu->repeat_psv_reentry) {
+            cpu->repeat_psv_reentry = false;
+            cpu->repeat_psv_started = true;
+            cycles = 5u;
+        } else if (!cpu->repeat_psv_started) {
+            cpu->repeat_psv_started = true;
+            cycles = 5u;
+        } else {
+            cycles = cpu->rcount == 0u ? 6u : 1u;
+        }
+    } else {
+        cycles = cpu->psv_read ? 5u : base_cycles + (cpu->non_cpu_sfr_read ? 1u : 0u);
+    }
+    if (!psv_repeat_access && (cpu->previous_working_register_writes &
+                               cpu->instruction_source_address_registers) != 0u) {
         cycles++;
     }
+    psv_repeat_exit_latency = cpu->psv_repeat_optimized && cycles == 1u;
     non_cpu_sfr_wait = cpu->non_cpu_sfr_read;
     cpu->current_instruction_cycles = 0u;
     cpu->non_cpu_sfr_read = false;
     cpu->psv_read = false;
+    cpu->psv_repeat_optimized = false;
     if (cpu->address_error) {
         uint32_t return_pc = cpu->address_error_return;
         bool control_state_completed = cpu->address_error_control_state_completed;
@@ -4064,6 +4099,8 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
             }
         } else {
             cpu->repeat_active = 0u;
+            cpu->repeat_psv_started = false;
+            cpu->repeat_psv_reentry = false;
             cpu->sr &= (uint16_t)~0x0010u;
         }
     }
@@ -4100,6 +4137,10 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
             ? cpu->pc
             : 0u;
     advance_instruction(cpu, cycles, non_cpu_sfr_wait);
+    if (psv_repeat_exit_latency && cpu->repeat_active != 0u &&
+        dspic33_device_interrupt_pending(cpu)) {
+        advance_instruction(cpu, 4u, false);
+    }
     if (cpu->power_state != DSPIC33_POWER_ACTIVE && dspic33_device_wake(cpu)) {
         cpu->power_state = DSPIC33_POWER_ACTIVE;
         cpu->stop_reason = DSPIC33_RUNNING;

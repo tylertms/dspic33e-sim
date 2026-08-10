@@ -3236,6 +3236,171 @@ static void psv_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
     expect(state, !cpu->psv_read, "reset clears PSV timing state");
 }
 
+static void psv_repeat_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
+    static const uint16_t values[] = {
+        0x1111u, 0x2222u, 0x3333u, 0x4444u, 0x5555u, 0x6666u,
+    };
+    size_t index;
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_REPEAT_2);
+    load_instruction(state, cpu, 2u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    for (index = 0u; index < sizeof(values) / sizeof(values[0]); index++) {
+        expect(state,
+               dspic33_load_program_word(cpu, 0x4000u + (uint32_t)index * 2u,
+                                         values[index]),
+               "load repeated PSV timing value");
+    }
+    dspic33_set_working_register(cpu, 1u, 0xc000u);
+    cpu->dsrpag = 0x0200u;
+    expect_step_cycles(state, cpu, 1u, "REPEAT setup precedes optimized PSV access");
+    expect_step_cycles(state, cpu, 5u,
+                       "first repeated PSV postincrement uses five cycles");
+    expect_step_cycles(state, cpu, 1u,
+                       "middle repeated PSV postincrement uses one cycle");
+    expect_step_cycles(state, cpu, 6u,
+                       "last repeated PSV postincrement uses six cycles");
+    expect(state,
+           cpu->w[1] == 0xc006u && cpu->w[2] == 0x3333u && cpu->rcount == 0u &&
+               cpu->repeat_active == 0u && !cpu->repeat_psv_started,
+           "optimized PSV postincrement completes repeat state");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_REPEAT_2);
+    load_instruction(state, cpu, 2u, OPCODE_MOV_W1_POST_DECREMENT_W2);
+    dspic33_set_working_register(cpu, 1u, 0xc006u);
+    cpu->dsrpag = 0x0200u;
+    expect_step_cycles(state, cpu, 1u, "PSV postdecrement REPEAT setup");
+    expect_step_cycles(state, cpu, 5u,
+                       "first repeated PSV postdecrement uses five cycles");
+    expect_step_cycles(state, cpu, 1u,
+                       "middle repeated PSV postdecrement uses one cycle");
+    expect_step_cycles(state, cpu, 6u,
+                       "last repeated PSV postdecrement uses six cycles");
+    expect(state, cpu->w[1] == 0xc000u && cpu->w[2] == 0x2222u,
+           "optimized PSV postdecrement reads each word");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_REPEAT_2);
+    load_instruction(state, cpu, 2u, OPCODE_MOV_BYTE_W1_POST_INCREMENT_W2);
+    dspic33_set_working_register(cpu, 1u, 0xc000u);
+    cpu->dsrpag = 0x0200u;
+    expect_step_cycles(state, cpu, 1u, "byte PSV REPEAT setup");
+    expect_step_cycles(state, cpu, 5u,
+                       "first repeated byte PSV access uses five cycles");
+    expect_step_cycles(state, cpu, 5u,
+                       "middle repeated byte PSV access uses five cycles");
+    expect_step_cycles(state, cpu, 5u,
+                       "last repeated byte PSV access uses five cycles");
+    expect(state, cpu->w[1] == 0xc003u,
+           "byte PSV postincrement remains outside optimized schedule");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_REPEAT_2);
+    load_instruction(state, cpu, 2u, OPCODE_MOV_W1_PRE_INCREMENT_W2);
+    dspic33_set_working_register(cpu, 1u, 0xbffeu);
+    cpu->dsrpag = 0x0200u;
+    expect_step_cycles(state, cpu, 1u, "preincrement PSV REPEAT setup");
+    expect_step_cycles(state, cpu, 5u,
+                       "first repeated preincrement PSV access uses five cycles");
+    expect_step_cycles(state, cpu, 5u,
+                       "middle repeated preincrement PSV access uses five cycles");
+    expect_step_cycles(state, cpu, 5u,
+                       "last repeated preincrement PSV access uses five cycles");
+    expect(state, cpu->w[1] == 0xc004u && cpu->w[2] == 0x3333u,
+           "preincrement PSV remains outside optimized schedule");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_REPEAT_2);
+    load_instruction(state, cpu, 2u, OPCODE_MOV_DOUBLE_W1_POST_INCREMENT_W2);
+    dspic33_set_working_register(cpu, 1u, 0xc000u);
+    cpu->dsrpag = 0x0200u;
+    expect_step_cycles(state, cpu, 1u, "MOV.D PSV REPEAT setup");
+    expect_step_cycles(state, cpu, 5u,
+                       "first repeated MOV.D PSV access uses five cycles");
+    expect_step_cycles(state, cpu, 5u,
+                       "middle repeated MOV.D PSV access uses five cycles");
+    expect_step_cycles(state, cpu, 5u,
+                       "last repeated MOV.D PSV access uses five cycles");
+    expect(state, cpu->w[1] == 0xc00cu && cpu->w[2] == 0x5555u && cpu->w[3] == 0x6666u,
+           "MOV.D PSV postincrement remains outside optimized schedule");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_REPEAT_2);
+    load_instruction(state, cpu, 2u, OPCODE_DSP_X_W8_INCREMENT_Y_W10_DECREMENT);
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 5u, 4u);
+    dspic33_set_working_register(cpu, 8u, 0xc000u);
+    dspic33_set_working_register(cpu, 10u, 0x9008u);
+    dspic33_write_word(cpu, 0x9008u, 0x7777u);
+    dspic33_write_word(cpu, 0x9006u, 0x8888u);
+    dspic33_write_word(cpu, 0x9004u, 0x9999u);
+    cpu->dsrpag = 0x0200u;
+    cpu->corcon = 0x0021u;
+    expect_step_cycles(state, cpu, 1u, "DSP PSV REPEAT setup");
+    expect_step_cycles(state, cpu, 5u,
+                       "first repeated DSP PSV prefetch uses five cycles");
+    expect_step_cycles(state, cpu, 1u,
+                       "middle repeated DSP PSV prefetch uses one cycle");
+    expect_step_cycles(state, cpu, 6u,
+                       "last repeated DSP PSV prefetch uses six cycles");
+    expect(state,
+           cpu->w[8] == 0xc006u && cpu->w[10] == 0x9002u && cpu->w[4] == 0x3333u &&
+               cpu->w[5] == 0x9999u,
+           "DSP PSV postincrement uses optimized repeat schedule");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, 0x090004u);
+    load_instruction(state, cpu, 2u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    load_instruction(state, cpu, 0x0014u, 0x000100u);
+    load_instruction(state, cpu, 0x0100u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x0102u, OPCODE_RETFIE);
+    dspic33_set_working_register(cpu, 1u, 0xc000u);
+    cpu->w[15] = 0x5000u;
+    cpu->dsrpag = 0x0200u;
+    cpu->disicnt = 7u;
+    dspic33_write_word(cpu, 0x0820u, 0x0001u);
+    dspic33_write_word(cpu, 0x0840u, 0x0004u);
+    dspic33_write_word(cpu, 0x08c2u, 0x8000u);
+    dspic33_raise_interrupt(cpu, 0u);
+    expect_step_cycles(state, cpu, 1u, "interruptible PSV REPEAT setup");
+    expect_step_cycles(state, cpu, 5u, "first interruptible repeated PSV access");
+    expect_step_cycles(state, cpu, 5u,
+                       "pre-interrupt repeated PSV access exits in five cycles");
+    expect(state,
+           cpu->disicnt == 0u && cpu->rcount == 2u && cpu->repeat_active != 0u &&
+               cpu->w[1] == 0xc004u,
+           "pre-interrupt PSV iteration preserves suspended repeat state");
+    expect_step_cycles(state, cpu, 1u,
+                       "interrupt dispatch executes handler instruction");
+    expect(state,
+           cpu->pc == 0x0102u && cpu->repeat_active == 0u && cpu->rcount == 2u &&
+               (dspic33_read_word(cpu, 0x5002u) & 0x1000u) != 0u,
+           "interrupt entry stacks optimized repeat state");
+    dspic33_write_word(cpu, 0x0800u, 0u);
+    expect_step_cycles(state, cpu, 6u, "RETFIE restores optimized repeat state");
+    expect(state, cpu->repeat_active != 0u && cpu->repeat_psv_reentry && cpu->pc == 2u,
+           "RETFIE arms PSV repeat re-entry timing");
+    expect_step_cycles(state, cpu, 5u, "re-entered PSV repeat access uses five cycles");
+    expect_step_cycles(state, cpu, 1u,
+                       "resumed middle PSV repeat access uses one cycle");
+    expect_step_cycles(state, cpu, 6u,
+                       "resumed final PSV repeat access uses six cycles");
+    expect(state,
+           cpu->w[1] == 0xc00au && cpu->w[2] == 0x5555u && cpu->repeat_active == 0u &&
+               !cpu->repeat_psv_started && !cpu->repeat_psv_reentry,
+           "interrupted PSV repeat completes all iterations");
+
+    cpu->repeat_psv_started = true;
+    cpu->repeat_psv_reentry = true;
+    cpu->psv_repeat_optimized = true;
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           !cpu->repeat_psv_started && !cpu->repeat_psv_reentry &&
+               !cpu->psv_repeat_optimized,
+           "reset clears PSV repeat timing state");
+}
+
 static void psv_program_hole_cases(ProcessorConformance* state, Dspic33* cpu) {
     reset_processor_conformance(cpu, 0u);
     prepare_address_trap(state, cpu);
@@ -4731,6 +4896,7 @@ int main(void) {
         move_double_mode_cases(&state, &cpu);
         non_cpu_sfr_timing_cases(&state, &cpu);
         psv_timing_cases(&state, &cpu);
+        psv_repeat_timing_cases(&state, &cpu);
         psv_program_hole_cases(&state, &cpu);
         address_register_dependency_cases(&state, &cpu);
         dsp_x_prefetch_page_cases(&state, &cpu);

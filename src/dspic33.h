@@ -592,6 +592,8 @@ typedef struct {
     uint16_t call_depth;
     uint8_t interrupt_depth;
     uint8_t repeat_active;
+    bool repeat_psv_started;
+    bool repeat_psv_reentry;
     uint8_t do_depth;
     uint32_t repeat_pc;
     uint32_t do_start[4];
@@ -620,6 +622,7 @@ typedef struct {
     uint16_t previous_working_register_writes;
     bool non_cpu_sfr_read;
     bool psv_read;
+    bool psv_repeat_optimized;
     bool address_error;
     bool address_error_access_allowed;
     bool address_error_working_state_completed;

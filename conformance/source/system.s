@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 69
+_system_conformance_terminal_count = 70
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -148,6 +148,8 @@ _run_system_probe:
     bra z, _system_psv_program_byte_fault_probe
     cp w0, #69
     bra z, _system_psv_program_double_fault_probe
+    cp w0, #70
+    bra z, _system_psv_repeat_probe
     return
 
 .global _system_sleep_probe
@@ -501,6 +503,31 @@ _system_psv_program_double_fault_probe:
 _system_psv_program_double_fault_instruction:
     .pword 0xbe0131
     return
+
+.global _system_psv_repeat_probe
+_system_psv_repeat_probe:
+    mov #0x0200, w0
+    mov w0, DSRPAG
+    mov #0xfff8, w1
+    clr w2
+    disi #31
+    repeat #2
+    mov [w1++], w2
+    mov w1, _system_psv_repeat_state
+    mov w2, _system_psv_repeat_state+2
+    mov DSRPAG, w0
+    mov w0, _system_psv_repeat_state+4
+    mov RCOUNT, w0
+    mov w0, _system_psv_repeat_state+6
+    mov SR, w0
+    mov w0, _system_psv_repeat_state+8
+    mov CORCON, w0
+    mov w0, _system_psv_repeat_state+10
+    mov #0x7070, w0
+    mov w0, _system_psv_repeat_state+12
+.global _system_psv_repeat_complete
+_system_psv_repeat_complete:
+    bra _system_psv_repeat_complete
 
 .global _system_sftac_probe
 _system_sftac_probe:
