@@ -783,12 +783,19 @@ static bool can_queue_pop(Dspic33CanQueue* queue, Dspic33CanFrame* frame) {
 }
 
 static bool event_less(const Dspic33Event* left, const Dspic33Event* right) {
+    bool left_dma_completion;
+    bool right_dma_completion;
     if (left->cycle != right->cycle) {
         return left->cycle < right->cycle;
     }
     if (left->type == DSPIC33_EVENT_DMA && right->type == DSPIC33_EVENT_DMA &&
         left->source != right->source) {
-        return left->source < right->source;
+        left_dma_completion = left->source >= DSPIC33_DMA_COUNT;
+        right_dma_completion = right->source >= DSPIC33_DMA_COUNT;
+        if (left_dma_completion != right_dma_completion) {
+            return left_dma_completion;
+        }
+        return left->source % DSPIC33_DMA_COUNT < right->source % DSPIC33_DMA_COUNT;
     }
     return left->sequence < right->sequence;
 }
@@ -1158,6 +1165,7 @@ static void dma_disable_channel(Dspic33* cpu, uint8_t channel, uint16_t control)
     cpu->io.dma_enabled &= (uint16_t)~bit;
     cpu->io.dma_forced_pending &= (uint16_t)~bit;
     cpu->io.dma_peripheral_pending &= (uint16_t)~bit;
+    cpu->io.dma_active &= (uint16_t)~bit;
     cpu->io.dma_generation[channel]++;
 }
 
@@ -1181,24 +1189,59 @@ static void dma_complete_block(Dspic33* cpu, uint8_t channel, uint16_t control) 
     cpu->io.dma_address[channel] = dma_start_address(cpu, channel);
 }
 
-static void run_dma(Dspic33* cpu, uint8_t channel, uint32_t event_value) {
+static void complete_dma_transfer(Dspic33* cpu, uint8_t channel, uint32_t event_value) {
+    uint16_t base = dma_channel_base(channel);
+    uint16_t bit = dma_channel_bit(channel);
+    uint16_t control = raw_word(cpu, base);
+    uint16_t count = raw_word(cpu, (uint16_t)(base + 0x0eu));
+    uint16_t index = cpu->io.dma_index[channel];
+    uint16_t transferred = (uint16_t)(index + 1u);
+    uint16_t half = (uint16_t)(((uint32_t)count + 2u) / 2u);
+    uint8_t width = (control & DMA_CON_SIZE_BYTE) != 0u ? 1u : 2u;
+    bool forced = (event_value & DMA_EVENT_FORCE) != 0u;
+    if ((cpu->io.dma_active & bit) == 0u) {
+        return;
+    }
+    if ((control & DMA_CON_AMODE_MASK) == 0u) {
+        cpu->io.dma_address[channel] += width;
+    }
+    if ((control & DMA_CON_HALF) != 0u && transferred == half &&
+        (cpu->io.dma_half_raised & bit) == 0u) {
+        cpu->io.dma_half_raised |= bit;
+        dspic33_raise_interrupt(cpu, dma_irqs[channel]);
+    }
+    if (index >= count) {
+        dma_complete_block(cpu, channel, control);
+    } else {
+        cpu->io.dma_index[channel]++;
+    }
+    cpu->io.dma_active &= (uint16_t)~bit;
+    if (forced) {
+        cpu->io.dma_forced_pending &= (uint16_t)~bit;
+        raw_write_word(
+            cpu, (uint16_t)(base + 2u),
+            (uint16_t)(raw_word(cpu, (uint16_t)(base + 2u)) & ~DMA_REQ_FORCE));
+    }
+}
+
+static void run_dma(Dspic33* cpu, uint16_t source, uint32_t event_value) {
     uint16_t base;
     uint16_t bit;
     uint16_t control;
-    uint16_t count;
     uint16_t pad;
-    uint16_t index;
-    uint16_t transferred;
-    uint16_t half;
     uint16_t value;
     uint16_t uart_errors;
     uint16_t generation;
     uint32_t address;
     uint8_t width;
+    uint8_t channel;
     bool forced;
-    if (channel >= DSPIC33_DMA_COUNT) {
+    bool completion;
+    if (source >= DSPIC33_DMA_COUNT * 2u) {
         return;
     }
+    completion = source >= DSPIC33_DMA_COUNT;
+    channel = (uint8_t)(source % DSPIC33_DMA_COUNT);
     bit = dma_channel_bit(channel);
     forced = (event_value & DMA_EVENT_FORCE) != 0u;
     generation = (uint16_t)((event_value >> DMA_EVENT_GENERATION_SHIFT) &
@@ -1206,29 +1249,41 @@ static void run_dma(Dspic33* cpu, uint8_t channel, uint32_t event_value) {
     if (generation != (cpu->io.dma_generation[channel] & DMA_EVENT_GENERATION_MASK)) {
         return;
     }
-    if (forced) {
-        cpu->io.dma_forced_pending &= (uint16_t)~bit;
-    } else {
+    base = dma_channel_base(channel);
+    if (completion) {
+        complete_dma_transfer(cpu, channel, event_value);
+        return;
+    }
+    if ((cpu->io.dma_active & bit) != 0u) {
+        if (!dspic33_schedule(cpu, DSPIC33_EVENT_DMA, source, event_value, 1u)) {
+            if (forced) {
+                cpu->io.dma_forced_pending &= (uint16_t)~bit;
+            } else {
+                cpu->io.dma_peripheral_pending &= (uint16_t)~bit;
+            }
+        }
+        return;
+    }
+    if (!forced) {
         cpu->io.dma_peripheral_pending &= (uint16_t)~bit;
     }
-    base = dma_channel_base(channel);
     control = raw_word(cpu, base);
     if ((control & DMA_CON_CHEN) == 0u || (raw_word(cpu, DMA_PWC) & bit) != 0u) {
         if (forced) {
+            cpu->io.dma_forced_pending &= (uint16_t)~bit;
             raw_write_word(
                 cpu, (uint16_t)(base + 2u),
                 (uint16_t)(raw_word(cpu, (uint16_t)(base + 2u)) & ~DMA_REQ_FORCE));
         }
         return;
     }
-    count = raw_word(cpu, (uint16_t)(base + 0x0eu));
     pad = raw_word(cpu, (uint16_t)(base + 0x0cu));
-    index = cpu->io.dma_index[channel];
     width = (control & DMA_CON_SIZE_BYTE) != 0u ? 1u : 2u;
     address = dma_transfer_address(cpu, channel, control, (uint16_t)event_value);
     if (!dma_memory_address_valid(address, width)) {
         dspic33_raise_dma_address_trap(cpu);
         if (forced) {
+            cpu->io.dma_forced_pending &= (uint16_t)~bit;
             raw_write_word(
                 cpu, (uint16_t)(base + 2u),
                 (uint16_t)(raw_word(cpu, (uint16_t)(base + 2u)) & ~DMA_REQ_FORCE));
@@ -1236,6 +1291,7 @@ static void run_dma(Dspic33* cpu, uint8_t channel, uint32_t event_value) {
         return;
     }
     dma_record_transfer(cpu, channel, control, address);
+    cpu->io.dma_active |= bit;
     cpu->io.dma_transfer_width = width;
     cpu->io.dma_transfer_active = true;
     if ((control & DMA_CON_RAM_TO_PERIPHERAL) != 0u) {
@@ -1264,25 +1320,10 @@ static void run_dma(Dspic33* cpu, uint8_t channel, uint32_t event_value) {
     }
     cpu->io.dma_transfer_active = false;
     cpu->io.dma_transfer_width = 0u;
-    if ((control & DMA_CON_AMODE_MASK) == 0u) {
-        cpu->io.dma_address[channel] += width;
-    }
-    if (forced) {
-        raw_write_word(
-            cpu, (uint16_t)(base + 2u),
-            (uint16_t)(raw_word(cpu, (uint16_t)(base + 2u)) & ~DMA_REQ_FORCE));
-    }
-    transferred = (uint16_t)(index + 1u);
-    half = (uint16_t)(((uint32_t)count + 2u) / 2u);
-    if ((control & DMA_CON_HALF) != 0u && transferred == half &&
-        (cpu->io.dma_half_raised & bit) == 0u) {
-        cpu->io.dma_half_raised |= bit;
-        dspic33_raise_interrupt(cpu, dma_irqs[channel]);
-    }
-    if (index >= count) {
-        dma_complete_block(cpu, channel, control);
-    } else {
-        cpu->io.dma_index[channel]++;
+    if ((cpu->io.dma_active & bit) != 0u &&
+        !dspic33_schedule(cpu, DSPIC33_EVENT_DMA,
+                          (uint16_t)(channel + DSPIC33_DMA_COUNT), event_value, 1u)) {
+        complete_dma_transfer(cpu, channel, event_value);
     }
 }
 
@@ -4227,7 +4268,7 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
         set_timer_gate(cpu, (uint8_t)event->source, event->value != 0u);
         break;
     case DSPIC33_EVENT_DMA:
-        run_dma(cpu, (uint8_t)event->source, event->value);
+        run_dma(cpu, event->source, event->value);
         break;
     case DSPIC33_EVENT_ADC:
         run_adc(cpu, (uint8_t)event->source, event->value);
@@ -4843,6 +4884,7 @@ static void initialize_dma_channel(Dspic33* cpu, uint8_t channel) {
     cpu->io.dma_half_raised &= (uint16_t)~bit;
     cpu->io.dma_forced_pending &= (uint16_t)~bit;
     cpu->io.dma_peripheral_pending &= (uint16_t)~bit;
+    cpu->io.dma_active &= (uint16_t)~bit;
     cpu->io.dma_enabled |= bit;
     cpu->io.dma_generation[channel]++;
     raw_write_word(cpu, DMA_PPS, (uint16_t)(raw_word(cpu, DMA_PPS) & ~bit));
@@ -4860,6 +4902,7 @@ static void update_dma_control(Dspic33* cpu, uint8_t channel, uint16_t previous)
         cpu->io.dma_enabled &= (uint16_t)~bit;
         cpu->io.dma_forced_pending &= (uint16_t)~bit;
         cpu->io.dma_peripheral_pending &= (uint16_t)~bit;
+        cpu->io.dma_active &= (uint16_t)~bit;
         cpu->io.dma_generation[channel]++;
         raw_write_word(
             cpu, (uint16_t)(base + 2u),
@@ -4881,6 +4924,11 @@ static void update_dma_request(Dspic33* cpu, uint8_t channel, uint16_t previous)
         return;
     }
     if ((request & DMA_REQ_FORCE) == 0u) {
+        return;
+    }
+    if ((cpu->io.dma_active & bit) != 0u) {
+        dma_request_collision(cpu, channel);
+        raw_write_word(cpu, address, (uint16_t)(request & ~DMA_REQ_FORCE));
         return;
     }
     if ((cpu->io.dma_peripheral_pending & bit) != 0u) {

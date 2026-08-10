@@ -309,6 +309,7 @@ typedef struct {
     uint16_t dma_half_raised;
     uint16_t dma_forced_pending;
     uint16_t dma_peripheral_pending;
+    uint16_t dma_active;
     uint16_t spi_shift[DSPIC33_SPI_COUNT];
     uint16_t spi_generation[DSPIC33_SPI_COUNT];
     uint8_t spi_busy;

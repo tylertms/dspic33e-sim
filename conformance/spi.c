@@ -568,7 +568,15 @@ static void dma_cases(SpiConformance* state, Dspic33* cpu) {
                "dma receive completion advance");
         expect(state, dspic33_read_word(cpu, rx_memory) == 0x6a00u + channel,
                "dma receive value");
-        expect(state, (dspic33_read_word(cpu, dma_base(0u)) & 0x8000u) == 0u,
+        expect(state,
+               (dspic33_read_word(cpu, dma_base(0u)) & 0x8000u) != 0u &&
+                   !interrupt_flag(cpu, 4u) && cpu->io.dma_index[0] == 0u,
+               "dma receive active before completion");
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "dma receive controller completion advance");
+        expect(state,
+               (dspic33_read_word(cpu, dma_base(0u)) & 0x8000u) == 0u &&
+                   interrupt_flag(cpu, 4u),
                "dma receive one shot complete");
 
         dspic33_reset(cpu, 0u);
@@ -581,7 +589,15 @@ static void dma_cases(SpiConformance* state, Dspic33* cpu) {
                "dma transmit request advance");
         expect(state, cpu->io.spi_shift[channel] == 0x7b00u + channel,
                "dma transmit loads next shift");
-        expect(state, (dspic33_read_word(cpu, dma_base(1u)) & 0x8000u) == 0u,
+        expect(state,
+               (dspic33_read_word(cpu, dma_base(1u)) & 0x8000u) != 0u &&
+                   !interrupt_flag(cpu, 14u) && cpu->io.dma_index[1] == 0u,
+               "dma transmit active before completion");
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "dma transmit controller completion advance");
+        expect(state,
+               (dspic33_read_word(cpu, dma_base(1u)) & 0x8000u) == 0u &&
+                   interrupt_flag(cpu, 14u),
                "dma transmit one shot complete");
         expect(state, dspic33_device_advance(cpu, cycles),
                "dma transmitted word completion");

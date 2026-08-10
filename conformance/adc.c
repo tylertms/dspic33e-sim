@@ -381,6 +381,10 @@ static void dma_cases(AdcConformance* state, Dspic33* cpu) {
                    (uint16_t)((index + 1u) * 16u),
                "ordered adc dma result");
     }
+    expect(state, !interrupt_flag(cpu, 4u) && cpu->io.dma_index[0] == 9u,
+           "ordered adc dma remains active before completion");
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "ordered adc dma completion advance");
     expect(state, interrupt_flag(cpu, 4u), "ordered adc dma block interrupt");
     expect(state, interrupt_flag(cpu, 13u), "ordered adc increment interrupt");
 

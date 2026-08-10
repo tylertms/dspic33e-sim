@@ -12,6 +12,8 @@ typedef struct {
     uint32_t failed;
 } DmaConformance;
 
+enum { DMA_FORCE = 0x8000u };
+
 static const uint8_t dma_irqs[DSPIC33_DMA_COUNT] = {
     4u, 14u, 24u, 36u, 46u, 61u, 68u, 69u, 118u, 119u, 120u, 121u, 130u, 131u, 132u};
 
@@ -60,7 +62,7 @@ static void configure_channel(Dspic33* cpu, uint8_t channel, uint16_t control,
 
 static bool request(Dspic33* cpu, uint8_t source, uint16_t indirect) {
     return dspic33_dma_request(cpu, source, indirect, 0u) &&
-           dspic33_device_advance(cpu, 0u);
+           dspic33_device_advance(cpu, 1u);
 }
 
 static void register_cases(DmaConformance* state, Dspic33* cpu) {
@@ -99,6 +101,10 @@ static void register_cases(DmaConformance* state, Dspic33* cpu) {
            "DMALCA reset and read only");
     expect(state, dspic33_read_word(cpu, 0x0bf8u) == 0u, "DSADRL read only");
     expect(state, dspic33_read_word(cpu, 0x0bfau) == 0u, "DSADRH read only");
+    expect(state,
+           dspic33_schedule(cpu, DSPIC33_EVENT_DMA, DSPIC33_DMA_COUNT * 2u, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u) && cpu->io.dma_active == 0u,
+           "invalid DMA event source ignored");
 }
 
 static void direction_and_width_cases(DmaConformance* state, Dspic33* cpu) {
@@ -290,57 +296,142 @@ static void interrupt_and_null_cases(DmaConformance* state, Dspic33* cpu) {
 }
 
 static void force_and_collision_cases(DmaConformance* state, Dspic33* cpu) {
-    dspic33_reset(cpu, 0u);
-    dspic33_write_word(cpu, 0x2900u, 0x1357u);
-    configure_channel(cpu, 0u, 0x2001u, 0x80u, 0x2900u, 0u, 0x2a00u, 0u);
-    dspic33_write_word(cpu, 0x0b02u, 0x8080u);
-    expect(state, (dspic33_read_word(cpu, 0x0b02u) & 0x8000u) != 0u,
-           "FORCE set while pending");
-    dspic33_write_word(cpu, 0x0b02u, 0x0080u);
-    expect(state, (dspic33_read_word(cpu, 0x0b02u) & 0x8000u) != 0u,
-           "FORCE cannot be user cleared");
-    expect(state, dspic33_device_advance(cpu, 1u), "FORCE transfer advance");
-    expect(state, dspic33_read_word(cpu, 0x2a00u) == 0x1357u,
-           "FORCE transfers one element");
-    expect(state, (dspic33_read_word(cpu, 0x0b02u) & 0x8000u) == 0u,
-           "FORCE hardware clears");
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_DMA_COUNT; channel++) {
+        uint16_t base = channel_base(channel);
+        uint16_t bit = (uint16_t)(1u << channel);
+        uint8_t source = (uint8_t)(0x80u + channel);
+        uint16_t memory = (uint16_t)(0x2900u + channel * 4u);
+        uint16_t pad = (uint16_t)(0x2a00u + channel * 4u);
+        uint16_t first = (uint16_t)(0x1100u + channel);
+        uint16_t second = (uint16_t)(0x2200u + channel);
 
-    dspic33_reset(cpu, 0u);
-    dspic33_write_word(cpu, 0x0b02u, 0x80a0u);
-    expect(state, dspic33_read_word(cpu, 0x0b02u) == 0x00a0u,
-           "FORCE clears while disabled");
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, memory, first);
+        dspic33_write_word(cpu, (uint16_t)(memory + 2u), second);
+        configure_channel(cpu, channel, 0x2000u, source, memory, 0u, pad, 3u);
+        dspic33_write_word(cpu, (uint16_t)(base + 2u), (uint16_t)(DMA_FORCE | source));
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 2u)) & DMA_FORCE) != 0u,
+               "FORCE software set matrix");
+        dspic33_write_word(cpu, (uint16_t)(base + 2u), source);
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 2u)) & DMA_FORCE) != 0u,
+               "FORCE write zero cannot clear matrix");
+        expect(state, dspic33_device_advance(cpu, 1u), "FORCE start matrix");
+        expect(state,
+               dspic33_read_word(cpu, pad) == first &&
+                   cpu->io.dma_index[channel] == 0u && !interrupt_flag(cpu, channel) &&
+                   (dspic33_read_word(cpu, base) & 0x8000u) != 0u,
+               "FORCE remains active before completion matrix");
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 2u)) & DMA_FORCE) != 0u,
+               "FORCE remains set until completion matrix");
+        expect(state, dspic33_device_advance(cpu, 1u), "FORCE completion matrix");
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 2u)) & DMA_FORCE) == 0u,
+               "FORCE hardware clear matrix");
+        expect(state, cpu->io.dma_index[channel] == 1u,
+               "FORCE completion advances count matrix");
+        expect(state, dspic33_device_advance(cpu, 2u), "FORCE idle advance matrix");
+        expect(state,
+               dspic33_read_word(cpu, pad) == first && cpu->io.dma_index[channel] == 1u,
+               "FORCE exactly one transfer matrix");
 
-    dspic33_reset(cpu, 0u);
-    dspic33_write_word(cpu, 0x2900u, 0x2468u);
-    configure_channel(cpu, 0u, 0x2000u, 0x81u, 0x2900u, 0u, 0x2a00u, 1u);
-    expect(state, dspic33_dma_request(cpu, 0x81u, 0u, 2u), "queue peripheral request");
-    dspic33_write_word(cpu, 0x0b02u, 0x8081u);
-    expect(state, (dspic33_read_word(cpu, 0x0bf2u) & 1u) != 0u,
-           "pending peripheral FORCE collision");
-    expect(state, (dspic33_read_word(cpu, 0x0b02u) & 0x8000u) == 0u,
-           "colliding FORCE discarded");
-    expect(state, (dspic33_read_word(cpu, 0x08c0u) & 0x0020u) != 0u,
-           "request collision sets DMACERR");
-    dspic33_write_word(cpu, 0x08c0u,
-                       (uint16_t)(dspic33_read_word(cpu, 0x08c0u) & ~0x0020u));
-    expect(state, dspic33_read_word(cpu, 0x0bf2u) == 0u,
-           "clearing DMACERR clears collision");
-    expect(state, dspic33_device_advance(cpu, 2u), "peripheral collision advance");
-    expect(state, dspic33_read_word(cpu, 0x2a00u) == 0x2468u,
-           "peripheral request survives collision");
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, memory, first);
+        configure_channel(cpu, channel, 0x2000u, source, memory, 0u, pad, 1u);
+        dspic33_write_word(cpu, (uint16_t)(base + 2u), (uint16_t)(DMA_FORCE | source));
+        expect(state, (cpu->io.dma_forced_pending & bit) != 0u,
+               "FORCE pending before disable matrix");
+        dspic33_write_word(cpu, base, 0x2000u);
+        expect(state,
+               (dspic33_read_word(cpu, (uint16_t)(base + 2u)) & DMA_FORCE) == 0u &&
+                   (cpu->io.dma_forced_pending & bit) == 0u,
+               "disable clears FORCE pending matrix");
+        expect(state,
+               dspic33_device_advance(cpu, 2u) && dspic33_read_word(cpu, pad) == 0u,
+               "disabled FORCE does not transfer matrix");
 
-    dspic33_reset(cpu, 0u);
-    dspic33_write_word(cpu, 0x2900u, 0xaaaa);
-    dspic33_write_word(cpu, 0x2902u, 0xbbbb);
-    configure_channel(cpu, 0u, 0x2000u, 0x82u, 0x2900u, 0u, 0x2a00u, 3u);
-    dspic33_write_word(cpu, 0x0b02u, 0x8082u);
-    expect(state, dspic33_dma_request(cpu, 0x82u, 0u, 1u), "queue request after FORCE");
-    expect(state, (dspic33_read_word(cpu, 0x0bf2u) & 1u) != 0u,
-           "FORCE then peripheral collision");
-    expect(state, dspic33_device_advance(cpu, 1u), "dual collision advance");
-    expect(state,
-           dspic33_read_word(cpu, 0x2a00u) == 0xbbbbu && cpu->io.dma_index[0] == 2u,
-           "FORCE then peripheral both execute");
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, memory, first);
+        configure_channel(cpu, channel, 0x2000u, source, memory, 0u, pad, 1u);
+        expect(state, dspic33_dma_request(cpu, source, 0u, 1u),
+               "queue peripheral before FORCE matrix");
+        dspic33_write_word(cpu, (uint16_t)(base + 2u), (uint16_t)(DMA_FORCE | source));
+        expect(state, (dspic33_read_word(cpu, 0x0bf2u) & bit) != 0u,
+               "peripheral before FORCE collision matrix");
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 2u)) & DMA_FORCE) == 0u,
+               "peripheral before FORCE discard matrix");
+        expect(state, (dspic33_read_word(cpu, 0x08c0u) & 0x0020u) != 0u,
+               "peripheral before FORCE trap matrix");
+        dspic33_write_word(cpu, 0x08c0u,
+                           (uint16_t)(dspic33_read_word(cpu, 0x08c0u) & ~0x0020u));
+        expect(state, dspic33_read_word(cpu, 0x0bf2u) == 0u,
+               "peripheral before FORCE collision clear matrix");
+        expect(state, dspic33_device_advance(cpu, 2u),
+               "peripheral before FORCE advance matrix");
+        expect(state,
+               dspic33_read_word(cpu, pad) == first && cpu->io.dma_index[channel] == 1u,
+               "peripheral before FORCE one transfer matrix");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, memory, first);
+        dspic33_write_word(cpu, (uint16_t)(memory + 2u), second);
+        configure_channel(cpu, channel, 0x2000u, source, memory, 0u, pad, 3u);
+        dspic33_write_word(cpu, (uint16_t)(base + 2u), (uint16_t)(DMA_FORCE | source));
+        expect(state, dspic33_dma_request(cpu, source, 0u, 1u),
+               "queue peripheral after FORCE matrix");
+        expect(state, (dspic33_read_word(cpu, 0x0bf2u) & bit) != 0u,
+               "FORCE before peripheral collision matrix");
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "FORCE before peripheral start matrix");
+        expect(state,
+               dspic33_read_word(cpu, pad) == first &&
+                   cpu->io.dma_index[channel] == 0u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 2u)) & DMA_FORCE) != 0u,
+               "FORCE executes before peripheral matrix");
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "FORCE before peripheral deferred matrix");
+        expect(state,
+               dspic33_read_word(cpu, pad) == second &&
+                   cpu->io.dma_index[channel] == 1u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 2u)) & DMA_FORCE) == 0u,
+               "peripheral executes after FORCE matrix");
+        expect(state, (dspic33_read_word(cpu, 0x08c0u) & 0x0020u) != 0u,
+               "FORCE before peripheral trap matrix");
+        expect(state,
+               dspic33_device_advance(cpu, 1u) && cpu->io.dma_index[channel] == 2u,
+               "peripheral collision completion matrix");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, memory, first);
+        dspic33_write_word(cpu, (uint16_t)(memory + 2u), second);
+        configure_channel(cpu, channel, 0x2000u, source, memory, 0u, pad, 3u);
+        expect(state,
+               dspic33_dma_request(cpu, source, 0u, 0u) &&
+                   dspic33_device_advance(cpu, 0u),
+               "start active peripheral transfer matrix");
+        expect(state, (cpu->io.dma_active & bit) != 0u,
+               "peripheral transfer active matrix");
+        expect(state,
+               dspic33_read_word(cpu, pad) == first && cpu->io.dma_index[channel] == 0u,
+               "active peripheral first transfer matrix");
+        dspic33_write_word(cpu, (uint16_t)(base + 2u), (uint16_t)(DMA_FORCE | source));
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 2u)) & DMA_FORCE) == 0u,
+               "FORCE ignored while active matrix");
+        expect(state, (dspic33_read_word(cpu, 0x0bf2u) & bit) != 0u,
+               "active FORCE request collision matrix");
+        expect(state, (dspic33_read_word(cpu, 0x08c0u) & 0x0020u) != 0u,
+               "active FORCE collision trap matrix");
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "active transfer completion matrix");
+        expect(state, (cpu->io.dma_active & bit) == 0u,
+               "active transfer clears matrix");
+        expect(state, cpu->io.dma_index[channel] == 1u,
+               "active transfer count completes matrix");
+        expect(state,
+               dspic33_device_advance(cpu, 1u) &&
+                   dspic33_read_word(cpu, pad) == first &&
+                   cpu->io.dma_index[channel] == 1u,
+               "ignored active FORCE does not transfer matrix");
+    }
 }
 
 static void routing_and_status_cases(DmaConformance* state, Dspic33* cpu) {
