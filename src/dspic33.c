@@ -20,6 +20,18 @@ static void schedule_soft_trap(Dspic33* cpu, uint16_t trap, uint32_t vector,
                                uint8_t priority, uint8_t delay);
 static void check_stack_address(Dspic33* cpu, int32_t address, bool wrapped);
 
+static bool program_target_requires_address_error(uint32_t address) {
+    return address >= DSPIC33_PROGRAM_LIMIT && address < 0x7fc000u;
+}
+
+static void raise_program_target_error(Dspic33* cpu, uint32_t return_pc) {
+    cpu->address_error = true;
+    cpu->address_error_return = return_pc;
+    cpu->address_error_access_allowed = false;
+    cpu->address_error_working_state_completed = true;
+    cpu->address_error_control_state_completed = true;
+}
+
 static bool check_data_alignment(Dspic33* cpu, uint32_t address) {
     if (!cpu->instruction_active || (address & 1u) == 0u) {
         return true;
@@ -1849,6 +1861,13 @@ static void enter_trap(Dspic33* cpu, uint16_t trap, uint32_t vector, uint8_t pri
     }
 }
 
+static void enter_address_trap(Dspic33* cpu, uint32_t return_pc) {
+    uint16_t sfa = (uint16_t)(cpu->corcon & 0x0004u);
+    cpu->corcon &= (uint16_t)~0x0004u;
+    enter_trap(cpu, 1u, 0x000006u, 14u, 0x0008u, return_pc);
+    cpu->corcon |= sfa;
+}
+
 static void schedule_soft_trap(Dspic33* cpu, uint16_t trap, uint32_t vector,
                                uint8_t priority, uint8_t delay) {
     Dspic33PendingSoftTrap* available = NULL;
@@ -1949,15 +1968,23 @@ static void advance_instruction(Dspic33* cpu, uint64_t cycles) {
 }
 
 static uint64_t instruction_cycles(const Dspic33* cpu, uint32_t opcode) {
+    if ((opcode & 0xf00000u) == 0x300000u) {
+        bool take;
+        if (branch_condition(cpu, (uint8_t)((opcode >> 16u) & 0x0fu), &take)) {
+            return take ? 4u : 1u;
+        }
+    }
     if ((opcode & 0xff0000u) == 0x050000u) {
         return exception_pending(cpu) ? 5u : 6u;
     }
     if ((opcode & 0xff0000u) == 0xbe0000u) {
         return 2u;
     }
-    if ((opcode & 0xff0000u) == 0x020000u || (opcode & 0xfffff0u) == 0x010000u ||
-        (opcode & 0xfffff0u) == 0x010200u || (opcode & 0xff0000u) == 0x070000u ||
-        (opcode & 0xff87f0u) == 0x018000u) {
+    if ((opcode & 0xff0000u) == 0x020000u || (opcode & 0xff0000u) == 0x040000u ||
+        (opcode & 0xfffff0u) == 0x010000u || (opcode & 0xfffff0u) == 0x010200u ||
+        (opcode & 0xff0000u) == 0x070000u || (opcode & 0xfffff0u) == 0x010400u ||
+        (opcode & 0xfffff0u) == 0x010600u || (opcode & 0xff87f0u) == 0x018000u ||
+        (opcode & 0xff87f0u) == 0x018400u) {
         return 4u;
     }
     return 1u;
@@ -2102,18 +2129,23 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         return true;
     }
     if ((opcode & 0xff0000u) == 0x020000u || (opcode & 0xff0000u) == 0x040000u) {
+        bool call = (opcode & 0xff0000u) == 0x020000u;
         uint32_t second;
         uint32_t target;
         if (cpu->pc >= DSPIC33_PROGRAM_LIMIT) {
             return false;
         }
         second = cpu->program[cpu->pc / 2u];
-        cpu->pc += 2u;
         target = ((second & 0x007fu) << 16u) | (opcode & 0x00ffffu);
         target &= 0x007ffffeu;
-        if ((opcode & 0xff0000u) == 0x020000u) {
-            push_program_counter(cpu, cpu->pc);
+        if (call) {
+            push_program_counter(cpu, cpu->pc + 2u);
         }
+        if (program_target_requires_address_error(target)) {
+            raise_program_target_error(cpu, cpu->pc);
+            return true;
+        }
+        cpu->pc += 2u;
         cpu->pc = target;
         return true;
     }
@@ -2123,8 +2155,14 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         return true;
     }
     if ((opcode & 0xfffff0u) == 0x010200u) {
+        uint32_t target;
         push_program_counter(cpu, cpu->pc);
-        cpu->pc = (uint32_t)(cpu->pc + (int16_t)cpu->w[opcode & 0x0fu] * 2);
+        target = (uint32_t)(cpu->pc + (int16_t)cpu->w[opcode & 0x0fu] * 2);
+        if (program_target_requires_address_error(target)) {
+            raise_program_target_error(cpu, cpu->pc);
+            return true;
+        }
+        cpu->pc = target;
         return true;
     }
     if ((opcode & 0xfffff0u) == 0x014000u || (opcode & 0xfffff0u) == 0x010400u) {
@@ -2132,7 +2170,13 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         return true;
     }
     if ((opcode & 0xfffff0u) == 0x010600u) {
-        cpu->pc = (uint32_t)(cpu->pc + (int32_t)(int16_t)cpu->w[opcode & 0x0fu] * 2);
+        uint32_t target =
+            (uint32_t)(cpu->pc + (int32_t)(int16_t)cpu->w[opcode & 0x0fu] * 2);
+        if (program_target_requires_address_error(target)) {
+            raise_program_target_error(cpu, cpu->pc);
+            return true;
+        }
+        cpu->pc = target;
         return true;
     }
     if ((opcode & 0xff87f0u) == 0x018000u || (opcode & 0xff87f0u) == 0x018400u) {
@@ -2142,7 +2186,12 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         if ((opcode & 0x000400u) == 0u) {
             push_program_counter(cpu, cpu->pc);
         }
-        cpu->pc = target & 0x007ffffeu;
+        target &= 0x007ffffeu;
+        if (program_target_requires_address_error(target)) {
+            raise_program_target_error(cpu, cpu->pc);
+            return true;
+        }
+        cpu->pc = target;
         return true;
     }
     if ((opcode & 0xfffff0u) == 0x088000u || (opcode & 0xff8000u) == 0x080000u) {
@@ -2393,6 +2442,10 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         int32_t displacement = (int16_t)(opcode & 0xffffu);
         uint32_t target = (uint32_t)(cpu->pc + displacement * 2);
         push_program_counter(cpu, cpu->pc);
+        if (program_target_requires_address_error(target)) {
+            raise_program_target_error(cpu, cpu->pc);
+            return true;
+        }
         cpu->pc = target;
         return true;
     }
@@ -2403,7 +2456,12 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         }
         if (take) {
             int32_t displacement = (int16_t)(opcode & 0xffffu);
-            cpu->pc = (uint32_t)(cpu->pc + displacement * 2);
+            uint32_t target = (uint32_t)(cpu->pc + displacement * 2);
+            if (program_target_requires_address_error(target)) {
+                raise_program_target_error(cpu, cpu->pc);
+                return true;
+            }
+            cpu->pc = target;
         }
         return true;
     }
@@ -2574,6 +2632,7 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
     cpu->address_error = false;
     cpu->address_error_access_allowed = false;
     cpu->address_error_working_state_completed = false;
+    cpu->address_error_control_state_completed = false;
     cpu->async_events_enabled = true;
     memset(cpu->interrupt_log_irq, 0xff, sizeof(cpu->interrupt_log_irq));
     memset(cpu->interrupt_log_entry, 0, sizeof(cpu->interrupt_log_entry));
@@ -2945,7 +3004,12 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     if (opcode == 0x064000u) {
         uint64_t cycles;
         dspic33_device_return_interrupt(cpu);
-        cycles = exception_pending(cpu) ? 5u : 6u;
+        if (program_target_requires_address_error(cpu->pc)) {
+            enter_address_trap(cpu, instruction_pc + 2u);
+            cycles = 5u;
+        } else {
+            cycles = exception_pending(cpu) ? 5u : 6u;
+        }
         cpu->instructions++;
         advance_instruction(cpu, cycles);
         return cpu->stop_reason;
@@ -2957,7 +3021,12 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
             return cpu->stop_reason;
         }
         cpu->pc = pop_program_counter(cpu);
-        cycles = exception_pending(cpu) ? 5u : 6u;
+        if (program_target_requires_address_error(cpu->pc)) {
+            enter_address_trap(cpu, instruction_pc + 2u);
+            cycles = 5u;
+        } else {
+            cycles = exception_pending(cpu) ? 5u : 6u;
+        }
         cpu->instructions++;
         advance_instruction(cpu, cycles);
         return cpu->stop_reason;
@@ -2972,6 +3041,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     cpu->address_error = false;
     cpu->address_error_access_allowed = false;
     cpu->address_error_working_state_completed = false;
+    cpu->address_error_control_state_completed = false;
     if (!execute(cpu, opcode) && !cpu->address_error) {
         cpu->instruction_active = false;
         cpu->pc -= 2u;
@@ -2984,16 +3054,24 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     cpu->instruction_active = false;
     if (cpu->address_error) {
         uint32_t return_pc = cpu->address_error_return;
+        bool control_state_completed = cpu->address_error_control_state_completed;
         if (!cpu->address_error_working_state_completed) {
             memcpy(cpu->w, working_registers, sizeof(working_registers));
             cpu->sr = status;
         }
         memcpy(cpu->accumulator, accumulators, sizeof(accumulators));
-        cpu->corcon = control;
+        if (!cpu->address_error_control_state_completed) {
+            cpu->corcon = control;
+        }
         cpu->address_error = false;
         cpu->address_error_access_allowed = false;
         cpu->address_error_working_state_completed = false;
-        enter_trap(cpu, 1u, 0x000006u, 14u, 0x0008u, return_pc);
+        cpu->address_error_control_state_completed = false;
+        if (control_state_completed) {
+            enter_address_trap(cpu, return_pc);
+        } else {
+            enter_trap(cpu, 1u, 0x000006u, 14u, 0x0008u, return_pc);
+        }
         advance_instruction(cpu, instruction_cycles(cpu, opcode));
         return cpu->stop_reason;
     }

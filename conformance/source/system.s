@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 31
+_system_conformance_terminal_count = 39
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -72,6 +72,22 @@ _run_system_probe:
     bra z, _system_eds_page_move_double_read_probe
     cp w0, #31
     bra z, _system_eds_page_move_double_write_probe
+    cp w0, #32
+    bra z, _system_program_target_goto_probe
+    cp w0, #33
+    bra z, _system_program_target_call_probe
+    cp w0, #34
+    bra z, _system_program_target_goto_long_probe
+    cp w0, #35
+    bra z, _system_program_target_call_long_probe
+    cp w0, #36
+    bra z, _system_program_target_return_probe
+    cp w0, #37
+    bra z, _system_program_target_retfie_probe
+    cp w0, #38
+    bra z, _system_program_target_bra_dispatch
+    cp w0, #39
+    bra z, _system_program_target_rcall_dispatch
     return
 
 .global _system_sleep_probe
@@ -548,8 +564,136 @@ _system_eds_page_move_double_write_probe:
     mov #0x1111, w5
     return
 
+.equ system_invalid_program_target, 0x55800
+
+.global _system_program_target_goto_probe
+_system_program_target_goto_probe:
+    mov #0x5000, w15
+    clr w1
+    mov #0x010f, w2
+    mov w2, SR
+    lnk #0
+    mov #0x5000, w15
+    goto system_invalid_program_target
+    mov #0x1111, w1
+    return
+
+.global _system_program_target_call_probe
+_system_program_target_call_probe:
+    mov #0x5000, w15
+    clr w1
+    mov #0x010f, w2
+    mov w2, SR
+    lnk #0
+    mov #0x5000, w15
+    call system_invalid_program_target
+    mov #0x1111, w1
+    return
+
+.global _system_program_target_goto_long_probe
+_system_program_target_goto_long_probe:
+    mov #0x5000, w15
+    clr w1
+    mov #0x010f, w2
+    mov w2, SR
+    lnk #0
+    mov #0x5000, w15
+    mov #0x5800, w0
+    mov #0x0005, w1
+    goto.l w0
+    mov #0x1111, w1
+    return
+
+.global _system_program_target_call_long_probe
+_system_program_target_call_long_probe:
+    mov #0x5000, w15
+    clr w1
+    mov #0x010f, w2
+    mov w2, SR
+    lnk #0
+    mov #0x5000, w15
+    mov #0x5800, w0
+    mov #0x0005, w1
+    call.l w0
+    mov #0x1111, w1
+    return
+
+.global _system_program_target_return_probe
+_system_program_target_return_probe:
+    rcall _system_program_target_return_body
+    return
+
+_system_program_target_return_body:
+    mov #0x5000, w15
+    clr w1
+    mov #0x010f, w2
+    mov w2, SR
+    lnk #0
+    mov #0x5000, w15
+    mov #0x5800, w0
+    mov w0, [w15++]
+    mov #0x0005, w0
+    mov w0, [w15++]
+    return
+    mov #0x1111, w1
+    return
+
+.global _system_program_target_retfie_probe
+_system_program_target_retfie_probe:
+    mov #0x5000, w15
+    clr w1
+    mov #0x010f, w2
+    mov w2, SR
+    lnk #0
+    mov #0x5000, w15
+    mov #0x5800, w0
+    mov w0, [w15++]
+    mov #0x0f05, w0
+    mov w0, [w15++]
+    retfie
+    mov #0x1111, w1
+    return
+
+.global _system_program_target_bra_dispatch
+_system_program_target_bra_dispatch:
+    goto _system_program_target_bra_probe
+
+.global _system_program_target_rcall_dispatch
+_system_program_target_rcall_dispatch:
+    goto _system_program_target_rcall_probe
+
+.section .system_program_target_near_limit,code,address(0x557d0)
+.global _system_program_target_bra_probe
+_system_program_target_bra_probe:
+    mov #0x5000, w15
+    clr w1
+    mov #0x010f, w2
+    mov w2, SR
+    lnk #0
+    mov #0x5000, w15
+    bra system_invalid_program_target
+    mov #0x1111, w1
+    return
+
+.global _system_program_target_rcall_probe
+_system_program_target_rcall_probe:
+    mov #0x5000, w15
+    clr w1
+    mov #0x010f, w2
+    mov w2, SR
+    lnk #0
+    mov #0x5000, w15
+    rcall system_invalid_program_target
+    mov #0x1111, w1
+    return
+
+.section .text,code
+
 .global __AddressError
 __AddressError:
+    mov w0, _system_program_target_trap_state
+    mov w1, _system_program_target_trap_state+2
+    mov w15, _system_program_target_trap_state+4
     mov w1, _system_address_trap_state
     mov _system_address_trap_buffer, w0
     mov w0, _system_address_trap_state+2
@@ -642,6 +786,22 @@ __AddressError:
     mov w0, _system_eds_page_trap_state+22
     mov DSWPAG, w0
     mov w0, _system_eds_page_trap_state+24
+    mov INTCON1, w0
+    mov w0, _system_program_target_trap_state+6
+    mov [w15-4], w0
+    mov w0, _system_program_target_trap_state+8
+    mov [w15-2], w0
+    mov w0, _system_program_target_trap_state+10
+    mov [w15-8], w0
+    mov w0, _system_program_target_trap_state+12
+    mov [w15-6], w0
+    mov w0, _system_program_target_trap_state+14
+    mov INTTREG, w0
+    mov w0, _system_program_target_trap_state+16
+    mov SR, w0
+    mov w0, _system_program_target_trap_state+18
+    mov CORCON, w0
+    mov w0, _system_program_target_trap_state+20
 .global _system_address_trap_complete
 _system_address_trap_complete:
     bra _system_address_trap_complete

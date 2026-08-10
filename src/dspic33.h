@@ -416,6 +416,7 @@ typedef struct {
     bool address_error;
     bool address_error_access_allowed;
     bool address_error_working_state_completed;
+    bool address_error_control_state_completed;
     bool stop_on_trap;
     bool async_events_enabled;
     uint16_t interrupt_log_irq[16];

@@ -18,10 +18,19 @@ enum {
     OPCODE_RETLW_0X123_W2 = 0x051232u,
     OPCODE_RETLW_0X122_W15 = 0x05122fu,
     OPCODE_CALL_0X100 = 0x020100u,
+    OPCODE_CALL_0X55800 = 0x025800u,
+    OPCODE_GOTO_0X100 = 0x040100u,
+    OPCODE_GOTO_0X55800 = 0x045800u,
     OPCODE_CALL_W0 = 0x010000u,
+    OPCODE_GOTO_W0 = 0x010400u,
     OPCODE_CALL_LONG_W0 = 0x018800u,
+    OPCODE_GOTO_LONG_W0 = 0x018c00u,
     OPCODE_RCALL_W0 = 0x010200u,
+    OPCODE_BRA_W0 = 0x010600u,
     OPCODE_RCALL_NEXT = 0x070000u,
+    OPCODE_RCALL_0X55800 = 0x07000au,
+    OPCODE_BRA_0X55800 = 0x370012u,
+    OPCODE_BRA_Z_0X55800 = 0x320012u,
     OPCODE_SFTAC_A_W5 = 0xc80005u,
     OPCODE_LNK_0 = 0xfa0000u,
     OPCODE_ULNK = 0xfa8000u,
@@ -97,6 +106,197 @@ static void expect_address_trap(ProcessorConformance* state, Dspic33* cpu,
            (dspic33_read_word(cpu, 0x08c0u) & 0x0008u) != 0u &&
                dspic33_read_word(cpu, 0x08c8u) == 0x0e01u,
            "address error records status and priority");
+}
+
+static void program_target_address_error_cases(ProcessorConformance* state,
+                                               Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_GOTO_0X55800);
+    load_instruction(state, cpu, 2u, 0x000005u);
+    cpu->corcon |= 0x0004u;
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 4u,
+           "unimplemented literal GOTO target traps in four cycles");
+    expect(state,
+           cpu->last_trap_return == 2u && cpu->w[15] == 0x5004u &&
+               dspic33_read_word(cpu, 0x5000u) == 2u && (cpu->corcon & 0x0004u) != 0u,
+           "literal GOTO stacks extension address and preserves SFA");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_CALL_0X55800);
+    load_instruction(state, cpu, 2u, 0x000005u);
+    cpu->corcon |= 0x0004u;
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 4u,
+           "unimplemented literal CALL target traps in four cycles");
+    expect(state,
+           cpu->last_trap_return == 2u && cpu->w[15] == 0x5008u &&
+               dspic33_read_word(cpu, 0x5000u) == 5u &&
+               dspic33_read_word(cpu, 0x5004u) == 2u && (cpu->corcon & 0x0004u) == 0u,
+           "literal CALL completes return push before target trap");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_GOTO_LONG_W0);
+    cpu->w[0] = 0x5800u;
+    cpu->w[1] = 0x0005u;
+    cpu->corcon |= 0x0004u;
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 4u,
+           "unimplemented GOTO.L target traps in four cycles");
+    expect(state,
+           cpu->last_trap_return == 2u && cpu->w[15] == 0x5004u &&
+               (cpu->corcon & 0x0004u) != 0u,
+           "GOTO.L target trap preserves registers and SFA");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_CALL_LONG_W0);
+    cpu->w[0] = 0x5800u;
+    cpu->w[1] = 0x0005u;
+    cpu->corcon |= 0x0004u;
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 4u,
+           "unimplemented CALL.L target traps in four cycles");
+    expect(state,
+           cpu->last_trap_return == 2u && cpu->w[15] == 0x5008u &&
+               dspic33_read_word(cpu, 0x5000u) == 3u && (cpu->corcon & 0x0004u) == 0u,
+           "CALL.L completes return push before target trap");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_RETURN);
+    dspic33_write_word(cpu, 0x5000u, 0x5800u);
+    dspic33_write_word(cpu, 0x5002u, 0x0005u);
+    cpu->call_depth = 1u;
+    cpu->w[15] = 0x5004u;
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 5u,
+           "unimplemented RETURN target traps in five cycles");
+    expect(state,
+           cpu->last_trap_return == 2u && cpu->w[15] == 0x5004u &&
+               cpu->call_depth == 0u && (cpu->corcon & 0x0004u) == 0u,
+           "RETURN completes frame pop before target trap");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_RETFIE);
+    dspic33_write_word(cpu, 0x5000u, 0x5800u);
+    dspic33_write_word(cpu, 0x5002u, 0x0f05u);
+    cpu->w[15] = 0x5004u;
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 5u,
+           "unimplemented RETFIE target traps in five cycles");
+    expect(state,
+           cpu->last_trap_return == 2u && cpu->w[15] == 0x5004u &&
+               (dspic33_read_word(cpu, 0x5002u) & 0xff00u) == 0x0f00u,
+           "RETFIE restores frame state before target trap");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0x557dau, OPCODE_BRA_0X55800);
+    cpu->pc = 0x557dau;
+    cpu->corcon |= 0x0004u;
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 4u,
+           "unimplemented literal BRA target traps in four cycles");
+    expect(state,
+           cpu->last_trap_return == 0x557dcu && cpu->w[15] == 0x5004u &&
+               (cpu->corcon & 0x0004u) != 0u,
+           "literal BRA stacks following PC and preserves SFA");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0x557eau, OPCODE_RCALL_0X55800);
+    cpu->pc = 0x557eau;
+    cpu->corcon |= 0x0004u;
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 4u,
+           "unimplemented literal RCALL target traps in four cycles");
+    expect(state,
+           cpu->last_trap_return == 0x557ecu && cpu->w[15] == 0x5008u &&
+               dspic33_read_word(cpu, 0x5000u) == 0x57edu &&
+               dspic33_read_word(cpu, 0x5002u) == 0x0005u &&
+               (cpu->corcon & 0x0004u) == 0u,
+           "literal RCALL completes return push before target trap");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0x557dau, OPCODE_BRA_Z_0X55800);
+    cpu->pc = 0x557dau;
+    cpu->sr |= 0x0002u;
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 4u,
+           "taken conditional BRA validates target in four cycles");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0x557dau, OPCODE_BRA_Z_0X55800);
+    cpu->pc = 0x557dau;
+    cpu->sr &= (uint16_t)~0x0002u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x557dcu &&
+               cpu->cycles == 1u && cpu->last_trap == UINT16_MAX,
+           "untaken conditional BRA skips target validation in one cycle");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_GOTO_0X100);
+    load_instruction(state, cpu, 2u, 0u);
+    load_instruction(state, cpu, 0x100u, OPCODE_NOP);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x100u &&
+               cpu->cycles == 4u,
+           "implemented literal GOTO target remains valid");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 2u, 0u);
+    load_instruction(state, cpu, 0x100u, OPCODE_NOP);
+    cpu->w[15] = 0x5000u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x100u &&
+               cpu->cycles == 4u && dspic33_read_word(cpu, 0x5000u) == 4u,
+           "implemented literal CALL target remains valid");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_GOTO_W0);
+    load_instruction(state, cpu, 0x100u, OPCODE_NOP);
+    cpu->w[0] = 0x100u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x100u &&
+               cpu->cycles == 4u,
+           "implemented GOTO Wn target remains valid");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_GOTO_LONG_W0);
+    cpu->w[0] = 0xc000u;
+    cpu->w[1] = 0x007fu;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x7fc000u &&
+               cpu->cycles == 4u && cpu->last_trap == UINT16_MAX,
+           "auxiliary GOTO.L target retains existing bounds behavior");
+    expect(state, dspic33_step(cpu) == DSPIC33_PROGRAM_BOUNDS,
+           "auxiliary target remains outside implemented fetch space");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_CALL_W0);
+    load_instruction(state, cpu, 0x100u, OPCODE_NOP);
+    cpu->w[0] = 0x100u;
+    cpu->w[15] = 0x5000u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x100u &&
+               cpu->cycles == 4u && dspic33_read_word(cpu, 0x5000u) == 2u,
+           "implemented CALL Wn target remains valid");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0x557dau, OPCODE_BRA_W0);
+    cpu->pc = 0x557dau;
+    cpu->w[0] = 0x0012u;
+    prepare_address_trap(state, cpu);
+    cpu->pc = 0x557dau;
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 4u,
+           "unimplemented BRA Wn target traps in four cycles");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0x557eau, OPCODE_RCALL_W0);
+    cpu->pc = 0x557eau;
+    cpu->w[0] = 0x000au;
+    prepare_address_trap(state, cpu);
+    cpu->pc = 0x557eau;
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 4u,
+           "unimplemented RCALL Wn target traps in four cycles");
 }
 
 static void prepare_timer_source(Dspic33* cpu) {
@@ -1089,6 +1289,7 @@ int main(void) {
     bool initialized = dspic33_initialize(&cpu);
     expect(&state, initialized, "initialize processor conformance");
     if (initialized) {
+        program_target_address_error_cases(&state, &cpu);
         address_error_cases(&state, &cpu);
         data_map_address_error_cases(&state, &cpu);
         page_zero_address_error_cases(&state, &cpu);
