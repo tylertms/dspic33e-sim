@@ -10,6 +10,8 @@ typedef struct {
     uint16_t initial;
     uint16_t ones;
     uint16_t zeroes;
+    uint16_t ones_without_dependent;
+    uint16_t zeroes_with_dependent;
     uint16_t normal;
     uint16_t read_only;
     uint16_t reserved;
@@ -28,6 +30,7 @@ typedef struct {
     uint32_t write_only_bits;
     uint32_t aliases;
     uint32_t mux_defaults;
+    uint32_t dependent_read_only_bits;
 } SfrAccessCensus;
 
 typedef struct {
@@ -73,7 +76,7 @@ static void prepare_register(Dspic33* cpu,
 static SfrAccessDifference
 inspect_access(Dspic33* cpu, uint16_t address, uint16_t normal_mask,
                uint16_t read_only_mask, uint16_t reserved_mask,
-               uint16_t write_only_mask,
+               uint16_t write_only_mask, uint16_t dependent_read_only_mask,
                const Dspic33SfrMuxAccessExpectation* mux_expectation) {
     SfrAccessDifference difference;
     prepare_register(cpu, mux_expectation);
@@ -83,11 +86,22 @@ inspect_access(Dspic33* cpu, uint16_t address, uint16_t normal_mask,
     prepare_register(cpu, mux_expectation);
     dspic33_write_word(cpu, address, 0u);
     difference.zeroes = dspic33_read_word(cpu, address);
+    prepare_register(cpu, mux_expectation);
+    dspic33_write_word(cpu, address,
+                       (uint16_t)(UINT16_MAX & ~dependent_read_only_mask));
+    difference.ones_without_dependent = dspic33_read_word(cpu, address);
+    prepare_register(cpu, mux_expectation);
+    dspic33_write_word(cpu, address, dependent_read_only_mask);
+    difference.zeroes_with_dependent = dspic33_read_word(cpu, address);
     difference.normal =
         (uint16_t)(((uint16_t)~difference.ones | difference.zeroes) & normal_mask);
-    difference.read_only = (uint16_t)(((difference.ones ^ difference.initial) |
-                                       (difference.zeroes ^ difference.initial)) &
-                                      read_only_mask);
+    difference.read_only =
+        (uint16_t)((((difference.ones ^ difference.initial) |
+                     (difference.zeroes ^ difference.initial)) &
+                    read_only_mask & ~dependent_read_only_mask) |
+                   (((difference.ones ^ difference.ones_without_dependent) |
+                     (difference.zeroes ^ difference.zeroes_with_dependent)) &
+                    dependent_read_only_mask));
     difference.reserved =
         (uint16_t)((difference.initial | difference.ones | difference.zeroes) &
                    reserved_mask);
@@ -112,12 +126,14 @@ static void record_access(SfrAccessCensus* census,
 
 static void inspect_register(SfrAccessCensus* census, Dspic33* cpu,
                              const Dspic33SfrAccessExpectation* expectation) {
-    SfrAccessDifference difference = inspect_access(
-        cpu, expectation->address, expectation->normal, expectation->read_only,
-        expectation->reserved, expectation->write_only, NULL);
+    SfrAccessDifference difference =
+        inspect_access(cpu, expectation->address, expectation->normal,
+                       expectation->read_only, expectation->reserved,
+                       expectation->write_only, expectation->dependent_read_only, NULL);
     record_access(census, &difference);
     census->aliases += expectation->aliases;
     census->mux_defaults += (expectation->flags & DSPIC33_SFR_ACCESS_MUX_DEFAULT) != 0u;
+    census->dependent_read_only_bits += bit_count(expectation->dependent_read_only);
     if (access_is_unresolved(&difference)) {
         printf("[sfr-access-unresolved] address=0x%04x initial=0x%04x "
                "ones=0x%04x zeroes=0x%04x normal=0x%04x "
@@ -148,7 +164,8 @@ static void inspect_mux_register(SfrMuxCensus* census, Dspic33* cpu,
                    expectation->selector_mask);
     difference = inspect_access(cpu, expectation->address, expectation->normal,
                                 expectation->read_only, expectation->reserved,
-                                expectation->write_only, expectation);
+                                expectation->write_only,
+                                expectation->dependent_read_only, expectation);
     unresolved = selector_reset != 0u || selector_switch != 0u ||
                  access_is_unresolved(&difference);
     census->addresses++;
@@ -255,6 +272,8 @@ int main(void) {
     print_mux_summary(&mux_census);
     if (census.aliases != DSPIC33_SFR_ACCESS_ALIAS_COUNT ||
         census.mux_defaults != DSPIC33_SFR_ACCESS_MUX_DEFAULT_COUNT ||
+        census.dependent_read_only_bits !=
+            DSPIC33_SFR_ACCESS_DEPENDENT_READ_ONLY_BIT_COUNT ||
         mux_census.addresses != DSPIC33_SFR_ACCESS_MUX_ALTERNATE_COUNT) {
         return 2;
     }
