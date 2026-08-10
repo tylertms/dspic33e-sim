@@ -2118,13 +2118,13 @@ static void adc_increment_boundary(Dspic33* cpu, uint8_t module) {
     } else {
         cpu->io.adc_buffer_index[module] = 0u;
     }
-    dspic33_raise_interrupt(cpu, adc_irqs[module]);
 }
 
 static void adc_store_result(Dspic33* cpu, uint8_t module, uint8_t channel,
                              uint16_t result) {
     uint16_t dma = module == 0u ? raw_word(cpu, 0x0332u) : raw_word(cpu, 0x0372u);
     uint16_t indirect = 0u;
+    bool increment_boundary;
     if ((dma & ADC_DMA_ENABLE) != 0u) {
         indirect = adc_dma_address(cpu, module, channel);
         raw_write_word(cpu, adc_buffers[module], result);
@@ -2138,8 +2138,13 @@ static void adc_store_result(Dspic33* cpu, uint8_t module, uint8_t channel,
     cpu->io.adc_buffer_index[module] =
         (uint8_t)((cpu->io.adc_buffer_index[module] + 1u) & 0x0fu);
     cpu->io.adc_sample_count[module]++;
-    if (cpu->io.adc_sample_count[module] >= adc_increment_threshold(cpu, module)) {
+    increment_boundary =
+        cpu->io.adc_sample_count[module] >= adc_increment_threshold(cpu, module);
+    if (increment_boundary) {
         adc_increment_boundary(cpu, module);
+    }
+    if ((dma & ADC_DMA_ENABLE) != 0u || increment_boundary) {
+        dspic33_raise_interrupt(cpu, adc_irqs[module]);
     }
 }
 

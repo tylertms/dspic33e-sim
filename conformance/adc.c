@@ -14,6 +14,7 @@ typedef struct {
 
 static const uint16_t buffers[DSPIC33_ADC_COUNT] = {0x0300u, 0x0340u};
 static const uint16_t controls[DSPIC33_ADC_COUNT] = {0x0320u, 0x0360u};
+static const uint16_t dma_controls[DSPIC33_ADC_COUNT] = {0x0332u, 0x0372u};
 static const uint8_t irqs[DSPIC33_ADC_COUNT] = {13u, 21u};
 
 static void expect(AdcConformance* state, bool condition, const char* name) {
@@ -188,6 +189,68 @@ static void format_cases(AdcConformance* state, Dspic33* cpu) {
     }
 }
 
+static void done_access_cases(AdcConformance* state, Dspic33* cpu) {
+    uint8_t module;
+    for (module = 0u; module < DSPIC33_ADC_COUNT; module++) {
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, controls[module], 0x0001u);
+        expect(state, (dspic33_read_word(cpu, controls[module]) & 0x0001u) == 0u,
+               "done write one cannot set");
+        set_input(cpu, 0u, 400u);
+        configure_manual(cpu, module, 0u, 0u, 0u);
+        start_manual(cpu, module);
+        finish_conversion(cpu, module);
+        expect(state, (dspic33_read_word(cpu, controls[module]) & 0x0001u) != 0u,
+               "done hardware set");
+        dspic33_write_word(
+            cpu, controls[module],
+            (uint16_t)(dspic33_read_word(cpu, controls[module]) | 0x0001u));
+        expect(state, (dspic33_read_word(cpu, controls[module]) & 0x0001u) != 0u,
+               "done write one preserves set");
+        dspic33_write_word(
+            cpu, controls[module],
+            (uint16_t)(dspic33_read_word(cpu, controls[module]) & ~0x0001u));
+        expect(state, (dspic33_read_word(cpu, controls[module]) & 0x0001u) == 0u,
+               "done software clear");
+    }
+}
+
+static void done_active_conversion_cases(AdcConformance* state, Dspic33* cpu) {
+    uint8_t module;
+    for (module = 0u; module < DSPIC33_ADC_COUNT; module++) {
+        dspic33_reset(cpu, 0u);
+        set_input(cpu, 0u, 400u);
+        configure_manual(cpu, module, 0u, 0u, 0u);
+        start_manual(cpu, module);
+        finish_conversion(cpu, module);
+        expect(state, dspic33_read_word(cpu, buffers[module]) == 100u,
+               "done active initial result");
+        expect(state, (dspic33_read_word(cpu, controls[module]) & 0x0001u) != 0u,
+               "done active initial completion");
+        set_input(cpu, 0u, 800u);
+        start_manual(cpu, module);
+        expect(state, (dspic33_read_word(cpu, controls[module]) & 0x0001u) == 0u,
+               "conversion start clears done");
+        dspic33_write_word(
+            cpu, controls[module],
+            (uint16_t)(dspic33_read_word(cpu, controls[module]) & ~0x0001u));
+        expect(state, (dspic33_read_word(cpu, controls[module]) & 0x0001u) == 0u,
+               "active conversion done clear");
+        expect(state, dspic33_device_advance(cpu, 11u),
+               "active conversion precompletion advance");
+        expect(state, dspic33_read_word(cpu, buffers[module]) == 100u,
+               "active conversion preserves prior result");
+        expect(state, (dspic33_read_word(cpu, controls[module]) & 0x0001u) == 0u,
+               "active conversion remains incomplete");
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "active conversion completion advance");
+        expect(state, dspic33_read_word(cpu, buffers[module]) == 200u,
+               "active conversion completes after clear");
+        expect(state, (dspic33_read_word(cpu, controls[module]) & 0x0001u) != 0u,
+               "active conversion restores done");
+    }
+}
+
 static void channel_cases(AdcConformance* state, Dspic33* cpu) {
     uint8_t channel;
     for (channel = 0u; channel < 32u; channel++) {
@@ -299,6 +362,44 @@ static void threshold_cases(AdcConformance* state, Dspic33* cpu) {
                        interrupt_flag(cpu, irqs[module]) == (sample == threshold),
                        "sample increment threshold");
             }
+        }
+    }
+}
+
+static void dma_interrupt_rate_cases(AdcConformance* state, Dspic33* cpu) {
+    uint8_t module;
+    uint8_t sample;
+    for (module = 0u; module < DSPIC33_ADC_COUNT; module++) {
+        dspic33_reset(cpu, 0u);
+        set_input(cpu, 0u, 400u);
+        configure_manual(cpu, module, 0u, 0x000cu, 0u);
+        for (sample = 1u; sample <= 4u; sample++) {
+            start_manual(cpu, module);
+            expect(state, (dspic33_read_word(cpu, controls[module]) & 0x0001u) == 0u,
+                   "non-dma conversion start clears done");
+            finish_conversion(cpu, module);
+            expect(state, (dspic33_read_word(cpu, controls[module]) & 0x0001u) != 0u,
+                   "non-dma conversion sets done");
+            expect(state, interrupt_flag(cpu, irqs[module]) == (sample == 4u),
+                   "non-dma sample interrupt rate");
+        }
+
+        dspic33_reset(cpu, 0u);
+        set_input(cpu, 0u, 400u);
+        dspic33_write_word(cpu, dma_controls[module], 0x0100u);
+        configure_manual(cpu, module, 0u, 0x000cu, 0u);
+        for (sample = 1u; sample <= 4u; sample++) {
+            start_manual(cpu, module);
+            expect(state, (dspic33_read_word(cpu, controls[module]) & 0x0001u) == 0u,
+                   "dma conversion start clears done");
+            finish_conversion(cpu, module);
+            expect(state, (dspic33_read_word(cpu, controls[module]) & 0x0001u) != 0u,
+                   "dma conversion sets done");
+            expect(state, interrupt_flag(cpu, irqs[module]),
+                   "dma conversion interrupt rate");
+            clear_interrupt(cpu, irqs[module]);
+            expect(state, !interrupt_flag(cpu, irqs[module]),
+                   "dma conversion interrupt clear");
         }
     }
 }
@@ -474,8 +575,11 @@ static void boundary_cases(AdcConformance* state, Dspic33* cpu) {
     for (sample = 1u; sample <= 32u; sample++) {
         start_manual(cpu, 0u);
         finish_conversion(cpu, 0u);
-        expect(state, interrupt_flag(cpu, 13u) == (sample == 32u),
-               "adc one dma increment threshold");
+        expect(state,
+               interrupt_flag(cpu, 13u) &&
+                   cpu->io.adc_sample_count[0] == (uint8_t)(sample & 0x1fu),
+               "adc one dma interrupt and increment threshold");
+        clear_interrupt(cpu, 13u);
     }
 
     dspic33_reset(cpu, 0u);
@@ -526,9 +630,12 @@ int main(void) {
     }
     register_cases(&state, &cpu);
     format_cases(&state, &cpu);
+    done_access_cases(&state, &cpu);
+    done_active_conversion_cases(&state, &cpu);
     channel_cases(&state, &cpu);
     sequence_cases(&state, &cpu);
     threshold_cases(&state, &cpu);
+    dma_interrupt_rate_cases(&state, &cpu);
     trigger_cases(&state, &cpu);
     dma_cases(&state, &cpu);
     power_cases(&state, &cpu);
