@@ -3,9 +3,9 @@
 .equ _conformance_y_scratch, 0x9000
 
 .global _multiply_conformance_cases
-_multiply_conformance_cases = 168
+_multiply_conformance_cases = 172
 .global _multiply_conformance_group_complete
-_multiply_conformance_group_complete = 0
+_multiply_conformance_group_complete = 1
 
 .macro record_accumulator id, low, high, upper
     mov \low, w1
@@ -1046,6 +1046,35 @@ _run_multiply_conformance:
     mov #_conformance_y_scratch+2, w10
     movsac A, [w8]+=2, w4, [w10]+=2, w4
     record_accumulator_case 0x07ad, w4, w8, w10
+
+    mov #0x5008, w1
+    mov #0x8003, w0
+    mov w0, [w1]
+    mov #0x5008, w4
+    mul.uu w4, [w4++], w2
+    record_accumulator_case 0x07ae, w2, w3, w4
+
+    mov #0x5008, w1
+    mov #0x8005, w0
+    mov w0, [w1]
+    mov #0x500a, w5
+    mul.ss w5, [--w5], w2
+    record_accumulator_case 0x07af, w2, w3, w5
+
+    mov #0x5008, w1
+    mov #0x8003, w0
+    mov w0, [w1]
+    mov #0x5008, w4
+    mul.uu w4, [w4++], w4
+    record_accumulator_case 0x07b0, w4, w5, w8
+
+    mov #0x5008, w1
+    mov #0x8003, w0
+    mov w0, [w1]
+    mov #0x5008, w4
+    mov #0x5a5a, w5
+    mulw.uu w4, [w4++], w4
+    record_accumulator_case 0x07b1, w4, w5, w8
 
     pop w0
     mov w0, YMODEND

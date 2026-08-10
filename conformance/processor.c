@@ -4570,6 +4570,657 @@ static void dsp_prefetch_destination_collision_cases(ProcessorConformance* state
            "MOVSAC prefetch collision preserves accumulators and control state");
 }
 
+typedef struct {
+    uint8_t register_offset;
+    int8_t access_offset;
+    int8_t update;
+    bool present;
+} DspMatrixPrefetch;
+
+enum {
+    DSP_MATRIX_WRITE_BACK_DIRECT = 0u,
+    DSP_MATRIX_WRITE_BACK_INDIRECT = 1u,
+    DSP_MATRIX_WRITE_BACK_NONE = 2u
+};
+
+static const DspMatrixPrefetch dsp_matrix_prefetches[16] = {
+    {0u, 0, 0, true},  {0u, 0, 2, true},  {0u, 0, 4, true},  {0u, 0, 6, true},
+    {0u, 0, 0, false}, {0u, 0, -6, true}, {0u, 0, -4, true}, {0u, 0, -2, true},
+    {1u, 0, 0, true},  {1u, 0, 2, true},  {1u, 0, 4, true},  {1u, 0, 6, true},
+    {1u, 2, 0, true},  {1u, 0, -6, true}, {1u, 0, -4, true}, {1u, 0, -2, true},
+};
+
+static uint16_t dsp_matrix_base_value(uint8_t reg) {
+    static const uint16_t values[4] = {0x5008u, 0x5108u, 0x9008u, 0x9108u};
+    return values[reg - 8u];
+}
+
+static uint16_t dsp_matrix_prefetch_value(bool y_space, uint8_t operation) {
+    return (uint16_t)((y_space ? 0x2200u : 0x1100u) | operation);
+}
+
+static void prepare_dsp_matrix_case(Dspic33* cpu, uint8_t target_accumulator,
+                                    uint8_t x_operation, uint8_t y_operation,
+                                    uint16_t expected_w[14]) {
+    static const uint16_t values[10] = {
+        2u, 3u, 5u, 7u, 0x5008u, 0x5108u, 0x9008u, 0x9108u, 2u, 0x5200u,
+    };
+    const DspMatrixPrefetch* x = &dsp_matrix_prefetches[x_operation];
+    const DspMatrixPrefetch* y = &dsp_matrix_prefetches[y_operation];
+    uint8_t reg;
+
+    cpu->pc = 0u;
+    cpu->sr = 0x000fu;
+    cpu->corcon = 0x0001u;
+    cpu->accumulator[target_accumulator] = 100;
+    cpu->accumulator[target_accumulator ^ 1u] = 0x12348001;
+    cpu->previous_working_register_writes = 0u;
+    cpu->unsupported_opcode = 0u;
+    cpu->last_trap = UINT16_MAX;
+    cpu->last_interrupt = UINT16_MAX;
+    cpu->address_error = false;
+    cpu->illegal_reset = false;
+    cpu->stop_reason = DSPIC33_RUNNING;
+    cpu->instruction_active = false;
+    cpu->repeat_active = 0u;
+    cpu->events.count = 0u;
+    for (reg = 4u; reg <= 13u; reg++) {
+        dspic33_set_working_register(cpu, reg, values[reg - 4u]);
+        expected_w[reg] = values[reg - 4u];
+    }
+    dspic33_write_word(cpu, 0x5200u, 0xa5a5u);
+    if (x->present) {
+        uint8_t base = (uint8_t)(8u + x->register_offset);
+        dspic33_write_word(cpu,
+                           (uint16_t)(dsp_matrix_base_value(base) + x->access_offset),
+                           dsp_matrix_prefetch_value(false, x_operation));
+    }
+    if (y->present) {
+        uint8_t base = (uint8_t)(10u + y->register_offset);
+        dspic33_write_word(cpu,
+                           (uint16_t)(dsp_matrix_base_value(base) + y->access_offset),
+                           dsp_matrix_prefetch_value(true, y_operation));
+    }
+}
+
+static void apply_dsp_matrix_prefetch(uint16_t expected_w[14], uint8_t operation,
+                                      uint8_t destination, bool y_space,
+                                      bool write_destination) {
+    const DspMatrixPrefetch* prefetch = &dsp_matrix_prefetches[operation];
+    uint8_t base;
+    if (!prefetch->present) {
+        return;
+    }
+    base = (uint8_t)((y_space ? 10u : 8u) + prefetch->register_offset);
+    expected_w[base] = (uint16_t)(dsp_matrix_base_value(base) + prefetch->update);
+    if (write_destination) {
+        expected_w[destination] = dsp_matrix_prefetch_value(y_space, operation);
+    }
+}
+
+static void expect_dsp_matrix_case(ProcessorConformance* state, bool condition,
+                                   uint32_t opcode, const char* domain) {
+    state->cases++;
+    if (condition) {
+        state->passed++;
+        return;
+    }
+    state->failed++;
+    printf("[processor-failed] %s opcode=%06" PRIx32 "\n", domain, opcode);
+}
+
+static void run_legal_dsp_matrix_case(ProcessorConformance* state, Dspic33* cpu,
+                                      uint32_t opcode, uint8_t target_accumulator,
+                                      int64_t target_result, uint8_t x_operation,
+                                      uint8_t y_operation, uint8_t x_destination,
+                                      uint8_t y_destination, uint8_t write_back,
+                                      int8_t difference_destination) {
+    uint16_t expected_w[14] = {0u};
+    uint16_t expected_memory = 0xa5a5u;
+    uint64_t cycles;
+    bool matches;
+    uint8_t reg;
+
+    prepare_dsp_matrix_case(cpu, target_accumulator, x_operation, y_operation,
+                            expected_w);
+    apply_dsp_matrix_prefetch(expected_w, x_operation, x_destination, false,
+                              difference_destination < 0);
+    apply_dsp_matrix_prefetch(expected_w, y_operation, y_destination, true,
+                              difference_destination < 0);
+    if (difference_destination >= 0) {
+        expected_w[(uint8_t)difference_destination] =
+            (uint16_t)(dsp_matrix_prefetch_value(false, x_operation) -
+                       dsp_matrix_prefetch_value(true, y_operation));
+    }
+    if (write_back == DSP_MATRIX_WRITE_BACK_DIRECT) {
+        expected_w[13] = 0x1235u;
+    } else if (write_back == DSP_MATRIX_WRITE_BACK_INDIRECT) {
+        expected_w[13] = 0x5202u;
+        expected_memory = 0x1235u;
+    }
+    cycles = cpu->cycles;
+    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+              cpu->cycles - cycles == 1u &&
+              cpu->accumulator[target_accumulator] == target_result &&
+              cpu->accumulator[target_accumulator ^ 1u] == 0x12348001 &&
+              cpu->sr == 0x000fu && cpu->corcon == 0x0001u &&
+              dspic33_read_word(cpu, 0x5200u) == expected_memory &&
+              !cpu->address_error && !cpu->illegal_reset &&
+              cpu->unsupported_opcode == 0u && cpu->last_trap == UINT16_MAX;
+    for (reg = 4u; reg <= 13u; reg++) {
+        matches = matches && cpu->w[reg] == expected_w[reg];
+    }
+    expect_dsp_matrix_case(state, matches, opcode, "legal DSP encoding");
+}
+
+static void general_dsp_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu,
+                                              uint32_t* legal_cases) {
+    static const uint8_t pair_encodings[6] = {0u, 1u, 2u, 4u, 5u, 6u};
+    static const uint8_t pair_left[6] = {0u, 0u, 0u, 1u, 1u, 2u};
+    static const uint8_t pair_right[6] = {1u, 2u, 3u, 2u, 3u, 3u};
+    static const int64_t operands[4] = {2, 3, 5, 7};
+    static const struct {
+        uint16_t bits;
+        int8_t sign;
+        bool replace;
+        uint8_t write_back;
+    } forms[8] = {
+        {0x0003u, 1, true, DSP_MATRIX_WRITE_BACK_NONE},
+        {0x4003u, -1, true, DSP_MATRIX_WRITE_BACK_NONE},
+        {0x0002u, 1, false, DSP_MATRIX_WRITE_BACK_NONE},
+        {0x0000u, 1, false, DSP_MATRIX_WRITE_BACK_DIRECT},
+        {0x0001u, 1, false, DSP_MATRIX_WRITE_BACK_INDIRECT},
+        {0x4002u, -1, false, DSP_MATRIX_WRITE_BACK_NONE},
+        {0x4000u, -1, false, DSP_MATRIX_WRITE_BACK_DIRECT},
+        {0x4001u, -1, false, DSP_MATRIX_WRITE_BACK_INDIRECT},
+    };
+    uint8_t pair;
+    uint8_t accumulator;
+    uint8_t form;
+    uint8_t x_operation;
+    uint8_t y_operation;
+    uint8_t x_destination;
+    uint8_t y_destination;
+
+    for (pair = 0u; pair < 6u; pair++) {
+        int64_t product = operands[pair_left[pair]] * operands[pair_right[pair]];
+        for (accumulator = 0u; accumulator < 2u; accumulator++) {
+            for (form = 0u; form < 8u; form++) {
+                int64_t result = forms[form].sign * product;
+                if (!forms[form].replace) {
+                    result += 100;
+                }
+                for (x_operation = 0u; x_operation < 16u; x_operation++) {
+                    for (y_operation = 0u; y_operation < 16u; y_operation++) {
+                        for (x_destination = 0u; x_destination < 4u; x_destination++) {
+                            for (y_destination = 0u; y_destination < 4u;
+                                 y_destination++) {
+                                uint32_t opcode =
+                                    0xc00000u |
+                                    ((uint32_t)pair_encodings[pair] << 16u) |
+                                    ((uint32_t)accumulator << 15u) |
+                                    ((uint32_t)x_destination << 12u) |
+                                    ((uint32_t)y_destination << 10u) |
+                                    ((uint32_t)x_operation << 6u) |
+                                    ((uint32_t)y_operation << 2u) | forms[form].bits;
+                                run_legal_dsp_matrix_case(state, cpu, opcode,
+                                                          accumulator, result,
+                                                          x_operation, y_operation,
+                                                          (uint8_t)(4u + x_destination),
+                                                          (uint8_t)(4u + y_destination),
+                                                          forms[form].write_back, -1);
+                                (*legal_cases)++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+static void special_dsp_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu,
+                                              uint32_t* legal_cases) {
+    static const uint32_t families[2] = {0xc30000u, 0xc70000u};
+    uint8_t family;
+    uint8_t accumulator;
+    uint8_t write_back;
+    uint8_t x_operation;
+    uint8_t y_operation;
+    uint8_t x_destination;
+    uint8_t y_destination;
+
+    for (family = 0u; family < 2u; family++) {
+        for (accumulator = 0u; accumulator < 2u; accumulator++) {
+            for (write_back = 0u; write_back < 3u; write_back++) {
+                for (x_operation = 0u; x_operation < 16u; x_operation++) {
+                    for (y_operation = 0u; y_operation < 16u; y_operation++) {
+                        for (x_destination = 0u; x_destination < 4u; x_destination++) {
+                            for (y_destination = 0u; y_destination < 4u;
+                                 y_destination++) {
+                                uint32_t opcode =
+                                    families[family] | ((uint32_t)accumulator << 15u) |
+                                    ((uint32_t)x_destination << 12u) |
+                                    ((uint32_t)y_destination << 10u) |
+                                    ((uint32_t)x_operation << 6u) |
+                                    ((uint32_t)y_operation << 2u) | write_back;
+                                run_legal_dsp_matrix_case(
+                                    state, cpu, opcode, accumulator,
+                                    family == 0u ? 0 : 100, x_operation, y_operation,
+                                    (uint8_t)(4u + x_destination),
+                                    (uint8_t)(4u + y_destination), write_back, -1);
+                                (*legal_cases)++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+static void square_dsp_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu,
+                                             uint32_t* legal_cases) {
+    static const int64_t operands[4] = {2, 3, 5, 7};
+    uint8_t source;
+    uint8_t accumulator;
+    uint8_t replace;
+    uint8_t x_operation;
+    uint8_t y_operation;
+    uint8_t x_destination;
+    uint8_t y_destination;
+
+    for (source = 0u; source < 4u; source++) {
+        int64_t product = operands[source] * operands[source];
+        for (accumulator = 0u; accumulator < 2u; accumulator++) {
+            for (replace = 0u; replace < 2u; replace++) {
+                int64_t result = replace != 0u ? product : 100 + product;
+                for (x_operation = 0u; x_operation < 16u; x_operation++) {
+                    for (y_operation = 0u; y_operation < 16u; y_operation++) {
+                        for (x_destination = 0u; x_destination < 4u; x_destination++) {
+                            for (y_destination = 0u; y_destination < 4u;
+                                 y_destination++) {
+                                uint32_t opcode =
+                                    0xf00000u | ((uint32_t)source << 16u) |
+                                    ((uint32_t)accumulator << 15u) |
+                                    ((uint32_t)x_destination << 12u) |
+                                    ((uint32_t)y_destination << 10u) |
+                                    ((uint32_t)x_operation << 6u) |
+                                    ((uint32_t)y_operation << 2u) | replace;
+                                run_legal_dsp_matrix_case(
+                                    state, cpu, opcode, accumulator, result,
+                                    x_operation, y_operation,
+                                    (uint8_t)(4u + x_destination),
+                                    (uint8_t)(4u + y_destination),
+                                    DSP_MATRIX_WRITE_BACK_NONE, -1);
+                                (*legal_cases)++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+static void euclidean_dsp_encoding_matrix_cases(ProcessorConformance* state,
+                                                Dspic33* cpu, uint32_t* legal_cases) {
+    static const int64_t operands[4] = {2, 3, 5, 7};
+    uint8_t source;
+    uint8_t accumulator;
+    uint8_t operation;
+    uint8_t destination;
+    uint8_t x_operation;
+    uint8_t y_operation;
+
+    for (source = 0u; source < 4u; source++) {
+        int64_t product = operands[source] * operands[source];
+        for (accumulator = 0u; accumulator < 2u; accumulator++) {
+            for (operation = 2u; operation < 4u; operation++) {
+                int64_t result = operation == 2u ? 100 + product : product;
+                for (destination = 0u; destination < 4u; destination++) {
+                    for (x_operation = 0u; x_operation < 16u; x_operation++) {
+                        if (x_operation == 4u) {
+                            continue;
+                        }
+                        for (y_operation = 0u; y_operation < 16u; y_operation++) {
+                            uint32_t opcode;
+                            if (y_operation == 4u) {
+                                continue;
+                            }
+                            opcode = 0xf04000u | ((uint32_t)source << 16u) |
+                                     ((uint32_t)accumulator << 15u) |
+                                     ((uint32_t)destination << 12u) |
+                                     ((uint32_t)x_operation << 6u) |
+                                     ((uint32_t)y_operation << 2u) | operation;
+                            run_legal_dsp_matrix_case(
+                                state, cpu, opcode, accumulator, result, x_operation,
+                                y_operation, 4u, 4u, DSP_MATRIX_WRITE_BACK_NONE,
+                                (int8_t)(4u + destination));
+                            (*legal_cases)++;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+static void prepare_invalid_dsp_matrix_case(Dspic33* cpu) {
+    uint8_t reg;
+    cpu->pc = 0u;
+    cpu->sr = 0x010fu;
+    cpu->corcon = 0x0001u;
+    cpu->accumulator[0] = 0x123456789a;
+    cpu->accumulator[1] = -0x123456789a;
+    cpu->illegal_reset = false;
+    cpu->last_trap = UINT16_MAX;
+    cpu->stop_reason = DSPIC33_RUNNING;
+    for (reg = 0u; reg < 15u; reg++) {
+        dspic33_set_working_register(cpu, reg,
+                                     (uint16_t)(0x5000u + (uint16_t)reg * 2u));
+    }
+    dspic33_write_word(cpu, 0x5000u, 0xa5a5u);
+}
+
+static void run_invalid_dsp_matrix_case(ProcessorConformance* state, Dspic33* cpu,
+                                        uint32_t opcode) {
+    uint64_t illegal_resets;
+    bool matches;
+    uint8_t reg;
+
+    prepare_invalid_dsp_matrix_case(cpu);
+    illegal_resets = cpu->illegal_reset_count;
+    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset &&
+              cpu->illegal_reset_count == illegal_resets + 1u &&
+              cpu->software_reset_count == 0u && cpu->trap_count == 0u &&
+              cpu->last_trap == UINT16_MAX && cpu->pc == 0u && cpu->w[15] == 0x1000u &&
+              cpu->initialized_working_registers == 0x8000u &&
+              (dspic33_read_word(cpu, 0x0740u) & 0x4000u) != 0u &&
+              dspic33_read_word(cpu, 0x5000u) == 0xa5a5u;
+    for (reg = 0u; reg < 15u; reg++) {
+        matches = matches && cpu->w[reg] == 0u;
+    }
+    expect_dsp_matrix_case(state, matches, opcode, "illegal DSP encoding");
+}
+
+static void invalid_dsp_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu,
+                                              uint32_t* invalid_cases) {
+    uint8_t pair;
+    uint8_t accumulator;
+    uint8_t alternate;
+    uint8_t x_destination;
+    uint8_t y_destination;
+    uint8_t x_operation;
+    uint8_t y_operation;
+    uint8_t low;
+
+    for (pair = 0u; pair < 8u; pair++) {
+        for (accumulator = 0u; accumulator < 2u; accumulator++) {
+            for (alternate = 0u; alternate < 2u; alternate++) {
+                for (x_destination = 0u; x_destination < 4u; x_destination++) {
+                    for (y_destination = 0u; y_destination < 4u; y_destination++) {
+                        for (x_operation = 0u; x_operation < 16u; x_operation++) {
+                            for (y_operation = 0u; y_operation < 16u; y_operation++) {
+                                for (low = 0u; low < 4u; low++) {
+                                    bool valid = (pair != 3u && pair != 7u) ||
+                                                 (alternate == 0u && low != 3u);
+                                    uint32_t opcode;
+                                    if (valid) {
+                                        continue;
+                                    }
+                                    opcode = 0xc00000u | ((uint32_t)pair << 16u) |
+                                             ((uint32_t)accumulator << 15u) |
+                                             ((uint32_t)alternate << 14u) |
+                                             ((uint32_t)x_destination << 12u) |
+                                             ((uint32_t)y_destination << 10u) |
+                                             ((uint32_t)x_operation << 6u) |
+                                             ((uint32_t)y_operation << 2u) | low;
+                                    run_invalid_dsp_matrix_case(state, cpu, opcode);
+                                    (*invalid_cases)++;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for (pair = 0u; pair < 4u; pair++) {
+        for (accumulator = 0u; accumulator < 2u; accumulator++) {
+            for (alternate = 0u; alternate < 2u; alternate++) {
+                for (x_destination = 0u; x_destination < 4u; x_destination++) {
+                    for (y_destination = 0u; y_destination < 4u; y_destination++) {
+                        for (x_operation = 0u; x_operation < 16u; x_operation++) {
+                            for (y_operation = 0u; y_operation < 16u; y_operation++) {
+                                for (low = 0u; low < 4u; low++) {
+                                    bool valid = alternate == 0u
+                                                     ? low < 2u
+                                                     : low >= 2u &&
+                                                           y_destination == 0u &&
+                                                           x_operation != 4u &&
+                                                           y_operation != 4u;
+                                    uint32_t opcode;
+                                    if (valid) {
+                                        continue;
+                                    }
+                                    opcode = 0xf00000u | ((uint32_t)pair << 16u) |
+                                             ((uint32_t)accumulator << 15u) |
+                                             ((uint32_t)alternate << 14u) |
+                                             ((uint32_t)x_destination << 12u) |
+                                             ((uint32_t)y_destination << 10u) |
+                                             ((uint32_t)x_operation << 6u) |
+                                             ((uint32_t)y_operation << 2u) | low;
+                                    run_invalid_dsp_matrix_case(state, cpu, opcode);
+                                    (*invalid_cases)++;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+static void dsp_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu) {
+    uint32_t legal_cases = 0u;
+    uint32_t invalid_cases = 0u;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    general_dsp_encoding_matrix_cases(state, cpu, &legal_cases);
+    special_dsp_encoding_matrix_cases(state, cpu, &legal_cases);
+    square_dsp_encoding_matrix_cases(state, cpu, &legal_cases);
+    euclidean_dsp_encoding_matrix_cases(state, cpu, &legal_cases);
+    invalid_dsp_encoding_matrix_cases(state, cpu, &invalid_cases);
+    expect(state, legal_cases == 522304u, "DSP legal encoding matrix is exhaustive");
+    expect(state, invalid_cases == 264128u,
+           "DSP illegal encoding matrix is exhaustive");
+}
+
+static int64_t generic_multiply_operand(uint16_t value, bool signed_value) {
+    return signed_value ? (int16_t)value : value;
+}
+
+static uint16_t generic_multiply_source_value(uint8_t mode) {
+    static const uint16_t values[6] = {
+        0u, 0x8003u, 0x8003u, 0x8003u, 0x8005u, 0x8007u,
+    };
+    return values[mode];
+}
+
+static void prepare_generic_multiply_case(Dspic33* cpu, uint8_t source_mode,
+                                          uint8_t source_register,
+                                          uint16_t expected_w[16]) {
+    uint8_t reg;
+    cpu->pc = 0u;
+    cpu->sr = 0x010fu;
+    cpu->corcon = 0x0005u;
+    cpu->accumulator[0] = 0x1111222233;
+    cpu->accumulator[1] = -0x1111222233;
+    cpu->previous_working_register_writes = 0u;
+    cpu->unsupported_opcode = 0u;
+    cpu->last_trap = UINT16_MAX;
+    cpu->last_interrupt = UINT16_MAX;
+    cpu->address_error = false;
+    cpu->illegal_reset = false;
+    cpu->stop_reason = DSPIC33_RUNNING;
+    cpu->instruction_active = false;
+    cpu->repeat_active = 0u;
+    cpu->events.count = 0u;
+    cpu->splim_enabled = false;
+    for (reg = 0u; reg < 16u; reg++) {
+        uint16_t value = (uint16_t)(0x8000u + (uint16_t)reg * 2u);
+        dspic33_set_working_register(cpu, reg, value);
+        expected_w[reg] = cpu->w[reg];
+    }
+    if (source_mode != 0u && source_mode < 6u) {
+        dspic33_set_working_register(cpu, source_register, 0x5008u);
+        expected_w[source_register] = 0x5008u;
+        dspic33_write_word(cpu, 0x5006u, 0x8005u);
+        dspic33_write_word(cpu, 0x5008u, 0x8003u);
+        dspic33_write_word(cpu, 0x500au, 0x8007u);
+    }
+}
+
+static void run_legal_generic_multiply_case(ProcessorConformance* state, Dspic33* cpu,
+                                            uint32_t opcode, bool base_signed,
+                                            bool source_signed, uint8_t base_register,
+                                            uint8_t destination, uint8_t source_mode,
+                                            uint8_t source_register) {
+    uint16_t expected_w[16] = {0u};
+    int64_t expected_accumulator[2] = {0x1111222233, -0x1111222233};
+    uint16_t source;
+    int64_t product;
+    uint64_t cycles;
+    bool matches;
+    uint8_t reg;
+
+    prepare_generic_multiply_case(cpu, source_mode, source_register, expected_w);
+    source = source_mode >= 6u   ? (uint16_t)(opcode & 0x001fu)
+             : source_mode == 0u ? expected_w[source_register]
+                                 : generic_multiply_source_value(source_mode);
+    if (source_mode == 2u || source_mode == 4u) {
+        expected_w[source_register] = 0x5006u;
+    } else if (source_mode == 3u || source_mode == 5u) {
+        expected_w[source_register] = 0x500au;
+    }
+    product = generic_multiply_operand(expected_w[base_register], base_signed) *
+              generic_multiply_operand(source, source_signed);
+    if (destination >= 14u) {
+        expected_accumulator[destination & 1u] = product;
+    } else {
+        uint8_t result_register = (uint8_t)(destination & 0x0eu);
+        expected_w[result_register] = (uint16_t)product;
+        if ((destination & 1u) == 0u) {
+            expected_w[result_register + 1u] = (uint16_t)((uint32_t)product >> 16u);
+        }
+    }
+    cycles = cpu->cycles;
+    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+              cpu->cycles - cycles == 1u &&
+              cpu->accumulator[0] == expected_accumulator[0] &&
+              cpu->accumulator[1] == expected_accumulator[1] && cpu->sr == 0x010fu &&
+              cpu->corcon == 0x0005u && !cpu->address_error && !cpu->illegal_reset &&
+              cpu->unsupported_opcode == 0u && cpu->last_trap == UINT16_MAX;
+    for (reg = 0u; reg < 16u; reg++) {
+        matches = matches && cpu->w[reg] == expected_w[reg];
+    }
+    expect_dsp_matrix_case(state, matches, opcode, "legal generic multiply encoding");
+}
+
+static void generic_multiply_encoding_matrix_cases(ProcessorConformance* state,
+                                                   Dspic33* cpu) {
+    uint32_t legal_cases = 0u;
+    uint32_t invalid_cases = 0u;
+    uint8_t base_signed;
+    uint8_t source_signed;
+    uint8_t base_register;
+    uint8_t destination;
+    uint8_t source_mode;
+    uint8_t source_register;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    for (base_signed = 0u; base_signed < 2u; base_signed++) {
+        for (source_signed = 0u; source_signed < 2u; source_signed++) {
+            for (base_register = 0u; base_register < 16u; base_register++) {
+                for (destination = 0u; destination < 16u; destination++) {
+                    for (source_mode = 0u; source_mode < 8u; source_mode++) {
+                        for (source_register = 0u; source_register < 16u;
+                             source_register++) {
+                            uint32_t opcode =
+                                0xb80000u | ((uint32_t)base_signed << 16u) |
+                                ((uint32_t)source_signed << 15u) |
+                                ((uint32_t)base_register << 11u) |
+                                ((uint32_t)destination << 7u) |
+                                ((uint32_t)source_mode << 4u) | source_register;
+                            if (source_signed != 0u && source_mode >= 6u) {
+                                run_invalid_dsp_matrix_case(state, cpu, opcode);
+                                invalid_cases++;
+                            } else {
+                                run_legal_generic_multiply_case(
+                                    state, cpu, opcode, base_signed != 0u,
+                                    source_signed != 0u, base_register, destination,
+                                    source_mode, source_register);
+                                legal_cases++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    expect(state, legal_cases == 114688u,
+           "generic multiply legal encoding matrix is exhaustive");
+    expect(state, invalid_cases == 16384u,
+           "generic multiply illegal encoding matrix is exhaustive");
+}
+
+static void file_multiply_encoding_matrix_cases(ProcessorConformance* state,
+                                                Dspic33* cpu) {
+    uint32_t cases = 0u;
+    uint8_t byte_mode;
+    uint16_t address;
+
+    expect(state, dspic33_load_program_word(cpu, 0x000006u, 0x000140u),
+           "load file multiply address-error vector");
+    for (byte_mode = 0u; byte_mode < 2u; byte_mode++) {
+        for (address = 0u; address < 0x2000u; address++) {
+            uint32_t opcode = 0xbc0000u | ((uint32_t)byte_mode << 14u) | address;
+            bool matches;
+            dspic33_reset(cpu, 0u);
+            cpu->stop_on_trap = true;
+            dspic33_set_working_register(cpu, 0u, 0u);
+            dspic33_set_working_register(cpu, 2u, 0xa5a5u);
+            dspic33_set_working_register(cpu, 3u, 0x5a5au);
+            dspic33_set_working_register(cpu, 15u, 0x5000u);
+            cpu->sr = 0x010fu;
+            matches = dspic33_load_program_word(cpu, 0u, opcode);
+            if (byte_mode == 0u && (address & 1u) != 0u) {
+                matches = matches && dspic33_step(cpu) == DSPIC33_TRAPPED &&
+                          cpu->last_trap == 1u && cpu->last_trap_return == 2u &&
+                          cpu->pc == 0x000140u &&
+                          (dspic33_read_word(cpu, 0x08c0u) & 0x0008u) != 0u;
+            } else {
+                matches = matches && dspic33_step(cpu) == DSPIC33_RUNNING &&
+                          cpu->pc == 2u && cpu->w[2] == 0u &&
+                          cpu->w[3] == (byte_mode != 0u ? 0x5a5au : 0u) &&
+                          cpu->sr == 0x010fu && cpu->last_trap == UINT16_MAX &&
+                          cpu->unsupported_opcode == 0u;
+            }
+            expect_dsp_matrix_case(state, matches, opcode, "file multiply encoding");
+            cases++;
+        }
+    }
+    expect(state, cases == 16384u, "file multiply encoding matrix is exhaustive");
+}
+
 static void illegal_condition_reset_cases(ProcessorConformance* state, Dspic33* cpu) {
     static const uint16_t preserved_addresses[] = {
         0x0742u, 0x0744u, 0x0746u, 0x0748u, 0x074eu, 0x0758u, 0x075au,
@@ -4984,6 +5635,9 @@ int main(void) {
         invalid_dsp_encoding_cases(&state, &cpu);
         valid_dsp_register_pair_cases(&state, &cpu);
         dsp_prefetch_destination_collision_cases(&state, &cpu);
+        dsp_encoding_matrix_cases(&state, &cpu);
+        generic_multiply_encoding_matrix_cases(&state, &cpu);
+        file_multiply_encoding_matrix_cases(&state, &cpu);
         illegal_condition_reset_cases(&state, &cpu);
         dspic33_destroy(&cpu);
     }

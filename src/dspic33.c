@@ -1894,6 +1894,12 @@ static bool execute_file_shift(Dspic33* cpu, uint32_t opcode) {
     return true;
 }
 
+static bool multiply_encoding_valid(uint32_t opcode) {
+    bool source_signed = (opcode & 0x008000u) != 0u;
+    bool literal_mode = (opcode & 0x000060u) == 0x000060u;
+    return !source_signed || !literal_mode;
+}
+
 static bool execute_multiply(Dspic33* cpu, uint32_t opcode) {
     bool base_signed = (opcode & 0x010000u) != 0u;
     bool source_signed = (opcode & 0x008000u) != 0u;
@@ -3142,6 +3148,10 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     }
     if ((opcode & 0xfc0000u) == 0xd00000u) {
         return execute_single_shift(cpu, opcode);
+    }
+    if ((opcode & 0xfe0000u) == 0xb80000u && !multiply_encoding_valid(opcode)) {
+        perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+        return true;
     }
     if ((opcode & 0xfe0000u) == 0xb80000u) {
         return execute_multiply(cpu, opcode);
