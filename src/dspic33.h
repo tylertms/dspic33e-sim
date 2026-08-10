@@ -7,6 +7,7 @@
 
 #define DSPIC33_DATA_SIZE 0x100000u
 #define DSPIC33_PROGRAM_LIMIT 0x55800u
+#define DSPIC33_AUXILIARY_PROGRAM_BASE 0x7fc000u
 #define DSPIC33_PROGRAM_WORDS (DSPIC33_PROGRAM_LIMIT / 2u)
 #define DSPIC33_PERSISTENT_PROGRAM_BASE 0x1000000u
 #define DSPIC33_PERSISTENT_PROGRAM_LIMIT 0x1010000u
@@ -448,6 +449,7 @@ typedef struct {
     bool address_error_access_allowed;
     bool address_error_working_state_completed;
     bool address_error_control_state_completed;
+    uint32_t sequential_program_hole_pc;
     bool illegal_reset;
     bool stop_on_trap;
     bool async_events_enabled;

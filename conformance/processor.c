@@ -81,6 +81,7 @@ enum {
     OPCODE_MOVPAG_INVALID_W1 = 0xfedc01u,
     OPCODE_ILLEGAL = 0x3f0000u,
     OPCODE_REPEAT_W0 = 0x098000u,
+    OPCODE_DO_0 = 0x080000u,
     OPCODE_DO_W0 = 0x088000u,
     OPCODE_PUSH_SHADOW = 0xfea000u,
     OPCODE_DSP_INDEXED = 0xc00732u,
@@ -164,7 +165,9 @@ static void program_target_address_error_cases(ProcessorConformance* state,
     load_instruction(state, cpu, 0u, OPCODE_GOTO_0X55800);
     load_instruction(state, cpu, 2u, 0x000005u);
     cpu->corcon |= 0x0004u;
-    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 4u,
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 4u &&
+               cpu->sequential_program_hole_pc == 0u,
            "unimplemented literal GOTO target traps in four cycles");
     expect(state,
            cpu->last_trap_return == 2u && cpu->w[15] == 0x5004u &&
@@ -414,12 +417,105 @@ static void program_read_address_error_cases(ProcessorConformance* state,
     reset_processor_conformance(cpu, 0x557feu);
     load_instruction(state, cpu, 0x557feu, OPCODE_NOP);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == DSPIC33_PROGRAM_LIMIT,
-           "sequential execution reaches the main program limit unchanged");
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == DSPIC33_PROGRAM_LIMIT &&
+               cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT &&
+               cpu->cycles == 1u,
+           "one-word sequential execution enters the program hole");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x55802u &&
+               cpu->sequential_program_hole_pc == 0x55802u && cpu->cycles == 2u,
+           "sequential program hole executes as one-cycle zero instruction");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x55804u &&
+               cpu->sequential_program_hole_pc == 0x55804u && cpu->cycles == 3u,
+           "sequential program hole provenance advances across zero instructions");
+
+    reset_processor_conformance(cpu, 0x557fcu);
+    load_instruction(state, cpu, 0x557fcu, OPCODE_DO_0);
+    load_instruction(state, cpu, 0x557feu, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == DSPIC33_PROGRAM_LIMIT &&
+               cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT &&
+               cpu->cycles == 1u,
+           "two-word sequential execution uses decoded program length at boundary");
+
+    reset_processor_conformance(cpu, DSPIC33_PROGRAM_LIMIT);
     expect(state,
            dspic33_step(cpu) == DSPIC33_PROGRAM_BOUNDS &&
-               (dspic33_read_word(cpu, 0x08c0u) & 0x0008u) == 0u,
-           "sequential fetch beyond main program remains a bounds stop");
+               cpu->sequential_program_hole_pc == 0u && cpu->cycles == 0u,
+           "direct host entry into program hole remains a bounds stop");
+
+    reset_processor_conformance(cpu, 0x557feu);
+    load_instruction(state, cpu, 0x557feu, OPCODE_NOP);
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "sequential provenance prepares exact next hole address");
+    cpu->pc = 0x55802u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_PROGRAM_BOUNDS &&
+               cpu->sequential_program_hole_pc == 0u,
+           "host PC rewrite cannot reuse stale sequential provenance");
+
+    reset_processor_conformance(cpu, 0x557feu);
+    load_instruction(state, cpu, 0x557feu, OPCODE_NOP);
+    load_instruction(state, cpu, 0x000014u, 0x000100u);
+    load_instruction(state, cpu, 0x000100u, OPCODE_NOP);
+    cpu->w[15] = 0x5000u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "sequential program hole prepares interrupt return");
+    dspic33_write_word(cpu, 0x0820u, 0x0001u);
+    dspic33_write_word(cpu, 0x0840u, 0x0004u);
+    dspic33_raise_interrupt(cpu, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000102u &&
+               cpu->interrupt_log_entry[0] == DSPIC33_PROGRAM_LIMIT &&
+               cpu->w[15] == 0x5004u && dspic33_read_word(cpu, 0x5000u) == 0x5800u &&
+               dspic33_read_word(cpu, 0x5002u) == 0x0005u &&
+               cpu->sequential_program_hole_pc == 0u && cpu->cycles == 2u,
+           "interrupt redirects and stacks program hole PC without provenance leak");
+
+    reset_processor_conformance(cpu, 0x557feu);
+    load_instruction(state, cpu, 0x557feu, OPCODE_NOP);
+    load_instruction(state, cpu, 0x000014u, DSPIC33_PROGRAM_LIMIT);
+    cpu->w[15] = 0x5000u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "same-PC interrupt prepares sequential provenance");
+    dspic33_write_word(cpu, 0x0820u, 0x0001u);
+    dspic33_write_word(cpu, 0x0840u, 0x0004u);
+    dspic33_raise_interrupt(cpu, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_PROGRAM_BOUNDS && cpu->interrupt_count == 1u &&
+               cpu->pc == DSPIC33_PROGRAM_LIMIT && cpu->w[15] == 0x5004u &&
+               cpu->sequential_program_hole_pc == 0u && cpu->cycles == 1u,
+           "confirmed same-PC interrupt dispatch clears sequential provenance");
+
+    reset_processor_conformance(cpu, 0x557feu);
+    load_instruction(state, cpu, 0x557feu, OPCODE_NOP);
+    load_instruction(state, cpu, 0x00000cu, DSPIC33_PROGRAM_LIMIT);
+    cpu->stop_on_trap = false;
+    cpu->w[15] = 0x5000u;
+    cpu->pending_soft_traps[0].trap = 4u;
+    cpu->pending_soft_traps[0].vector = 0x00000cu;
+    cpu->pending_soft_traps[0].priority = 11u;
+    cpu->pending_soft_traps[0].delay = 1u;
+    cpu->pending_soft_traps[0].active = true;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == 4u &&
+               cpu->pc == DSPIC33_PROGRAM_LIMIT && cpu->w[15] == 0x5004u &&
+               cpu->sequential_program_hole_pc == 0u && cpu->cycles == 1u,
+           "delayed same-PC soft trap clears sequential provenance");
+    expect(state, dspic33_step(cpu) == DSPIC33_PROGRAM_BOUNDS,
+           "soft-trap target cannot inherit sequential hole authorization");
+
+    reset_processor_conformance(cpu, 0u);
+    cpu->pc = DSPIC33_AUXILIARY_PROGRAM_BASE - 2u;
+    cpu->sequential_program_hole_pc = cpu->pc;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               cpu->pc == DSPIC33_AUXILIARY_PROGRAM_BASE &&
+               cpu->sequential_program_hole_pc == 0u && cpu->cycles == 1u,
+           "sequential hole provenance ends at auxiliary program boundary");
+    expect(state, dspic33_step(cpu) == DSPIC33_PROGRAM_BOUNDS,
+           "auxiliary program boundary retains existing bounds behavior");
 }
 
 static void prepare_timer_source(Dspic33* cpu) {

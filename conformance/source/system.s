@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 41
+_system_conformance_terminal_count = 42
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -92,6 +92,8 @@ _run_system_probe:
     bra z, _system_program_target_retlw_probe
     cp w0, #41
     bra z, _system_program_read_table_probe
+    cp w0, #42
+    bra z, _system_sequential_hole_dispatch
     return
 
 .global _system_sleep_probe
@@ -701,6 +703,12 @@ _system_program_target_bra_dispatch:
 _system_program_target_rcall_dispatch:
     goto _system_program_target_rcall_probe
 
+.global _system_sequential_hole_dispatch
+_system_sequential_hole_dispatch:
+    mov #0x4242, w1
+    mov w1, _system_sequential_hole_state
+    goto _system_sequential_hole_probe
+
 .section .system_program_target_near_limit,code,address(0x557d0)
 .global _system_program_target_bra_probe
 _system_program_target_bra_probe:
@@ -725,6 +733,12 @@ _system_program_target_rcall_probe:
     rcall system_invalid_program_target
     mov #0x1111, w1
     return
+
+.global _system_sequential_hole_probe
+_system_sequential_hole_probe = 0x557fe
+
+.global _system_sequential_hole_complete
+_system_sequential_hole_complete = 0x55804
 
 .section .text,code
 

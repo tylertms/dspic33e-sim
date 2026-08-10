@@ -22,7 +22,14 @@ static void schedule_soft_trap(Dspic33* cpu, uint16_t trap, uint32_t vector,
 static void check_stack_address(Dspic33* cpu, int32_t address, bool wrapped);
 
 static bool program_target_requires_address_error(uint32_t address) {
-    return address >= DSPIC33_PROGRAM_LIMIT && address < 0x7fc000u;
+    return address >= DSPIC33_PROGRAM_LIMIT && address < DSPIC33_AUXILIARY_PROGRAM_BASE;
+}
+
+static uint32_t instruction_length(uint32_t opcode) {
+    return (opcode & 0xff0000u) == 0x020000u || (opcode & 0xff0000u) == 0x040000u ||
+                   (opcode & 0xff0000u) == 0x080000u
+               ? 4u
+               : 2u;
 }
 
 static void raise_program_target_error(Dspic33* cpu, uint32_t return_pc) {
@@ -1151,10 +1158,7 @@ static void skip_instruction(Dspic33* cpu) {
         return;
     }
     next = cpu->program[cpu->pc / 2u];
-    cpu->pc += ((next & 0xff0000u) == 0x020000u || (next & 0xff0000u) == 0x040000u ||
-                (next & 0xff0000u) == 0x080000u)
-                   ? 4u
-                   : 2u;
+    cpu->pc += instruction_length(next);
 }
 
 static bool execute_bit(Dspic33* cpu, uint32_t opcode) {
@@ -1934,6 +1938,7 @@ static void update_divide_flags(Dspic33* cpu, int64_t remainder, bool overflow) 
 static void enter_trap(Dspic33* cpu, uint16_t trap, uint32_t vector, uint8_t priority,
                        uint16_t status, uint32_t return_pc) {
     uint16_t stacked_high;
+    cpu->sequential_program_hole_pc = 0u;
     check_stack_address(cpu, cpu->w[15], cpu->w[15] > 0xfffdu);
     write_word(cpu, cpu->w[15],
                (uint16_t)((return_pc & 0xfffeu) | ((cpu->corcon >> 2u) & 1u)));
@@ -2739,6 +2744,7 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
     cpu->address_error_access_allowed = false;
     cpu->address_error_working_state_completed = false;
     cpu->address_error_control_state_completed = false;
+    cpu->sequential_program_hole_pc = 0u;
     cpu->illegal_reset = false;
     cpu->async_events_enabled = true;
     memset(cpu->interrupt_log_irq, 0xff, sizeof(cpu->interrupt_log_irq));
@@ -3170,6 +3176,8 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     uint16_t control;
     uint32_t opcode;
     uint32_t instruction_pc;
+    bool exception_dispatched;
+    bool sequential_hole_fetch;
     cpu->illegal_reset = false;
     if (cpu->nvm.active) {
         if (!dspic33_device_advance_nvm(cpu)) {
@@ -3187,16 +3195,25 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         cpu->power_state = DSPIC33_POWER_ACTIVE;
         cpu->stop_reason = DSPIC33_RUNNING;
     } else {
-        if (!service_pending_soft_trap(cpu)) {
-            dspic33_device_service_interrupt(cpu);
+        exception_dispatched = service_pending_soft_trap(cpu);
+        if (!exception_dispatched) {
+            exception_dispatched = dspic33_device_service_interrupt(cpu);
+        }
+        if (exception_dispatched) {
+            cpu->sequential_program_hole_pc = 0u;
         }
     }
-    if ((cpu->pc & 1u) != 0u || cpu->pc >= DSPIC33_PROGRAM_LIMIT) {
+    sequential_hole_fetch = cpu->sequential_program_hole_pc == cpu->pc &&
+                            program_target_requires_address_error(cpu->pc);
+    if ((cpu->pc & 1u) != 0u ||
+        (cpu->pc >= DSPIC33_PROGRAM_LIMIT && !sequential_hole_fetch)) {
+        cpu->sequential_program_hole_pc = 0u;
         cpu->stop_reason = DSPIC33_PROGRAM_BOUNDS;
         return cpu->stop_reason;
     }
     instruction_pc = cpu->pc;
-    opcode = cpu->program[cpu->pc / 2u];
+    opcode = sequential_hole_fetch ? 0u : cpu->program[cpu->pc / 2u];
+    cpu->sequential_program_hole_pc = 0u;
     if (opcode == 0x064000u) {
         uint64_t cycles;
         dspic33_device_return_interrupt(cpu);
@@ -3310,6 +3327,11 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
             }
         }
     }
+    cpu->sequential_program_hole_pc =
+        cpu->pc == instruction_pc + instruction_length(opcode) &&
+                program_target_requires_address_error(cpu->pc)
+            ? cpu->pc
+            : 0u;
     advance_instruction(cpu, instruction_cycles(cpu, opcode));
     if (cpu->power_state != DSPIC33_POWER_ACTIVE && dspic33_device_wake(cpu)) {
         cpu->power_state = DSPIC33_POWER_ACTIVE;

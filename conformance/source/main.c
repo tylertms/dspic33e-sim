@@ -33,6 +33,7 @@ volatile uint16_t system_page_zero_trap_state[12] __attribute__((near));
 volatile uint16_t system_page_zero_control_state[8] __attribute__((near));
 volatile uint16_t system_eds_page_trap_state[13] __attribute__((near));
 volatile uint16_t system_program_target_trap_state[11] __attribute__((near));
+volatile uint16_t system_sequential_hole_state __attribute__((near));
 
 extern uint16_t run_arithmetic_conformance(volatile uint16_t* results);
 extern uint16_t run_adc_conformance(volatile uint16_t* results);
