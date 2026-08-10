@@ -100,6 +100,10 @@ enum {
     OPCODE_ILLEGAL = 0x3f0000u,
     OPCODE_REPEAT_2 = 0x090002u,
     OPCODE_REPEAT_W0 = 0x098000u,
+    OPCODE_DISI_2 = 0xfc0002u,
+    OPCODE_MOV_W1_IFS1 = 0x884011u,
+    OPCODE_CLEAR_RCOUNT = 0xef2036u,
+    OPCODE_INCREMENT_W2 = 0xe80102u,
     OPCODE_DO_0 = 0x080000u,
     OPCODE_DO_1 = 0x080001u,
     OPCODE_DO_W0 = 0x088000u,
@@ -1937,6 +1941,107 @@ static void repeat_exception_cases(ProcessorConformance* state, Dspic33* cpu) {
            "interrupt RETFIE restores repeat state");
 }
 
+static void repeat_interrupt_cases(ProcessorConformance* state, Dspic33* cpu) {
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_DISI_2);
+    load_instruction(state, cpu, 2u, OPCODE_MOV_W1_IFS1);
+    load_instruction(state, cpu, 4u, OPCODE_REPEAT_2);
+    load_instruction(state, cpu, 6u, OPCODE_INCREMENT_W2);
+    load_instruction(state, cpu, 0x00003cu, 0x000100u);
+    load_instruction(state, cpu, 0x000100u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x000102u, OPCODE_RETFIE);
+    cpu->w[1] = 0x0010u;
+    cpu->w[15] = 0x5000u;
+    dspic33_write_word(cpu, 0x0822u, 0x0010u);
+    dspic33_write_word(cpu, 0x084au, 0x0004u);
+    dspic33_write_word(cpu, 0x08c2u, 0x8000u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->disicnt == 2u &&
+               cpu->cycles == 1u,
+           "DISI initializes integrated repeat interrupt window");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->disicnt == 1u &&
+               cpu->cycles == 2u && (dspic33_read_word(cpu, 0x0802u) & 0x0010u) != 0u,
+           "word IFS write consumes one disabled cycle");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->disicnt == 0u &&
+               cpu->repeat_active != 0u && cpu->repeat_pc == 6u && cpu->rcount == 2u &&
+               cpu->cycles == 3u,
+           "REPEAT consumes final disabled cycle");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000102u &&
+               cpu->last_interrupt == 20u && cpu->w[15] == 0x5004u &&
+               dspic33_read_word(cpu, 0x5000u) == 6u &&
+               (dspic33_read_word(cpu, 0x5002u) & 0x1000u) != 0u &&
+               cpu->repeat_active == 0u && cpu->rcount == 2u &&
+               (cpu->sr & 0x00f0u) == 0x0080u && cpu->cycles == 4u,
+           "integrated interrupt suspends repeat at target");
+    dspic33_write_word(cpu, 0x0802u, 0u);
+    dspic33_write_word(cpu, 0x0822u, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 6u &&
+               cpu->w[15] == 0x5000u && cpu->repeat_active != 0u &&
+               cpu->repeat_pc == 6u && cpu->rcount == 2u && (cpu->sr & 0x0010u) != 0u &&
+               cpu->cycles == 10u,
+           "integrated RETFIE restores repeat state in six cycles");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 1u &&
+               cpu->rcount == 1u && cpu->pc == 6u && cpu->cycles == 11u,
+           "restored repeat executes first target");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 2u &&
+               cpu->rcount == 0u && cpu->pc == 6u && cpu->cycles == 12u,
+           "restored repeat executes second target");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 3u &&
+               cpu->repeat_active == 0u && cpu->pc == 8u && (cpu->sr & 0x0010u) == 0u &&
+               cpu->cycles == 13u,
+           "restored repeat completes all targets");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_DISI_2);
+    load_instruction(state, cpu, 2u, OPCODE_MOV_W1_IFS1);
+    load_instruction(state, cpu, 4u, OPCODE_REPEAT_2);
+    load_instruction(state, cpu, 6u, OPCODE_INCREMENT_W2);
+    load_instruction(state, cpu, 0x00003cu, 0x000100u);
+    load_instruction(state, cpu, 0x000100u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x000102u, OPCODE_CLEAR_RCOUNT);
+    load_instruction(state, cpu, 0x000104u, OPCODE_RETFIE);
+    cpu->w[1] = 0x0010u;
+    cpu->w[15] = 0x5000u;
+    dspic33_write_word(cpu, 0x0822u, 0x0010u);
+    dspic33_write_word(cpu, 0x084au, 0x0004u);
+    dspic33_write_word(cpu, 0x08c2u, 0x8000u);
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "initialize early-termination interrupt window");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "raise early-termination interrupt with word write");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "arm repeat before early-termination interrupt");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000102u &&
+               cpu->w[15] == 0x5004u && cpu->rcount == 2u && cpu->repeat_active == 0u &&
+               (cpu->sr & 0x00f0u) == 0x0080u && cpu->cycles == 4u,
+           "early-termination handler observes suspended repeat");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000104u &&
+               cpu->rcount == 0u && cpu->cycles == 5u,
+           "handler clears suspended RCOUNT");
+    dspic33_write_word(cpu, 0x0802u, 0u);
+    dspic33_write_word(cpu, 0x0822u, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 6u &&
+               cpu->w[15] == 0x5000u && cpu->repeat_active != 0u &&
+               cpu->repeat_pc == 6u && cpu->rcount == 0u && (cpu->sr & 0x0010u) != 0u &&
+               cpu->cycles == 11u,
+           "RETFIE restores prefetched target after RCOUNT clear");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 1u && cpu->pc == 8u &&
+               cpu->rcount == 0u && cpu->repeat_active == 0u &&
+               (cpu->sr & 0x0010u) == 0u && cpu->cycles == 12u,
+           "cleared repeat executes final prefetched target once");
+}
+
 static void call_stack_timing_case(ProcessorConformance* state, Dspic33* cpu) {
     reset_processor_conformance(cpu, 0u);
     cpu->stop_on_trap = true;
@@ -2554,6 +2659,7 @@ int main(void) {
         simultaneous_trap_case(&state, &cpu);
         earlier_deadline_case(&state, &cpu);
         repeat_exception_cases(&state, &cpu);
+        repeat_interrupt_cases(&state, &cpu);
         instruction_cycle_cases(&state, &cpu);
         call_stack_timing_case(&state, &cpu);
         move_double_stack_timing_cases(&state, &cpu);

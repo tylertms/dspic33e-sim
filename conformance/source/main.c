@@ -40,6 +40,7 @@ volatile uint16_t system_program_boundary_state[7] __attribute__((near));
 volatile uint16_t system_skip_state[7] __attribute__((near));
 volatile uint16_t system_do_boundary_state[13] __attribute__((near));
 volatile uint16_t system_repeat_trap_state[8] __attribute__((near));
+volatile uint16_t system_repeat_irq_state[10] __attribute__((near));
 
 extern uint16_t run_arithmetic_conformance(volatile uint16_t* results);
 extern uint16_t run_adc_conformance(volatile uint16_t* results);

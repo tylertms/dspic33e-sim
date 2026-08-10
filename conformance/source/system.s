@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 57
+_system_conformance_terminal_count = 58
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -124,6 +124,8 @@ _run_system_probe:
     bra z, _system_do_boundary_dispatch
     cp w0, #57
     bra z, _system_repeat_divide_probe
+    cp w0, #58
+    bra z, _system_repeat_irq_probe
     return
 
 .global _system_sleep_probe
@@ -166,6 +168,35 @@ _system_repeat_divide_probe:
 _system_repeat_divide_target:
     div.s w2, w3
     return
+
+.global _system_repeat_irq_probe
+_system_repeat_irq_probe:
+    mov #0x5000, w15
+    clr IFS1
+    clr IEC1
+    clr IPC5
+    bset INTCON2, #15
+    mov #4, w0
+    mov w0, IPC5
+    mov #0x0010, w1
+    mov w1, IEC1
+    clr w2
+    disi #2
+    mov w1, IFS1
+    repeat #2
+.global _system_repeat_irq_target
+_system_repeat_irq_target:
+    inc w2, w2
+    mov w15, _system_repeat_irq_state+12
+    mov w2, _system_repeat_irq_state+14
+    mov RCOUNT, w0
+    mov w0, _system_repeat_irq_state+16
+    mov SR, w0
+    and #0x00f0, w0
+    mov w0, _system_repeat_irq_state+18
+.global _system_repeat_irq_complete
+_system_repeat_irq_complete:
+    bra _system_repeat_irq_complete
 
 .global _system_sftac_probe
 _system_sftac_probe:
@@ -1190,6 +1221,28 @@ _system_repeat_math_handler:
 .global _system_repeat_math_complete
 _system_repeat_math_complete:
     bra _system_repeat_math_complete
+
+.global __INT1Interrupt
+__INT1Interrupt:
+    mov w15, _system_repeat_irq_state
+    mov [w15-4], w0
+    mov w0, _system_repeat_irq_state+2
+    mov [w15-2], w0
+    mov #0x107f, w1
+    and w0, w1, w0
+    mov w0, _system_repeat_irq_state+4
+    mov RCOUNT, w0
+    mov w0, _system_repeat_irq_state+6
+    mov SR, w0
+    and #0x00f0, w0
+    mov w0, _system_repeat_irq_state+8
+    mov CORCON, w0
+    mov w0, _system_repeat_irq_state+10
+    clr RCOUNT
+    clr w0
+    mov w0, IEC1
+    mov w0, IFS1
+    retfie
 
 .global __SoftTrapError
 __SoftTrapError:
