@@ -75,6 +75,15 @@ _sfr_conformance_group_complete = 0
     mov w5, \lat
 .endm
 
+.macro gpio_analog_output_case identifier, tris, port, lat, ansel
+    push w8
+    mov \ansel, w8
+    clr \ansel
+    gpio_output_case \identifier, \tris, \port, \lat
+    mov w8, \ansel
+    pop w8
+.endm
+
 .macro sfr_write_case identifier, address
     mov \address, w1
     setm w0
@@ -303,13 +312,13 @@ _run_sfr_conformance:
     sfr_write_case 0x0eb2, 0x0768
     sfr_write_case 0x0eb3, 0x076a
     sfr_write_case 0x0eb4, 0x076c
-    gpio_output_case 0x0eb5, 0x0e00, 0x0e02, 0x0e04
-    gpio_output_case 0x0eb6, 0x0e10, 0x0e12, 0x0e14
-    gpio_output_case 0x0eb7, 0x0e20, 0x0e22, 0x0e24
-    gpio_output_case 0x0eb8, 0x0e30, 0x0e32, 0x0e34
-    gpio_output_case 0x0eb9, 0x0e40, 0x0e42, 0x0e44
+    gpio_analog_output_case 0x0eb5, 0x0e00, 0x0e02, 0x0e04, 0x0e0e
+    gpio_analog_output_case 0x0eb6, 0x0e10, 0x0e12, 0x0e14, 0x0e1e
+    gpio_analog_output_case 0x0eb7, 0x0e20, 0x0e22, 0x0e24, 0x0e2e
+    gpio_analog_output_case 0x0eb8, 0x0e30, 0x0e32, 0x0e34, 0x0e3e
+    gpio_analog_output_case 0x0eb9, 0x0e40, 0x0e42, 0x0e44, 0x0e4e
     gpio_output_case 0x0eba, 0x0e50, 0x0e52, 0x0e54
-    gpio_output_case 0x0ebb, 0x0e60, 0x0e62, 0x0e64
+    gpio_analog_output_case 0x0ebb, 0x0e60, 0x0e62, 0x0e64, 0x0e6e
     gpio_latch_case 0x0efd, 0x0e32, 0x0e34
 
     end_results

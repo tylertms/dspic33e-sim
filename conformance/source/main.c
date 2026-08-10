@@ -1,5 +1,7 @@
 #include <stdint.h>
 
+#pragma config OSCIOFNC = ON
+
 enum { CONFORMANCE_RESULT_WORDS = 8192 };
 
 typedef struct {
