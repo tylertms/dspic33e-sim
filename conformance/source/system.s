@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 66
+_system_conformance_terminal_count = 69
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -142,6 +142,12 @@ _run_system_probe:
     bra z, _system_dsp_x_fault_probe
     cp w0, #66
     bra z, _system_dsp_x_program_fault_probe
+    cp w0, #67
+    bra z, _system_psv_program_fault_probe
+    cp w0, #68
+    bra z, _system_psv_program_byte_fault_probe
+    cp w0, #69
+    bra z, _system_psv_program_double_fault_probe
     return
 
 .global _system_sleep_probe
@@ -426,6 +432,74 @@ _system_dsp_x_program_fault_probe:
 .global _system_dsp_x_program_fault_instruction
 _system_dsp_x_program_fault_instruction:
     .pword 0xc0041f
+    return
+
+.global _system_psv_program_fault_probe
+_system_psv_program_fault_probe:
+    mov #67, w0
+    mov w0, _system_probe_selector
+    mov #0x5200, w15
+    clr INTCON1
+    mov #0x0021, w0
+    mov w0, CORCON
+    clr w0
+    mov w0, SR
+    mov #0x020a, w0
+    mov w0, DSRPAG
+    mov #0xd800, w1
+    mov #0xa5a5, w2
+    mov #0xbeef, w3
+    mov #0x1357, w0
+    mov w0, 0x5000
+.global _system_psv_program_fault_instruction
+_system_psv_program_fault_instruction:
+    .pword 0x780131
+    mov #0xdead, w3
+    return
+
+.global _system_psv_program_byte_fault_probe
+_system_psv_program_byte_fault_probe:
+    mov #68, w0
+    mov w0, _system_probe_selector
+    mov #0x5200, w15
+    clr INTCON1
+    mov #0x0021, w0
+    mov w0, CORCON
+    clr w0
+    mov w0, SR
+    mov #0x020a, w0
+    mov w0, DSRPAG
+    mov #0xd800, w1
+    mov #0xa5a5, w2
+    mov #0xbeef, w3
+    mov #0x1357, w0
+    mov w0, 0x5000
+.global _system_psv_program_byte_fault_instruction
+_system_psv_program_byte_fault_instruction:
+    .pword 0x784131
+    mov #0xdead, w3
+    return
+
+.global _system_psv_program_double_fault_probe
+_system_psv_program_double_fault_probe:
+    mov #69, w0
+    mov w0, _system_probe_selector
+    mov #0x5200, w15
+    clr INTCON1
+    mov #0x0021, w0
+    mov w0, CORCON
+    clr w0
+    mov w0, SR
+    mov #0x020a, w0
+    mov w0, DSRPAG
+    mov #0xd800, w1
+    mov #0xa5a5, w2
+    mov #0xbeef, w3
+    mov #0x1357, w0
+    mov w0, 0x5000
+.global _system_psv_program_double_fault_instruction
+_system_psv_program_double_fault_instruction:
+    .pword 0xbe0131
     return
 
 .global _system_sftac_probe
@@ -1424,6 +1498,30 @@ __AddressError:
     mov CORCON, w0
     mov w0, _system_dsp_x_program_fault_state+26
     mov w15, _system_dsp_x_program_fault_state+28
+    mov w1, _system_psv_program_fault_state
+    mov w2, _system_psv_program_fault_state+2
+    mov w3, _system_psv_program_fault_state+4
+    mov DSRPAG, w0
+    mov w0, _system_psv_program_fault_state+6
+    mov INTCON1, w0
+    mov w0, _system_psv_program_fault_state+8
+    mov [w15-4], w0
+    mov w0, _system_psv_program_fault_state+10
+    mov [w15-2], w0
+    mov w0, _system_psv_program_fault_state+12
+    mov INTTREG, w0
+    mov w0, _system_psv_program_fault_state+14
+    mov SR, w0
+    mov w0, _system_psv_program_fault_state+16
+    mov CORCON, w0
+    mov w0, _system_psv_program_fault_state+18
+    mov w15, _system_psv_program_fault_state+20
+    mov 0x5000, w0
+    mov w0, _system_psv_program_fault_state+22
+    mov _system_probe_selector, w0
+    mov w0, _system_psv_program_fault_state+24
+    mov DISICNT, w0
+    mov w0, _system_psv_program_fault_state+26
 .global _system_address_trap_complete
 _system_address_trap_complete:
     bra _system_address_trap_complete

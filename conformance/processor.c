@@ -3236,6 +3236,90 @@ static void psv_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
     expect(state, !cpu->psv_read, "reset clears PSV timing state");
 }
 
+static void psv_program_hole_cases(ProcessorConformance* state, Dspic33* cpu) {
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    dspic33_set_working_register(cpu, 1u, 0xd800u);
+    dspic33_set_working_register(cpu, 2u, 0xa5a5u);
+    dspic33_set_working_register(cpu, 3u, 0xbeefu);
+    dspic33_write_word(cpu, 0x5008u, 0x1357u);
+    cpu->dsrpag = 0x020au;
+    expect_address_trap(state, cpu, "PSV program-hole word read traps");
+    expect(state,
+           cpu->w[1] == 0xd802u && cpu->w[2] == 0u && cpu->w[3] == 0xbeefu &&
+               cpu->dsrpag == 0x020au && dspic33_read_word(cpu, 0x5008u) == 0x1357u &&
+               cpu->cycles == 5u,
+           "PSV program-hole word read completes destination and pointer");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_BYTE_W1_POST_INCREMENT_W2);
+    dspic33_set_working_register(cpu, 1u, 0xd800u);
+    dspic33_set_working_register(cpu, 2u, 0xa5a5u);
+    cpu->dsrpag = 0x020au;
+    expect_address_trap(state, cpu, "PSV program-hole low-byte read traps");
+    expect(state,
+           cpu->w[1] == 0xd801u && cpu->w[2] == 0xa500u && cpu->dsrpag == 0x020au &&
+               cpu->cycles == 5u,
+           "PSV program-hole low-byte read preserves destination high byte");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_BYTE_W1_POST_INCREMENT_W2);
+    dspic33_set_working_register(cpu, 1u, 0xd800u);
+    dspic33_set_working_register(cpu, 2u, 0x5a5au);
+    cpu->dsrpag = 0x030au;
+    expect_address_trap(state, cpu, "PSV program-hole high-byte read traps");
+    expect(state,
+           cpu->w[1] == 0xd801u && cpu->w[2] == 0x5a00u && cpu->dsrpag == 0x030au &&
+               cpu->cycles == 5u,
+           "PSV program-hole high-byte read preserves destination high byte");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_DOUBLE_W1_POST_INCREMENT_W2);
+    dspic33_set_working_register(cpu, 1u, 0xd800u);
+    dspic33_set_working_register(cpu, 2u, 0xa5a5u);
+    dspic33_set_working_register(cpu, 3u, 0x5a5au);
+    cpu->dsrpag = 0x020au;
+    expect_address_trap(state, cpu, "PSV program-hole MOV.D read traps");
+    expect(state,
+           cpu->w[1] == 0xd804u && cpu->w[2] == 0u && cpu->w[3] == 0u &&
+               cpu->dsrpag == 0x020au && cpu->cycles == 5u && cpu->trap_count == 1u,
+           "PSV program-hole MOV.D coalesces reads and completes pointer");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_MEMORY_W2_MEMORY);
+    dspic33_set_working_register(cpu, 1u, 0xd800u);
+    dspic33_set_working_register(cpu, 2u, 0x5008u);
+    dspic33_write_word(cpu, 0x5008u, 0x2468u);
+    cpu->dsrpag = 0x020au;
+    expect_address_trap(state, cpu, "PSV program-hole memory move traps");
+    expect(state,
+           cpu->w[1] == 0xd800u && cpu->w[2] == 0x5008u &&
+               dspic33_read_word(cpu, 0x5008u) == 0x2468u && cpu->cycles == 5u,
+           "PSV program-hole fault inhibits data destination write");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    expect(state, dspic33_load_program_word(cpu, 0x557feu, 0x001357u),
+           "load final implemented PSV word");
+    dspic33_set_working_register(cpu, 1u, 0xd7feu);
+    dspic33_set_working_register(cpu, 2u, 0xa5a5u);
+    cpu->dsrpag = 0x020au;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0xd800u &&
+               cpu->w[2] == 0x1357u && cpu->dsrpag == 0x020au && !cpu->address_error &&
+               cpu->cycles == 5u,
+           "final implemented PSV word remains valid before hole boundary");
+
+    reset_processor_conformance(cpu, 0u);
+    expect(state, dspic33_read_word(cpu, 0x01055800u) == 0u && !cpu->address_error,
+           "raw PSV program-hole read bypasses CPU fault state");
+}
+
 static void address_register_dependency_cases(ProcessorConformance* state,
                                               Dspic33* cpu) {
     reset_processor_conformance(cpu, 0u);
@@ -4647,6 +4731,7 @@ int main(void) {
         move_double_mode_cases(&state, &cpu);
         non_cpu_sfr_timing_cases(&state, &cpu);
         psv_timing_cases(&state, &cpu);
+        psv_program_hole_cases(&state, &cpu);
         address_register_dependency_cases(&state, &cpu);
         dsp_x_prefetch_page_cases(&state, &cpu);
         dsp_prefetch_address_error_cases(&state, &cpu);

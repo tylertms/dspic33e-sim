@@ -3780,6 +3780,10 @@ static uint8_t read_byte_value(Dspic33* cpu, uint32_t address) {
         uint32_t program_address = address & PSV_ADDRESS_MASK;
         uint32_t word;
         if (program_address >= DSPIC33_PROGRAM_LIMIT) {
+            if (cpu->instruction_active &&
+                program_target_requires_address_error(program_address)) {
+                raise_program_read_error(cpu);
+            }
             return 0u;
         }
         word = cpu->program[(program_address & ~1u) / 2u];
