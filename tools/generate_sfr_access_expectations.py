@@ -20,6 +20,9 @@ EXPECTED_ALIASES = (
 )
 EXPECTED_MUX_DEFAULTS = 16
 EXPECTED_MUX_ALTERNATES = 16
+EXPECTED_IMPLEMENTED_WORDS = 977
+EXPECTED_ABSENT_WORDS = 1071
+EXPECTED_ABSENT_RANGES = 77
 EXPECTED_ACCESS_BITS = {
     "-": 2933,
     "c": 167,
@@ -99,10 +102,19 @@ def default_output():
     )
 
 
+def default_map_output():
+    return (
+        Path(__file__).resolve().parents[1]
+        / "generated"
+        / "dspic33ep512mu810_sfr_map.h"
+    )
+
+
 def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", type=Path, default=default_manifest())
     parser.add_argument("--output", type=Path, default=default_output())
+    parser.add_argument("--map-output", type=Path, default=default_map_output())
     parser.add_argument("--check", action="store_true")
     return parser.parse_args()
 
@@ -272,6 +284,57 @@ def load_inventory(path):
     return defaults, muxes
 
 
+def implementation_bitmap(defaults):
+    slots = [False] * 2048
+    for register in defaults:
+        address = int(register["address"], 16)
+        if address >= 0x1000 or address & 1 or register["width"] != 16:
+            raise ValueError(
+                f"invalid SFR map entry {register['name']} at 0x{address:04x}"
+            )
+        slots[address >> 1] = True
+    implemented_words = sum(slots)
+    absent_words = len(slots) - implemented_words
+    absent_ranges = sum(
+        not implemented and (index == 0 or slots[index - 1])
+        for index, implemented in enumerate(slots)
+    )
+    if implemented_words != EXPECTED_IMPLEMENTED_WORDS:
+        raise ValueError(f"SFR map has {implemented_words} implemented words")
+    if absent_words != EXPECTED_ABSENT_WORDS:
+        raise ValueError(f"SFR map has {absent_words} absent words")
+    if absent_ranges != EXPECTED_ABSENT_RANGES:
+        raise ValueError(f"SFR map has {absent_ranges} absent ranges")
+    return bytes(
+        sum(slots[byte * 8 + bit] << bit for bit in range(8)) for byte in range(256)
+    )
+
+
+def render_map(defaults):
+    bitmap = implementation_bitmap(defaults)
+    lines = [
+        "#ifndef DSPIC33EP512MU810_SFR_MAP_H",
+        "#define DSPIC33EP512MU810_SFR_MAP_H",
+        "",
+        "#include <stdint.h>",
+        "",
+        "enum {",
+        "    DSPIC33_SFR_WORD_COUNT = 2048u,",
+        "    DSPIC33_SFR_IMPLEMENTATION_BITMAP_SIZE = 256u,",
+        f"    DSPIC33_SFR_IMPLEMENTED_WORD_COUNT = {EXPECTED_IMPLEMENTED_WORDS}u,",
+        f"    DSPIC33_SFR_ABSENT_WORD_COUNT = {EXPECTED_ABSENT_WORDS}u,",
+        f"    DSPIC33_SFR_ABSENT_RANGE_COUNT = {EXPECTED_ABSENT_RANGES}u,",
+        "};",
+        "",
+        "static const uint8_t dspic33_sfr_implementation_bitmap[] = {",
+    ]
+    for offset in range(0, len(bitmap), 12):
+        values = ", ".join(f"0x{value:02x}u" for value in bitmap[offset : offset + 12])
+        lines.append(f"    {values},")
+    lines.extend(["};", "", "#endif", ""])
+    return "\n".join(lines).encode("ascii")
+
+
 def render(defaults, muxes):
     lines = [
         "#ifndef DSPIC33EP512MU810_SFR_ACCESS_H",
@@ -389,7 +452,9 @@ def render(defaults, muxes):
 
 def main():
     arguments = parse_arguments()
-    rendered = render(*load_inventory(arguments.manifest))
+    defaults, muxes = load_inventory(arguments.manifest)
+    rendered = render(defaults, muxes)
+    rendered_map = render_map(defaults)
     if arguments.check:
         if not arguments.output.exists() or arguments.output.read_bytes() != rendered:
             print(
@@ -397,11 +462,28 @@ def main():
                 file=sys.stderr,
             )
             return 1
-        print(f"SFR access expectations are current: {arguments.output}")
+        if (
+            not arguments.map_output.exists()
+            or arguments.map_output.read_bytes() != rendered_map
+        ):
+            print(
+                f"SFR implementation map is stale: {arguments.map_output}",
+                file=sys.stderr,
+            )
+            return 1
+        print(
+            f"SFR access expectations and implementation map are current: "
+            f"{arguments.output}, {arguments.map_output}"
+        )
         return 0
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_bytes(rendered)
-    print(f"Generated SFR access expectations: {arguments.output}")
+    arguments.map_output.parent.mkdir(parents=True, exist_ok=True)
+    arguments.map_output.write_bytes(rendered_map)
+    print(
+        f"Generated SFR access expectations and implementation map: "
+        f"{arguments.output}, {arguments.map_output}"
+    )
     return 0
 
 

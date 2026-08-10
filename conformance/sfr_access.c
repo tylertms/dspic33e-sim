@@ -5,6 +5,7 @@
 
 #include "dspic33.h"
 #include "dspic33ep512mu810_sfr_access.h"
+#include "dspic33ep512mu810_sfr_map.h"
 
 typedef struct {
     uint16_t initial;
@@ -42,6 +43,163 @@ typedef struct {
     uint32_t selector_switch_addresses;
     uint32_t selector_switch_bits;
 } SfrMuxCensus;
+
+typedef struct {
+    uint32_t implemented_words;
+    uint32_t absent_words;
+    uint32_t absent_ranges;
+    uint32_t direct_byte_checks;
+    uint32_t direct_word_checks;
+    uint32_t internal_pad_byte_checks;
+    uint32_t internal_pad_word_checks;
+    uint32_t odd_crossing_checks;
+    uint32_t lifecycle_checks;
+    uint32_t failures;
+} SfrMapCensus;
+
+static bool map_word_is_implemented(uint32_t slot) {
+    return (dspic33_sfr_implementation_bitmap[slot >> 3u] &
+            (uint8_t)(1u << (slot & 7u))) != 0u;
+}
+
+static void inspect_map_condition(SfrMapCensus* census, bool condition,
+                                  uint16_t address, const char* operation) {
+    if (!condition) {
+        census->failures++;
+        printf("[sfr-map-failed] address=0x%04x operation=%s\n", (unsigned)address,
+               operation);
+    }
+}
+
+static void inspect_absent_word(SfrMapCensus* census, Dspic33* cpu, uint16_t address) {
+    uint32_t events = cpu->events.count;
+    cpu->data[address] = 0xa5u;
+    cpu->data[address + 1u] = 0x5au;
+    cpu->address_error = false;
+    cpu->io.cpu_write_valid = false;
+    inspect_map_condition(census, dspic33_read_byte(cpu, address) == 0u, address,
+                          "direct-low-read");
+    inspect_map_condition(census, dspic33_read_byte(cpu, address + 1u) == 0u, address,
+                          "direct-high-read");
+    dspic33_write_byte(cpu, address, 0x3cu);
+    dspic33_write_byte(cpu, address + 1u, 0xc3u);
+    inspect_map_condition(census, dspic33_read_word(cpu, address) == 0u, address,
+                          "direct-word-read");
+    dspic33_write_word(cpu, address, 0x3cc3u);
+    inspect_map_condition(census,
+                          cpu->data[address] == 0xa5u &&
+                              cpu->data[address + 1u] == 0x5au && !cpu->address_error &&
+                              !cpu->io.cpu_write_valid && cpu->events.count == events,
+                          address, "direct-write-isolation");
+    census->direct_byte_checks += 2u;
+    census->direct_word_checks++;
+
+    cpu->instruction_active = true;
+    cpu->io.dma_transfer_active = true;
+    inspect_map_condition(census, dspic33_read_byte(cpu, address) == 0u, address,
+                          "internal-pad-low-read");
+    inspect_map_condition(census, dspic33_read_byte(cpu, address + 1u) == 0u, address,
+                          "internal-pad-high-read");
+    dspic33_write_byte(cpu, address, 0x69u);
+    dspic33_write_byte(cpu, address + 1u, 0x96u);
+    inspect_map_condition(census, dspic33_read_word(cpu, address) == 0u, address,
+                          "internal-pad-word-read");
+    dspic33_write_word(cpu, address, 0x6996u);
+    inspect_map_condition(census,
+                          cpu->data[address] == 0xa5u &&
+                              cpu->data[address + 1u] == 0x5au && !cpu->address_error &&
+                              !cpu->io.cpu_write_valid && cpu->events.count == events,
+                          address, "internal-pad-write-isolation");
+    cpu->io.dma_transfer_active = false;
+    cpu->instruction_active = false;
+    census->internal_pad_byte_checks += 2u;
+    census->internal_pad_word_checks++;
+}
+
+static SfrMapCensus inspect_sfr_map(Dspic33* cpu) {
+    bool expected[DSPIC33_SFR_WORD_COUNT] = {false};
+    SfrMapCensus census = {0u};
+    Dspic33 copy;
+    uint32_t slot;
+    uint32_t index;
+    bool copy_initialized;
+    for (index = 0u; index < DSPIC33_SFR_ACCESS_ADDRESS_COUNT; index++) {
+        expected[dspic33_sfr_access_expectations[index].address >> 1u] = true;
+    }
+    for (slot = 0u; slot < DSPIC33_SFR_WORD_COUNT; slot++) {
+        bool implemented = map_word_is_implemented(slot);
+        uint16_t address = (uint16_t)(slot << 1u);
+        inspect_map_condition(&census, implemented == expected[slot], address,
+                              "dfp-membership");
+        if (implemented) {
+            census.implemented_words++;
+            continue;
+        }
+        census.absent_words++;
+        census.absent_ranges += slot == 0u || map_word_is_implemented(slot - 1u);
+        inspect_absent_word(&census, cpu, address);
+    }
+
+    dspic33_reset(cpu, 0u);
+    cpu->data[0x013eu] = 0xa5u;
+    cpu->io.cpu_write_valid = false;
+    dspic33_write_word(cpu, 0x013du, 0x69a0u);
+    inspect_map_condition(&census, dspic33_read_word(cpu, 0x013cu) == 0xa000u, 0x013du,
+                          "odd-present-low-write");
+    inspect_map_condition(&census, dspic33_read_byte(cpu, 0x013eu) == 0u, 0x013du,
+                          "odd-absent-high-read");
+    inspect_map_condition(&census, cpu->data[0x013eu] == 0xa5u, 0x013du,
+                          "odd-absent-high-storage");
+    inspect_map_condition(&census,
+                          cpu->io.cpu_write_valid &&
+                              cpu->io.cpu_write_address == 0x013du &&
+                              cpu->io.cpu_write_width == 1u,
+                          0x013du, "odd-present-low-transaction");
+    inspect_map_condition(
+        &census, dspic33_read_word(cpu, 0x013du) == 0x00a0u && !cpu->address_error,
+        0x013du, "odd-present-low-result");
+
+    dspic33_reset(cpu, 0u);
+    cpu->data[0x00ffu] = 0xa5u;
+    cpu->io.cpu_write_valid = false;
+    dspic33_write_word(cpu, 0x00ffu, 0x5a69u);
+    inspect_map_condition(&census, dspic33_read_byte(cpu, 0x00ffu) == 0u, 0x00ffu,
+                          "odd-absent-low-read");
+    inspect_map_condition(&census, cpu->data[0x00ffu] == 0xa5u, 0x00ffu,
+                          "odd-absent-low-storage");
+    inspect_map_condition(&census, dspic33_read_word(cpu, 0x0100u) == 0x005au, 0x00ffu,
+                          "odd-present-high-write");
+    inspect_map_condition(&census,
+                          cpu->io.cpu_write_valid &&
+                              cpu->io.cpu_write_address == 0x0100u &&
+                              cpu->io.cpu_write_width == 1u,
+                          0x00ffu, "odd-present-high-transaction");
+    inspect_map_condition(
+        &census, dspic33_read_word(cpu, 0x00ffu) == 0x5a00u && !cpu->address_error,
+        0x00ffu, "odd-present-high-result");
+    census.odd_crossing_checks += 10u;
+
+    cpu->data[0x0a9cu] = 0xa5u;
+    cpu->data[0x0a9du] = 0x5au;
+    copy_initialized = dspic33_initialize(&copy);
+    inspect_map_condition(&census, copy_initialized, 0x0a9cu, "copy-initialize");
+    census.lifecycle_checks++;
+    if (copy_initialized) {
+        inspect_map_condition(&census, dspic33_copy(&copy, cpu), 0x0a9cu, "copy-state");
+        inspect_map_condition(&census, dspic33_read_word(&copy, 0x0a9cu) == 0u, 0x0a9cu,
+                              "copy-read");
+        census.lifecycle_checks += 2u;
+        dspic33_destroy(&copy);
+    }
+    dspic33_reset(cpu, 0u);
+    inspect_map_condition(&census, dspic33_read_word(cpu, 0x0a9cu) == 0u, 0x0a9cu,
+                          "reset-read");
+    dspic33_write_word(cpu, 0x0a9cu, 0xffffu);
+    inspect_map_condition(&census, dspic33_read_word(cpu, 0x0a9cu) == 0u, 0x0a9cu,
+                          "reset-write");
+    census.lifecycle_checks += 2u;
+    return census;
+}
 
 static uint32_t bit_count(uint16_t value) {
     uint32_t count = 0u;
@@ -242,10 +400,24 @@ static void print_mux_summary(const SfrMuxCensus* census) {
            census->access.write_only_bits);
 }
 
+static void print_map_summary(const SfrMapCensus* census) {
+    printf("[sfr-map-summary] words=%u implemented=%" PRIu32 " absent=%" PRIu32
+           " absent-ranges=%" PRIu32 " direct-byte-checks=%" PRIu32
+           " direct-word-checks=%" PRIu32 " internal-pad-byte-checks=%" PRIu32
+           " internal-pad-word-checks=%" PRIu32 " odd-crossing-checks=%" PRIu32
+           " lifecycle-checks=%" PRIu32 " failures=%" PRIu32 "\n",
+           DSPIC33_SFR_WORD_COUNT, census->implemented_words, census->absent_words,
+           census->absent_ranges, census->direct_byte_checks,
+           census->direct_word_checks, census->internal_pad_byte_checks,
+           census->internal_pad_word_checks, census->odd_crossing_checks,
+           census->lifecycle_checks, census->failures);
+}
+
 int main(void) {
     Dspic33 cpu;
     SfrAccessCensus census = {0u};
     SfrMuxCensus mux_census = {0u};
+    SfrMapCensus map_census;
     uint32_t index;
     _Static_assert(sizeof(dspic33_sfr_access_expectations) /
                            sizeof(dspic33_sfr_access_expectations[0]) ==
@@ -255,6 +427,9 @@ int main(void) {
                            sizeof(dspic33_sfr_mux_access_expectations[0]) ==
                        DSPIC33_SFR_ACCESS_MUX_ALTERNATE_COUNT,
                    "SFR mux access expectation count");
+    _Static_assert(sizeof(dspic33_sfr_implementation_bitmap) ==
+                       DSPIC33_SFR_IMPLEMENTATION_BITMAP_SIZE,
+                   "SFR implementation bitmap size");
     if (!dspic33_initialize(&cpu)) {
         fprintf(stderr, "failed to initialize simulator\n");
         return 2;
@@ -266,10 +441,12 @@ int main(void) {
         inspect_mux_register(&mux_census, &cpu,
                              &dspic33_sfr_mux_access_expectations[index]);
     }
+    map_census = inspect_sfr_map(&cpu);
     dspic33_destroy(&cpu);
     print_inventory(&census);
     print_access_summary(&census);
     print_mux_summary(&mux_census);
+    print_map_summary(&map_census);
     if (census.aliases != DSPIC33_SFR_ACCESS_ALIAS_COUNT ||
         census.mux_defaults != DSPIC33_SFR_ACCESS_MUX_DEFAULT_COUNT ||
         census.dependent_read_only_bits !=
@@ -277,7 +454,8 @@ int main(void) {
         mux_census.addresses != DSPIC33_SFR_ACCESS_MUX_ALTERNATE_COUNT) {
         return 2;
     }
-    return census.unresolved_addresses == 0u && mux_census.unresolved_addresses == 0u
+    return census.unresolved_addresses == 0u && mux_census.unresolved_addresses == 0u &&
+                   map_census.failures == 0u
                ? 0
                : 1;
 }

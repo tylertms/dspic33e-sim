@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "device.h"
+#include "dspic33ep512mu810_sfr_map.h"
 
 enum {
     PSV_ADDRESS = 0x01000000u,
@@ -60,6 +61,16 @@ static bool check_data_alignment(Dspic33* cpu, uint32_t address) {
     }
     cpu->address_error_access_allowed = false;
     return false;
+}
+
+static bool data_byte_is_implemented(uint32_t address) {
+    uint32_t slot;
+    if (address >= 0x1000u) {
+        return true;
+    }
+    slot = (address & 0x0ffeu) >> 1u;
+    return (dspic33_sfr_implementation_bitmap[slot >> 3u] &
+            (uint8_t)(1u << (slot & 7u))) != 0u;
 }
 
 static bool check_data_implementation(Dspic33* cpu, uint32_t address, uint8_t width) {
@@ -3042,6 +3053,9 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
         !check_data_implementation(cpu, address, 1u) || address >= DSPIC33_DATA_SIZE) {
         return;
     }
+    if (!data_byte_is_implemented(address)) {
+        return;
+    }
     if (!cpu->io.dma_transfer_active) {
         cpu->io.cpu_write_cycle = cpu->cycles;
         cpu->io.cpu_write_address = address;
@@ -3154,11 +3168,24 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
 }
 
 void dspic33_write_word(Dspic33* cpu, uint32_t address, uint16_t value) {
+    bool low_implemented;
+    bool high_implemented;
     uint16_t previous;
     if (!check_data_alignment(cpu, address) ||
         !check_data_implementation(cpu, address, 2u) ||
         (cpu->address_error && !cpu->address_error_access_allowed) ||
         address + 1u >= DSPIC33_DATA_SIZE) {
+        return;
+    }
+    low_implemented = data_byte_is_implemented(address);
+    high_implemented = data_byte_is_implemented(address + 1u);
+    if (!low_implemented || !high_implemented) {
+        if (low_implemented) {
+            dspic33_write_byte(cpu, address, (uint8_t)value);
+        }
+        if (high_implemented) {
+            dspic33_write_byte(cpu, address + 1u, (uint8_t)(value >> 8u));
+        }
         return;
     }
     if (!cpu->io.dma_transfer_active) {
@@ -3213,6 +3240,9 @@ static uint8_t read_byte_value(Dspic33* cpu, uint32_t address) {
         return (uint8_t)(word >> ((program_address & 1u) * 8u));
     }
     if (address >= DSPIC33_DATA_SIZE) {
+        return 0u;
+    }
+    if (!data_byte_is_implemented(address)) {
         return 0u;
     }
     if (address < 32u) {

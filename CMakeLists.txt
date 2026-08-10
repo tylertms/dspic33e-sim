@@ -55,7 +55,11 @@ add_executable(
     opentec_simulator_sfr_access_conformance conformance/sfr_access.c
 )
 
-target_include_directories(opentec_simulator_core PUBLIC src)
+target_include_directories(
+    opentec_simulator_core
+    PUBLIC src
+    PRIVATE generated
+)
 target_link_libraries(opentec_firmware_simulator PRIVATE opentec_simulator_core)
 target_link_libraries(
     opentec_simulator_event_conformance PRIVATE opentec_simulator_core
