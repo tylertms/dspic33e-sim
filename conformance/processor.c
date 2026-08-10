@@ -82,6 +82,17 @@ enum {
     OPCODE_MOV_DOUBLE_W1_POST_INCREMENT_W2 = 0xbe0131u,
     OPCODE_MOV_DOUBLE_W1_PRE_INCREMENT_W2 = 0xbe0151u,
     OPCODE_MOV_DOUBLE_W4_W6 = 0xbe0314u,
+    OPCODE_MOV_DOUBLE_INVALID_SOURCE_MODE_6 = 0xbe0161u,
+    OPCODE_MOV_DOUBLE_INVALID_SOURCE_MODE_7 = 0xbe0171u,
+    OPCODE_MOV_DOUBLE_INVALID_DESTINATION_MODE_6 = 0xbeb082u,
+    OPCODE_MOV_DOUBLE_INVALID_DESTINATION_MODE_7 = 0xbeb882u,
+    OPCODE_MOV_DOUBLE_INVALID_MEMORY_PAIR = 0xbe8891u,
+    OPCODE_MOV_DOUBLE_INVALID_ODD_SOURCE_PAIR = 0xbe0101u,
+    OPCODE_MOV_DOUBLE_INVALID_ODD_DESTINATION_PAIR = 0xbe0082u,
+    OPCODE_MOV_DOUBLE_INVALID_REVERSE_ODD_SOURCE_PAIR = 0xbe8881u,
+    OPCODE_MOV_DOUBLE_INVALID_REVERSE_DIRECT = 0xbe8102u,
+    OPCODE_MOV_DOUBLE_INVALID_DIRECTION_BIT = 0xbec902u,
+    OPCODE_MOV_DOUBLE_W2_W4_PRE_INCREMENT = 0xbeaa02u,
     OPCODE_MOV_W0_IFS0 = 0x884000u,
     OPCODE_MOV_IFS0_W2 = 0x804002u,
     OPCODE_BSET_BYTE_IFS0_BIT_0 = 0xa80800u,
@@ -2897,6 +2908,64 @@ static void interrupt_stack_timing_case(ProcessorConformance* state, Dspic33* cp
            "IRQ stack fault stacks third handler PC");
 }
 
+static void invalid_move_double_cases(ProcessorConformance* state, Dspic33* cpu) {
+    static const struct {
+        uint32_t opcode;
+        const char* execution;
+    } cases[] = {
+        {OPCODE_MOV_DOUBLE_INVALID_SOURCE_MODE_6,
+         "MOV.D source mode 6 resets processor"},
+        {OPCODE_MOV_DOUBLE_INVALID_SOURCE_MODE_7,
+         "MOV.D source mode 7 resets processor"},
+        {OPCODE_MOV_DOUBLE_INVALID_DESTINATION_MODE_6,
+         "MOV.D destination mode 6 resets processor"},
+        {OPCODE_MOV_DOUBLE_INVALID_DESTINATION_MODE_7,
+         "MOV.D destination mode 7 resets processor"},
+        {OPCODE_MOV_DOUBLE_INVALID_MEMORY_PAIR, "MOV.D memory pair resets processor"},
+        {OPCODE_MOV_DOUBLE_INVALID_ODD_SOURCE_PAIR,
+         "MOV.D odd source register pair resets processor"},
+        {OPCODE_MOV_DOUBLE_INVALID_ODD_DESTINATION_PAIR,
+         "MOV.D odd destination register pair resets processor"},
+        {OPCODE_MOV_DOUBLE_INVALID_REVERSE_ODD_SOURCE_PAIR,
+         "MOV.D reverse odd source register pair resets processor"},
+        {OPCODE_MOV_DOUBLE_INVALID_REVERSE_DIRECT,
+         "MOV.D reverse direct destination resets processor"},
+        {OPCODE_MOV_DOUBLE_INVALID_DIRECTION_BIT,
+         "MOV.D reserved direction bit resets processor"},
+    };
+    size_t index;
+
+    for (index = 0u; index < sizeof(cases) / sizeof(cases[0]); index++) {
+        dspic33_reset(cpu, 0u);
+        load_instruction(state, cpu, 0u, cases[index].opcode);
+        dspic33_set_working_register(cpu, 0u, 2u);
+        dspic33_set_working_register(cpu, 1u, 0x5000u);
+        dspic33_set_working_register(cpu, 2u, 0x1111u);
+        dspic33_set_working_register(cpu, 3u, 0x2222u);
+        dspic33_write_word(cpu, 0x5000u, 0xaaaau);
+        dspic33_write_word(cpu, 0x5002u, 0x5555u);
+        dspic33_write_word(cpu, 0x5004u, 0x3333u);
+        expect_illegal_reset(state, cpu, cases[index].execution);
+        expect(state,
+               dspic33_read_word(cpu, 0x5000u) == 0xaaaau &&
+                   dspic33_read_word(cpu, 0x5002u) == 0x5555u &&
+                   dspic33_read_word(cpu, 0x5004u) == 0x3333u,
+               "invalid MOV.D preserves destination memory");
+    }
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_DOUBLE_W2_W4_PRE_INCREMENT);
+    dspic33_set_working_register(cpu, 2u, 0x1111u);
+    dspic33_set_working_register(cpu, 3u, 0x2222u);
+    dspic33_set_working_register(cpu, 4u, 0x4ffcu);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[4] == 0x5000u &&
+               dspic33_read_word(cpu, 0x5000u) == 0x1111u &&
+               dspic33_read_word(cpu, 0x5002u) == 0x2222u &&
+               cpu->illegal_reset_count == 0u,
+           "MOV.D destination mode 5 remains valid");
+}
+
 static void illegal_condition_reset_cases(ProcessorConformance* state, Dspic33* cpu) {
     static const uint16_t preserved_addresses[] = {
         0x0742u, 0x0744u, 0x0746u, 0x0748u, 0x074eu, 0x0758u, 0x075au,
@@ -3295,6 +3364,7 @@ int main(void) {
         return_instruction_cycle_cases(&state, &cpu);
         retfie_stack_timing_case(&state, &cpu);
         interrupt_stack_timing_case(&state, &cpu);
+        invalid_move_double_cases(&state, &cpu);
         illegal_condition_reset_cases(&state, &cpu);
         dspic33_destroy(&cpu);
     }

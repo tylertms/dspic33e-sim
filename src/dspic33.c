@@ -710,12 +710,20 @@ static bool execute_move_double(Dspic33* cpu, uint32_t opcode) {
     uint8_t source_register = (uint8_t)(opcode & 0x0fu);
     uint8_t destination_mode = (uint8_t)((opcode >> 11u) & 0x07u);
     uint8_t destination_register = (uint8_t)((opcode >> 7u) & 0x0fu);
+    bool source_to_direct = (opcode & 0xfff880u) == 0xbe0000u && source_mode <= 5u &&
+                            (source_mode != 0u || (source_register & 1u) == 0u);
+    bool direct_to_indirect = (opcode & 0xffc071u) == 0xbe8000u &&
+                              destination_mode >= 1u && destination_mode <= 5u;
     uint16_t low;
     uint16_t high;
     uint32_t address;
     uint32_t high_address;
     OperandResolution resolution;
     uint16_t registers[16];
+    if (!source_to_direct && !direct_to_indirect) {
+        perform_warm_reset(cpu, 0x4000u, true);
+        return true;
+    }
     memcpy(registers, cpu->w, sizeof(registers));
     if (!validate_operand_alignment(cpu, registers, source_mode, source_register, 0u,
                                     4u, false, false) ||
