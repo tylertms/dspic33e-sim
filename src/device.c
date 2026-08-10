@@ -95,6 +95,23 @@ enum {
     NVM_WRITE = 0x8000u,
     NVM_WRITE_ENABLE = 0x4000u,
     NVM_WRITE_ERROR = 0x2000u,
+    CRC_CONTROL = 0x0640u,
+    CRC_CONFIG = 0x0642u,
+    CRC_POLYNOMIAL_LOW = 0x0644u,
+    CRC_POLYNOMIAL_HIGH = 0x0646u,
+    CRC_DATA_LOW = 0x0648u,
+    CRC_DATA_HIGH = 0x064au,
+    CRC_SHIFT_LOW = 0x064cu,
+    CRC_SHIFT_HIGH = 0x064eu,
+    CRC_ENABLE = 0x8000u,
+    CRC_WORD_COUNT_MASK = 0x1f00u,
+    CRC_FULL = 0x0080u,
+    CRC_EMPTY = 0x0040u,
+    CRC_INTERRUPT_EMPTY = 0x0020u,
+    CRC_GO = 0x0010u,
+    CRC_LITTLE_ENDIAN = 0x0008u,
+    CRC_BITS_PER_CYCLE = 2u,
+    CRC_IRQ = 67u,
     UART_MODE_ENABLE = 0x8000u,
     UART_MODE_IREN = 0x1000u,
     UART_MODE_UEN_MASK = 0x0300u,
@@ -326,7 +343,9 @@ static const Dspic33RegisterMask register_masks[] = {
     {0x0046u, 0xcfffu}, {0x0048u, 0xfffeu}, {0x004au, 0xfffeu}, {0x004cu, 0xfffeu},
     {0x004eu, 0xfffeu}, {0x0050u, 0xffffu}, {0x0104u, 0xa076u}, {0x0110u, 0xa07au},
     {0x0112u, 0xa072u}, {0x011eu, 0xa07au}, {0x0120u, 0xa072u}, {0x012cu, 0xa07au},
-    {0x012eu, 0xa072u}, {0x013au, 0xa07au}, {0x013cu, 0xa072u}, {0x0680u, 0x3f3fu},
+    {0x012eu, 0xa072u}, {0x013au, 0xa07au}, {0x013cu, 0xa072u}, {0x0640u, 0xa038u},
+    {0x0642u, 0x1f1fu}, {0x0644u, 0xfffeu}, {0x0646u, 0xffffu}, {0x0648u, 0xffffu},
+    {0x064au, 0xffffu}, {0x064cu, 0xffffu}, {0x064eu, 0xffffu}, {0x0680u, 0x3f3fu},
     {0x0682u, 0x3f3fu}, {0x0684u, 0x3f3fu}, {0x0686u, 0x3f3fu}, {0x0688u, 0x3f3fu},
     {0x068au, 0x3f3fu}, {0x068cu, 0x3f3fu}, {0x068eu, 0x3f3fu}, {0x0690u, 0x3f3fu},
     {0x0692u, 0x3f3fu}, {0x0696u, 0x3f3fu}, {0x0698u, 0x3f3fu}, {0x069au, 0x3f3fu},
@@ -766,6 +785,168 @@ static bool word_queue_front(const Dspic33WordQueue* queue, uint16_t* value) {
     }
     *value = queue->words[queue->head];
     return true;
+}
+
+static uint8_t crc_data_width(const Dspic33* cpu) {
+    return (uint8_t)(((raw_word(cpu, CRC_CONFIG) >> 8u) & 0x001fu) + 1u);
+}
+
+static uint8_t crc_polynomial_width(const Dspic33* cpu) {
+    return (uint8_t)((raw_word(cpu, CRC_CONFIG) & 0x001fu) + 1u);
+}
+
+static uint8_t crc_capacity(const Dspic33* cpu) {
+    uint8_t width = crc_data_width(cpu);
+    return width <= 8u ? 16u : width <= 16u ? 8u : 4u;
+}
+
+static uint32_t crc_width_mask(uint8_t width) {
+    return width == 32u ? UINT32_MAX : ((uint32_t)1u << width) - 1u;
+}
+
+static void crc_refresh_status(Dspic33* cpu) {
+    uint16_t control = raw_word(cpu, CRC_CONTROL);
+    uint16_t status = (uint16_t)((uint16_t)cpu->io.crc.count << 8u);
+    if (cpu->io.crc.count == 0u) {
+        status |= CRC_EMPTY;
+    }
+    if (cpu->io.crc.count >= crc_capacity(cpu)) {
+        status |= CRC_FULL;
+    }
+    raw_write_word(
+        cpu, CRC_CONTROL,
+        (uint16_t)((control & ~(CRC_WORD_COUNT_MASK | CRC_FULL | CRC_EMPTY)) | status));
+}
+
+static void crc_abort(Dspic33* cpu) {
+    cpu->io.crc.generation++;
+    cpu->io.crc.active = false;
+    cpu->io.crc.bits_remaining = 0u;
+}
+
+static void crc_reset_runtime(Dspic33* cpu) {
+    uint16_t generation = (uint16_t)(cpu->io.crc.generation + 1u);
+    uint16_t control = raw_word(cpu, CRC_CONTROL);
+    memset(&cpu->io.crc, 0, sizeof(cpu->io.crc));
+    cpu->io.crc.generation = generation;
+    raw_write_word(cpu, CRC_DATA_LOW, 0u);
+    raw_write_word(cpu, CRC_DATA_HIGH, 0u);
+    raw_write_word(cpu, CRC_SHIFT_LOW, 0u);
+    raw_write_word(cpu, CRC_SHIFT_HIGH, 0u);
+    raw_write_word(cpu, CRC_CONTROL, (uint16_t)(control & ~CRC_GO));
+    crc_refresh_status(cpu);
+}
+
+static bool crc_schedule(Dspic33* cpu) {
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CRC, 0u, cpu->io.crc.generation, 1u)) {
+        crc_abort(cpu);
+        raw_write_word(cpu, CRC_CONTROL,
+                       (uint16_t)(raw_word(cpu, CRC_CONTROL) & ~CRC_GO));
+        return false;
+    }
+    cpu->io.crc.active = true;
+    return true;
+}
+
+static void crc_start_if_ready(Dspic33* cpu) {
+    uint16_t control = raw_word(cpu, CRC_CONTROL);
+    if ((control & (CRC_ENABLE | CRC_GO)) == (CRC_ENABLE | CRC_GO) &&
+        !cpu->io.crc.active && cpu->io.crc.count != 0u) {
+        crc_schedule(cpu);
+    }
+}
+
+static void crc_push(Dspic33* cpu, uint32_t value) {
+    uint8_t capacity = crc_capacity(cpu);
+    uint8_t index;
+    if (cpu->io.crc.count >= capacity) {
+        return;
+    }
+    index = (uint8_t)((cpu->io.crc.head + cpu->io.crc.count) % 16u);
+    cpu->io.crc.words[index] = value & crc_width_mask(crc_data_width(cpu));
+    cpu->io.crc.count++;
+    crc_refresh_status(cpu);
+    crc_start_if_ready(cpu);
+}
+
+static uint32_t crc_shift_register(const Dspic33* cpu) {
+    return (uint32_t)raw_word(cpu, CRC_SHIFT_LOW) |
+           ((uint32_t)raw_word(cpu, CRC_SHIFT_HIGH) << 16u);
+}
+
+static void crc_write_shift_register(Dspic33* cpu, uint32_t value) {
+    raw_write_word(cpu, CRC_SHIFT_LOW, (uint16_t)value);
+    raw_write_word(cpu, CRC_SHIFT_HIGH, (uint16_t)(value >> 16u));
+}
+
+static void crc_load_shift_data(Dspic33* cpu) {
+    uint32_t polynomial = (uint32_t)raw_word(cpu, CRC_POLYNOMIAL_LOW) |
+                          ((uint32_t)raw_word(cpu, CRC_POLYNOMIAL_HIGH) << 16u);
+    cpu->io.crc.shift_data = cpu->io.crc.words[cpu->io.crc.head];
+    cpu->io.crc.head = (uint8_t)((cpu->io.crc.head + 1u) % 16u);
+    cpu->io.crc.count--;
+    cpu->io.crc.data_width = crc_data_width(cpu);
+    cpu->io.crc.polynomial_width = crc_polynomial_width(cpu);
+    cpu->io.crc.bits_remaining = cpu->io.crc.data_width;
+    cpu->io.crc.polynomial =
+        (polynomial | 1u) & crc_width_mask(cpu->io.crc.polynomial_width);
+    cpu->io.crc.little_endian = (raw_word(cpu, CRC_CONTROL) & CRC_LITTLE_ENDIAN) != 0u;
+    crc_refresh_status(cpu);
+    if (cpu->io.crc.count == 0u &&
+        (raw_word(cpu, CRC_CONTROL) & CRC_INTERRUPT_EMPTY) != 0u) {
+        dspic33_raise_interrupt(cpu, CRC_IRQ);
+    }
+}
+
+static void crc_shift_bits(Dspic33* cpu) {
+    uint32_t remainder =
+        crc_shift_register(cpu) & crc_width_mask(cpu->io.crc.polynomial_width);
+    uint8_t shifted;
+    for (shifted = 0u; shifted < CRC_BITS_PER_CYCLE && cpu->io.crc.bits_remaining != 0u;
+         shifted++) {
+        uint8_t source_bit =
+            cpu->io.crc.little_endian
+                ? (uint8_t)(cpu->io.crc.data_width - cpu->io.crc.bits_remaining)
+                : (uint8_t)(cpu->io.crc.bits_remaining - 1u);
+        bool feedback = ((remainder >> (cpu->io.crc.polynomial_width - 1u)) & 1u) != 0u;
+        feedback = feedback != ((cpu->io.crc.shift_data >> source_bit) & 1u);
+        remainder = (remainder << 1u) & crc_width_mask(cpu->io.crc.polynomial_width);
+        if (feedback) {
+            remainder ^= cpu->io.crc.polynomial;
+        }
+        cpu->io.crc.bits_remaining--;
+    }
+    crc_write_shift_register(cpu, remainder);
+}
+
+static void run_crc(Dspic33* cpu, uint16_t generation) {
+    uint16_t control = raw_word(cpu, CRC_CONTROL);
+    if (generation != cpu->io.crc.generation || !cpu->io.crc.active ||
+        (control & (CRC_ENABLE | CRC_GO)) != (CRC_ENABLE | CRC_GO)) {
+        return;
+    }
+    if (cpu->io.crc.bits_remaining == 0u) {
+        if (cpu->io.crc.count == 0u) {
+            cpu->io.crc.active = false;
+            raw_write_word(cpu, CRC_CONTROL, (uint16_t)(control & ~CRC_GO));
+            if ((control & CRC_INTERRUPT_EMPTY) == 0u) {
+                dspic33_raise_interrupt(cpu, CRC_IRQ);
+            }
+            return;
+        }
+        crc_load_shift_data(cpu);
+    }
+    crc_shift_bits(cpu);
+    if (cpu->io.crc.bits_remaining == 0u && cpu->io.crc.count == 0u) {
+        cpu->io.crc.active = false;
+        control = raw_word(cpu, CRC_CONTROL);
+        raw_write_word(cpu, CRC_CONTROL, (uint16_t)(control & ~CRC_GO));
+        if ((control & CRC_INTERRUPT_EMPTY) == 0u) {
+            dspic33_raise_interrupt(cpu, CRC_IRQ);
+        }
+        return;
+    }
+    crc_schedule(cpu);
 }
 
 static bool can_queue_push(Dspic33CanQueue* queue, const Dspic33CanFrame* frame) {
@@ -4374,6 +4555,9 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
     case DSPIC33_EVENT_USB:
         run_usb(cpu, event->source);
         break;
+    case DSPIC33_EVENT_CRC:
+        run_crc(cpu, (uint16_t)event->value);
+        break;
     case DSPIC33_EVENT_NVM:
         complete_nvm_event(cpu);
         break;
@@ -5321,6 +5505,108 @@ static void update_nvm_key(Dspic33* cpu, uint16_t requested) {
     raw_write_word(cpu, NVM_KEY, 0u);
 }
 
+static uint8_t crc_write_width(const Dspic33* cpu) {
+    if (cpu->io.dma_transfer_active) {
+        return cpu->io.dma_transfer_width;
+    }
+    return cpu->io.cpu_write_valid ? cpu->io.cpu_write_width : 1u;
+}
+
+static void update_crc_data(Dspic33* cpu, uint16_t address, uint16_t requested) {
+    uint16_t base = (uint16_t)(address & 0xfffeu);
+    uint8_t width = crc_data_width(cpu);
+    uint8_t write_width = crc_write_width(cpu);
+    bool high_byte = (address & 1u) != 0u;
+    if ((raw_word(cpu, CRC_CONTROL) & CRC_ENABLE) == 0u) {
+        raw_write_word(cpu, base, 0u);
+        return;
+    }
+    if (base == CRC_DATA_LOW) {
+        if (width <= 8u) {
+            if (write_width == 2u) {
+                crc_push(cpu, requested & 0x00ffu);
+                crc_push(cpu, requested >> 8u);
+            } else {
+                crc_push(cpu, requested >> (high_byte ? 8u : 0u));
+            }
+        } else if (width <= 16u) {
+            if (write_width == 2u) {
+                crc_push(cpu, requested);
+                cpu->io.crc.data_latch = 0u;
+            } else if (high_byte) {
+                cpu->io.crc.data_latch =
+                    (cpu->io.crc.data_latch & 0xffff00ffu) | requested;
+                crc_push(cpu, cpu->io.crc.data_latch);
+                cpu->io.crc.data_latch = 0u;
+            } else {
+                cpu->io.crc.data_latch =
+                    (cpu->io.crc.data_latch & 0xffffff00u) | (requested & 0x00ffu);
+            }
+        } else if (write_width == 2u) {
+            cpu->io.crc.data_latch = (cpu->io.crc.data_latch & 0xffff0000u) | requested;
+        } else if (high_byte) {
+            cpu->io.crc.data_latch =
+                (cpu->io.crc.data_latch & 0xffff00ffu) | (requested & 0xff00u);
+        } else {
+            cpu->io.crc.data_latch =
+                (cpu->io.crc.data_latch & 0xffffff00u) | (requested & 0x00ffu);
+        }
+    } else if (width > 16u) {
+        if (write_width == 2u) {
+            cpu->io.crc.data_latch =
+                (cpu->io.crc.data_latch & 0x0000ffffu) | ((uint32_t)requested << 16u);
+            crc_push(cpu, cpu->io.crc.data_latch);
+            cpu->io.crc.data_latch = 0u;
+        } else if (high_byte) {
+            cpu->io.crc.data_latch = (cpu->io.crc.data_latch & 0x00ffffffu) |
+                                     ((uint32_t)(requested & 0xff00u) << 16u);
+            if (width > 24u) {
+                crc_push(cpu, cpu->io.crc.data_latch);
+                cpu->io.crc.data_latch = 0u;
+            }
+        } else {
+            cpu->io.crc.data_latch = (cpu->io.crc.data_latch & 0xff00ffffu) |
+                                     ((uint32_t)(requested & 0x00ffu) << 16u);
+            if (width <= 24u) {
+                crc_push(cpu, cpu->io.crc.data_latch);
+                cpu->io.crc.data_latch = 0u;
+            }
+        }
+    }
+    raw_write_word(cpu, base, 0u);
+}
+
+static void update_crc_control(Dspic33* cpu, uint16_t previous) {
+    uint16_t control = raw_word(cpu, CRC_CONTROL);
+    bool enabled = (control & CRC_ENABLE) != 0u;
+    bool was_go = (previous & CRC_GO) != 0u;
+    bool go = (control & CRC_GO) != 0u;
+    if (!enabled) {
+        crc_reset_runtime(cpu);
+        return;
+    }
+    if (was_go && !go) {
+        crc_abort(cpu);
+    }
+    crc_refresh_status(cpu);
+    if (!was_go && go) {
+        crc_start_if_ready(cpu);
+    }
+}
+
+static void update_crc_register(Dspic33* cpu, uint16_t address, uint16_t previous,
+                                uint16_t requested) {
+    uint16_t base = (uint16_t)(address & 0xfffeu);
+    if (base == CRC_CONTROL) {
+        update_crc_control(cpu, previous);
+    } else if (base == CRC_DATA_LOW || base == CRC_DATA_HIGH) {
+        update_crc_data(cpu, address, requested);
+    } else if ((base == CRC_SHIFT_LOW || base == CRC_SHIFT_HIGH) &&
+               (raw_word(cpu, CRC_CONTROL) & CRC_GO) != 0u) {
+        raw_write_word(cpu, base, previous);
+    }
+}
+
 static void fail_nvm_write(Dspic33* cpu) {
     uint16_t control = raw_word(cpu, NVM_CONTROL);
     cpu->nvm.key_stage = 0u;
@@ -5455,6 +5741,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     update_spi_register(cpu, base, previous, requested);
     update_can_register(cpu, base, previous, requested);
     update_usb_register(cpu, base, previous, requested);
+    update_crc_register(cpu, address, previous, requested);
     update_oscillator(cpu, base);
     update_uart_register(cpu, base, previous, requested);
     if (base == NVM_KEY && (cpu->io.cpu_write_width == 2u || address == NVM_KEY)) {
@@ -5481,6 +5768,9 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
         return value;
     }
     if ((address & 0xfffeu) == 0x072eu) {
+        return 0u;
+    }
+    if ((address & 0xfffeu) == CRC_DATA_LOW || (address & 0xfffeu) == CRC_DATA_HIGH) {
         return 0u;
     }
     if (address == USB_IR && (raw_word(cpu, USB_CON) & USB_HOST_ENABLE) == 0u) {

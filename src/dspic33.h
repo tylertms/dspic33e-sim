@@ -57,6 +57,7 @@ typedef enum {
     DSPIC33_EVENT_CAN,
     DSPIC33_EVENT_USB,
     DSPIC33_EVENT_NVM,
+    DSPIC33_EVENT_CRC,
     DSPIC33_EVENT_AUX_PLL
 } Dspic33EventType;
 
@@ -119,6 +120,21 @@ typedef struct {
     uint8_t head;
     uint8_t count;
 } Dspic33WordQueue;
+
+typedef struct {
+    uint32_t words[16];
+    uint32_t data_latch;
+    uint32_t shift_data;
+    uint32_t polynomial;
+    uint16_t generation;
+    uint8_t head;
+    uint8_t count;
+    uint8_t data_width;
+    uint8_t polynomial_width;
+    uint8_t bits_remaining;
+    bool little_endian;
+    bool active;
+} Dspic33Crc;
 
 typedef enum {
     DSPIC33_I2C_START,
@@ -323,6 +339,7 @@ typedef struct {
     bool cpu_write_valid;
     uint8_t dma_transfer_width;
     bool dma_transfer_active;
+    Dspic33Crc crc;
     Dspic33UsbPending usb_pending[DSPIC33_USB_PENDING_COUNT];
     Dspic33UsbQueue usb_tx;
     uint8_t usb_next_bank[DSPIC33_USB_ENDPOINT_COUNT][2];
