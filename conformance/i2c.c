@@ -952,17 +952,21 @@ static void isolation_and_power_cases(I2cConformance* state, Dspic33* cpu) {
     expect(state, dspic33_read_word(cpu, 0x0216u) == 0x1000u,
            "disabled second module ignores writes");
 
+    for (channel = 0u; channel < DSPIC33_I2C_COUNT; channel++) {
+        uint16_t control = (uint16_t)(bases[channel] + 6u);
+        dspic33_reset(cpu, 0u);
+        enable(cpu, channel, 0u, 0u);
+        dspic33_write_word(cpu, control, 0x8000u);
+        expect(state, dspic33_read_word(cpu, control) == 0x9000u,
+               "software cannot clear release without stretch enable");
+        dspic33_write_word(cpu, control, 0x8040u);
+        expect(state, dspic33_read_word(cpu, control) == 0x8040u,
+               "software clears release with stretch enable");
+        dspic33_write_word(cpu, control, 0u);
+        expect(state, dspic33_read_word(cpu, control) == 0x1000u,
+               "module disable releases clock");
+    }
     dspic33_reset(cpu, 0u);
-    enable(cpu, 0u, 0u, 0u);
-    dspic33_write_word(cpu, 0x0206u, 0x8000u);
-    expect(state, dspic33_read_word(cpu, 0x0206u) == 0x9000u,
-           "software cannot clear release without stretch enable");
-    dspic33_write_word(cpu, 0x0206u, 0x8040u);
-    expect(state, dspic33_read_word(cpu, 0x0206u) == 0x8040u,
-           "software clears release with stretch enable");
-    dspic33_write_word(cpu, 0x0206u, 0u);
-    expect(state, dspic33_read_word(cpu, 0x0206u) == 0x1000u,
-           "module disable releases clock");
     enable(cpu, 0u, 0u, 0u);
     dspic33_write_byte(cpu, 0x0203u, 0x5au);
     expect(state, (dspic33_read_word(cpu, 0x0208u) & 0x4001u) == 0u,

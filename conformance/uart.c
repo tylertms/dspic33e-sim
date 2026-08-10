@@ -530,6 +530,7 @@ static void transmit_timing_cases(UartConformance* state, Dspic33* cpu) {
 }
 
 static void transmit_mode_cases(UartConformance* state, Dspic33* cpu) {
+    uint8_t channel;
     uint8_t interrupt_mode;
     Dspic33UartFrame output;
     for (interrupt_mode = 0u; interrupt_mode < 3u; interrupt_mode++) {
@@ -568,18 +569,36 @@ static void transmit_mode_cases(UartConformance* state, Dspic33* cpu) {
     expect(state, dspic33_read_word(cpu, (uint16_t)(bases[0] + 6u)) == 0x5au,
            "loopback receive data");
 
-    dspic33_reset(cpu, 0u);
-    configure(cpu, 0u, 0x8000u, 0x0c00u, 0u);
-    clear_interrupt(cpu, transmit_irqs[0]);
-    dspic33_write_word(cpu, (uint16_t)(bases[0] + 4u), 0x7eu);
-    expect(state, !interrupt_flag(cpu, transmit_irqs[0]),
-           "break transfer suppresses transmit interrupt");
-    expect(state, dspic33_device_advance(cpu, 224u), "break advance");
-    expect(state,
-           dspic33_uart_transmit(cpu, 0u, &output) && output.break_signal &&
-               output.value == 0u && output.data_bits == 12u &&
-               (dspic33_read_word(cpu, (uint16_t)(bases[0] + 2u)) & 0x0800u) == 0u,
-           "break frame and automatic clear");
+    for (channel = 0u; channel < DSPIC33_UART_COUNT; channel++) {
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, bases[channel], 0x8000u);
+        clear_interrupt(cpu, transmit_irqs[channel]);
+        dspic33_write_word(cpu, (uint16_t)(bases[channel] + 2u), 0x0400u);
+        expect(state, interrupt_flag(cpu, transmit_irqs[channel]),
+               "transmit enable raises interrupt");
+        dspic33_write_word(cpu, (uint16_t)(bases[channel] + 4u), 0x5au);
+        dspic33_write_word(cpu, (uint16_t)(bases[channel] + 2u), 0u);
+        expect(state,
+               dspic33_device_advance(cpu, 1000u) &&
+                   !dspic33_uart_transmit(cpu, channel, &output) &&
+                   (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) &
+                    0x0511u) == 0x0110u,
+               "transmit disable aborts and resets transmitter");
+
+        dspic33_reset(cpu, 0u);
+        configure(cpu, channel, 0x8000u, 0x0c00u, 0u);
+        clear_interrupt(cpu, transmit_irqs[channel]);
+        dspic33_write_word(cpu, (uint16_t)(bases[channel] + 4u), 0x7eu);
+        expect(state, !interrupt_flag(cpu, transmit_irqs[channel]),
+               "break transfer suppresses transmit interrupt");
+        expect(state, dspic33_device_advance(cpu, 224u), "break advance");
+        expect(state,
+               dspic33_uart_transmit(cpu, channel, &output) && output.break_signal &&
+                   output.value == 0u && output.data_bits == 12u &&
+                   (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) &
+                    0x0800u) == 0u,
+               "break frame and automatic clear");
+    }
 }
 
 static void cts_cases(UartConformance* state, Dspic33* cpu) {
