@@ -84,6 +84,16 @@ enum {
     OPCODE_MOV_DOUBLE_W2_W1_POST_INCREMENT = 0xbe9882u,
     OPCODE_MOV_DOUBLE_W1_POST_INCREMENT_W2 = 0xbe0131u,
     OPCODE_MOV_DOUBLE_W1_PRE_INCREMENT_W2 = 0xbe0151u,
+    OPCODE_MOV_DOUBLE_W4_POST_DECREMENT_W2 = 0xbe0124u,
+    OPCODE_MOV_DOUBLE_W4_POST_INCREMENT_W2 = 0xbe0134u,
+    OPCODE_MOV_DOUBLE_W4_PRE_DECREMENT_W2 = 0xbe0144u,
+    OPCODE_MOV_DOUBLE_W4_PRE_INCREMENT_W2 = 0xbe0154u,
+    OPCODE_MOV_DOUBLE_W2_W4_POST_DECREMENT = 0xbe9202u,
+    OPCODE_MOV_DOUBLE_W2_W4_POST_INCREMENT = 0xbe9a02u,
+    OPCODE_MOV_DOUBLE_W2_W4_PRE_DECREMENT = 0xbea202u,
+    OPCODE_MOV_DOUBLE_W2_W4_PRE_INCREMENT = 0xbeaa02u,
+    OPCODE_MOV_DOUBLE_W2_POST_INCREMENT_W2 = 0xbe0132u,
+    OPCODE_MOV_DOUBLE_W2_W2_POST_INCREMENT = 0xbe9902u,
     OPCODE_MOV_DOUBLE_W4_W6 = 0xbe0314u,
     OPCODE_MOV_DOUBLE_INVALID_SOURCE_MODE_6 = 0xbe0161u,
     OPCODE_MOV_DOUBLE_INVALID_SOURCE_MODE_7 = 0xbe0171u,
@@ -95,7 +105,6 @@ enum {
     OPCODE_MOV_DOUBLE_INVALID_REVERSE_ODD_SOURCE_PAIR = 0xbe8881u,
     OPCODE_MOV_DOUBLE_INVALID_REVERSE_DIRECT = 0xbe8102u,
     OPCODE_MOV_DOUBLE_INVALID_DIRECTION_BIT = 0xbec902u,
-    OPCODE_MOV_DOUBLE_W2_W4_PRE_INCREMENT = 0xbeaa02u,
     OPCODE_MOV_W0_IFS0 = 0x884000u,
     OPCODE_MOV_IFS0_W2 = 0x804002u,
     OPCODE_MOV_FILE_WORD_0X1000 = 0xbfb000u,
@@ -2679,6 +2688,123 @@ static void direct_file_move_cases(ProcessorConformance* state, Dspic33* cpu) {
            "non-CPU SFR byte file destination writes pins back to latch");
 }
 
+static void move_double_mode_cases(ProcessorConformance* state, Dspic33* cpu) {
+    static const struct {
+        uint32_t opcode;
+        uint16_t initial_pointer;
+        uint16_t access_address;
+        uint16_t final_pointer;
+        uint16_t low;
+        uint16_t high;
+        const char* name;
+    } source_cases[] = {
+        {OPCODE_MOV_DOUBLE_W4_POST_DECREMENT_W2, 0x5004u, 0x5004u, 0x5000u, 0x1112u,
+         0x2212u, "MOV.D source post-decrement"},
+        {OPCODE_MOV_DOUBLE_W4_POST_INCREMENT_W2, 0x5000u, 0x5000u, 0x5004u, 0x1113u,
+         0x2213u, "MOV.D source post-increment"},
+        {OPCODE_MOV_DOUBLE_W4_PRE_DECREMENT_W2, 0x5004u, 0x5000u, 0x5000u, 0x1114u,
+         0x2214u, "MOV.D source pre-decrement"},
+        {OPCODE_MOV_DOUBLE_W4_PRE_INCREMENT_W2, 0x4ffcu, 0x5000u, 0x5000u, 0x1115u,
+         0x2215u, "MOV.D source pre-increment"},
+    };
+    static const struct {
+        uint32_t opcode;
+        uint16_t initial_pointer;
+        uint16_t access_address;
+        uint16_t final_pointer;
+        uint16_t preserved_address;
+        uint16_t low;
+        uint16_t high;
+        const char* name;
+    } destination_cases[] = {
+        {OPCODE_MOV_DOUBLE_W2_W4_POST_DECREMENT, 0x5004u, 0x5004u, 0x5000u, 0x5000u,
+         0x3312u, 0x4412u, "MOV.D destination post-decrement"},
+        {OPCODE_MOV_DOUBLE_W2_W4_POST_INCREMENT, 0x5000u, 0x5000u, 0x5004u, 0x5004u,
+         0x3313u, 0x4413u, "MOV.D destination post-increment"},
+        {OPCODE_MOV_DOUBLE_W2_W4_PRE_DECREMENT, 0x5004u, 0x5000u, 0x5000u, 0x5004u,
+         0x3314u, 0x4414u, "MOV.D destination pre-decrement"},
+        {OPCODE_MOV_DOUBLE_W2_W4_PRE_INCREMENT, 0x4ffcu, 0x5000u, 0x5000u, 0x4ffcu,
+         0x3315u, 0x4415u, "MOV.D destination pre-increment"},
+    };
+    size_t index;
+
+    for (index = 0u; index < sizeof(source_cases) / sizeof(source_cases[0]); index++) {
+        reset_processor_conformance(cpu, 0u);
+        load_instruction(state, cpu, 0u, source_cases[index].opcode);
+        dspic33_write_word(cpu, 0x4ffcu, 0xdeadu);
+        dspic33_write_word(cpu, 0x4ffeu, 0xdeadu);
+        dspic33_write_word(cpu, 0x5000u, 0xdeadu);
+        dspic33_write_word(cpu, 0x5002u, 0xdeadu);
+        dspic33_write_word(cpu, 0x5004u, 0xdeadu);
+        dspic33_write_word(cpu, 0x5006u, 0xdeadu);
+        dspic33_write_word(cpu, source_cases[index].access_address,
+                           source_cases[index].low);
+        dspic33_write_word(cpu, source_cases[index].access_address + 2u,
+                           source_cases[index].high);
+        dspic33_set_working_register(cpu, 4u, source_cases[index].initial_pointer);
+        cpu->sr = 0x010fu;
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+                   cpu->w[2] == source_cases[index].low &&
+                   cpu->w[3] == source_cases[index].high &&
+                   cpu->w[4] == source_cases[index].final_pointer &&
+                   cpu->sr == 0x010fu && cpu->cycles == 2u,
+               source_cases[index].name);
+    }
+
+    for (index = 0u; index < sizeof(destination_cases) / sizeof(destination_cases[0]);
+         index++) {
+        reset_processor_conformance(cpu, 0u);
+        load_instruction(state, cpu, 0u, destination_cases[index].opcode);
+        dspic33_write_word(cpu, 0x4ffcu, 0xdeadu);
+        dspic33_write_word(cpu, 0x4ffeu, 0xdeadu);
+        dspic33_write_word(cpu, 0x5000u, 0xdeadu);
+        dspic33_write_word(cpu, 0x5002u, 0xdeadu);
+        dspic33_write_word(cpu, 0x5004u, 0xdeadu);
+        dspic33_write_word(cpu, 0x5006u, 0xdeadu);
+        dspic33_set_working_register(cpu, 2u, destination_cases[index].low);
+        dspic33_set_working_register(cpu, 3u, destination_cases[index].high);
+        dspic33_set_working_register(cpu, 4u, destination_cases[index].initial_pointer);
+        cpu->sr = 0x010fu;
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+                   dspic33_read_word(cpu, destination_cases[index].access_address) ==
+                       destination_cases[index].low &&
+                   dspic33_read_word(cpu, destination_cases[index].access_address +
+                                              2u) == destination_cases[index].high &&
+                   dspic33_read_word(cpu, destination_cases[index].preserved_address) ==
+                       0xdeadu &&
+                   cpu->w[4] == destination_cases[index].final_pointer &&
+                   cpu->sr == 0x010fu && cpu->cycles == 2u,
+               destination_cases[index].name);
+    }
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_DOUBLE_W2_POST_INCREMENT_W2);
+    dspic33_write_word(cpu, 0x5000u, 0x5511u);
+    dspic33_write_word(cpu, 0x5002u, 0x6622u);
+    dspic33_set_working_register(cpu, 2u, 0x5000u);
+    cpu->sr = 0x010fu;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0x5511u &&
+               cpu->w[3] == 0x6622u && cpu->sr == 0x010fu && cpu->cycles == 2u,
+           "MOV.D overlapping load writes destination after source pointer update");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_DOUBLE_W2_W2_POST_INCREMENT);
+    dspic33_write_word(cpu, 0x5000u, 0xdeadu);
+    dspic33_write_word(cpu, 0x5002u, 0xdeadu);
+    dspic33_set_working_register(cpu, 2u, 0x5000u);
+    dspic33_set_working_register(cpu, 3u, 0x7788u);
+    cpu->sr = 0x010fu;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0x5004u &&
+               cpu->w[3] == 0x7788u && dspic33_read_word(cpu, 0x5000u) == 0x5000u &&
+               dspic33_read_word(cpu, 0x5002u) == 0x7788u && cpu->sr == 0x010fu &&
+               cpu->cycles == 2u,
+           "MOV.D overlapping store captures source before destination pointer update");
+}
+
 static void non_cpu_sfr_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_BSET_BYTE_IFS0_BIT_0);
@@ -4287,6 +4413,7 @@ int main(void) {
         instruction_cycle_cases(&state, &cpu);
         register_move_instruction_cases(&state, &cpu);
         direct_file_move_cases(&state, &cpu);
+        move_double_mode_cases(&state, &cpu);
         non_cpu_sfr_timing_cases(&state, &cpu);
         psv_timing_cases(&state, &cpu);
         dsp_x_prefetch_page_cases(&state, &cpu);

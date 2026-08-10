@@ -2,7 +2,7 @@
 .include "conformance.inc"
 
 .global _move_conformance_cases
-_move_conformance_cases = 71
+_move_conformance_cases = 90
 .global _move_conformance_group_complete
 _move_conformance_group_complete = 0
 
@@ -498,6 +498,104 @@ _run_move_conformance:
     mov w8, TRISB
     mov w9, LATB
     mov w10, ANSELB
+
+    mov #0x1112, w1
+    mov w1, _conformance_scratch+8
+    mov #0x2212, w1
+    mov w1, _conformance_scratch+10
+    mov #_conformance_scratch+8, w4
+    set_status 0x010f
+    mov.d [w4--], w2
+    record_case 0x0547, w2, w4
+    record_case 0x0548, w3, w4
+
+    mov #0x1113, w1
+    mov w1, _conformance_scratch
+    mov #0x2213, w1
+    mov w1, _conformance_scratch+2
+    mov #_conformance_scratch, w4
+    set_status 0x010f
+    mov.d [w4++], w2
+    record_case 0x0549, w2, w4
+    record_case 0x054a, w3, w4
+
+    mov #0x1114, w1
+    mov w1, _conformance_scratch
+    mov #0x2214, w1
+    mov w1, _conformance_scratch+2
+    mov #_conformance_scratch+4, w4
+    set_status 0x010f
+    mov.d [--w4], w2
+    record_case 0x054b, w2, w4
+    record_case 0x054c, w3, w4
+
+    mov #0x1115, w1
+    mov w1, _conformance_scratch+4
+    mov #0x2215, w1
+    mov w1, _conformance_scratch+6
+    mov #_conformance_scratch, w4
+    set_status 0x010f
+    mov.d [++w4], w2
+    record_case 0x054d, w2, w4
+    record_case 0x054e, w3, w4
+
+    mov #0x3312, w2
+    mov #0x4412, w3
+    mov #_conformance_scratch+8, w4
+    set_status 0x010f
+    mov.d w2, [w4--]
+    mov _conformance_scratch+8, w5
+    record_case 0x054f, w5, w4
+    mov _conformance_scratch+10, w5
+    record_case 0x0550, w5, w4
+
+    mov #0x3313, w2
+    mov #0x4413, w3
+    mov #_conformance_scratch, w4
+    set_status 0x010f
+    mov.d w2, [w4++]
+    mov _conformance_scratch, w5
+    record_case 0x0551, w5, w4
+    mov _conformance_scratch+2, w5
+    record_case 0x0552, w5, w4
+
+    mov #0x3314, w2
+    mov #0x4414, w3
+    mov #_conformance_scratch+4, w4
+    set_status 0x010f
+    mov.d w2, [--w4]
+    mov _conformance_scratch, w5
+    record_case 0x0553, w5, w4
+    mov _conformance_scratch+2, w5
+    record_case 0x0554, w5, w4
+
+    mov #0x3315, w2
+    mov #0x4415, w3
+    mov #_conformance_scratch, w4
+    set_status 0x010f
+    mov.d w2, [++w4]
+    mov _conformance_scratch+4, w5
+    record_case 0x0555, w5, w4
+    mov _conformance_scratch+6, w5
+    record_case 0x0556, w5, w4
+
+    mov #0x5511, w1
+    mov w1, _conformance_scratch
+    mov #0x6622, w1
+    mov w1, _conformance_scratch+2
+    mov #_conformance_scratch, w2
+    set_status 0x010f
+    mov.d [w2++], w2
+    record_double_case 0x0557, w2, w3
+
+    mov #_conformance_scratch, w2
+    mov #0x7788, w3
+    set_status 0x010f
+    mov.d w2, [w2++]
+    mov _conformance_scratch, w4
+    mov _conformance_scratch+2, w5
+    record_double_case 0x0558, w4, w5
+    record_case 0x0559, w2, w3
 
     mov #1, w0
     mov w0, DSRPAG
