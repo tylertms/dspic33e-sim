@@ -2601,7 +2601,9 @@ bool dspic33_initialize(Dspic33* cpu) {
     memset(cpu->program, 0xff, DSPIC33_PROGRAM_WORDS * sizeof(*cpu->program));
     memset(cpu->persistent_program, 0xff,
            DSPIC33_PERSISTENT_PROGRAM_WORDS * sizeof(*cpu->persistent_program));
-    memset(cpu->write_latches, 0xff, sizeof(cpu->write_latches));
+    for (size_t index = 0u; index < DSPIC33_WRITE_LATCH_WORDS; index++) {
+        cpu->write_latches[index] = 0x00ffffffu;
+    }
     memset(cpu->configuration, 0xff, sizeof(cpu->configuration));
     return true;
 }
@@ -2708,7 +2710,10 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
     memset(cpu->interrupt_log_return, 0, sizeof(cpu->interrupt_log_return));
     cpu->events.count = 0u;
     cpu->events.sequence = 0u;
-    memset(cpu->write_latches, 0xff, sizeof(cpu->write_latches));
+    memset(&cpu->nvm, 0, sizeof(cpu->nvm));
+    for (size_t index = 0u; index < DSPIC33_WRITE_LATCH_WORDS; index++) {
+        cpu->write_latches[index] = 0x00ffffffu;
+    }
     cpu->power_state = DSPIC33_POWER_ACTIVE;
     cpu->stop_reason = DSPIC33_RUNNING;
     dspic33_device_reset(cpu);
@@ -2716,8 +2721,8 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
 
 static void perform_warm_reset(Dspic33* cpu, uint16_t cause, bool illegal) {
     static const uint16_t preserved_addresses[] = {
-        0x0620u, 0x0622u, 0x0624u, 0x0626u, 0x0742u, 0x0744u,
-        0x0746u, 0x0748u, 0x074eu, 0x0758u, 0x075au,
+        0x0620u, 0x0622u, 0x0624u, 0x0626u, 0x0728u, 0x0742u,
+        0x0744u, 0x0746u, 0x0748u, 0x074eu, 0x0758u, 0x075au,
     };
     uint16_t
         preserved_values[sizeof(preserved_addresses) / sizeof(preserved_addresses[0])];
@@ -2806,18 +2811,27 @@ bool dspic33_load_program_word(Dspic33* cpu, uint32_t address, uint32_t word) {
 }
 
 void dspic33_complete_nvm(Dspic33* cpu) {
-    uint16_t control = dspic33_read_word(cpu, 0x0728u);
-    uint32_t target = (((uint32_t)dspic33_read_word(cpu, 0x072cu) & 0x01ffu) << 16u) |
-                      dspic33_read_word(cpu, 0x072au);
+    uint16_t operation = (uint16_t)(cpu->nvm.control & 0x000fu);
+    uint32_t target = cpu->nvm.address;
     uint32_t count;
     uint32_t index;
-    if ((control & 0x000fu) == 1u) {
+    if (operation == 0u) {
+        uint32_t offset;
+        if (target < DSPIC33_CONFIGURATION_BASE ||
+            target >= DSPIC33_CONFIGURATION_BASE + DSPIC33_CONFIGURATION_SIZE) {
+            return;
+        }
+        offset = target - DSPIC33_CONFIGURATION_BASE;
+        cpu->configuration[offset] &= (uint8_t)cpu->nvm.latches[0];
+        return;
+    }
+    if (operation == 1u) {
         target &= 0x01fffffcu;
         count = 2u;
-    } else if ((control & 0x000fu) == 2u) {
+    } else if (operation == 2u) {
         target &= 0x01ffff00u;
         count = DSPIC33_WRITE_LATCH_WORDS;
-    } else if ((control & 0x000fu) == 3u) {
+    } else if (operation == 3u) {
         target &= 0x01fff800u;
         for (index = 0u; index < 0x400u; index++) {
             uint32_t* destination = writable_program_word(cpu, target + index * 2u);
@@ -2832,7 +2846,7 @@ void dspic33_complete_nvm(Dspic33* cpu) {
     for (index = 0u; index < count; index++) {
         uint32_t* destination = writable_program_word(cpu, target + index * 2u);
         if (destination != NULL) {
-            *destination &= cpu->write_latches[index];
+            *destination &= cpu->nvm.latches[index];
         }
     }
 }
@@ -3121,6 +3135,12 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     uint32_t opcode;
     uint32_t instruction_pc;
     cpu->illegal_reset = false;
+    if (cpu->nvm.active) {
+        if (!dspic33_device_advance_nvm(cpu)) {
+            cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+        }
+        return cpu->stop_reason;
+    }
     if (cpu->power_state != DSPIC33_POWER_ACTIVE) {
         if (!dspic33_device_wake(cpu)) {
             cpu->stop_reason = cpu->power_state == DSPIC33_POWER_SLEEP

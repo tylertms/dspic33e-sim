@@ -88,6 +88,13 @@ enum {
     DMA_LCA = 0x0bf6u,
     DMA_SADRL = 0x0bf8u,
     DMA_SADRH = 0x0bfau,
+    NVM_CONTROL = 0x0728u,
+    NVM_ADDRESS = 0x072au,
+    NVM_ADDRESS_HIGH = 0x072cu,
+    NVM_KEY = 0x072eu,
+    NVM_WRITE = 0x8000u,
+    NVM_WRITE_ENABLE = 0x4000u,
+    NVM_WRITE_ERROR = 0x2000u,
     UART_MODE_ENABLE = 0x8000u,
     UART_MODE_IREN = 0x1000u,
     UART_MODE_UEN_MASK = 0x0300u,
@@ -334,7 +341,7 @@ static const Dspic33RegisterMask register_masks[] = {
     {0x06deu, 0x7f7fu}, {0x06e0u, 0x007fu}, {0x06e2u, 0x7f7fu}, {0x06e4u, 0x7f7fu},
     {0x06e6u, 0x7f7fu}, {0x06e8u, 0x7f7fu}, {0x06eau, 0x7f7fu}, {0x06ecu, 0x7f7fu},
     {0x06eeu, 0x7f7fu}, {0x06f0u, 0x7f7fu}, {0x06f2u, 0x007fu}, {0x06f4u, 0x7f7fu},
-    {0x06f6u, 0x007fu}, {0x0728u, 0xf00fu}, {0x072cu, 0x00ffu}, {0x072eu, 0x00ffu},
+    {0x06f6u, 0x007fu}, {0x0728u, 0x700fu}, {0x072cu, 0x00ffu}, {0x072eu, 0x00ffu},
     {0x0740u, 0xcbffu}, {0x0744u, 0xffdfu}, {0x0746u, 0x01ffu}, {0x0748u, 0x003fu},
     {0x074eu, 0xbf00u}, {0x075au, 0x183fu}, {0x0760u, 0xffffu}, {0x0762u, 0xffffu},
     {0x0764u, 0xf7abu}, {0x0766u, 0x0021u}, {0x0768u, 0xffffu}, {0x076au, 0x3f03u},
@@ -4291,6 +4298,30 @@ static void run_usb(Dspic33* cpu, uint16_t slot) {
     pending->active = false;
 }
 
+static void complete_nvm_event(Dspic33* cpu) {
+    if (!cpu->nvm.active) {
+        return;
+    }
+    dspic33_complete_nvm(cpu);
+    cpu->nvm.active = false;
+    raw_write_word(
+        cpu, NVM_CONTROL,
+        (uint16_t)(raw_word(cpu, NVM_CONTROL) & ~(NVM_WRITE | NVM_WRITE_ERROR)));
+    dspic33_raise_interrupt(cpu, 15u);
+}
+
+static void remove_nvm_events(Dspic33* cpu) {
+    size_t source;
+    size_t destination = 0u;
+    for (source = 0u; source < cpu->events.count; source++) {
+        if (cpu->events.items[source].type != DSPIC33_EVENT_NVM) {
+            cpu->events.items[destination++] = cpu->events.items[source];
+        }
+    }
+    cpu->events.count = destination;
+    dspic33_reorder_events(cpu);
+}
+
 static void process_event(Dspic33* cpu, const Dspic33Event* event) {
     switch (event->type) {
     case DSPIC33_EVENT_INTERRUPT:
@@ -4344,8 +4375,7 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
         run_usb(cpu, event->source);
         break;
     case DSPIC33_EVENT_NVM:
-        dspic33_complete_nvm(cpu);
-        raw_write_word(cpu, 0x0728u, (uint16_t)(raw_word(cpu, 0x0728u) & ~0x8000u));
+        complete_nvm_event(cpu);
         break;
     case DSPIC33_EVENT_AUX_PLL:
         raw_write_word(cpu, 0x0758u, (uint16_t)(raw_word(cpu, 0x0758u) | 0x4000u));
@@ -4432,6 +4462,17 @@ bool dspic33_device_advance(Dspic33* cpu, uint64_t cycles) {
     }
     cpu->gie_disable_deferred = cpu->gie_disable_deferred_next;
     cpu->gie_disable_deferred_next = 0u;
+    return true;
+}
+
+bool dspic33_device_advance_nvm(Dspic33* cpu) {
+    if (!dspic33_device_advance(cpu, 1u)) {
+        return false;
+    }
+    if (cpu->nvm.active && cpu->cycles >= cpu->nvm.completion_cycle) {
+        complete_nvm_event(cpu);
+        remove_nvm_events(cpu);
+    }
     return true;
 }
 
@@ -5262,6 +5303,90 @@ static void update_usb_register(Dspic33* cpu, uint16_t address, uint16_t previou
     }
 }
 
+static void update_nvm_key(Dspic33* cpu, uint16_t requested) {
+    uint8_t key = (uint8_t)requested;
+    if (key == 0x55u) {
+        cpu->nvm.key_stage = 1u;
+        cpu->nvm.key_instruction = cpu->instructions;
+        cpu->nvm.key_interrupt_count = cpu->interrupt_count;
+        cpu->nvm.key_trap_count = cpu->trap_count;
+    } else if (key == 0xaau && cpu->nvm.key_stage == 1u &&
+               cpu->interrupt_count == cpu->nvm.key_interrupt_count &&
+               cpu->trap_count == cpu->nvm.key_trap_count) {
+        cpu->nvm.key_stage = 2u;
+        cpu->nvm.key_instruction = cpu->instructions;
+    } else {
+        cpu->nvm.key_stage = 0u;
+    }
+    raw_write_word(cpu, NVM_KEY, 0u);
+}
+
+static void fail_nvm_write(Dspic33* cpu) {
+    uint16_t control = raw_word(cpu, NVM_CONTROL);
+    cpu->nvm.key_stage = 0u;
+    cpu->nvm.active = false;
+    raw_write_word(cpu, NVM_CONTROL,
+                   (uint16_t)((control & ~NVM_WRITE) | NVM_WRITE_ERROR));
+}
+
+static bool nvm_program_range_valid(uint32_t address, uint32_t size) {
+    return address < DSPIC33_PROGRAM_LIMIT && size <= DSPIC33_PROGRAM_LIMIT - address;
+}
+
+static bool nvm_target_valid(uint16_t control, uint32_t address) {
+    switch (control & 0x000fu) {
+    case 0u:
+        return address == 0xf80004u || address == 0xf80006u || address == 0xf80008u ||
+               address == 0xf8000au || address == 0xf8000cu || address == 0xf8000eu ||
+               address == 0xf80010u || address == 0xf80012u;
+    case 1u:
+        address &= 0x00fffffcu;
+        return nvm_program_range_valid(address, 4u);
+    case 2u:
+        address &= 0x00ffff00u;
+        return nvm_program_range_valid(address, DSPIC33_WRITE_LATCH_WORDS * 2u);
+    case 3u:
+        address &= 0x00fff800u;
+        return nvm_program_range_valid(address, 0x800u);
+    default:
+        return false;
+    }
+}
+
+static void update_nvm_control(Dspic33* cpu, uint16_t requested) {
+    uint16_t control = raw_word(cpu, NVM_CONTROL);
+    uint32_t target =
+        ((uint32_t)raw_word(cpu, NVM_ADDRESS_HIGH) << 16u) | raw_word(cpu, NVM_ADDRESS);
+    bool write_requested = (requested & NVM_WRITE) != 0u;
+    if (cpu->nvm.active) {
+        raw_write_word(cpu, NVM_CONTROL,
+                       (uint16_t)(control | NVM_WRITE | NVM_WRITE_ERROR));
+        return;
+    }
+    if (!write_requested) {
+        return;
+    }
+    if ((control & NVM_WRITE_ENABLE) == 0u || cpu->nvm.key_stage != 2u ||
+        cpu->nvm.key_instruction == UINT64_MAX ||
+        cpu->instructions != cpu->nvm.key_instruction + 1u ||
+        cpu->interrupt_count != cpu->nvm.key_interrupt_count ||
+        cpu->trap_count != cpu->nvm.key_trap_count || cpu->cycles > UINT64_MAX - 2u ||
+        !nvm_target_valid(control, target)) {
+        fail_nvm_write(cpu);
+        return;
+    }
+    cpu->nvm.control = control;
+    cpu->nvm.address = target;
+    memcpy(cpu->nvm.latches, cpu->write_latches, sizeof(cpu->nvm.latches));
+    cpu->nvm.key_stage = 0u;
+    cpu->nvm.active = true;
+    cpu->nvm.completion_cycle = cpu->cycles + 2u;
+    raw_write_word(cpu, NVM_CONTROL, (uint16_t)(control | NVM_WRITE | NVM_WRITE_ERROR));
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_NVM, 0u, 0u, 2u)) {
+        fail_nvm_write(cpu);
+    }
+}
+
 void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous) {
     uint16_t base = (uint16_t)(address & 0xfffeu);
     uint16_t requested = raw_word(cpu, base);
@@ -5332,8 +5457,10 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     update_usb_register(cpu, base, previous, requested);
     update_oscillator(cpu, base);
     update_uart_register(cpu, base, previous, requested);
-    if (base == 0x0728u && (raw_word(cpu, base) & 0x8000u) != 0u) {
-        dspic33_schedule(cpu, DSPIC33_EVENT_NVM, 0u, 0u, 2u);
+    if (base == NVM_KEY && (cpu->io.cpu_write_width == 2u || address == NVM_KEY)) {
+        update_nvm_key(cpu, requested);
+    } else if (base == NVM_CONTROL) {
+        update_nvm_control(cpu, requested);
     }
     if (base >= DMA_CHANNEL_BASE &&
         base < DMA_CHANNEL_BASE + DSPIC33_DMA_COUNT * DMA_CHANNEL_STRIDE) {

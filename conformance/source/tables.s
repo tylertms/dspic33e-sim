@@ -183,8 +183,16 @@ _run_table_conformance:
     tblwth.b w2, [w3]
     record_case 0x0b1d, w2, w3
 
-    mov #0x005e, w2
+    select_write_latches
+    clr w3
+    mov #0x00c3, w2
+    tblwtl w2, [w3]
+    mov #0x00ef, w2
+    tblwth w2, [w3]
     mov #2, w3
+    mov #0x5678, w2
+    tblwtl w2, [w3]
+    mov #0x005e, w2
     tblwth w2, [w3]
 
     mov #1, w0

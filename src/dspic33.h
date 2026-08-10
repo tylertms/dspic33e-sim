@@ -367,6 +367,18 @@ typedef struct {
 } Dspic33PendingSoftTrap;
 
 typedef struct {
+    uint32_t address;
+    uint32_t latches[DSPIC33_WRITE_LATCH_WORDS];
+    uint64_t completion_cycle;
+    uint64_t key_interrupt_count;
+    uint64_t key_trap_count;
+    uint64_t key_instruction;
+    uint16_t control;
+    uint8_t key_stage;
+    bool active;
+} Dspic33Nvm;
+
+typedef struct {
     uint32_t* program;
     uint32_t* persistent_program;
     uint32_t write_latches[DSPIC33_WRITE_LATCH_WORDS];
@@ -429,6 +441,7 @@ typedef struct {
     uint16_t interrupt_deferred_next[DSPIC33_IRQ_GROUP_COUNT];
     uint8_t gie_disable_deferred;
     uint8_t gie_disable_deferred_next;
+    Dspic33Nvm nvm;
     Dspic33EventQueue events;
     Dspic33Io io;
     Dspic33PowerState power_state;
