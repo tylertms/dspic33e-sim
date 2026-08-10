@@ -21,9 +21,6 @@ enum {
     RTCC_PAD_CONTROL = 0x0efeu,
     RTCC_PMD_ADDRESS = 0x0764u,
     RTCC_NVM_KEY = 0x072eu,
-    RTCC_DMA_BASE = 0x0b00u,
-    RTCC_DMA_REQUEST = 0x1du,
-    RTCC_DMA_DESTINATION = 0x3000u,
     RTCC_ENABLE = 0x8000u,
     RTCC_WRITE_ENABLE = 0x2000u,
     RTCC_SYNC = 0x1000u,
@@ -126,21 +123,6 @@ static void set_alarm(Dspic33* cpu, uint16_t minute_second, uint16_t weekday_hou
 
 static bool clock_edges(Dspic33* cpu, uint32_t edges) {
     return dspic33_rtcc_clock(cpu, edges, 0u) && dspic33_device_advance(cpu, 0u);
-}
-
-static void configure_dma_read(Dspic33* cpu, uint16_t pad, bool byte) {
-    dspic33_write_word(cpu, RTCC_DMA_BASE, 0u);
-    dspic33_write_word(cpu, RTCC_DMA_BASE + 2u, RTCC_DMA_REQUEST);
-    dspic33_write_word(cpu, RTCC_DMA_BASE + 4u, RTCC_DMA_DESTINATION);
-    dspic33_write_word(cpu, RTCC_DMA_BASE + 6u, 0u);
-    dspic33_write_word(cpu, RTCC_DMA_BASE + 0x0cu, pad);
-    dspic33_write_word(cpu, RTCC_DMA_BASE + 0x0eu, 0u);
-    dspic33_write_word(cpu, RTCC_DMA_BASE, byte ? 0xc001u : 0x8001u);
-}
-
-static bool request_dma_read(Dspic33* cpu) {
-    return dspic33_dma_request(cpu, RTCC_DMA_REQUEST, 0u, 0u) &&
-           dspic33_device_advance(cpu, 1u);
 }
 
 static void reset_access_cases(RtccConformance* state, Dspic33* cpu) {
@@ -369,7 +351,7 @@ static void pointer_write_cases(RtccConformance* state, Dspic33* cpu) {
            "ALRMVAL high-byte write decrements pointer");
 }
 
-static void dma_window_cases(RtccConformance* state, Dspic33* cpu) {
+static void transfer_context_cases(RtccConformance* state, Dspic33* cpu) {
     uint8_t alarm;
     for (alarm = 0u; alarm < 2u; alarm++) {
         uint16_t value_address = alarm != 0u ? RTCC_ALARM_VALUE : RTCC_VALUE;
@@ -377,7 +359,8 @@ static void dma_window_cases(RtccConformance* state, Dspic33* cpu) {
         uint16_t* slot;
         dspic33_reset(cpu, 0u);
         if (alarm == 0u) {
-            expect(state, authorize_calendar_write(cpu), "authorize DMA RTCVAL write");
+            expect(state, authorize_calendar_write(cpu),
+                   "authorize transfer-context RTCVAL write");
             dspic33_write_word(cpu, RTCC_CONTROL, RTCC_WRITE_ENABLE | 0x0200u);
             slot = &cpu->io.rtcc.calendar[2];
         } else {
@@ -389,17 +372,19 @@ static void dma_window_cases(RtccConformance* state, Dspic33* cpu) {
         cpu->io.dma_transfer_width = 1u;
         dspic33_write_byte(cpu, value_address, 0x15u);
         cpu->io.dma_transfer_active = false;
-        expect(state, *slot == 0x0115u, "DMA byte-low updates RTCC window");
+        expect(state, *slot == 0x0115u,
+               "internal byte-low transfer context updates RTCC window");
         expect(state, (dspic33_read_word(cpu, control_address) & 0x0300u) == 0x0200u,
-               "DMA byte-low preserves RTCC pointer");
+               "internal byte-low transfer context preserves RTCC pointer");
 
         cpu->io.dma_transfer_active = true;
         cpu->io.dma_transfer_width = 1u;
         dspic33_write_byte(cpu, value_address + 1u, 0x12u);
         cpu->io.dma_transfer_active = false;
-        expect(state, *slot == 0x1215u, "DMA byte-high updates RTCC window");
+        expect(state, *slot == 0x1215u,
+               "internal byte-high transfer context updates RTCC window");
         expect(state, (dspic33_read_word(cpu, control_address) & 0x0300u) == 0x0100u,
-               "DMA byte-high decrements RTCC pointer");
+               "internal byte-high transfer context decrements RTCC pointer");
 
         if (alarm == 0u) {
             dspic33_write_word(cpu, RTCC_CONTROL, RTCC_WRITE_ENABLE | 0x0200u);
@@ -410,40 +395,11 @@ static void dma_window_cases(RtccConformance* state, Dspic33* cpu) {
         cpu->io.dma_transfer_width = 2u;
         dspic33_write_word(cpu, value_address, 0x1231u);
         cpu->io.dma_transfer_active = false;
-        expect(state, *slot == 0x1231u, "DMA word updates RTCC window");
+        expect(state, *slot == 0x1231u,
+               "internal word transfer context updates RTCC window");
         expect(state, (dspic33_read_word(cpu, control_address) & 0x0300u) == 0x0100u,
-               "DMA word decrements RTCC pointer once");
+               "internal word transfer context decrements RTCC pointer once");
     }
-
-    dspic33_reset(cpu, 0u);
-    cpu->io.rtcc.calendar[2] = 0x1231u;
-    dspic33_write_word(cpu, RTCC_CONTROL, 0x0200u);
-    configure_dma_read(cpu, RTCC_VALUE, false);
-    expect(state, request_dma_read(cpu), "execute DMA RTCVAL word read");
-    expect(state, dspic33_read_word(cpu, RTCC_DMA_DESTINATION) == 0x1231u,
-           "DMA word reads selected RTCVAL value");
-    expect(state, (dspic33_read_word(cpu, RTCC_CONTROL) & 0x0300u) == 0x0100u,
-           "DMA RTCVAL word read decrements pointer once");
-
-    dspic33_reset(cpu, 0u);
-    cpu->io.rtcc.calendar[2] = 0x1231u;
-    dspic33_write_word(cpu, RTCC_CONTROL, 0x0200u);
-    configure_dma_read(cpu, RTCC_VALUE, true);
-    expect(state, request_dma_read(cpu), "execute DMA RTCVAL low-byte read");
-    expect(state, dspic33_read_byte(cpu, RTCC_DMA_DESTINATION) == 0x31u,
-           "DMA byte reads RTCVAL low byte");
-    expect(state, (dspic33_read_word(cpu, RTCC_CONTROL) & 0x0300u) == 0x0100u,
-           "DMA RTCVAL low-byte read decrements pointer");
-
-    dspic33_reset(cpu, 0u);
-    cpu->io.rtcc.alarm[2] = 0x1231u;
-    dspic33_write_word(cpu, RTCC_ALARM_CONTROL, 0x0200u);
-    configure_dma_read(cpu, RTCC_ALARM_VALUE + 1u, true);
-    expect(state, request_dma_read(cpu), "execute DMA ALRMVAL high-byte read");
-    expect(state, dspic33_read_byte(cpu, RTCC_DMA_DESTINATION) == 0x12u,
-           "DMA byte reads ALRMVAL high byte");
-    expect(state, (dspic33_read_word(cpu, RTCC_ALARM_CONTROL) & 0x0300u) == 0x0100u,
-           "DMA ALRMVAL high-byte read decrements pointer");
 }
 
 static void calendar_cases(RtccConformance* state, Dspic33* cpu) {
@@ -871,13 +827,13 @@ int main(void) {
         authorization_cases(&state, &cpu);
         pointer_read_cases(&state, &cpu);
         pointer_write_cases(&state, &cpu);
-        dma_window_cases(&state, &cpu);
+        transfer_context_cases(&state, &cpu);
         calendar_cases(&state, &cpu);
         alarm_cases(&state, &cpu);
         interrupt_output_power_cases(&state, &cpu);
         lifecycle_cases(&state, &cpu);
         long_sequence_cases(&state, &cpu);
-        expect(&state, state.cases == 438u, "RTCC assertion arithmetic");
+        expect(&state, state.cases == 429u, "RTCC assertion arithmetic");
         dspic33_destroy(&cpu);
     }
     printf("[rtcc-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",

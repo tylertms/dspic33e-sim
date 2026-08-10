@@ -12,6 +12,8 @@ typedef struct {
     uint32_t failed;
 } TimerConformance;
 
+enum { TIMER_DMA_WRITE_PAD = 0x0298u };
+
 static const uint16_t timer_registers[DSPIC33_TIMER_COUNT] = {
     0x0100u, 0x0106u, 0x010au, 0x0114u, 0x0118u, 0x0122u, 0x0126u, 0x0130u, 0x0134u};
 static const uint16_t timer_periods[DSPIC33_TIMER_COUNT] = {
@@ -32,6 +34,10 @@ static void expect(TimerConformance* state, bool condition, const char* name) {
         state->failed++;
         printf("[timer-failed] %s\n", name);
     }
+}
+
+static uint16_t stored_word(const Dspic33* cpu, uint16_t address) {
+    return (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[address + 1u] << 8u));
 }
 
 static bool interrupt_flag(Dspic33* cpu, uint8_t timer) {
@@ -477,15 +483,22 @@ static void dma_trigger_cases(TimerConformance* state, Dspic33* cpu) {
     uint8_t timer;
     for (timer = 0u; timer < DSPIC33_TIMER_COUNT; timer++) {
         uint16_t source = (uint16_t)(0x2800u + timer * 2u);
-        uint16_t destination = (uint16_t)(0x2a00u + timer * 2u);
+        bool supported = timer >= 1u && timer <= 4u;
         dspic33_reset(cpu, 0u);
         dspic33_write_word(cpu, source, (uint16_t)(0x5100u + timer));
-        configure_dma(cpu, timer_irqs[timer], source, destination);
+        configure_dma(cpu, timer_irqs[timer], source, TIMER_DMA_WRITE_PAD);
         configure_16_bit(cpu, timer, 0u, 1u, 0u);
-        expect(state, dspic33_device_advance(cpu, 1u), "advance timer DMA match");
         expect(state,
-               dspic33_read_word(cpu, destination) == (uint16_t)(0x5100u + timer),
-               "timer period requests DMA");
+               dspic33_device_advance(cpu, 1u) &&
+                   (cpu->io.timer_interrupt_pending & (uint16_t)(1u << timer)) != 0u,
+               "advance timer period match before DMA classification");
+        expect(state,
+               stored_word(cpu, TIMER_DMA_WRITE_PAD) ==
+                       (supported ? (uint16_t)(0x5100u + timer) : 0u) &&
+                   cpu->io.dma_index[0] == 0u &&
+                   ((cpu->io.dma_active & 1u) != 0u) == supported,
+               supported ? "TMR2 through TMR5 period requests DMA"
+                         : "unsupported timer period does not request DMA");
         expect(state, !interrupt_flag(cpu, timer), "timer DMA precedes interrupt flag");
     }
 }

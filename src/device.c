@@ -5847,7 +5847,9 @@ static TimerAdvance advance_counter(uint64_t current, uint64_t period, uint64_t 
 static void signal_timer_period(Dspic33* cpu, uint8_t timer, uint64_t matches,
                                 bool gated) {
     if (matches != 0u) {
-        dspic33_dma_request(cpu, timer_irqs[timer], 0u, 0u);
+        if (timer >= 1u && timer <= 4u) {
+            dspic33_dma_request(cpu, timer_irqs[timer], 0u, 0u);
+        }
         if (!gated) {
             cpu->io.timer_interrupt_pending |= (uint16_t)(1u << timer);
         }
