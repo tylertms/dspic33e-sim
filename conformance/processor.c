@@ -93,8 +93,10 @@ enum {
     OPCODE_MOVPAG_TBL_W1 = 0xfed801u,
     OPCODE_MOVPAG_INVALID_W1 = 0xfedc01u,
     OPCODE_ILLEGAL = 0x3f0000u,
+    OPCODE_REPEAT_2 = 0x090002u,
     OPCODE_REPEAT_W0 = 0x098000u,
     OPCODE_DO_0 = 0x080000u,
+    OPCODE_DO_1 = 0x080001u,
     OPCODE_DO_W0 = 0x088000u,
     OPCODE_PUSH_SHADOW = 0xfea000u,
     OPCODE_DSP_INDEXED = 0xc00732u,
@@ -550,14 +552,101 @@ static void program_read_address_error_cases(ProcessorConformance* state,
                cpu->sequential_program_hole_pc == 0x55804u && cpu->cycles == 3u,
            "sequential program hole provenance advances across zero instructions");
 
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_DO_0);
+    load_instruction(state, cpu, 2u, 2u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 4u && cpu->cycles == 2u &&
+               cpu->do_depth == 1u && cpu->do_count[0] == 0u &&
+               cpu->do_start[0] == 4u && cpu->do_end[0] == 8u,
+           "literal DO initializes loop state in two cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_DO_W0);
+    load_instruction(state, cpu, 2u, 2u);
+    cpu->w[0] = 1u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 4u && cpu->cycles == 2u &&
+               cpu->do_depth == 1u && cpu->do_count[0] == 1u &&
+               cpu->do_start[0] == 4u && cpu->do_end[0] == 8u,
+           "register DO initializes loop state in two cycles");
+
     reset_processor_conformance(cpu, 0x557fcu);
-    load_instruction(state, cpu, 0x557fcu, OPCODE_DO_0);
-    load_instruction(state, cpu, 0x557feu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0x557fcu, OPCODE_DO_1);
+    load_instruction(state, cpu, 0x557feu, 2u);
+    cpu->sr = 0x010fu;
+    cpu->corcon |= 0x0004u;
+    dspic33_write_word(cpu, 0x5000u, 0xa5a5u);
+    dspic33_write_word(cpu, 0x5002u, 0x5a5au);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->pc == 0x000140u &&
+               cpu->cycles == 2u && cpu->last_trap == 1u &&
+               cpu->last_trap_return == 0x557feu && cpu->do_depth == 1u &&
+               cpu->do_count[0] == 1u && cpu->do_start[0] == DSPIC33_PROGRAM_LIMIT &&
+               cpu->do_end[0] == 0x55804u && cpu->dcount == 1u &&
+               cpu->dostart == DSPIC33_PROGRAM_LIMIT && cpu->doend == 0x55804u,
+           "DO start in program hole traps after completing loop state");
+    expect(state,
+           cpu->w[15] == 0x5004u && dspic33_read_word(cpu, 0x5000u) == 0x57feu &&
+               dspic33_read_word(cpu, 0x5002u) == 0x0f05u &&
+               (dspic33_read_word(cpu, 0x08c0u) & 0x0008u) != 0u &&
+               dspic33_read_word(cpu, 0x08c8u) == 0x0e01u &&
+               cpu->sequential_program_hole_pc == 0u,
+           "DO program-hole trap stacks extension PC and clears provenance");
+
+    reset_processor_conformance(cpu, 0x557f8u);
+    load_instruction(state, cpu, 0x557f8u, OPCODE_DO_1);
+    load_instruction(state, cpu, 0x557fau, 2u);
+    load_instruction(state, cpu, 0x557fcu, OPCODE_NOP);
+    load_instruction(state, cpu, 0x557feu, OPCODE_NOP);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x557fcu &&
+               cpu->cycles == 2u,
+           "DO with program-hole end initializes normally");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x557fcu &&
+               cpu->dcount == 0u && cpu->last_trap == UINT16_MAX && cpu->cycles == 5u,
+           "DO program-hole end executes zero and starts final iteration");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x55802u &&
+               cpu->do_depth == 0u && (cpu->sr & 0x0200u) == 0u &&
+               (cpu->corcon & 0x0700u) == 0u && cpu->cycles == 8u,
+           "DO program-hole final iteration exits normally");
+
+    reset_processor_conformance(cpu, 0x557feu);
+    load_instruction(state, cpu, 0x557feu, OPCODE_REPEAT_2);
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == DSPIC33_PROGRAM_LIMIT &&
+               cpu->rcount == 2u && cpu->repeat_active != 0u &&
+               (cpu->sr & 0x0010u) != 0u &&
                cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT &&
                cpu->cycles == 1u,
-           "two-word sequential execution uses decoded program length at boundary");
+           "REPEAT initializes a program-hole target");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == DSPIC33_PROGRAM_LIMIT &&
+               cpu->rcount == 1u && cpu->repeat_active != 0u &&
+               (cpu->sr & 0x0010u) != 0u &&
+               cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT &&
+               cpu->cycles == 2u,
+           "REPEAT retains provenance for a program-hole rewind");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == DSPIC33_PROGRAM_LIMIT &&
+               cpu->rcount == 0u && cpu->repeat_active != 0u &&
+               (cpu->sr & 0x0010u) == 0u &&
+               cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT &&
+               cpu->cycles == 3u,
+           "REPEAT clears RA when the counter reaches zero");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x55802u &&
+               cpu->rcount == 0u && cpu->repeat_active == 0u &&
+               (cpu->sr & 0x0010u) == 0u &&
+               cpu->sequential_program_hole_pc == 0x55802u && cpu->cycles == 4u,
+           "REPEAT executes the final program-hole iteration once");
 
     reset_processor_conformance(cpu, DSPIC33_PROGRAM_LIMIT);
     expect(state,

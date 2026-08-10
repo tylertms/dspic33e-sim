@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 54
+_system_conformance_terminal_count = 56
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -118,6 +118,10 @@ _run_system_probe:
     bra z, _system_skip_two_word_dispatch
     cp w0, #54
     bra z, _system_program_boundary_dispatch
+    cp w0, #55
+    bra z, _system_sequential_hole_dispatch
+    cp w0, #56
+    bra z, _system_do_boundary_dispatch
     return
 
 .global _system_sleep_probe
@@ -805,6 +809,18 @@ _system_program_boundary_dispatch:
     mov #0x1111, w1
     return
 
+.global _system_do_boundary_dispatch
+_system_do_boundary_dispatch:
+    mov #0x5000, w15
+    lnk #0
+    mov #0x5000, w15
+    clr w1
+    mov #0x010f, w0
+    mov w0, SR
+    goto _system_skip_one_word_probe
+    mov #0x1111, w1
+    return
+
 .macro prepare_skip_probe
     mov #0x5000, w15
     clr w1
@@ -942,6 +958,30 @@ __AddressError:
     mov SR, w0
     mov w0, _system_address_trap_state+16
     mov w15, _system_address_trap_state+18
+    mov w1, _system_do_boundary_state
+    mov w15, _system_do_boundary_state+2
+    mov [w15-4], w0
+    mov w0, _system_do_boundary_state+4
+    mov [w15-2], w0
+    mov w0, _system_do_boundary_state+6
+    mov INTCON1, w0
+    mov w0, _system_do_boundary_state+8
+    mov INTTREG, w0
+    mov w0, _system_do_boundary_state+10
+    mov SR, w0
+    mov w0, _system_do_boundary_state+12
+    mov CORCON, w0
+    mov w0, _system_do_boundary_state+14
+    mov DCOUNT, w0
+    mov w0, _system_do_boundary_state+16
+    mov DOSTARTL, w0
+    mov w0, _system_do_boundary_state+18
+    mov DOSTARTH, w0
+    mov w0, _system_do_boundary_state+20
+    mov DOENDL, w0
+    mov w0, _system_do_boundary_state+22
+    mov DOENDH, w0
+    mov w0, _system_do_boundary_state+24
     mov TMR3HLD, w0
     mov w0, _system_multi_operand_trap_state
     mov w4, _system_multi_operand_trap_state+2

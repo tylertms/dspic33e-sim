@@ -2188,6 +2188,9 @@ static uint64_t instruction_cycles(const Dspic33* cpu, uint32_t opcode,
     if ((opcode & 0xfe0000u) == 0xba0000u) {
         return 2u;
     }
+    if ((opcode & 0xfffff0u) == 0x088000u || (opcode & 0xff8000u) == 0x080000u) {
+        return 2u;
+    }
     if ((opcode & 0xff0000u) == 0xbe0000u) {
         return 2u;
     }
@@ -2437,6 +2440,9 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         cpu->corcon =
             (uint16_t)((cpu->corcon & ~0x0700u) | ((uint16_t)cpu->do_depth << 8u));
         cpu->sr |= 0x0200u;
+        if (program_target_requires_address_error(cpu->do_start[depth])) {
+            raise_program_target_error(cpu, cpu->pc - 2u);
+        }
         return true;
     }
     if ((opcode & 0xff8000u) == 0x090000u) {
@@ -3427,6 +3433,9 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         if (cpu->rcount != 0u) {
             cpu->rcount--;
             cpu->pc = cpu->repeat_pc;
+            if (cpu->rcount == 0u) {
+                cpu->sr &= (uint16_t)~0x0010u;
+            }
         } else {
             cpu->repeat_active = 0u;
             cpu->sr &= (uint16_t)~0x0010u;
@@ -3458,7 +3467,9 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     }
     cpu->sequential_program_hole_pc =
         (cpu->sequential_program_hole_pc == cpu->pc ||
-         cpu->pc == instruction_pc + instruction_length(opcode)) &&
+         cpu->pc == instruction_pc + instruction_length(opcode) ||
+         (sequential_hole_fetch && cpu->repeat_active != 0u &&
+          cpu->pc == instruction_pc)) &&
                 program_target_requires_address_error(cpu->pc)
             ? cpu->pc
             : 0u;
