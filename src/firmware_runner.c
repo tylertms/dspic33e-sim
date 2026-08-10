@@ -792,7 +792,7 @@ static bool apply_register(Runner* runner, Dspic33* cpu, const FirmwareImage* im
         (void)image;
         return false;
     }
-    cpu->w[reg] = (uint16_t)value;
+    dspic33_set_working_register(cpu, reg, (uint16_t)value);
     return true;
 }
 
@@ -2376,8 +2376,8 @@ static bool apply_generated_value(Runner* runner, const JsonValue* specification
             snprintf(error, error_size, "generated value has no destination");
             return false;
         }
-        runner->reference.w[reg] = word;
-        runner->candidate.w[reg] = word;
+        dspic33_set_working_register(&runner->reference, reg, word);
+        dspic33_set_working_register(&runner->candidate, reg, word);
     }
     return true;
 }

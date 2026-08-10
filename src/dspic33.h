@@ -374,6 +374,7 @@ typedef struct {
     uint8_t configuration[DSPIC33_CONFIGURATION_SIZE];
     uint16_t w[16];
     uint16_t shadow_w[4];
+    uint16_t initialized_working_registers;
     uint16_t shadow_status;
     int64_t accumulator[2];
     uint32_t pc;
@@ -406,6 +407,7 @@ typedef struct {
     uint32_t last_interrupt_return;
     uint64_t interrupt_count;
     uint64_t software_reset_count;
+    uint64_t illegal_reset_count;
     uint64_t trap_count;
     uint32_t last_trap_return;
     uint16_t reset_interrupt;
@@ -417,6 +419,7 @@ typedef struct {
     bool address_error_access_allowed;
     bool address_error_working_state_completed;
     bool address_error_control_state_completed;
+    bool illegal_reset;
     bool stop_on_trap;
     bool async_events_enabled;
     uint16_t interrupt_log_irq[16];
@@ -433,6 +436,7 @@ typedef struct {
 } Dspic33;
 
 bool dspic33_initialize(Dspic33* cpu);
+void dspic33_set_working_register(Dspic33* cpu, uint8_t reg, uint16_t value);
 void dspic33_destroy(Dspic33* cpu);
 bool dspic33_copy(Dspic33* destination, const Dspic33* source);
 void dspic33_reset(Dspic33* cpu, uint32_t entry);

@@ -221,7 +221,7 @@ int main(int argc, char** argv) {
     dspic33_reset(&cpu, entry);
     for (reg = 0u; reg < 16u; reg++) {
         if (arguments.register_set[reg]) {
-            cpu.w[reg] = arguments.register_value[reg];
+            dspic33_set_working_register(&cpu, reg, arguments.register_value[reg]);
         }
     }
     if (arguments.write_symbol != NULL) {

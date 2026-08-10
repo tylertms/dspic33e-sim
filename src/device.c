@@ -986,13 +986,13 @@ static bool service_interrupt(Dspic33* cpu, bool waking) {
     dspic33_check_stack_address(cpu, cpu->w[15], cpu->w[15] > 0xfffdu, 2u);
     dspic33_write_word(cpu, cpu->w[15],
                        (uint16_t)((cpu->pc & 0xfffeu) | ((cpu->corcon >> 2u) & 1u)));
-    cpu->w[15] += 2u;
+    dspic33_set_working_register(cpu, 15u, (uint16_t)(cpu->w[15] + 2u));
     stacked_high = (uint16_t)(((cpu->sr & 0x00ffu) << 8u) |
                               ((cpu->corcon & 0x0008u) != 0u ? 0x0080u : 0u) |
                               ((cpu->pc >> 16u) & 0x007fu));
     dspic33_check_stack_address(cpu, cpu->w[15], cpu->w[15] > 0xfffdu, 2u);
     dspic33_write_word(cpu, cpu->w[15], stacked_high);
-    cpu->w[15] += 2u;
+    dspic33_set_working_register(cpu, 15u, (uint16_t)(cpu->w[15] + 2u));
     cpu->corcon &= (uint16_t)~0x0004u;
     next_priority = (raw_word(cpu, 0x08c0u) & 0x8000u) != 0u
                         ? UINT16_C(0x00e0)
@@ -1039,10 +1039,10 @@ void dspic33_device_return_interrupt(Dspic33* cpu) {
     uint16_t high;
     uint16_t low;
     dspic33_check_stack_address(cpu, (int32_t)cpu->w[15] - 2, cpu->w[15] < 2u, 2u);
-    cpu->w[15] -= 2u;
+    dspic33_set_working_register(cpu, 15u, (uint16_t)(cpu->w[15] - 2u));
     high = dspic33_read_word(cpu, cpu->w[15]);
     dspic33_check_stack_address(cpu, (int32_t)cpu->w[15] - 2, cpu->w[15] < 2u, 2u);
-    cpu->w[15] -= 2u;
+    dspic33_set_working_register(cpu, 15u, (uint16_t)(cpu->w[15] - 2u));
     low = dspic33_read_word(cpu, cpu->w[15]);
     cpu->pc = ((uint32_t)(high & 0x007fu) << 16u) | (low & 0xfffeu);
     cpu->last_interrupt_return = cpu->pc;
