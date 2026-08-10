@@ -147,6 +147,13 @@ enum {
     OPCODE_DO_1 = 0x080001u,
     OPCODE_DO_W0 = 0x088000u,
     OPCODE_PUSH_SHADOW = 0xfea000u,
+    OPCODE_DSP_X_W8_INCREMENT_Y_W10_DECREMENT = 0xc0045fu,
+    OPCODE_DSP_X_W8_INCREMENT_4_Y_W10_DECREMENT = 0xc0049fu,
+    OPCODE_DSP_X_W8_INCREMENT_6_Y_W10_DECREMENT = 0xc004dfu,
+    OPCODE_DSP_X_W8_DECREMENT_6_Y_W10_DECREMENT = 0xc0055fu,
+    OPCODE_DSP_X_W8_DECREMENT_4_Y_W10_DECREMENT = 0xc0059fu,
+    OPCODE_DSP_X_W8_DECREMENT_Y_W10_DECREMENT = 0xc005dfu,
+    OPCODE_DSP_Y_W10_DECREMENT = 0xc0051fu,
     OPCODE_DSP_INDEXED = 0xc00732u,
     OPCODE_DSP_DIRECT_W13 = 0xc00110u,
     OPCODE_DSP_WRITE_BACK = 0xc393b1u
@@ -2912,6 +2919,184 @@ static void psv_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
     expect(state, !cpu->psv_read, "reset clears PSV timing state");
 }
 
+static void expect_dsp_x_page_transition(ProcessorConformance* state, Dspic33* cpu,
+                                         uint32_t opcode, uint16_t pointer,
+                                         uint16_t page, uint32_t program_address,
+                                         uint16_t value, uint16_t expected_pointer,
+                                         uint16_t expected_page, const char* name) {
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, opcode);
+    expect(state, dspic33_load_program_word(cpu, program_address, value),
+           "load DSP X transition value");
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 5u, 4u);
+    dspic33_set_working_register(cpu, 8u, pointer);
+    dspic33_set_working_register(cpu, 10u, 0x9002u);
+    dspic33_write_word(cpu, 0x9002u, 0x6789u);
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = page;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->accumulator[0] == 12 &&
+               cpu->w[4] == value && cpu->w[5] == 0x6789u &&
+               cpu->w[8] == expected_pointer && cpu->w[10] == 0x9000u &&
+               cpu->dsrpag == expected_page && cpu->cycles == 5u,
+           name);
+}
+
+static void dsp_x_prefetch_page_cases(ProcessorConformance* state, Dspic33* cpu) {
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_X_W8_INCREMENT_Y_W10_DECREMENT);
+    expect(state, dspic33_load_program_word(cpu, 0x0100u, 0x001234u),
+           "load DSP X PSV value");
+    expect(state, dspic33_load_program_word(cpu, 0x1002u, 0x009abcu),
+           "load DSP Y isolation value");
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 5u, 4u);
+    dspic33_set_working_register(cpu, 8u, 0x8100u);
+    dspic33_set_working_register(cpu, 10u, 0x9002u);
+    dspic33_write_word(cpu, 0x8100u, 0x1111u);
+    dspic33_write_word(cpu, 0x9002u, 0x5678u);
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->accumulator[0] == 12 &&
+               cpu->w[4] == 0x1234u && cpu->w[5] == 0x5678u && cpu->w[8] == 0x8102u &&
+               cpu->w[10] == 0x9000u && cpu->dsrpag == 0x0200u && cpu->cycles == 5u &&
+               cpu->corcon == 0x0021u && cpu->sr == 0u,
+           "DSP X PSV prefetch maps through DSRPAG while Y remains base-only");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_X_W8_INCREMENT_Y_W10_DECREMENT);
+    expect(state, dspic33_load_program_word(cpu, 0x7ffeu, 0x003456u),
+           "load DSP X crossing value");
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 5u, 4u);
+    dspic33_set_working_register(cpu, 8u, 0xfffeu);
+    dspic33_set_working_register(cpu, 10u, 0x9002u);
+    dspic33_write_word(cpu, 0x9002u, 0x6789u);
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[4] == 0x3456u &&
+               cpu->w[5] == 0x6789u && cpu->w[8] == 0x8000u && cpu->w[10] == 0x9000u &&
+               cpu->dsrpag == 0x0201u && cpu->cycles == 5u,
+           "DSP X post-increment reads the original PSV page before transition");
+
+    expect_dsp_x_page_transition(
+        state, cpu, OPCODE_DSP_X_W8_INCREMENT_4_Y_W10_DECREMENT, 0xfffcu, 0x0200u,
+        0x7ffcu, 0x4567u, 0x8000u, 0x0201u,
+        "DSP X four-byte post-increment crosses into the next PSV page");
+    expect_dsp_x_page_transition(
+        state, cpu, OPCODE_DSP_X_W8_INCREMENT_6_Y_W10_DECREMENT, 0xfffau, 0x0200u,
+        0x7ffau, 0x5678u, 0x8000u, 0x0201u,
+        "DSP X six-byte post-increment crosses into the next PSV page");
+    expect_dsp_x_page_transition(
+        state, cpu, OPCODE_DSP_X_W8_DECREMENT_4_Y_W10_DECREMENT, 0x8000u, 0x0201u,
+        0x8000u, 0x6789u, 0xfffcu, 0x0200u,
+        "DSP X four-byte post-decrement crosses into the prior PSV page");
+    expect_dsp_x_page_transition(
+        state, cpu, OPCODE_DSP_X_W8_DECREMENT_6_Y_W10_DECREMENT, 0x8000u, 0x0201u,
+        0x8000u, 0x789au, 0xfffau, 0x0200u,
+        "DSP X six-byte post-decrement crosses into the prior PSV page");
+    expect_dsp_x_page_transition(
+        state, cpu, OPCODE_DSP_X_W8_DECREMENT_Y_W10_DECREMENT, 0x8000u, 0x0201u,
+        0x8000u, 0x89abu, 0xfffeu, 0x0200u,
+        "DSP X two-byte post-decrement crosses into the prior PSV page");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_X_W8_INCREMENT_Y_W10_DECREMENT);
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 5u, 4u);
+    dspic33_set_working_register(cpu, 8u, 0x8100u);
+    dspic33_set_working_register(cpu, 10u, 0x9002u);
+    dspic33_write_word(cpu, 0x8100u, 0x2468u);
+    dspic33_write_word(cpu, 0x9002u, 0x789au);
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 1u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[4] == 0x2468u &&
+               cpu->w[5] == 0x789au && cpu->w[8] == 0x8102u && cpu->dsrpag == 1u &&
+               cpu->cycles == 1u,
+           "DSP X EDS prefetch retains data-space timing");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_INDEXED);
+    expect(state, dspic33_load_program_word(cpu, 0x0100u, 0x00abcdu),
+           "load indexed DSP X PSV value");
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 5u, 4u);
+    dspic33_set_working_register(cpu, 9u, 0x80feu);
+    dspic33_set_working_register(cpu, 11u, 0x8ffeu);
+    dspic33_set_working_register(cpu, 12u, 2u);
+    dspic33_write_word(cpu, 0x9000u, 0x89abu);
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 0x0200u;
+    cpu->accumulator[0] = 5;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->accumulator[0] == 17 &&
+               cpu->w[4] == 0xabcdu && cpu->w[5] == 0x89abu && cpu->w[9] == 0x80feu &&
+               cpu->w[11] == 0x8ffeu && cpu->w[12] == 2u && cpu->dsrpag == 0x0200u &&
+               cpu->cycles == 5u,
+           "indexed DSP X PSV prefetch does not update pointer or page");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_INDEXED);
+    expect(state, dspic33_load_program_word(cpu, 0x7ff8u, 0x00def0u),
+           "load indexed modulo DSP X PSV value");
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 5u, 4u);
+    dspic33_set_working_register(cpu, 9u, 0xfffeu);
+    dspic33_set_working_register(cpu, 11u, 0x8ffeu);
+    dspic33_set_working_register(cpu, 12u, 2u);
+    dspic33_write_word(cpu, 0x0046u, 0x8009u);
+    dspic33_write_word(cpu, 0x0048u, 0xfff8u);
+    dspic33_write_word(cpu, 0x004au, 0xffffu);
+    dspic33_write_word(cpu, 0x9000u, 0x9abcu);
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->accumulator[0] == 12 &&
+               cpu->w[4] == 0xdef0u && cpu->w[5] == 0x9abcu && cpu->w[9] == 0xfffeu &&
+               cpu->w[11] == 0x8ffeu && cpu->w[12] == 2u && cpu->dsrpag == 0x0200u &&
+               cpu->cycles == 5u,
+           "indexed DSP X modulo wrap retains pointer and PSV page");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_X_W8_INCREMENT_Y_W10_DECREMENT);
+    expect(state, dspic33_load_program_word(cpu, 0x7ffeu, 0x00bcdeu),
+           "load modulo DSP X PSV value");
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 5u, 4u);
+    dspic33_set_working_register(cpu, 8u, 0xfffeu);
+    dspic33_set_working_register(cpu, 10u, 0x9002u);
+    dspic33_write_word(cpu, 0x0046u, 0x8008u);
+    dspic33_write_word(cpu, 0x0048u, 0xfff8u);
+    dspic33_write_word(cpu, 0x004au, 0xffffu);
+    dspic33_write_word(cpu, 0x9002u, 0x9abcu);
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[4] == 0xbcdeu &&
+               cpu->w[5] == 0x9abcu && cpu->w[8] == 0xfff8u && cpu->dsrpag == 0x0200u &&
+               cpu->cycles == 5u,
+           "DSP X modulo wrap retains the PSV page");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_Y_W10_DECREMENT);
+    dspic33_set_working_register(cpu, 4u, 0xfffdu);
+    dspic33_set_working_register(cpu, 5u, 4u);
+    dspic33_set_working_register(cpu, 10u, 0x9002u);
+    dspic33_write_word(cpu, 0x9002u, 0xa55au);
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 0x03ffu;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->accumulator[0] == -12 &&
+               cpu->w[4] == 0xfffdu && cpu->w[5] == 0xa55au && cpu->w[10] == 0x9000u &&
+               cpu->dsrpag == 0x03ffu && cpu->cycles == 1u && cpu->corcon == 0x0021u &&
+               cpu->sr == 0u,
+           "DSP Y prefetch ignores DSRPAG without X activity");
+}
+
 static void move_double_stack_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
     reset_processor_conformance(cpu, 0u);
     cpu->stop_on_trap = true;
@@ -3510,6 +3695,7 @@ int main(void) {
         register_move_instruction_cases(&state, &cpu);
         non_cpu_sfr_timing_cases(&state, &cpu);
         psv_timing_cases(&state, &cpu);
+        dsp_x_prefetch_page_cases(&state, &cpu);
         call_stack_timing_case(&state, &cpu);
         move_double_stack_timing_cases(&state, &cpu);
         return_instruction_cycle_cases(&state, &cpu);

@@ -5,7 +5,7 @@
 .global _multiply_conformance_cases
 _multiply_conformance_cases = 153
 .global _multiply_conformance_group_complete
-_multiply_conformance_group_complete = 1
+_multiply_conformance_group_complete = 0
 
 .macro record_accumulator id, low, high, upper
     mov \low, w1

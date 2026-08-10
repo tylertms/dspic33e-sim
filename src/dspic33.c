@@ -347,6 +347,16 @@ typedef struct {
     bool unimplemented_data_page;
 } OperandResolution;
 
+typedef enum {
+    DSP_X_PREFETCH_BASE,
+    DSP_X_PREFETCH_MAPPED,
+    DSP_X_PREFETCH_DEFERRED
+} DspXPrefetchMapping;
+
+static const int8_t dsp_prefetch_updates[16] = {
+    0, 2, 4, 6, 0, -6, -4, -2, 0, 2, 4, 6, 0, -6, -4, -2,
+};
+
 static bool pseudo_linear_addressing_enabled(const Dspic33* cpu, uint8_t mode,
                                              uint8_t reg, bool bit_reversed) {
     return mode >= 2u && mode <= 5u && reg < 14u && !bit_reversed &&
@@ -1923,6 +1933,49 @@ static bool validate_dsp_prefetch_alignment(Dspic33* cpu, uint8_t operation,
     return check_data_alignment(cpu, address);
 }
 
+static bool dsp_x_address_valid(uint16_t address, uint16_t page) {
+    return address < 0x8000u || page >= 0x0200u || (page == 1u && address <= 0x8ffeu);
+}
+
+static DspXPrefetchMapping resolve_dsp_x_prefetch(Dspic33* cpu, uint8_t operation,
+                                                  OperandResolution* resolution) {
+    uint8_t base_register = (uint8_t)(8u + (operation >= 8u ? 1u : 0u));
+    int8_t update = dsp_prefetch_updates[operation];
+    uint8_t mode = update == 0 ? 1u : update > 0 ? 3u : 2u;
+    uint8_t width = update < 0 ? (uint8_t)-update : (uint8_t)update;
+    if (operation == 12u) {
+        mode = 6u;
+        width = 2u;
+    } else if (width == 0u) {
+        width = 2u;
+    }
+    OperandResolution preview;
+    if (!resolve_operand_address(cpu, cpu->w, mode, base_register, 12u, width, false,
+                                 &preview)) {
+        return DSP_X_PREFETCH_DEFERRED;
+    }
+    if (preview.wrapped && operation == 12u && cpu->w[base_register] >= 0x8000u &&
+        !modulo_addressing_enabled(cpu, base_register, false)) {
+        return DSP_X_PREFETCH_DEFERRED;
+    }
+    if (!dsp_x_address_valid(preview.access_register, preview.access_data_page)) {
+        return DSP_X_PREFETCH_DEFERRED;
+    }
+    if (preview.updates_register) {
+        uint16_t updated_page =
+            preview.updates_data_page ? preview.updated_data_page : cpu->dsrpag;
+        if (!dsp_x_address_valid(preview.updated_register, updated_page)) {
+            return DSP_X_PREFETCH_DEFERRED;
+        }
+    }
+    if (preview.access_register < 0x8000u) {
+        return DSP_X_PREFETCH_BASE;
+    }
+    return operand_resolution(cpu, mode, base_register, 12u, width, false, resolution)
+               ? DSP_X_PREFETCH_MAPPED
+               : DSP_X_PREFETCH_DEFERRED;
+}
+
 static bool validate_dsp_alignments(Dspic33* cpu, uint8_t x_operation,
                                     uint8_t y_operation, bool memory_write_back) {
     return validate_dsp_prefetch_alignment(cpu, x_operation, false) &&
@@ -1933,14 +1986,20 @@ static bool validate_dsp_alignments(Dspic33* cpu, uint8_t x_operation,
 
 static bool dsp_prefetch_value(Dspic33* cpu, uint8_t operation, bool y_space,
                                uint16_t* value) {
-    static const int8_t updates[16] = {
-        0, 2, 4, 6, 0, -6, -4, -2, 0, 2, 4, 6, 0, -6, -4, -2,
-    };
     uint8_t base_register;
     int32_t delta;
     uint16_t address;
+    OperandResolution resolution;
+    DspXPrefetchMapping mapping;
     if (operation == 4u) {
         return false;
+    }
+    if (!y_space) {
+        mapping = resolve_dsp_x_prefetch(cpu, operation, &resolution);
+        if (mapping == DSP_X_PREFETCH_MAPPED) {
+            *value = read_data_word(cpu, resolution.address);
+            return true;
+        }
     }
     base_register = (uint8_t)((y_space ? 10u : 8u) + (operation >= 8u ? 1u : 0u));
     address = cpu->w[base_register];
@@ -1950,7 +2009,7 @@ static bool dsp_prefetch_value(Dspic33* cpu, uint8_t operation, bool y_space,
                                  y_space);
     }
     *value = read_data_word(cpu, address);
-    delta = updates[operation];
+    delta = dsp_prefetch_updates[operation];
     write_working_register(cpu, base_register,
                            modulo_address(cpu, base_register,
                                           (int32_t)cpu->w[base_register] + delta, delta,

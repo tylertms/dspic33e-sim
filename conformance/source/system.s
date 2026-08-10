@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 63
+_system_conformance_terminal_count = 64
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -136,6 +136,8 @@ _run_system_probe:
     bra z, _system_pseudo_linear_probe
     cp w0, #63
     bra z, _system_pseudo_linear_move_double_probe
+    cp w0, #64
+    bra z, _system_dsp_x_prefetch_probe
     return
 
 .global _system_sleep_probe
@@ -338,6 +340,41 @@ _system_pseudo_linear_move_double_probe:
 _system_pseudo_linear_move_double:
     .pword 0xbe0131
     return
+
+.global _system_dsp_x_prefetch_probe
+_system_dsp_x_prefetch_probe:
+    mov #0x0021, w0
+    mov w0, CORCON
+    clr w0
+    mov w0, SR
+    mov #0x0200, w0
+    mov w0, DSRPAG
+    mov #3, w4
+    mov #4, w5
+    mov #0xfffe, w8
+    mov #0x9002, w10
+    mov #0x6789, w0
+    mov w0, [w10]
+    .pword 0xc0045f
+    mov ACCAL, w0
+    mov w0, _system_dsp_x_prefetch_state
+    mov ACCAH, w0
+    mov w0, _system_dsp_x_prefetch_state+2
+    mov ACCAU, w0
+    mov w0, _system_dsp_x_prefetch_state+4
+    mov w4, _system_dsp_x_prefetch_state+6
+    mov w5, _system_dsp_x_prefetch_state+8
+    mov w8, _system_dsp_x_prefetch_state+10
+    mov w10, _system_dsp_x_prefetch_state+12
+    mov DSRPAG, w0
+    mov w0, _system_dsp_x_prefetch_state+14
+    mov CORCON, w0
+    mov w0, _system_dsp_x_prefetch_state+16
+    mov SR, w0
+    mov w0, _system_dsp_x_prefetch_state+18
+.global _system_dsp_x_prefetch_complete
+_system_dsp_x_prefetch_complete:
+    bra _system_dsp_x_prefetch_complete
 
 .global _system_sftac_probe
 _system_sftac_probe:
