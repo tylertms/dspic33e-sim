@@ -2434,6 +2434,18 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     if ((opcode & 0xfffff0u) == 0xfd4000u) {
         return execute_decimal_adjust(cpu, opcode);
     }
+    if ((opcode & 0xffbff0u) == 0xfd8000u) {
+        uint8_t reg = (uint8_t)(opcode & 0x0fu);
+        uint16_t value = cpu->w[reg];
+        if ((opcode & 0x004000u) != 0u) {
+            uint8_t low = (uint8_t)value;
+            write_working_register_byte(cpu, reg, false,
+                                        (uint8_t)((low << 4u) | (low >> 4u)));
+        } else {
+            write_working_register(cpu, reg, (uint16_t)((value << 8u) | (value >> 8u)));
+        }
+        return true;
+    }
     if ((opcode & 0xfff870u) == 0xfd0000u) {
         uint8_t source = (uint8_t)(opcode & 0x0fu);
         uint8_t destination = (uint8_t)((opcode >> 7u) & 0x0fu);

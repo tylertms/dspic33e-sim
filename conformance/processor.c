@@ -117,6 +117,12 @@ enum {
     OPCODE_MOVPAG_INVALID_LITERAL = 0xfecc00u,
     OPCODE_MOVPAG_TBL_W1 = 0xfed801u,
     OPCODE_MOVPAG_INVALID_W1 = 0xfedc01u,
+    OPCODE_SWAP_W1 = 0xfd8001u,
+    OPCODE_SWAP_BYTE_W1 = 0xfdc001u,
+    OPCODE_SWAP_W15 = 0xfd800fu,
+    OPCODE_SWAP_BYTE_W15 = 0xfdc00fu,
+    OPCODE_EXCH_W1_W2 = 0xfd0101u,
+    OPCODE_EXCH_W1_W1 = 0xfd0081u,
     OPCODE_ILLEGAL = 0x3f0000u,
     OPCODE_REPEAT_2 = 0x090002u,
     OPCODE_REPEAT_W0 = 0x098000u,
@@ -2418,6 +2424,71 @@ static void instruction_cycle_cases(ProcessorConformance* state, Dspic33* cpu) {
            "RETFIE with pending exception consumes five cycles");
 }
 
+static void register_move_instruction_cases(ProcessorConformance* state, Dspic33* cpu) {
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_SWAP_W1);
+    cpu->initialized_working_registers &= (uint16_t)~0x0002u;
+    cpu->w[1] = 0xa587u;
+    cpu->sr = 0x0105u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x87a5u &&
+               cpu->sr == 0x0105u && cpu->cycles == 1u &&
+               (cpu->initialized_working_registers & 0x0002u) != 0u,
+           "SWAP exchanges bytes and initializes word destination");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_SWAP_BYTE_W1);
+    cpu->initialized_working_registers &= (uint16_t)~0x0002u;
+    cpu->w[1] = 0xa587u;
+    cpu->sr = 0x0105u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0xa578u &&
+               cpu->sr == 0x0105u && cpu->cycles == 1u &&
+               (cpu->initialized_working_registers & 0x0002u) == 0u,
+           "SWAP.B exchanges low nibbles without initializing byte destination");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_SWAP_W15);
+    cpu->w[15] = 0xa586u;
+    cpu->sr = 0x0105u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[15] == 0x86a4u &&
+               cpu->sr == 0x0105u && cpu->cycles == 1u,
+           "SWAP keeps stack pointer even");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_SWAP_BYTE_W15);
+    cpu->w[15] = 0xa586u;
+    cpu->sr = 0x0105u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[15] == 0xa568u &&
+               cpu->sr == 0x0105u && cpu->cycles == 1u,
+           "SWAP.B keeps stack pointer even");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_EXCH_W1_W2);
+    cpu->initialized_working_registers &= (uint16_t)~0x0006u;
+    cpu->w[1] = 0x1234u;
+    cpu->w[2] = 0xa5a5u;
+    cpu->sr = 0x0105u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0xa5a5u &&
+               cpu->w[2] == 0x1234u && cpu->sr == 0x0105u && cpu->cycles == 1u &&
+               (cpu->initialized_working_registers & 0x0006u) == 0x0006u,
+           "EXCH swaps registers and initializes both destinations");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_EXCH_W1_W1);
+    cpu->initialized_working_registers &= (uint16_t)~0x0002u;
+    cpu->w[1] = 0xa5a5u;
+    cpu->sr = 0x0105u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0xa5a5u &&
+               cpu->sr == 0x0105u && cpu->cycles == 1u &&
+               (cpu->initialized_working_registers & 0x0002u) != 0u,
+           "EXCH accepts identical source and destination");
+}
+
 static void non_cpu_sfr_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_BSET_BYTE_IFS0_BIT_0);
@@ -2933,7 +3004,7 @@ static void illegal_condition_reset_cases(ProcessorConformance* state, Dspic33* 
     load_instruction(state, cpu, 0u, OPCODE_MOVPAG_TBL_LITERAL);
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->tblpag == 0x00a5u &&
-               cpu->illegal_reset_count == 0u,
+               cpu->illegal_reset_count == 0u && cpu->cycles == 1u,
            "MOVPAG literal PP2 writes TBLPAG");
 
     dspic33_reset(cpu, 0u);
@@ -2945,7 +3016,7 @@ static void illegal_condition_reset_cases(ProcessorConformance* state, Dspic33* 
     dspic33_set_working_register(cpu, 1u, 0x00a5u);
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->tblpag == 0x00a5u &&
-               cpu->illegal_reset_count == 0u,
+               cpu->illegal_reset_count == 0u && cpu->cycles == 1u,
            "MOVPAG register PP2 writes TBLPAG");
 
     dspic33_reset(cpu, 0u);
@@ -3216,6 +3287,7 @@ int main(void) {
         repeat_exception_cases(&state, &cpu);
         repeat_interrupt_cases(&state, &cpu);
         instruction_cycle_cases(&state, &cpu);
+        register_move_instruction_cases(&state, &cpu);
         non_cpu_sfr_timing_cases(&state, &cpu);
         call_stack_timing_case(&state, &cpu);
         move_double_stack_timing_cases(&state, &cpu);

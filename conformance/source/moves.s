@@ -2,7 +2,7 @@
 .include "conformance.inc"
 
 .global _move_conformance_cases
-_move_conformance_cases = 59
+_move_conformance_cases = 68
 .global _move_conformance_group_complete
 _move_conformance_group_complete = 0
 
@@ -422,6 +422,54 @@ _run_move_conformance:
     mov w9, XMODSRT
     mov w10, XMODEND
     nop
+
+    set_status 0x0105
+    mov #0xa587, w1
+    swap w1
+    record_case 0x053b, w1, w1
+
+    set_status 0x0105
+    mov #0xa587, w1
+    swap.b w1
+    record_case 0x053c, w1, w1
+
+    set_status 0x0105
+    mov #0x1234, w1
+    mov #0xa5a5, w2
+    exch w1, w2
+    record_double_case 0x053d, w1, w2
+
+    movpag #0x0155, DSRPAG
+    mov DSRPAG, w2
+    record_case 0x053e, w2, w2
+
+    movpag #0x00aa, DSWPAG
+    mov DSWPAG, w2
+    record_case 0x053f, w2, w2
+
+    movpag #0x005a, TBLPAG
+    mov TBLPAG, w2
+    record_case 0x0540, w2, w2
+
+    mov #0x02a5, w1
+    movpag w1, DSRPAG
+    mov DSRPAG, w2
+    record_case 0x0541, w2, w1
+
+    mov #0x0155, w1
+    movpag w1, DSWPAG
+    mov DSWPAG, w2
+    record_case 0x0542, w2, w1
+
+    mov #0x00a5, w1
+    movpag w1, TBLPAG
+    mov TBLPAG, w2
+    record_case 0x0543, w2, w1
+
+    mov #1, w0
+    mov w0, DSRPAG
+    mov w0, DSWPAG
+    clr TBLPAG
 
     pop w11
     pop w10
