@@ -428,6 +428,8 @@ static void trigger_cases(PwmConformance* state, Dspic33* cpu) {
     enable_pwm(cpu, 0u);
     dspic33_device_advance(cpu, 2u);
     expect(state, interrupt_flag(cpu, 73u), "secondary special event interrupt");
+    expect(state, (dspic33_read_word(cpu, 0x0c0eu) & 0x1000u) != 0u,
+           "secondary special event status");
 }
 
 static void protection_cases(PwmConformance* state, Dspic33* cpu) {
