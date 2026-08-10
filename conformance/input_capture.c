@@ -72,6 +72,11 @@ static bool rising_edge(Dspic33* cpu, uint8_t channel) {
            dspic33_device_advance(cpu, 1u);
 }
 
+static bool set_level(Dspic33* cpu, uint8_t channel, bool high) {
+    return dspic33_input_capture_input(cpu, channel, high, 0u) &&
+           dspic33_device_advance(cpu, 1u);
+}
+
 static void configure_dma(Dspic33* cpu, uint8_t request, uint16_t pad,
                           uint16_t destination) {
     dspic33_write_word(cpu, 0x0b00u, 0u);
@@ -212,6 +217,7 @@ static void zero_interval_overflow_cases(InputCaptureConformance* state, Dspic33
 
 static void mode_cases(InputCaptureConformance* state, Dspic33* cpu) {
     uint16_t base = capture_base(0u);
+    uint8_t edge;
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, (uint16_t)(base + 2u), CAPTURE_TRIGGER);
     dspic33_write_word(cpu, base, 0x1803u);
@@ -234,15 +240,141 @@ static void mode_cases(InputCaptureConformance* state, Dspic33* cpu) {
                cpu->io.input_capture.timer[0] == 0u,
            "cleared trigger status captures held-zero timer");
     dspic33_write_word(cpu, base, 0u);
+    expect(state, set_level(cpu, 0u, false), "seed every-edge input low");
+    dspic33_write_word(cpu, (uint16_t)(base + 2u), CAPTURE_TRIGGER);
+    dspic33_write_word(cpu, base, 0x1c01u);
+    expect(state, set_level(cpu, 0u, true) && set_level(cpu, 0u, false),
+           "every-edge capture transitions advance");
+    expect(state,
+           cpu->io.input_capture.fifo[0].count == 2u &&
+               cpu->io.input_capture.fifo[0].words[0] == 1u &&
+               cpu->io.input_capture.fifo[0].words[1] == 2u,
+           "every-edge mode captures rising and falling transitions");
+    dspic33_write_word(cpu, base, 0u);
+    expect(state, set_level(cpu, 0u, false), "seed every-edge interrupt input low");
+    dspic33_write_word(cpu, (uint16_t)(base + 2u), CAPTURE_TRIGGER);
+    dspic33_write_word(cpu, base, 0x1c61u);
+    expect(state, set_level(cpu, 0u, true), "every-edge interrupt event advances");
+    expect(state, dspic33_device_advance(cpu, 2u),
+           "every-edge interrupt delay advances");
+    expect(state, interrupt_flag(cpu, 0u),
+           "every-edge mode ignores capture interrupt interval");
+    clear_interrupt(cpu, 0u);
+    expect(state,
+           set_level(cpu, 0u, false) && set_level(cpu, 0u, true) &&
+               set_level(cpu, 0u, false),
+           "every-edge FIFO reaches four entries");
+    expect(state, set_level(cpu, 0u, true), "every-edge overflow event advances");
+    expect(state,
+           cpu->io.input_capture.fifo[0].count == 4u &&
+               (dspic33_read_word(cpu, base) & CAPTURE_OVERFLOW) == 0u,
+           "every-edge overflow discards sample without ICOV");
+
+    dspic33_write_word(cpu, base, 0u);
+    expect(state, set_level(cpu, 0u, false), "seed fourth-edge input low");
     dspic33_write_word(cpu, (uint16_t)(base + 2u), CAPTURE_TRIGGER);
     dspic33_write_word(cpu, base, 0x1c02u);
-    expect(state, rising_edge(cpu, 0u), "unsupported edge mode advances");
-    expect(state, cpu->io.input_capture.fifo[0].count == 0u,
-           "falling capture mode remains excluded");
+    expect(state, set_level(cpu, 0u, true) && set_level(cpu, 0u, false),
+           "falling capture transitions advance");
+    expect(state,
+           cpu->io.input_capture.fifo[0].count == 1u &&
+               cpu->io.input_capture.fifo[0].words[0] == 2u,
+           "falling mode captures only falling transitions");
+
     configure_capture(cpu, 0u, 0u, false);
     expect(state, rising_edge(cpu, 0u), "supported rising edge advances");
     expect(state, cpu->io.input_capture.fifo[0].count == 1u,
            "FP software-triggered rising capture succeeds");
+
+    dspic33_write_word(cpu, base, 0u);
+    expect(state, set_level(cpu, 0u, false), "seed sixteenth-edge input low");
+    dspic33_write_word(cpu, (uint16_t)(base + 2u), CAPTURE_TRIGGER);
+    dspic33_write_word(cpu, base, 0x1c04u);
+    for (edge = 0u; edge < 3u; edge++) {
+        expect(state, set_level(cpu, 0u, true) && set_level(cpu, 0u, false),
+               "fourth-edge prescaler advances below threshold");
+    }
+    expect(state, cpu->io.input_capture.fifo[0].count == 0u,
+           "fourth-edge prescaler suppresses first three rising edges");
+    expect(state, set_level(cpu, 0u, true), "fourth rising edge advances");
+    expect(state,
+           cpu->io.input_capture.fifo[0].count == 1u &&
+               cpu->io.input_capture.fifo[0].words[0] == 7u,
+           "fourth-edge prescaler captures fourth rising edge");
+
+    dspic33_write_word(cpu, base, 0u);
+    expect(state, set_level(cpu, 0u, false), "seed switched prescaler input low");
+    dspic33_write_word(cpu, (uint16_t)(base + 2u), CAPTURE_TRIGGER);
+    dspic33_write_word(cpu, base, 0x1c05u);
+    for (edge = 0u; edge < 15u; edge++) {
+        expect(state, set_level(cpu, 0u, false) && set_level(cpu, 0u, true),
+               "sixteenth-edge prescaler advances below threshold");
+    }
+    expect(state, cpu->io.input_capture.fifo[0].count == 0u,
+           "sixteenth-edge prescaler suppresses first fifteen rising edges");
+    expect(state, set_level(cpu, 0u, false) && set_level(cpu, 0u, true),
+           "sixteenth rising edge advances");
+    expect(state, cpu->io.input_capture.fifo[0].count == 1u,
+           "sixteenth-edge prescaler captures sixteenth rising edge");
+
+    dspic33_write_word(cpu, base, 0u);
+    expect(state, set_level(cpu, 0u, false), "seed unused-mode input low");
+    dspic33_write_word(cpu, (uint16_t)(base + 2u), CAPTURE_TRIGGER);
+    dspic33_write_word(cpu, base, 0x1c04u);
+    for (edge = 0u; edge < 3u; edge++) {
+        expect(state, set_level(cpu, 0u, false) && set_level(cpu, 0u, true),
+               "active-mode prescaler advances before mode switch");
+    }
+    dspic33_write_word(cpu, base, 0x1c05u);
+    for (edge = 0u; edge < 13u; edge++) {
+        expect(state, set_level(cpu, 0u, false) && set_level(cpu, 0u, true),
+               "active-mode prescaler advances after mode switch");
+    }
+    expect(state, cpu->io.input_capture.fifo[0].count == 1u,
+           "active-mode switch preserves prescaler count");
+
+    dspic33_write_word(cpu, base, 0u);
+    expect(state, set_level(cpu, 0u, false), "seed reverse prescaler input low");
+    dspic33_write_word(cpu, (uint16_t)(base + 2u), CAPTURE_TRIGGER);
+    dspic33_write_word(cpu, base, 0x1c05u);
+    for (edge = 0u; edge < 5u; edge++) {
+        expect(state, set_level(cpu, 0u, true) && set_level(cpu, 0u, false),
+               "sixteenth-edge prescaler advances before reverse switch");
+    }
+    dspic33_write_word(cpu, base, 0x1c04u);
+    for (edge = 0u; edge < 2u; edge++) {
+        expect(state, set_level(cpu, 0u, true) && set_level(cpu, 0u, false),
+               "fourth-edge prescaler advances below next phase boundary");
+    }
+    expect(state, cpu->io.input_capture.fifo[0].count == 0u,
+           "reverse mode switch retains nonzero prescaler phase");
+    expect(state, set_level(cpu, 0u, true),
+           "fourth-edge prescaler reaches next phase boundary");
+    expect(state, cpu->io.input_capture.fifo[0].count == 1u,
+           "reverse active-mode switch captures at finite next boundary");
+
+    dspic33_write_word(cpu, base, 0u);
+    expect(state, set_level(cpu, 0u, false), "seed reset prescaler input low");
+    dspic33_write_word(cpu, (uint16_t)(base + 2u), CAPTURE_TRIGGER);
+    dspic33_write_word(cpu, base, 0x1c04u);
+    for (edge = 0u; edge < 3u; edge++) {
+        expect(state, set_level(cpu, 0u, true) && set_level(cpu, 0u, false),
+               "prescaler advances before module disable");
+    }
+    dspic33_write_word(cpu, base, 0u);
+    dspic33_write_word(cpu, base, 0x1c04u);
+    expect(state, set_level(cpu, 0u, true),
+           "prescaler advances after module re-enable");
+    expect(state, cpu->io.input_capture.fifo[0].count == 0u,
+           "module disable clears prescaler count");
+
+    dspic33_write_word(cpu, base, 0u);
+    dspic33_write_word(cpu, (uint16_t)(base + 2u), CAPTURE_TRIGGER);
+    dspic33_write_word(cpu, base, 0x1c06u);
+    expect(state, set_level(cpu, 0u, false) && set_level(cpu, 0u, true),
+           "unused capture mode edge advances");
+    expect(state, cpu->io.input_capture.fifo[0].count == 0u,
+           "unused capture mode remains disabled");
 }
 
 static void configure_capture_interrupt(Dspic33* cpu, uint8_t channel) {
@@ -259,6 +391,60 @@ static void configure_capture_interrupt(Dspic33* cpu, uint8_t channel) {
                    (uint16_t)(3u << shift)));
     cpu->program[(0x0014u + irq * 2u) / 2u] = CAPTURE_VECTOR;
     cpu->w[15] = 0x1800u;
+}
+
+static void power_cases(InputCaptureConformance* state, Dspic33* cpu) {
+    uint16_t base = capture_base(0u);
+
+    dspic33_reset(cpu, 0u);
+    configure_capture(cpu, 0u, 0u, false);
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    expect(state, set_level(cpu, 0u, true), "sleep rising capture edge advances");
+    expect(state, cpu->io.input_capture.fifo[0].count == 0u && !interrupt_flag(cpu, 0u),
+           "normal capture mode stops in Sleep");
+
+    dspic33_reset(cpu, 0u);
+    configure_capture(cpu, 0u, 0u, false);
+    cpu->power_state = DSPIC33_POWER_IDLE;
+    expect(state, set_level(cpu, 0u, true), "idle-running capture edge advances");
+    expect(state, cpu->io.input_capture.fifo[0].count == 1u,
+           "ICSIDL clear continues capture in Idle");
+
+    dspic33_reset(cpu, 0u);
+    configure_capture(cpu, 0u, 0u, false);
+    dspic33_write_word(cpu, base, (uint16_t)(CAPTURE_FP_RISING | 0x2000u));
+    cpu->power_state = DSPIC33_POWER_IDLE;
+    expect(state, set_level(cpu, 0u, true), "idle-stopped capture edge advances");
+    expect(state, cpu->io.input_capture.fifo[0].count == 0u,
+           "ICSIDL set stops normal capture in Idle");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, base, 7u);
+    configure_capture_interrupt(cpu, 0u);
+    cpu->power_state = DSPIC33_POWER_ACTIVE;
+    expect(state, set_level(cpu, 0u, true), "active interrupt-only edge advances");
+    expect(state, !interrupt_flag(cpu, 0u) && cpu->io.input_capture.fifo[0].count == 0u,
+           "interrupt-only mode is inactive outside Sleep and Idle");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, base, 7u);
+    configure_capture_interrupt(cpu, 0u);
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    expect(state, set_level(cpu, 0u, true), "sleep interrupt-only edge advances");
+    expect(state, interrupt_flag(cpu, 0u) && cpu->io.input_capture.fifo[0].count == 0u,
+           "interrupt-only Sleep edge raises IRQ without FIFO data");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && dspic33_device_wake(cpu) &&
+               cpu->last_interrupt == capture_irqs[0] && cpu->pc == CAPTURE_VECTOR,
+           "interrupt-only Sleep edge wakes through capture vector");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, base, 7u);
+    configure_capture_interrupt(cpu, 0u);
+    cpu->power_state = DSPIC33_POWER_IDLE;
+    expect(state, set_level(cpu, 0u, true), "idle interrupt-only edge advances");
+    expect(state, interrupt_flag(cpu, 0u) && cpu->io.input_capture.fifo[0].count == 0u,
+           "interrupt-only Idle edge raises IRQ without FIFO data");
 }
 
 static void paired_firmware_case(InputCaptureConformance* state, Dspic33* cpu,
@@ -439,6 +625,7 @@ int main(void) {
         interrupt_rate_cases(&state, &cpu);
         zero_interval_overflow_cases(&state, &cpu);
         mode_cases(&state, &cpu);
+        power_cases(&state, &cpu);
         paired_cases(&state, &cpu);
         dma_cases(&state, &cpu);
         lifecycle_cases(&state, &cpu);

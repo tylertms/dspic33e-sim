@@ -215,7 +215,13 @@ enum {
     INPUT_CAPTURE_OVERFLOW = 0x0010u,
     INPUT_CAPTURE_NOT_EMPTY = 0x0008u,
     INPUT_CAPTURE_MODE_MASK = 0x0007u,
+    INPUT_CAPTURE_MODE_EVERY_EDGE = 0x0001u,
+    INPUT_CAPTURE_MODE_FALLING = 0x0002u,
     INPUT_CAPTURE_MODE_RISING = 0x0003u,
+    INPUT_CAPTURE_MODE_EVERY_FOURTH_RISING = 0x0004u,
+    INPUT_CAPTURE_MODE_EVERY_SIXTEENTH_RISING = 0x0005u,
+    INPUT_CAPTURE_MODE_INTERRUPT = 0x0007u,
+    INPUT_CAPTURE_STOP_IDLE = 0x2000u,
     INPUT_CAPTURE_SYNC_MASK = 0x001fu,
     INPUT_CAPTURE_EVENT_KIND_MASK = 0x00000003u,
     INPUT_CAPTURE_EVENT_INPUT = 0u,
@@ -1569,6 +1575,7 @@ static void input_capture_flush(Dspic33* cpu, uint8_t channel) {
     fifo->head = 0u;
     fifo->count = 0u;
     cpu->io.input_capture.interrupt_count[channel] = 0u;
+    cpu->io.input_capture.prescaler_count[channel] = 0u;
     cpu->io.input_capture.timer[channel] = 0u;
     cpu->io.input_capture.generation[channel]++;
     raw_write_word(cpu, base,
@@ -1578,19 +1585,30 @@ static void input_capture_flush(Dspic33* cpu, uint8_t channel) {
     raw_write_word(cpu, (uint16_t)(base + 6u), 0u);
 }
 
-static bool input_capture_enabled(const Dspic33* cpu, uint8_t channel) {
+static bool input_capture_configuration_supported(const Dspic33* cpu, uint8_t channel) {
     uint16_t base = input_capture_base(channel);
     uint16_t control1 = raw_word(cpu, base);
     uint16_t control2 = raw_word(cpu, (uint16_t)(base + 2u));
-    return (control1 & INPUT_CAPTURE_MODE_MASK) == INPUT_CAPTURE_MODE_RISING &&
+    uint16_t mode = control1 & INPUT_CAPTURE_MODE_MASK;
+    return mode != 0u && mode != 6u && mode != INPUT_CAPTURE_MODE_INTERRUPT &&
            (control1 & INPUT_CAPTURE_TIMER_SOURCE_MASK) ==
                INPUT_CAPTURE_TIMER_SOURCE_FP &&
            (control2 & INPUT_CAPTURE_TRIGGER) != 0u &&
            (control2 & INPUT_CAPTURE_SYNC_MASK) == 0u;
 }
 
+static bool input_capture_operating(const Dspic33* cpu, uint8_t channel) {
+    uint16_t control = raw_word(cpu, input_capture_base(channel));
+    if (!input_capture_configuration_supported(cpu, channel) ||
+        cpu->power_state == DSPIC33_POWER_SLEEP) {
+        return false;
+    }
+    return cpu->power_state != DSPIC33_POWER_IDLE ||
+           (control & INPUT_CAPTURE_STOP_IDLE) == 0u;
+}
+
 static bool input_capture_timer_running(const Dspic33* cpu, uint8_t channel) {
-    return input_capture_enabled(cpu, channel) &&
+    return input_capture_operating(cpu, channel) &&
            (raw_word(cpu, (uint16_t)(input_capture_base(channel) + 2u)) &
             INPUT_CAPTURE_TRIGGER_STATUS) != 0u;
 }
@@ -1599,8 +1617,8 @@ static bool input_capture_pair_enabled(const Dspic33* cpu, uint8_t channel) {
     uint16_t first;
     uint16_t second;
     if ((channel & 1u) != 0u || channel + 1u >= DSPIC33_INPUT_CAPTURE_COUNT ||
-        !input_capture_enabled(cpu, channel) ||
-        !input_capture_enabled(cpu, (uint8_t)(channel + 1u))) {
+        !input_capture_operating(cpu, channel) ||
+        !input_capture_operating(cpu, (uint8_t)(channel + 1u))) {
         return false;
     }
     first = raw_word(cpu, (uint16_t)(input_capture_base(channel) + 2u));
@@ -1636,11 +1654,15 @@ static void input_capture_record(Dspic33* cpu, uint8_t channel, uint16_t value) 
     Dspic33InputCaptureFifo* fifo = &cpu->io.input_capture.fifo[channel];
     uint16_t base = input_capture_base(channel);
     uint16_t control = raw_word(cpu, base);
+    uint16_t mode = control & INPUT_CAPTURE_MODE_MASK;
     uint8_t interrupt_interval =
-        (uint8_t)(((control & INPUT_CAPTURE_INTERRUPT_MASK) >> 5u) + 1u);
+        mode == INPUT_CAPTURE_MODE_EVERY_EDGE
+            ? 1u
+            : (uint8_t)(((control & INPUT_CAPTURE_INTERRUPT_MASK) >> 5u) + 1u);
     bool interrupt = false;
     if (!input_capture_fifo_push(fifo, value)) {
-        if ((control & INPUT_CAPTURE_INTERRUPT_MASK) != 0u) {
+        if (mode != INPUT_CAPTURE_MODE_EVERY_EDGE &&
+            (control & INPUT_CAPTURE_INTERRUPT_MASK) != 0u) {
             raw_write_word(cpu, base, (uint16_t)(control | INPUT_CAPTURE_OVERFLOW));
             return;
         }
@@ -1666,7 +1688,7 @@ static void input_capture_snapshot(Dspic33* cpu, uint8_t channel, uint32_t value
     uint16_t generation = (uint16_t)(value >> INPUT_CAPTURE_EVENT_GENERATION_SHIFT);
     bool paired = (value & INPUT_CAPTURE_EVENT_PAIRED) != 0u;
     if (generation != cpu->io.input_capture.generation[channel] ||
-        !input_capture_enabled(cpu, channel)) {
+        !input_capture_operating(cpu, channel)) {
         return;
     }
     if (paired) {
@@ -1684,6 +1706,42 @@ static void input_capture_snapshot(Dspic33* cpu, uint8_t channel, uint32_t value
     input_capture_record(cpu, channel, cpu->io.input_capture.timer[channel]);
 }
 
+static bool input_capture_edge_matches(Dspic33* cpu, uint8_t channel, bool was_high,
+                                       bool high) {
+    uint16_t mode =
+        raw_word(cpu, input_capture_base(channel)) & INPUT_CAPTURE_MODE_MASK;
+    if (was_high == high) {
+        return false;
+    }
+    if (mode == INPUT_CAPTURE_MODE_EVERY_EDGE) {
+        return true;
+    }
+    if (mode == INPUT_CAPTURE_MODE_FALLING) {
+        return was_high && !high;
+    }
+    if (mode == INPUT_CAPTURE_MODE_RISING) {
+        return !was_high && high;
+    }
+    if (!was_high && high &&
+        (mode == INPUT_CAPTURE_MODE_EVERY_FOURTH_RISING ||
+         mode == INPUT_CAPTURE_MODE_EVERY_SIXTEENTH_RISING)) {
+        uint8_t interval = mode == INPUT_CAPTURE_MODE_EVERY_FOURTH_RISING ? 4u : 16u;
+        cpu->io.input_capture.prescaler_count[channel] =
+            (uint8_t)((cpu->io.input_capture.prescaler_count[channel] + 1u) & 0x0fu);
+        if ((cpu->io.input_capture.prescaler_count[channel] & (interval - 1u)) == 0u) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool input_capture_interrupt_mode(const Dspic33* cpu, uint8_t channel) {
+    uint16_t control = raw_word(cpu, input_capture_base(channel));
+    return (control & INPUT_CAPTURE_MODE_MASK) == INPUT_CAPTURE_MODE_INTERRUPT &&
+           (cpu->power_state == DSPIC33_POWER_SLEEP ||
+            cpu->power_state == DSPIC33_POWER_IDLE);
+}
+
 static void input_capture_level(Dspic33* cpu, uint8_t channel, bool high) {
     uint16_t bit = (uint16_t)(1u << channel);
     bool was_high = (cpu->io.input_capture.input_high & bit) != 0u;
@@ -1693,7 +1751,14 @@ static void input_capture_level(Dspic33* cpu, uint8_t channel, bool high) {
     } else {
         cpu->io.input_capture.input_high &= (uint16_t)~bit;
     }
-    if (was_high || !high || !input_capture_enabled(cpu, channel) ||
+    if (input_capture_interrupt_mode(cpu, channel)) {
+        if (!was_high && high) {
+            dspic33_raise_interrupt(cpu, input_capture_irqs[channel]);
+        }
+        return;
+    }
+    if (!input_capture_operating(cpu, channel) ||
+        !input_capture_edge_matches(cpu, channel, was_high, high) ||
         ((channel & 1u) != 0u &&
          input_capture_pair_enabled(cpu, (uint8_t)(channel - 1u)))) {
         return;
@@ -1775,7 +1840,8 @@ static void run_input_capture(Dspic33* cpu, uint16_t source, uint32_t value) {
     } else if (kind == INPUT_CAPTURE_EVENT_INTERRUPT &&
                (uint16_t)(value >> INPUT_CAPTURE_EVENT_GENERATION_SHIFT) ==
                    cpu->io.input_capture.generation[source] &&
-               input_capture_enabled(cpu, (uint8_t)source)) {
+               (input_capture_operating(cpu, (uint8_t)source) ||
+                input_capture_interrupt_mode(cpu, (uint8_t)source))) {
         dspic33_raise_interrupt(cpu, input_capture_irqs[source]);
     }
 }
