@@ -20,8 +20,15 @@ enum {
     PMP_ENABLE = 0x8000u,
     PMP_BUSY = 0x8000u,
     PMP_INTERRUPT_EACH = 0x2000u,
+    PMP_INCREMENT = 0x0800u,
+    PMP_DECREMENT = 0x1000u,
+    PMP_DATA_16_BIT = 0x0400u,
     PMP_MASTER_MODE_2 = 0x0200u,
     PMP_MASTER_MODE_3 = 0x0300u,
+    PMP_PARTIAL_MUX = 0x0800u,
+    PMP_FULL_MUX = 0x1000u,
+    PMP_ONE_CHIP_SELECT = 0x0040u,
+    PMP_TWO_CHIP_SELECTS = 0x0080u,
     PMP_FIRMWARE_MODE = 0x22beu,
     PMP_INTERRUPT_FLAG = 0x2000u,
     PMP_INTERRUPT_ENABLE = 0x2000u,
@@ -45,11 +52,16 @@ static void expect(PmpConformance* state, bool condition, const char* name) {
     }
 }
 
-static void configure_pmp(Dspic33* cpu, uint16_t mode, uint16_t address) {
+static void configure_pmp_control(Dspic33* cpu, uint16_t control, uint16_t mode,
+                                  uint16_t address) {
     dspic33_write_word(cpu, PMP_CONTROL, 0u);
     dspic33_write_word(cpu, PMP_MODE, mode);
     dspic33_write_word(cpu, PMP_ADDRESS, address);
-    dspic33_write_word(cpu, PMP_CONTROL, PMP_ENABLE);
+    dspic33_write_word(cpu, PMP_CONTROL, (uint16_t)(control | PMP_ENABLE));
+}
+
+static void configure_pmp(Dspic33* cpu, uint16_t mode, uint16_t address) {
+    configure_pmp_control(cpu, 0u, mode, address);
 }
 
 static void configure_dma(Dspic33* cpu, uint8_t channel, uint8_t request,
@@ -161,6 +173,172 @@ static void access_lane_cases(PmpConformance* state, Dspic33* cpu) {
            dspic33_pmp_transmit(cpu, &transfer) && transfer.value == 0x6du &&
                transfer.address == 0x3456u,
            "master mode three emits transfer");
+}
+
+static void sixteen_bit_lane_cases(PmpConformance* state, Dspic33* cpu) {
+    Dspic33PmpTransfer transfer;
+    dspic33_reset(cpu, 0u);
+    configure_pmp(cpu, PMP_DATA_16_BIT | PMP_MASTER_MODE_2, 0x6789u);
+    dspic33_write_byte(cpu, (uint16_t)(PMP_DATA + 1u), 0xaau);
+    expect(state, !cpu->io.pmp.active && cpu->events.count == 0u,
+           "16-bit high-byte write only loads the data latch");
+    dspic33_write_byte(cpu, PMP_DATA, 0x55u);
+    expect(state,
+           cpu->io.pmp.active && cpu->io.pmp.value == 0xaa55u &&
+               cpu->io.pmp.width == 2u,
+           "16-bit low-byte write starts both byte phases");
+    dspic33_write_word(cpu, PMP_DATA, 0x1234u);
+    expect(state, dspic33_read_word(cpu, PMP_DATA) == 0xaa55u,
+           "16-bit write while BUSY leaves the active data latch unchanged");
+    expect(state, dspic33_device_advance(cpu, 2u), "advance latched 16-bit byte write");
+    expect(state,
+           dspic33_pmp_transmit(cpu, &transfer) && transfer.value == 0xaa55u &&
+               transfer.width == 2u && transfer.address == 0x6789u &&
+               !dspic33_pmp_transmit(cpu, &transfer),
+           "16-bit byte-lane transfer completes exactly once");
+}
+
+typedef struct {
+    uint16_t control;
+    uint16_t mode;
+    uint16_t expected_value;
+    uint8_t width;
+    uint8_t cycles;
+} PmpMasterWriteCase;
+
+static void master_write_matrix_cases(PmpConformance* state, Dspic33* cpu) {
+    static const PmpMasterWriteCase cases[] = {
+        {0u, PMP_MASTER_MODE_2, 0x005cu, 1u, 1u},
+        {PMP_PARTIAL_MUX, PMP_MASTER_MODE_2, 0x005cu, 1u, 2u},
+        {PMP_FULL_MUX, PMP_MASTER_MODE_2, 0x005cu, 1u, 3u},
+        {0u, PMP_MASTER_MODE_3, 0x005cu, 1u, 1u},
+        {PMP_PARTIAL_MUX, PMP_MASTER_MODE_3, 0x005cu, 1u, 2u},
+        {PMP_FULL_MUX, PMP_MASTER_MODE_3, 0x005cu, 1u, 3u},
+        {0u, PMP_DATA_16_BIT | PMP_MASTER_MODE_2, 0xab5cu, 2u, 2u},
+        {PMP_PARTIAL_MUX, PMP_DATA_16_BIT | PMP_MASTER_MODE_2, 0xab5cu, 2u, 3u},
+        {PMP_FULL_MUX, PMP_DATA_16_BIT | PMP_MASTER_MODE_2, 0xab5cu, 2u, 4u},
+        {0u, PMP_DATA_16_BIT | PMP_MASTER_MODE_3, 0xab5cu, 2u, 2u},
+        {PMP_PARTIAL_MUX, PMP_DATA_16_BIT | PMP_MASTER_MODE_3, 0xab5cu, 2u, 3u},
+        {PMP_FULL_MUX, PMP_DATA_16_BIT | PMP_MASTER_MODE_3, 0xab5cu, 2u, 4u},
+    };
+    Dspic33PmpTransfer transfer;
+    size_t index;
+    for (index = 0u; index < sizeof(cases) / sizeof(cases[0]); index++) {
+        const PmpMasterWriteCase* current = &cases[index];
+        dspic33_reset(cpu, 0u);
+        configure_pmp_control(cpu, current->control, current->mode, 0x2468u);
+        dspic33_write_word(cpu, PMP_DATA, 0xab5cu);
+        expect(state,
+               cpu->io.pmp.active && ((dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) !=
+                                      0u) == (current->cycles > 1u),
+               "master write matrix starts with documented BUSY state");
+        expect(state, dspic33_device_advance(cpu, current->cycles - 1u),
+               "advance master write matrix before completion");
+        expect(state,
+               (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) == 0u &&
+                   !dspic33_pmp_transmit(cpu, &transfer),
+               "master write matrix clears BUSY on its final cycle");
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "advance master write matrix completion");
+        expect(state,
+               dspic33_pmp_transmit(cpu, &transfer) && transfer.address == 0x2468u &&
+                   transfer.control == (uint16_t)(current->control | PMP_ENABLE) &&
+                   transfer.mode == current->mode &&
+                   transfer.value == current->expected_value &&
+                   transfer.width == current->width &&
+                   transfer.cycle == current->cycles,
+               "master write matrix captures width mode mux and timing");
+    }
+}
+
+static void wait_state_matrix_cases(PmpConformance* state, Dspic33* cpu) {
+    static const PmpMasterWriteCase cases[] = {
+        {0u, 0x00c3u | PMP_MASTER_MODE_2, 0x005cu, 1u, 1u},
+        {0u, 0x00c7u | PMP_MASTER_MODE_2, 0x005cu, 1u, 9u},
+        {PMP_PARTIAL_MUX, 0x00c7u | PMP_MASTER_MODE_2, 0x005cu, 1u, 13u},
+        {PMP_FULL_MUX, 0x00c7u | PMP_MASTER_MODE_2, 0x005cu, 1u, 17u},
+        {0u, 0x00c7u | PMP_DATA_16_BIT | PMP_MASTER_MODE_3, 0xab5cu, 2u, 18u},
+        {PMP_PARTIAL_MUX, 0x00c7u | PMP_DATA_16_BIT | PMP_MASTER_MODE_3, 0xab5cu, 2u,
+         22u},
+        {PMP_FULL_MUX, 0x00c7u | PMP_DATA_16_BIT | PMP_MASTER_MODE_3, 0xab5cu, 2u, 26u},
+    };
+    Dspic33PmpTransfer transfer;
+    size_t index;
+    for (index = 0u; index < sizeof(cases) / sizeof(cases[0]); index++) {
+        const PmpMasterWriteCase* current = &cases[index];
+        dspic33_reset(cpu, 0u);
+        configure_pmp_control(cpu, current->control, current->mode, 0x1357u);
+        dspic33_write_word(cpu, PMP_DATA, 0xab5cu);
+        expect(state, dspic33_device_advance(cpu, current->cycles - 1u),
+               "advance wait-state matrix before completion");
+        expect(state,
+               (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) == 0u &&
+                   !dspic33_pmp_transmit(cpu, &transfer),
+               "wait-state matrix clears BUSY before completion");
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "advance wait-state matrix completion");
+        expect(state,
+               dspic33_pmp_transmit(cpu, &transfer) &&
+                   transfer.value == current->expected_value &&
+                   transfer.width == current->width &&
+                   transfer.cycle == current->cycles,
+               "wait-state matrix completes on the documented phase count");
+    }
+}
+
+static void address_update_cases(PmpConformance* state, Dspic33* cpu) {
+    static const struct {
+        uint16_t control;
+        uint16_t mode;
+        uint16_t initial;
+        uint16_t expected;
+    } cases[] = {
+        {0u, PMP_INCREMENT, 0xffffu, 0x0000u},
+        {0u, PMP_DECREMENT, 0x0000u, 0xffffu},
+        {PMP_ONE_CHIP_SELECT, PMP_INCREMENT, 0xffffu, 0x8000u},
+        {PMP_ONE_CHIP_SELECT, PMP_DECREMENT, 0x8000u, 0xffffu},
+        {PMP_TWO_CHIP_SELECTS, PMP_INCREMENT, 0xffffu, 0xc000u},
+        {PMP_TWO_CHIP_SELECTS, PMP_DECREMENT, 0xc000u, 0xffffu},
+        {0u, 0x1800u, 0x4567u, 0x4567u},
+    };
+    Dspic33PmpTransfer transfer;
+    size_t index;
+    for (index = 0u; index < sizeof(cases) / sizeof(cases[0]); index++) {
+        dspic33_reset(cpu, 0u);
+        configure_pmp_control(
+            cpu, cases[index].control,
+            (uint16_t)(PMP_MASTER_MODE_2 | cases[index].mode | 0x0004u),
+            cases[index].initial);
+        dspic33_write_byte(cpu, PMP_DATA, 0x6au);
+        expect(state,
+               cpu->io.pmp.active &&
+                   dspic33_read_word(cpu, PMP_ADDRESS) == cases[index].initial,
+               "master address remains stable while BUSY");
+        expect(state, dspic33_device_advance(cpu, 2u),
+               "advance master address to BUSY-clear boundary");
+        expect(state,
+               !cpu->io.pmp.active &&
+                   dspic33_read_word(cpu, PMP_ADDRESS) == cases[index].expected &&
+                   !dspic33_pmp_transmit(cpu, &transfer),
+               "master address updates when BUSY clears");
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "advance master address operation completion");
+        expect(state,
+               dspic33_pmp_transmit(cpu, &transfer) &&
+                   transfer.address == cases[index].initial && transfer.value == 0x6au,
+               "master transfer retains pre-update address");
+    }
+
+    dspic33_reset(cpu, 0u);
+    configure_pmp_control(cpu, 0x00c0u, PMP_MASTER_MODE_2, 0u);
+    dspic33_write_byte(cpu, PMP_DATA, 0x71u);
+    expect(state, !cpu->io.pmp.active && cpu->events.count == 0u,
+           "reserved chip-select function rejects master transfer");
+    dspic33_reset(cpu, 0u);
+    configure_pmp_control(cpu, 0x1800u, PMP_MASTER_MODE_2, 0u);
+    dspic33_write_byte(cpu, PMP_DATA, 0x72u);
+    expect(state, !cpu->io.pmp.active && cpu->events.count == 0u,
+           "reserved address multiplexing rejects master transfer");
 }
 
 static void interrupt_cases(PmpConformance* state, Dspic33* cpu) {
@@ -352,6 +530,10 @@ int main(void) {
         access_cases(&state, &cpu);
         timing_cases(&state, &cpu);
         access_lane_cases(&state, &cpu);
+        sixteen_bit_lane_cases(&state, &cpu);
+        master_write_matrix_cases(&state, &cpu);
+        wait_state_matrix_cases(&state, &cpu);
+        address_update_cases(&state, &cpu);
         interrupt_cases(&state, &cpu);
         dma_chain_cases(&state, &cpu);
         dma_negative_cases(&state, &cpu);

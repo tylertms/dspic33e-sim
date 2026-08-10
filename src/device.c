@@ -198,7 +198,12 @@ enum {
     PMP_DATA_16_BIT = 0x0400u,
     PMP_MASTER_MODE_MASK = 0x0300u,
     PMP_MASTER_MODE_2 = 0x0200u,
+    PMP_MASTER_MODE_1 = 0x0300u,
+    PMP_INCREMENT_MODE_MASK = 0x1800u,
+    PMP_INCREMENT_ADDRESS = 0x0800u,
+    PMP_DECREMENT_ADDRESS = 0x1000u,
     PMP_ADDRESS_MUX_MASK = 0x1800u,
+    PMP_CHIP_SELECT_FUNCTION_MASK = 0x00c0u,
     PMP_WAIT_BEGIN_MASK = 0x00c0u,
     PMP_WAIT_MIDDLE_MASK = 0x003cu,
     PMP_WAIT_END_MASK = 0x0003u,
@@ -1399,13 +1404,21 @@ static void update_crc_pmd(Dspic33* cpu, uint16_t previous) {
     }
 }
 
-static uint64_t pmp_transfer_cycles(uint16_t mode) {
+static uint8_t pmp_transfer_width(uint16_t mode) {
+    return (mode & PMP_DATA_16_BIT) != 0u ? 2u : 1u;
+}
+
+static uint64_t pmp_transfer_cycles(uint16_t control, uint16_t mode) {
+    uint8_t address_phases = (uint8_t)((control & PMP_ADDRESS_MUX_MASK) >> 11u);
+    uint8_t data_phases = pmp_transfer_width(mode);
+    uint8_t beginning = (uint8_t)((mode & PMP_WAIT_BEGIN_MASK) >> 6u);
     uint8_t middle = (uint8_t)((mode & PMP_WAIT_MIDDLE_MASK) >> 2u);
     if (middle == 0u) {
-        return 1u;
+        return (uint64_t)address_phases + data_phases;
     }
-    return (uint64_t)(((mode & PMP_WAIT_BEGIN_MASK) >> 6u) + 1u) + middle +
-           ((mode & PMP_WAIT_END_MASK) + 1u);
+    return (uint64_t)address_phases * (beginning + 1u) +
+           (uint64_t)data_phases *
+               (beginning + 1u + middle + (mode & PMP_WAIT_END_MASK) + 1u);
 }
 
 static bool pmp_master_write_enabled(const Dspic33* cpu) {
@@ -1413,8 +1426,37 @@ static bool pmp_master_write_enabled(const Dspic33* cpu) {
     uint16_t mode = raw_word(cpu, PMP_MODE);
     uint16_t master = mode & PMP_MASTER_MODE_MASK;
     return (control & PMP_ENABLE) != 0u &&
-           (master == PMP_MASTER_MODE_2 || master == PMP_MASTER_MODE_MASK) &&
-           (control & PMP_ADDRESS_MUX_MASK) == 0u && (mode & PMP_DATA_16_BIT) == 0u;
+           (master == PMP_MASTER_MODE_2 || master == PMP_MASTER_MODE_1) &&
+           (control & PMP_ADDRESS_MUX_MASK) != PMP_ADDRESS_MUX_MASK &&
+           (control & PMP_CHIP_SELECT_FUNCTION_MASK) != PMP_CHIP_SELECT_FUNCTION_MASK;
+}
+
+static void pmp_update_address(Dspic33* cpu, uint16_t control, uint16_t mode) {
+    uint16_t increment = mode & PMP_INCREMENT_MODE_MASK;
+    uint16_t counter_mask;
+    uint16_t address;
+    if (increment != PMP_INCREMENT_ADDRESS && increment != PMP_DECREMENT_ADDRESS) {
+        return;
+    }
+    switch (control & PMP_CHIP_SELECT_FUNCTION_MASK) {
+    case 0x0000u:
+        counter_mask = 0xffffu;
+        break;
+    case 0x0040u:
+        counter_mask = 0x7fffu;
+        break;
+    case 0x0080u:
+        counter_mask = 0x3fffu;
+        break;
+    default:
+        return;
+    }
+    address = raw_word(cpu, PMP_ADDRESS);
+    raw_write_word(
+        cpu, PMP_ADDRESS,
+        (uint16_t)((address & ~counter_mask) |
+                   ((increment == PMP_INCREMENT_ADDRESS ? address + 1u : address - 1u) &
+                    counter_mask)));
 }
 
 static void pmp_abort(Dspic33* cpu) {
@@ -1452,9 +1494,11 @@ static void pmp_start_write(Dspic33* cpu) {
     cpu->io.pmp.address = raw_word(cpu, PMP_ADDRESS);
     cpu->io.pmp.control = raw_word(cpu, PMP_CONTROL);
     cpu->io.pmp.mode = (uint16_t)(raw_word(cpu, PMP_MODE) & ~PMP_BUSY);
-    cpu->io.pmp.value = (uint8_t)raw_word(cpu, PMP_DATA);
+    cpu->io.pmp.width = pmp_transfer_width(cpu->io.pmp.mode);
+    cpu->io.pmp.value = (uint16_t)(raw_word(cpu, PMP_DATA) &
+                                   (cpu->io.pmp.width == 2u ? 0xffffu : 0x00ffu));
     cpu->io.pmp.active = true;
-    delay = pmp_transfer_cycles(cpu->io.pmp.mode);
+    delay = pmp_transfer_cycles(cpu->io.pmp.control, cpu->io.pmp.mode);
     if (delay > 1u) {
         raw_write_word(cpu, PMP_MODE, (uint16_t)(raw_word(cpu, PMP_MODE) | PMP_BUSY));
     }
@@ -1475,9 +1519,11 @@ static void pmp_clear_busy(Dspic33* cpu, uint16_t generation) {
     cpu->io.pmp.completing.control = cpu->io.pmp.control;
     cpu->io.pmp.completing.mode = cpu->io.pmp.mode;
     cpu->io.pmp.completing.value = cpu->io.pmp.value;
+    cpu->io.pmp.completing.width = cpu->io.pmp.width;
     cpu->io.pmp.completing_generation = generation;
     cpu->io.pmp.completing_active = true;
     cpu->io.pmp.active = false;
+    pmp_update_address(cpu, cpu->io.pmp.control, cpu->io.pmp.mode);
     raw_write_word(cpu, PMP_MODE, (uint16_t)(raw_word(cpu, PMP_MODE) & ~PMP_BUSY));
 }
 
@@ -1492,7 +1538,9 @@ static void run_pmp(Dspic33* cpu, uint16_t generation) {
         transfer.control = cpu->io.pmp.control;
         transfer.mode = cpu->io.pmp.mode;
         transfer.value = cpu->io.pmp.value;
+        transfer.width = cpu->io.pmp.width;
         cpu->io.pmp.active = false;
+        pmp_update_address(cpu, cpu->io.pmp.control, cpu->io.pmp.mode);
         raw_write_word(cpu, PMP_MODE, (uint16_t)(raw_word(cpu, PMP_MODE) & ~PMP_BUSY));
     } else {
         return;

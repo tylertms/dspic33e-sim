@@ -164,7 +164,8 @@ typedef struct {
     uint16_t address;
     uint16_t control;
     uint16_t mode;
-    uint8_t value;
+    uint16_t value;
+    uint8_t width;
 } Dspic33PmpTransfer;
 
 typedef struct {
@@ -181,7 +182,8 @@ typedef struct {
     uint16_t mode;
     uint16_t generation;
     uint16_t completing_generation;
-    uint8_t value;
+    uint16_t value;
+    uint8_t width;
     bool active;
     bool completing_active;
 } Dspic33Pmp;
