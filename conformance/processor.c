@@ -3660,6 +3660,108 @@ static void invalid_move_double_cases(ProcessorConformance* state, Dspic33* cpu)
            "MOV.D destination mode 5 remains valid");
 }
 
+static void invalid_dsp_encoding_cases(ProcessorConformance* state, Dspic33* cpu) {
+    static const struct {
+        uint32_t opcode;
+        const char* execution;
+    } cases[] = {
+        {0xc30113u, "CLR write-back encoding 3 resets processor"},
+        {0xc70113u, "MOVSAC write-back encoding 3 resets processor"},
+        {0xc34110u, "CLR reserved operation encoding 0 resets processor"},
+        {0xc34111u, "CLR reserved operation encoding 1 resets processor"},
+        {0xc34112u, "CLR reserved operation encoding 2 resets processor"},
+        {0xc34113u, "CLR reserved operation encoding 3 resets processor"},
+        {0xc74110u, "MOVSAC reserved operation encoding 0 resets processor"},
+        {0xc74111u, "MOVSAC reserved operation encoding 1 resets processor"},
+        {0xc74112u, "MOVSAC reserved operation encoding 2 resets processor"},
+        {0xc74113u, "MOVSAC reserved operation encoding 3 resets processor"},
+        {0xf00112u, "square EDAC operation encoding resets processor"},
+        {0xf00113u, "square ED operation encoding resets processor"},
+        {0xf0405cu, "EDAC square operation encoding resets processor"},
+        {0xf0405du, "ED square operation encoding resets processor"},
+        {0xf0445eu, "EDAC reserved destination encoding 1 resets processor"},
+        {0xf0485eu, "EDAC reserved destination encoding 2 resets processor"},
+        {0xf04c5eu, "EDAC reserved destination encoding 3 resets processor"},
+        {0xf0445fu, "ED reserved destination encoding 1 resets processor"},
+        {0xf0485fu, "ED reserved destination encoding 2 resets processor"},
+        {0xf04c5fu, "ED reserved destination encoding 3 resets processor"},
+        {0xf0411eu, "EDAC missing X prefetch resets processor"},
+        {0xf04052u, "EDAC missing Y prefetch resets processor"},
+        {0xf04112u, "EDAC missing both prefetches resets processor"},
+        {0xf0411fu, "ED missing X prefetch resets processor"},
+        {0xf04053u, "ED missing Y prefetch resets processor"},
+        {0xf04113u, "ED missing both prefetches resets processor"},
+    };
+    size_t index;
+
+    for (index = 0u; index < sizeof(cases) / sizeof(cases[0]); index++) {
+        dspic33_reset(cpu, 0u);
+        load_instruction(state, cpu, 0u, cases[index].opcode);
+        dspic33_set_working_register(cpu, 4u, 0x1111u);
+        dspic33_set_working_register(cpu, 5u, 0x2222u);
+        dspic33_set_working_register(cpu, 8u, 0x5000u);
+        dspic33_set_working_register(cpu, 10u, 0x5002u);
+        dspic33_set_working_register(cpu, 13u, 0x5004u);
+        cpu->accumulator[0] = 0x123456789a;
+        cpu->accumulator[1] = -0x123456789a;
+        dspic33_write_word(cpu, 0x5000u, 0xaaaau);
+        dspic33_write_word(cpu, 0x5002u, 0x5555u);
+        dspic33_write_word(cpu, 0x5004u, 0x3333u);
+        expect_illegal_reset(state, cpu, cases[index].execution);
+        expect(state,
+               dspic33_read_word(cpu, 0x5000u) == 0xaaaau &&
+                   dspic33_read_word(cpu, 0x5002u) == 0x5555u &&
+                   dspic33_read_word(cpu, 0x5004u) == 0x3333u,
+               "invalid DSP encoding preserves data memory");
+    }
+}
+
+static void valid_dsp_register_pair_cases(ProcessorConformance* state, Dspic33* cpu) {
+    static const struct {
+        uint32_t opcode;
+        int64_t result;
+        const char* execution;
+    } cases[] = {
+        {0xc00113u, -196602ll, "MPY maps W4 times W5"},
+        {0xc10113u, 2147549180ll, "MPY maps W4 times W6"},
+        {0xc20113u, -2147221510ll, "MPY maps W4 times W7"},
+        {0xc40113u, -98310ll, "MPY maps W5 times W6"},
+        {0xc50113u, 98295ll, "MPY maps W5 times W7"},
+        {0xc60113u, -1073709050ll, "MPY maps W6 times W7"},
+        {0xf00111u, 4294705156ll, "MPY maps W4 square"},
+        {0xf10111u, 9ll, "MPY maps W5 square"},
+        {0xf20111u, 1073872900ll, "MPY maps W6 square"},
+        {0xf30111u, 1073545225ll, "MPY maps W7 square"},
+    };
+    size_t index;
+
+    for (index = 0u; index < sizeof(cases) / sizeof(cases[0]); index++) {
+        uint16_t expected_status =
+            cases[index].result < INT32_MIN || cases[index].result > INT32_MAX
+                ? 0x880fu
+                : 0x000fu;
+        dspic33_reset(cpu, 0u);
+        load_instruction(state, cpu, 0u, cases[index].opcode);
+        dspic33_set_working_register(cpu, 4u, 0xfffeu);
+        dspic33_set_working_register(cpu, 5u, 0xfffdu);
+        dspic33_set_working_register(cpu, 6u, 0x8002u);
+        dspic33_set_working_register(cpu, 7u, 0x8003u);
+        cpu->corcon = 0x2001u;
+        cpu->sr = 0x000fu;
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 1u &&
+                   cpu->accumulator[0] == cases[index].result &&
+                   cpu->accumulator[1] == 0,
+               cases[index].execution);
+        expect(state,
+               cpu->corcon == 0x2001u && cpu->sr == expected_status &&
+                   cpu->w[4] == 0xfffeu && cpu->w[5] == 0xfffdu &&
+                   cpu->w[6] == 0x8002u && cpu->w[7] == 0x8003u &&
+                   cpu->illegal_reset_count == 0u,
+               "DSP register pair preserves control, status, and operands");
+    }
+}
+
 static void illegal_condition_reset_cases(ProcessorConformance* state, Dspic33* cpu) {
     static const uint16_t preserved_addresses[] = {
         0x0742u, 0x0744u, 0x0746u, 0x0748u, 0x074eu, 0x0758u, 0x075au,
@@ -4066,6 +4168,8 @@ int main(void) {
         retfie_stack_timing_case(&state, &cpu);
         interrupt_stack_timing_case(&state, &cpu);
         invalid_move_double_cases(&state, &cpu);
+        invalid_dsp_encoding_cases(&state, &cpu);
+        valid_dsp_register_pair_cases(&state, &cpu);
         illegal_condition_reset_cases(&state, &cpu);
         dspic33_destroy(&cpu);
     }

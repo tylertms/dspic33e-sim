@@ -3,7 +3,7 @@
 .equ _conformance_y_scratch, 0x9000
 
 .global _multiply_conformance_cases
-_multiply_conformance_cases = 153
+_multiply_conformance_cases = 163
 .global _multiply_conformance_group_complete
 _multiply_conformance_group_complete = 0
 
@@ -27,6 +27,14 @@ _multiply_conformance_group_complete = 0
     clr A
     clr B
     set_status \value
+.endm
+
+.macro record_multiply_pair id, opcode
+    .pword \opcode
+    mov w13, w7
+    record_accumulator \id, ACCAL, ACCAH, ACCAU
+    mov w7, w13
+    mov #0x8003, w7
 .endm
 
 .global _run_multiply_conformance
@@ -969,6 +977,27 @@ _run_multiply_conformance:
     mpy w4*w5, A, [w8]+=2, w4, [w10]-=2, w5
     record_accumulator_case 0x079d, w8, w8, w8
     record_accumulator_case 0x079e, w10, w10, w10
+
+    mov w6, w12
+    mov w7, w13
+    mov #0x2001, w0
+    mov w0, CORCON
+    mov #0xfffe, w4
+    mov #0xfffd, w5
+    mov #0x8002, w6
+    mov #0x8003, w7
+    record_multiply_pair 0x079f, 0xc00113
+    record_multiply_pair 0x07a0, 0xc10113
+    record_multiply_pair 0x07a1, 0xc20113
+    record_multiply_pair 0x07a2, 0xc40113
+    record_multiply_pair 0x07a3, 0xc50113
+    record_multiply_pair 0x07a4, 0xc60113
+    record_multiply_pair 0x07a5, 0xf00111
+    record_multiply_pair 0x07a6, 0xf10111
+    record_multiply_pair 0x07a7, 0xf20111
+    record_multiply_pair 0x07a8, 0xf30111
+    mov w12, w6
+    mov w13, w7
     pop w0
     mov w0, YMODEND
     pop w0

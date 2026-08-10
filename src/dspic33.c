@@ -1945,6 +1945,22 @@ static bool dsp_multiply_registers(uint32_t opcode, uint8_t* left, uint8_t* righ
     return true;
 }
 
+static bool dsp_encoding_valid(uint32_t opcode) {
+    if ((opcode & 0xf80000u) == 0xc00000u) {
+        uint8_t pair = (uint8_t)((opcode >> 16u) & 7u);
+        return (pair != 3u && pair != 7u) ||
+               ((opcode & 0x004000u) == 0u && (opcode & 3u) != 3u);
+    }
+    if ((opcode & 0xfc0000u) == 0xf00000u) {
+        if ((opcode & 0x004000u) == 0u) {
+            return (opcode & 2u) == 0u;
+        }
+        return (opcode & 0x000c02u) == 2u && ((opcode >> 6u) & 0x0fu) != 4u &&
+               ((opcode >> 2u) & 0x0fu) != 4u;
+    }
+    return true;
+}
+
 static int64_t dsp_multiply_operand(const Dspic33* cpu, uint8_t register_index,
                                     uint8_t sign_mode) {
     bool unsigned_operand =
@@ -2937,6 +2953,11 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     if ((opcode & 0xff7fffu) == 0xcb0000u || (opcode & 0xff7fffu) == 0xcb1000u ||
         (opcode & 0xff7fffu) == 0xcb3000u) {
         return execute_accumulator_arithmetic(cpu, opcode);
+    }
+    if (((opcode & 0xf80000u) == 0xc00000u || (opcode & 0xfc0000u) == 0xf00000u) &&
+        !dsp_encoding_valid(opcode)) {
+        perform_warm_reset(cpu, 0x4000u, true);
+        return true;
     }
     if ((opcode & 0xff4000u) == 0xc30000u || (opcode & 0xff4000u) == 0xc70000u) {
         return execute_dsp_clear_or_move(cpu, opcode);
