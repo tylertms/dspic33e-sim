@@ -20,12 +20,15 @@ enum {
     CRC_DATA_HIGH = 0x064au,
     CRC_SHIFT_LOW = 0x064cu,
     CRC_SHIFT_HIGH = 0x064eu,
+    CRC_PMD_ADDRESS = 0x0764u,
     CRC_ENABLE = 0x8000u,
+    CRC_STOP_IDLE = 0x2000u,
     CRC_FULL = 0x0080u,
     CRC_EMPTY = 0x0040u,
     CRC_INTERRUPT_EMPTY = 0x0020u,
     CRC_GO = 0x0010u,
     CRC_LITTLE_ENDIAN = 0x0008u,
+    CRC_PMD = 0x0080u,
     CRC_INTERRUPT_FLAG = 0x0008u,
     CRC_BITS_PER_CYCLE = 2u,
     CRC_IRQ = 67u,
@@ -184,21 +187,19 @@ static void lane_cases(CrcConformance* state, Dspic33* cpu) {
     dspic33_write_byte(cpu, CRC_DATA_LOW, 0x12u);
     dspic33_write_byte(cpu, CRC_DATA_LOW + 1u, 0x34u);
     dspic33_write_word(cpu, CRC_DATA_LOW, 0x5678u);
-    expect(state, valid_words(cpu) == 4u, "byte lanes enqueue four words");
-    expect(state,
-           cpu->io.crc.words[0] == 0x12u && cpu->io.crc.words[1] == 0x34u &&
-               cpu->io.crc.words[2] == 0x78u && cpu->io.crc.words[3] == 0x56u,
-           "byte lane order");
+    expect(state, valid_words(cpu) == 2u, "byte lanes enqueue two words");
+    expect(state, cpu->io.crc.words[0] == 0x12u && cpu->io.crc.words[1] == 0x34u,
+           "byte lane order and word-write rejection");
 
     configure(cpu, 16u, 16u, 0x1021u, false, false);
     dspic33_write_byte(cpu, CRC_DATA_LOW, 0x12u);
-    expect(state, valid_words(cpu) == 0u, "word low byte waits");
+    expect(state, valid_words(cpu) == 0u, "word low byte ignored");
     dspic33_write_byte(cpu, CRC_DATA_LOW + 1u, 0x34u);
+    expect(state, valid_words(cpu) == 0u, "word high byte ignored");
     dspic33_write_word(cpu, CRC_DATA_LOW, 0x5678u);
     dspic33_write_word(cpu, CRC_DATA_HIGH, 0x9abcu);
-    expect(state, valid_words(cpu) == 2u, "word high byte and word commit");
-    expect(state, cpu->io.crc.words[0] == 0x3412u && cpu->io.crc.words[1] == 0x5678u,
-           "word lane assembly");
+    expect(state, valid_words(cpu) == 1u, "word write commits and CRCDATH ignores");
+    expect(state, cpu->io.crc.words[0] == 0x5678u, "word lane value");
 
     configure(cpu, 17u, 16u, 0x1021u, false, false);
     dspic33_write_word(cpu, CRC_DATA_LOW, 0xabcdu);
@@ -447,6 +448,111 @@ static void lifecycle_cases(CrcConformance* state, Dspic33* cpu) {
            "disabled stale event has no effect");
 }
 
+static void power_cases(CrcConformance* state, Dspic33* cpu) {
+    configure(cpu, 8u, 16u, 0x1021u, false, false);
+    enqueue(cpu, 8u, 0x5au);
+    start(cpu);
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    expect(state, dspic33_device_advance(cpu, 8u), "advance sleeping CRC");
+    expect(state,
+           cpu->io.crc.active && cpu->io.crc.count == 1u &&
+               cpu->io.crc.bits_remaining == 0u && shift_value(cpu) == 0u &&
+               (dspic33_read_word(cpu, CRC_CONTROL) & CRC_GO) != 0u,
+           "Sleep suspends CRC state");
+    cpu->power_state = DSPIC33_POWER_ACTIVE;
+    expect(state, dspic33_device_advance(cpu, 4u), "resume sleeping CRC");
+    expect(state, shift_value(cpu) == 0xfbbfu && !cpu->io.crc.active,
+           "CRC resumes after Sleep");
+
+    configure(cpu, 8u, 16u, 0x1021u, false, false);
+    enqueue(cpu, 8u, 0x5au);
+    start(cpu);
+    cpu->power_state = DSPIC33_POWER_IDLE;
+    expect(state, dspic33_device_advance(cpu, 4u), "advance active Idle CRC");
+    expect(state, shift_value(cpu) == 0xfbbfu && !cpu->io.crc.active,
+           "CSIDL clear keeps CRC active in Idle");
+
+    configure(cpu, 8u, 16u, 0x1021u, false, false);
+    dspic33_write_word(cpu, CRC_CONTROL, (uint16_t)(CRC_ENABLE | CRC_STOP_IDLE));
+    enqueue(cpu, 8u, 0x5au);
+    start(cpu);
+    cpu->power_state = DSPIC33_POWER_IDLE;
+    expect(state, dspic33_device_advance(cpu, 8u), "advance stopped Idle CRC");
+    expect(state,
+           cpu->io.crc.active && cpu->io.crc.count == 1u &&
+               cpu->io.crc.bits_remaining == 0u && shift_value(cpu) == 0u,
+           "CSIDL set suspends CRC in Idle");
+    cpu->power_state = DSPIC33_POWER_ACTIVE;
+    expect(state, dspic33_device_advance(cpu, 4u), "resume stopped Idle CRC");
+    expect(state, shift_value(cpu) == 0xfbbfu && !cpu->io.crc.active,
+           "CRC resumes after stopped Idle");
+
+    configure(cpu, 8u, 16u, 0x1021u, false, true);
+    dspic33_write_word(cpu, CRC_CONTROL,
+                       (uint16_t)(CRC_ENABLE | CRC_STOP_IDLE | CRC_INTERRUPT_EMPTY));
+    enqueue(cpu, 8u, 0x5au);
+    start(cpu);
+    expect(state, dspic33_device_advance(cpu, 1u), "raise CRC empty interrupt");
+    cpu->power_state = DSPIC33_POWER_IDLE;
+    expect(state, dspic33_device_advance(cpu, 8u), "hold interrupted CRC in Idle");
+    expect(state,
+           interrupt_flag(cpu) && cpu->io.crc.active &&
+               cpu->io.crc.bits_remaining == 6u,
+           "pending CRC interrupt passes while clocks stop");
+    cpu->power_state = DSPIC33_POWER_ACTIVE;
+}
+
+static void pmd_cases(CrcConformance* state, Dspic33* cpu) {
+    uint8_t bits_remaining;
+    configure(cpu, 8u, 16u, 0x1021u, false, false);
+    enqueue(cpu, 8u, 0x5au);
+    start(cpu);
+    dspic33_write_word(cpu, CRC_PMD_ADDRESS, CRC_PMD);
+    expect(state, !cpu->io.crc.pmd_disabled, "CRC PMD disable is delayed");
+    expect(state, dspic33_device_advance(cpu, 1u) && cpu->io.crc.pmd_disabled,
+           "CRC PMD disable applies after one cycle");
+    bits_remaining = cpu->io.crc.bits_remaining;
+    expect(state,
+           cpu->io.crc.active && bits_remaining == 6u &&
+               dspic33_read_word(cpu, CRC_CONTROL) == 0u,
+           "CRC PMD hides registers after current cycle");
+    dspic33_write_word(cpu, CRC_CONFIG, 0xffffu);
+    expect(state, dspic33_device_advance(cpu, 8u), "advance PMD-disabled CRC");
+    expect(state, cpu->io.crc.active && cpu->io.crc.bits_remaining == bits_remaining,
+           "CRC PMD suspends shift state");
+    dspic33_write_word(cpu, CRC_PMD_ADDRESS, 0u);
+    expect(state, cpu->io.crc.pmd_disabled, "CRC PMD enable is delayed");
+    expect(state, dspic33_device_advance(cpu, 1u) && !cpu->io.crc.pmd_disabled,
+           "CRC PMD enable applies after one cycle");
+    expect(state, dspic33_read_word(cpu, CRC_CONFIG) == 0x070fu,
+           "CRC PMD ignores register writes and preserves configuration");
+    expect(state, shift_value(cpu) == 0x1021u, "CRC PMD preserves partial remainder");
+    expect(state, dspic33_device_advance(cpu, 3u), "finish PMD-resumed CRC");
+    expect(state, shift_value(cpu) == 0xfbbfu && !cpu->io.crc.active,
+           "CRC completes after PMD resume");
+
+    configure(cpu, 8u, 16u, 0x1021u, false, false);
+    dspic33_write_word(cpu, CRC_PMD_ADDRESS, CRC_PMD);
+    dspic33_write_word(cpu, CRC_PMD_ADDRESS, 0u);
+    expect(state, cpu->io.crc.pmd_generation == 2u && cpu->events.count == 2u,
+           "rapid CRC PMD toggle queues generations");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && !cpu->io.crc.pmd_disabled &&
+               (dspic33_read_word(cpu, CRC_PMD_ADDRESS) & CRC_PMD) == 0u,
+           "stale CRC PMD event cannot override latest state");
+
+    configure(cpu, 8u, 16u, 0x1021u, false, false);
+    cpu->device_cycles = UINT64_MAX;
+    dspic33_write_word(cpu, CRC_PMD_ADDRESS, CRC_PMD);
+    expect(state,
+           (dspic33_read_word(cpu, CRC_PMD_ADDRESS) & CRC_PMD) == 0u &&
+               cpu->io.crc.pmd_generation == 2u && !cpu->io.crc.pmd_disabled &&
+               cpu->events.count == 0u,
+           "failed CRC PMD transition rolls back and invalidates generation");
+    expect(state, cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR,
+           "failed CRC PMD transition reports queue error");
+}
+
 static void interrupt_service_cases(CrcConformance* state, Dspic33* cpu) {
     uint16_t priority_address = (uint16_t)(0x0840u + (CRC_IRQ / 4u) * 2u);
     uint16_t priority_shift = (uint16_t)((CRC_IRQ % 4u) * 4u);
@@ -523,13 +629,26 @@ static void copy_reset_failure_cases(CrcConformance* state, Dspic33* cpu) {
            "copied CRC result matches source");
 
     configure(cpu, 8u, 16u, 0x1021u, false, false);
+    dspic33_write_word(cpu, CRC_PMD_ADDRESS, CRC_PMD);
+    expect(state, dspic33_copy(&copy, cpu), "copy pending CRC PMD transition");
+    expect(state,
+           copy.io.crc.pmd_generation == 1u && !copy.io.crc.pmd_disabled &&
+               copy.events.count == 1u && copy.events.items != cpu->events.items,
+           "copy retains independent pending CRC PMD state");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && dspic33_device_advance(&copy, 1u) &&
+               cpu->io.crc.pmd_disabled && copy.io.crc.pmd_disabled,
+           "copied CRC PMD transitions complete equally");
+
+    configure(cpu, 8u, 16u, 0x1021u, false, false);
     enqueue(cpu, 8u, 0x12u);
     start(cpu);
     expect(state, dspic33_device_advance(cpu, 1u), "reset begins CRC");
     dspic33_reset(cpu, 0u);
     expect(state,
            dspic33_read_word(cpu, CRC_CONTROL) == CRC_EMPTY && !cpu->io.crc.active &&
-               cpu->io.crc.count == 0u && cpu->events.count == 0u,
+               cpu->io.crc.count == 0u && !cpu->io.crc.pmd_disabled &&
+               cpu->io.crc.pmd_generation == 0u && cpu->events.count == 0u,
            "POR aborts CRC and clears events");
 
     configure(cpu, 8u, 16u, 0x1021u, false, false);
@@ -556,6 +675,8 @@ int main(void) {
         width_matrix_cases(&state, &cpu);
         interrupt_timing_cases(&state, &cpu);
         lifecycle_cases(&state, &cpu);
+        power_cases(&state, &cpu);
+        pmd_cases(&state, &cpu);
         interrupt_service_cases(&state, &cpu);
         no_dma_cases(&state, &cpu);
         copy_reset_failure_cases(&state, &cpu);

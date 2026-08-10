@@ -148,6 +148,7 @@ typedef struct {
     uint32_t shift_data;
     uint32_t polynomial;
     uint16_t generation;
+    uint16_t pmd_generation;
     uint8_t head;
     uint8_t count;
     uint8_t data_width;
@@ -155,6 +156,7 @@ typedef struct {
     uint8_t bits_remaining;
     bool little_endian;
     bool active;
+    bool pmd_disabled;
 } Dspic33Crc;
 
 typedef struct {

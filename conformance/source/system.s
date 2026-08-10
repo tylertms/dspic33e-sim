@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 74
+_system_conformance_terminal_count = 75
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -158,6 +158,8 @@ _run_system_probe:
     bra z, _system_move_file_rmw_fault_probe
     cp w0, #74
     bra z, _system_move_file_store_fault_probe
+    cp w0, #75
+    bra z, _system_crc_lane_probe
     return
 
 .global _system_sleep_probe
@@ -611,6 +613,66 @@ _system_move_file_store_fault_execute:
 _system_move_file_store_fault_instruction:
     .pword 0xb7b001
     return
+
+.global _system_crc_lane_probe
+_system_crc_lane_probe:
+    clr w0
+    mov w0, CRCCON1
+    nop
+    mov #0x0700, w0
+    mov w0, CRCCON2
+    mov #0x8000, w0
+    mov w0, CRCCON1
+    mov #0x3412, w1
+    mov w1, CRCDATL
+    nop
+    mov CRCCON1, w0
+    mov w0, _system_crc_lane_state
+
+    clr w0
+    mov w0, CRCCON1
+    nop
+    mov #0x0f00, w0
+    mov w0, CRCCON2
+    mov #0x8000, w0
+    mov w0, CRCCON1
+    mov #0x0012, w1
+    mov #CRCDATL, w2
+    mov.b w1, [w2]
+    nop
+    mov CRCCON1, w0
+    mov w0, _system_crc_lane_state+2
+
+    clr w0
+    mov w0, CRCCON1
+    nop
+    mov #0x8000, w0
+    mov w0, CRCCON1
+    mov #0x0034, w1
+    mov #CRCDATL+1, w2
+    mov.b w1, [w2]
+    nop
+    mov CRCCON1, w0
+    mov w0, _system_crc_lane_state+4
+
+    clr w0
+    mov w0, CRCCON1
+    nop
+    mov #0x0700, w0
+    mov w0, CRCCON2
+    mov #0x8000, w0
+    mov w0, CRCCON1
+    mov #0x0012, w1
+    mov #CRCDATL, w2
+    mov.b w1, [w2]
+    nop
+    mov CRCCON1, w0
+    mov w0, _system_crc_lane_state+6
+    clr w0
+    mov w0, CRCCON1
+.global _system_crc_lane_complete
+_system_crc_lane_complete:
+    bra _system_crc_lane_complete
 _system_move_file_load_fault_execute:
     set_status 0x010d
     mov #0xa5a5, w0

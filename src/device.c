@@ -169,15 +169,19 @@ enum {
     CRC_DATA_HIGH = 0x064au,
     CRC_SHIFT_LOW = 0x064cu,
     CRC_SHIFT_HIGH = 0x064eu,
+    CRC_PMD_ADDRESS = 0x0764u,
     CRC_ENABLE = 0x8000u,
+    CRC_STOP_IDLE = 0x2000u,
     CRC_WORD_COUNT_MASK = 0x1f00u,
     CRC_FULL = 0x0080u,
     CRC_EMPTY = 0x0040u,
     CRC_INTERRUPT_EMPTY = 0x0020u,
     CRC_GO = 0x0010u,
     CRC_LITTLE_ENDIAN = 0x0008u,
+    CRC_PMD = 0x0080u,
     CRC_BITS_PER_CYCLE = 2u,
     CRC_IRQ = 67u,
+    CRC_EVENT_PMD_SOURCE = UINT16_MAX,
     PMP_CONTROL = 0x0600u,
     PMP_MODE = 0x0602u,
     PMP_ADDRESS = 0x0604u,
@@ -1218,9 +1222,13 @@ static void crc_abort(Dspic33* cpu) {
 
 static void crc_reset_runtime(Dspic33* cpu) {
     uint16_t generation = (uint16_t)(cpu->io.crc.generation + 1u);
+    uint16_t pmd_generation = cpu->io.crc.pmd_generation;
     uint16_t control = raw_word(cpu, CRC_CONTROL);
+    bool pmd_disabled = cpu->io.crc.pmd_disabled;
     memset(&cpu->io.crc, 0, sizeof(cpu->io.crc));
     cpu->io.crc.generation = generation;
+    cpu->io.crc.pmd_generation = pmd_generation;
+    cpu->io.crc.pmd_disabled = pmd_disabled;
     raw_write_word(cpu, CRC_DATA_LOW, 0u);
     raw_write_word(cpu, CRC_DATA_HIGH, 0u);
     raw_write_word(cpu, CRC_SHIFT_LOW, 0u);
@@ -1317,6 +1325,11 @@ static void run_crc(Dspic33* cpu, uint16_t generation) {
         (control & (CRC_ENABLE | CRC_GO)) != (CRC_ENABLE | CRC_GO)) {
         return;
     }
+    if (cpu->io.crc.pmd_disabled || cpu->power_state == DSPIC33_POWER_SLEEP ||
+        (cpu->power_state == DSPIC33_POWER_IDLE && (control & CRC_STOP_IDLE) != 0u)) {
+        crc_schedule(cpu);
+        return;
+    }
     if (cpu->io.crc.bits_remaining == 0u) {
         if (cpu->io.crc.count == 0u) {
             cpu->io.crc.active = false;
@@ -1339,6 +1352,32 @@ static void run_crc(Dspic33* cpu, uint16_t generation) {
         return;
     }
     crc_schedule(cpu);
+}
+
+static void run_crc_pmd(Dspic33* cpu, uint32_t value) {
+    uint16_t generation = (uint16_t)(value >> 1u);
+    if (generation != cpu->io.crc.pmd_generation) {
+        return;
+    }
+    cpu->io.crc.pmd_disabled = (value & 1u) != 0u;
+    if (!cpu->io.crc.pmd_disabled) {
+        crc_start_if_ready(cpu);
+    }
+}
+
+static void update_crc_pmd(Dspic33* cpu, uint16_t previous) {
+    bool disabled = (raw_word(cpu, CRC_PMD_ADDRESS) & CRC_PMD) != 0u;
+    if (((previous & CRC_PMD) != 0u) == disabled) {
+        return;
+    }
+    cpu->io.crc.pmd_generation++;
+    if (!dspic33_schedule(
+            cpu, DSPIC33_EVENT_CRC, CRC_EVENT_PMD_SOURCE,
+            ((uint32_t)cpu->io.crc.pmd_generation << 1u) | (disabled ? 1u : 0u), 1u)) {
+        raw_write_word(cpu, CRC_PMD_ADDRESS, previous);
+        cpu->io.crc.pmd_generation++;
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    }
 }
 
 static uint64_t pmp_transfer_cycles(uint16_t mode) {
@@ -7334,7 +7373,11 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
         run_usb(cpu, event->source);
         break;
     case DSPIC33_EVENT_CRC:
-        run_crc(cpu, (uint16_t)event->value);
+        if (event->source == CRC_EVENT_PMD_SOURCE) {
+            run_crc_pmd(cpu, event->value);
+        } else {
+            run_crc(cpu, (uint16_t)event->value);
+        }
         break;
     case DSPIC33_EVENT_PMP:
         if (event->source == PMP_EVENT_CLEAR_BUSY) {
@@ -8486,24 +8529,13 @@ static void update_crc_data(Dspic33* cpu, uint16_t address, uint16_t requested) 
     }
     if (base == CRC_DATA_LOW) {
         if (width <= 8u) {
-            if (write_width == 2u) {
-                crc_push(cpu, requested & 0x00ffu);
-                crc_push(cpu, requested >> 8u);
-            } else {
+            if (write_width == 1u) {
                 crc_push(cpu, requested >> (high_byte ? 8u : 0u));
             }
         } else if (width <= 16u) {
             if (write_width == 2u) {
                 crc_push(cpu, requested);
                 cpu->io.crc.data_latch = 0u;
-            } else if (high_byte) {
-                cpu->io.crc.data_latch =
-                    (cpu->io.crc.data_latch & 0xffff00ffu) | requested;
-                crc_push(cpu, cpu->io.crc.data_latch);
-                cpu->io.crc.data_latch = 0u;
-            } else {
-                cpu->io.crc.data_latch =
-                    (cpu->io.crc.data_latch & 0xffffff00u) | (requested & 0x00ffu);
             }
         } else if (write_width == 2u) {
             cpu->io.crc.data_latch = (cpu->io.crc.data_latch & 0xffff0000u) | requested;
@@ -8560,7 +8592,13 @@ static void update_crc_control(Dspic33* cpu, uint16_t previous) {
 static void update_crc_register(Dspic33* cpu, uint16_t address, uint16_t previous,
                                 uint16_t requested) {
     uint16_t base = (uint16_t)(address & 0xfffeu);
-    if (base == CRC_CONTROL) {
+    if (base == CRC_PMD_ADDRESS) {
+        update_crc_pmd(cpu, previous);
+    } else if (base < CRC_CONTROL || base > CRC_SHIFT_HIGH) {
+        return;
+    } else if (cpu->io.crc.pmd_disabled) {
+        raw_write_word(cpu, base, previous);
+    } else if (base == CRC_CONTROL) {
         update_crc_control(cpu, previous);
     } else if (base == CRC_DATA_LOW || base == CRC_DATA_HIGH) {
         update_crc_data(cpu, address, requested);
@@ -8740,6 +8778,9 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
     uint8_t port;
     uint8_t channel;
     uint8_t timer;
+    if (cpu->io.crc.pmd_disabled && base >= CRC_CONTROL && base <= CRC_SHIFT_HIGH) {
+        return 0u;
+    }
     if (dspic33_i2c_read_register(cpu, address, &value)) {
         return value;
     }
