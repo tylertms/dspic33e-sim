@@ -605,6 +605,7 @@ typedef struct {
     bool instruction_active;
     uint8_t current_instruction_cycles;
     bool non_cpu_sfr_read;
+    bool psv_read;
     bool address_error;
     bool address_error_access_allowed;
     bool address_error_working_state_completed;

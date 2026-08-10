@@ -254,13 +254,20 @@ static void record_non_cpu_sfr_read(Dspic33* cpu, uint32_t address) {
     }
 }
 
-static uint8_t read_data_byte(Dspic33* cpu, uint32_t address) {
+static void record_cpu_data_read(Dspic33* cpu, uint32_t address) {
     record_non_cpu_sfr_read(cpu, address);
+    if (cpu->instruction_active && (address & PSV_ADDRESS) != 0u) {
+        cpu->psv_read = true;
+    }
+}
+
+static uint8_t read_data_byte(Dspic33* cpu, uint32_t address) {
+    record_cpu_data_read(cpu, address);
     return dspic33_read_byte(cpu, address);
 }
 
 static uint16_t read_data_word(Dspic33* cpu, uint32_t address) {
-    record_non_cpu_sfr_read(cpu, address);
+    record_cpu_data_read(cpu, address);
     return dspic33_read_word(cpu, address);
 }
 
@@ -2310,12 +2317,15 @@ static void advance_instruction(Dspic33* cpu, uint64_t cycles,
     service_pending_soft_trap(cpu);
 }
 
+static bool is_skip_instruction(uint32_t opcode) {
+    uint8_t bit_kind = (uint8_t)((opcode >> 16u) & 0x07u);
+    return ((opcode & 0xf00000u) == 0xa00000u && bit_kind >= 6u) ||
+           compare_skip_kind(opcode) != COMPARE_SKIP_NONE;
+}
+
 static uint64_t instruction_cycles(const Dspic33* cpu, uint32_t opcode,
                                    uint32_t instruction_pc) {
-    uint8_t bit_kind = (uint8_t)((opcode >> 16u) & 0x07u);
-    bool bit_skip = (opcode & 0xf00000u) == 0xa00000u && bit_kind >= 6u;
-    bool skip = bit_skip || compare_skip_kind(opcode) != COMPARE_SKIP_NONE;
-    if (skip) {
+    if (is_skip_instruction(opcode)) {
         if (cpu->address_error && cpu->address_error_control_state_completed &&
             cpu->address_error_return == DSPIC33_PROGRAM_LIMIT &&
             instruction_pc + 2u == DSPIC33_PROGRAM_LIMIT) {
@@ -3018,6 +3028,7 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
     cpu->instruction_active = false;
     cpu->current_instruction_cycles = 0u;
     cpu->non_cpu_sfr_read = false;
+    cpu->psv_read = false;
     cpu->address_error = false;
     cpu->address_error_access_allowed = false;
     cpu->address_error_working_state_completed = false;
@@ -3512,6 +3523,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     bool sequential_hole_fetch;
     bool non_cpu_sfr_wait;
     bool power_save_next;
+    uint64_t base_cycles;
     cpu->illegal_reset = false;
     if (cpu->nvm.active) {
         if (!dspic33_device_advance_nvm(cpu)) {
@@ -3588,6 +3600,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     cpu->pc += 2u;
     cpu->instructions++;
     cpu->non_cpu_sfr_read = false;
+    cpu->psv_read = false;
     cpu->current_instruction_cycles =
         (uint8_t)instruction_cycles(cpu, opcode, instruction_pc);
     cpu->instruction_active = true;
@@ -3599,6 +3612,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         cpu->instruction_active = false;
         cpu->current_instruction_cycles = 0u;
         cpu->non_cpu_sfr_read = false;
+        cpu->psv_read = false;
         cpu->pc -= 2u;
         if (cpu->stop_reason == DSPIC33_RUNNING) {
             cpu->unsupported_opcode = opcode;
@@ -3610,11 +3624,13 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     if (cpu->illegal_reset) {
         return cpu->stop_reason;
     }
-    cycles = instruction_cycles(cpu, opcode, instruction_pc) +
-             (cpu->non_cpu_sfr_read ? 1u : 0u);
+    base_cycles = instruction_cycles(cpu, opcode, instruction_pc);
+    cycles = cpu->psv_read ? 5u + (is_skip_instruction(opcode) ? base_cycles - 1u : 0u)
+                           : base_cycles + (cpu->non_cpu_sfr_read ? 1u : 0u);
     non_cpu_sfr_wait = cpu->non_cpu_sfr_read;
     cpu->current_instruction_cycles = 0u;
     cpu->non_cpu_sfr_read = false;
+    cpu->psv_read = false;
     if (cpu->address_error) {
         uint32_t return_pc = cpu->address_error_return;
         bool control_state_completed = cpu->address_error_control_state_completed;

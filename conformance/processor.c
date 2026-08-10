@@ -12,6 +12,7 @@ typedef struct {
 } ProcessorConformance;
 
 enum {
+    PSV_TEST_ADDRESS = 0x01004000u,
     OPCODE_NOP = 0x000000u,
     OPCODE_POWER_SAVE_SLEEP = 0xfe4000u,
     OPCODE_RETURN = 0x060000u,
@@ -33,6 +34,7 @@ enum {
     OPCODE_BRA_0X55800 = 0x370012u,
     OPCODE_BRA_Z_0X55800 = 0x320012u,
     OPCODE_BTSS_W2_BIT_0 = 0xa60002u,
+    OPCODE_BTSS_W4_POST_INCREMENT_BIT_0 = 0xa60034u,
     OPCODE_BTSC_W2_BIT_0 = 0xa70002u,
     OPCODE_BTSC_W4_POST_INCREMENT_BIT_0 = 0xa70034u,
     OPCODE_CPSEQ = 0xe78010u,
@@ -2762,6 +2764,154 @@ static void non_cpu_sfr_timing_cases(ProcessorConformance* state, Dspic33* cpu) 
     expect(state, !cpu->non_cpu_sfr_read, "reset clears non-CPU SFR timing state");
 }
 
+static void psv_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_W2);
+    expect(state, dspic33_load_program_word(cpu, 0x4000u, 0x001357u),
+           "load PSV word timing value");
+    dspic33_set_working_register(cpu, 1u, 0xc000u);
+    cpu->dsrpag = 0x0200u;
+    cpu->disicnt = 6u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0x1357u &&
+               cpu->cycles == 5u && cpu->disicnt == 1u,
+           "PSV word read consumes five cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_BYTE_W1_POST_INCREMENT_W2);
+    dspic33_set_working_register(cpu, 1u, 0xc000u);
+    cpu->w[2] = 0xa500u;
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0xc001u &&
+               cpu->w[2] == 0xa557u && cpu->cycles == 5u,
+           "PSV byte read consumes five cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_PRE_INCREMENT_W2);
+    dspic33_set_working_register(cpu, 1u, 0xbffeu);
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0xc000u &&
+               cpu->w[2] == 0x1357u && cpu->cycles == 5u,
+           "PSV pre-increment read consumes five cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_W0_OFFSET_W2);
+    dspic33_set_working_register(cpu, 0u, 2u);
+    dspic33_set_working_register(cpu, 1u, 0xbffeu);
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[0] == 2u &&
+               cpu->w[1] == 0xbffeu && cpu->w[2] == 0x1357u && cpu->cycles == 5u,
+           "PSV indexed read consumes five cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W4_LITERAL_2_W2);
+    dspic33_set_working_register(cpu, 4u, 0xbffeu);
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0x1357u &&
+               cpu->w[4] == 0xbffeu && cpu->cycles == 5u,
+           "PSV literal-offset read consumes five cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_0X9000_W2);
+    expect(state, dspic33_load_program_word(cpu, 0x1000u, 0x005a5au),
+           "load direct PSV timing value");
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0x5a5au &&
+               cpu->cycles == 5u,
+           "direct PSV read consumes five cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_DOUBLE_W4_W6);
+    expect(state, dspic33_load_program_word(cpu, 0x4002u, 0x002468u),
+           "load second PSV double timing value");
+    dspic33_set_working_register(cpu, 4u, 0xc000u);
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[6] == 0x1357u &&
+               cpu->w[7] == 0x2468u && cpu->cycles == 5u,
+           "double PSV read consumes five total cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_ADD_W2_W4_POST_INCREMENT_W5);
+    dspic33_set_working_register(cpu, 2u, 1u);
+    dspic33_set_working_register(cpu, 4u, 0xc000u);
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[4] == 0xc002u &&
+               cpu->w[5] == 0x1358u && cpu->cycles == 5u,
+           "arithmetic PSV source consumes five cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_W2);
+    dspic33_set_working_register(cpu, 1u, 0xc000u);
+    dspic33_write_word(cpu, 0xc000u, 0x7777u);
+    cpu->dsrpag = 1u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0x7777u &&
+               cpu->cycles == 1u,
+           "EDS data read retains base timing");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_W2);
+    expect(state, dspic33_load_program_word(cpu, 0x4000u, 0xab1357u),
+           "load PSV high-byte timing value");
+    dspic33_set_working_register(cpu, 1u, 0xc000u);
+    cpu->dsrpag = 0x0300u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0x00abu &&
+               cpu->cycles == 5u,
+           "PSV high-byte read consumes five cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_BTSS_W4_POST_INCREMENT_BIT_0);
+    load_instruction(state, cpu, 2u, OPCODE_NOP);
+    expect(state, dspic33_load_program_word(cpu, 0x4004u, 0x001356u),
+           "load clear PSV skip bit");
+    dspic33_set_working_register(cpu, 4u, 0xc004u);
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+               cpu->w[4] == 0xc006u && cpu->cycles == 5u,
+           "untaken PSV bit skip consumes five cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_BTSS_W4_POST_INCREMENT_BIT_0);
+    load_instruction(state, cpu, 2u, OPCODE_NOP);
+    dspic33_set_working_register(cpu, 4u, 0xc000u);
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 4u &&
+               cpu->w[4] == 0xc002u && cpu->cycles == 6u,
+           "one-word PSV bit skip adds one cycle");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_BTSS_W4_POST_INCREMENT_BIT_0);
+    load_instruction(state, cpu, 2u, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 4u, 0u);
+    dspic33_set_working_register(cpu, 4u, 0xc000u);
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 6u &&
+               cpu->w[4] == 0xc002u && cpu->cycles == 7u,
+           "two-word PSV bit skip adds two cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    cpu->instruction_active = true;
+    cpu->psv_read = false;
+    dspic33_read_word(cpu, PSV_TEST_ADDRESS);
+    expect(state, !cpu->psv_read, "raw PSV read bypasses CPU instruction timing");
+    cpu->instruction_active = false;
+
+    cpu->psv_read = true;
+    dspic33_reset(cpu, 0u);
+    expect(state, !cpu->psv_read, "reset clears PSV timing state");
+}
+
 static void move_double_stack_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
     reset_processor_conformance(cpu, 0u);
     cpu->stop_on_trap = true;
@@ -3359,6 +3509,7 @@ int main(void) {
         instruction_cycle_cases(&state, &cpu);
         register_move_instruction_cases(&state, &cpu);
         non_cpu_sfr_timing_cases(&state, &cpu);
+        psv_timing_cases(&state, &cpu);
         call_stack_timing_case(&state, &cpu);
         move_double_stack_timing_cases(&state, &cpu);
         return_instruction_cycle_cases(&state, &cpu);
