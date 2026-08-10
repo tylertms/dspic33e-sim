@@ -2886,8 +2886,8 @@ static void psv_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
     cpu->dsrpag = 0x0200u;
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 4u &&
-               cpu->w[4] == 0xc002u && cpu->cycles == 6u,
-           "one-word PSV bit skip adds one cycle");
+               cpu->w[4] == 0xc002u && cpu->cycles == 5u,
+           "one-word PSV bit skip remains five cycles");
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_BTSS_W4_POST_INCREMENT_BIT_0);
@@ -2897,8 +2897,8 @@ static void psv_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
     cpu->dsrpag = 0x0200u;
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 6u &&
-               cpu->w[4] == 0xc002u && cpu->cycles == 7u,
-           "two-word PSV bit skip adds two cycles");
+               cpu->w[4] == 0xc002u && cpu->cycles == 5u,
+           "two-word PSV bit skip remains five cycles");
 
     reset_processor_conformance(cpu, 0u);
     cpu->instruction_active = true;

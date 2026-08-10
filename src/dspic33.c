@@ -2317,15 +2317,12 @@ static void advance_instruction(Dspic33* cpu, uint64_t cycles,
     service_pending_soft_trap(cpu);
 }
 
-static bool is_skip_instruction(uint32_t opcode) {
-    uint8_t bit_kind = (uint8_t)((opcode >> 16u) & 0x07u);
-    return ((opcode & 0xf00000u) == 0xa00000u && bit_kind >= 6u) ||
-           compare_skip_kind(opcode) != COMPARE_SKIP_NONE;
-}
-
 static uint64_t instruction_cycles(const Dspic33* cpu, uint32_t opcode,
                                    uint32_t instruction_pc) {
-    if (is_skip_instruction(opcode)) {
+    uint8_t bit_kind = (uint8_t)((opcode >> 16u) & 0x07u);
+    bool bit_skip = (opcode & 0xf00000u) == 0xa00000u && bit_kind >= 6u;
+    bool skip = bit_skip || compare_skip_kind(opcode) != COMPARE_SKIP_NONE;
+    if (skip) {
         if (cpu->address_error && cpu->address_error_control_state_completed &&
             cpu->address_error_return == DSPIC33_PROGRAM_LIMIT &&
             instruction_pc + 2u == DSPIC33_PROGRAM_LIMIT) {
@@ -3625,8 +3622,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         return cpu->stop_reason;
     }
     base_cycles = instruction_cycles(cpu, opcode, instruction_pc);
-    cycles = cpu->psv_read ? 5u + (is_skip_instruction(opcode) ? base_cycles - 1u : 0u)
-                           : base_cycles + (cpu->non_cpu_sfr_read ? 1u : 0u);
+    cycles = cpu->psv_read ? 5u : base_cycles + (cpu->non_cpu_sfr_read ? 1u : 0u);
     non_cpu_sfr_wait = cpu->non_cpu_sfr_read;
     cpu->current_instruction_cycles = 0u;
     cpu->non_cpu_sfr_read = false;
