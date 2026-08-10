@@ -67,6 +67,11 @@ enum {
     OPCODE_BSET_WORD_W4_POST_INCREMENT = 0xa09034u,
     OPCODE_TBLRDL_W2_W3 = 0xba0192u,
     OPCODE_TBLRDL_W2_W4_POST_INCREMENT = 0xba1a12u,
+    OPCODE_TBLRDL_W2_POST_INCREMENT_W4_POST_INCREMENT = 0xba1a32u,
+    OPCODE_TBLRDL_W2_W15_POST_INCREMENT = 0xba1f92u,
+    OPCODE_TBLRDL_BYTE_W2_W3 = 0xba4192u,
+    OPCODE_TBLRDH_W2_W3 = 0xba8192u,
+    OPCODE_TBLRDH_BYTE_W2_W3 = 0xbac192u,
     OPCODE_TBLWTL_W2_W3 = 0xbb0982u,
     OPCODE_MOV_W0_SPLIM = 0x880100u,
     OPCODE_MOV_SENTINEL_W1 = 0x211111u,
@@ -401,8 +406,70 @@ static void program_read_address_error_cases(ProcessorConformance* state,
     dspic33_write_word(cpu, 0x1000u, 0xa5a5u);
     expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED,
            "unimplemented table read with indirect destination traps");
-    expect(state, cpu->w[4] == 0x1002u && dspic33_read_word(cpu, 0x1000u) == 0xa5a5u,
-           "table read trap completes pointer update and inhibits data write");
+    expect(state, cpu->w[4] == 0x1002u && dspic33_read_word(cpu, 0x1000u) == 0u,
+           "table read trap completes pointer update and zero result write");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_TBLRDH_W2_W3);
+    cpu->tblpag = 5u;
+    cpu->w[2] = 0x5800u;
+    cpu->w[3] = 0xa5a5u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->w[2] == 0x5800u &&
+               cpu->w[3] == 0u && cpu->cycles == 2u,
+           "unimplemented high table word read returns zero in two cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_TBLRDH_BYTE_W2_W3);
+    cpu->tblpag = 5u;
+    cpu->w[2] = 0x5800u;
+    cpu->w[3] = 0xa5a5u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->w[2] == 0x5800u &&
+               cpu->w[3] == 0xa500u && cpu->cycles == 2u,
+           "unimplemented high table byte read clears the low byte in two cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_TBLRDL_BYTE_W2_W3);
+    cpu->tblpag = 5u;
+    cpu->w[2] = 0x5801u;
+    cpu->w[3] = 0xa5a5u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->w[2] == 0x5801u &&
+               cpu->w[3] == 0xa500u && cpu->cycles == 2u,
+           "unimplemented low table byte read accepts odd source in two cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_TBLRDL_W2_POST_INCREMENT_W4_POST_INCREMENT);
+    cpu->tblpag = 5u;
+    cpu->w[2] = 0x5800u;
+    cpu->w[4] = 0x1001u;
+    dspic33_write_word(cpu, 0x1000u, 0xa5a5u);
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 2u,
+           "unimplemented table read and odd destination coalesce in two cycles");
+    expect(state,
+           cpu->w[2] == 0x5802u && cpu->w[4] == 0x1001u &&
+               dspic33_read_word(cpu, 0x1000u) == 0xa5a5u &&
+               cpu->last_trap_return == 2u,
+           "table read collision completes source and inhibits destination state");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_TBLRDL_W2_W15_POST_INCREMENT);
+    cpu->tblpag = 5u;
+    cpu->w[2] = 0x5800u;
+    dspic33_write_word(cpu, 0x5000u, 0xa5a5u);
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 2u,
+           "unimplemented table read through stack pointer traps in two cycles");
+    expect(state,
+           cpu->w[2] == 0x5800u && cpu->w[15] == 0x5006u &&
+               dspic33_read_word(cpu, 0x5000u) == 0u &&
+               dspic33_read_word(cpu, 0x5002u) == 2u,
+           "stack destination update and zero write precede the trap frame");
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_TBLWTL_W2_W3);
@@ -1778,6 +1845,21 @@ static void illegal_condition_reset_cases(ProcessorConformance* state, Dspic33* 
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset_count == 0u,
            "initialized table pointer completes access");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_TBLRDL_W2_W4_POST_INCREMENT);
+    cpu->tblpag = 5u;
+    dspic33_set_working_register(cpu, 2u, 0x5800u);
+    cpu->w[4] = 0x1000u;
+    expect_illegal_reset(
+        state, cpu,
+        "unimplemented table read with uninitialized destination resets processor");
+    expect(state,
+           !cpu->address_error && !cpu->address_error_access_allowed &&
+               !cpu->address_error_working_state_completed &&
+               !cpu->address_error_control_state_completed &&
+               cpu->address_error_return == 0u,
+           "table destination reset clears address error lifecycle state");
 
     dspic33_reset(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_DSP_INDEXED);

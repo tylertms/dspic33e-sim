@@ -1051,8 +1051,20 @@ static bool execute_table(Dspic33* cpu, uint32_t opcode) {
                 write_working_register(cpu, destination_register, value);
             }
         } else {
+            if (!validate_destination_after_source_execution(
+                    cpu, destination_mode, destination_register, byte_mode ? 1u : 2u)) {
+                if (!cpu->illegal_reset) {
+                    raise_program_read_error(cpu);
+                }
+                return true;
+            }
             operand_address(cpu, destination_mode, destination_register, 0u,
                             byte_mode ? 1u : 2u, true, &destination_address);
+            if (byte_mode) {
+                dspic33_write_byte(cpu, destination_address, (uint8_t)value);
+            } else {
+                write_word(cpu, destination_address, value);
+            }
         }
         raise_program_read_error(cpu);
         return true;

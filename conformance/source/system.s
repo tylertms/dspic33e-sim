@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 42
+_system_conformance_terminal_count = 47
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -94,6 +94,16 @@ _run_system_probe:
     bra z, _system_program_read_table_probe
     cp w0, #42
     bra z, _system_sequential_hole_dispatch
+    cp w0, #43
+    bra z, _system_program_read_high_probe
+    cp w0, #44
+    bra z, _system_program_read_high_byte_probe
+    cp w0, #45
+    bra z, _system_program_read_low_byte_probe
+    cp w0, #46
+    bra z, _system_program_read_collision_probe
+    cp w0, #47
+    bra z, _system_program_read_stack_probe
     return
 
 .global _system_sleep_probe
@@ -695,6 +705,62 @@ _system_program_read_table_probe:
     mov #0x1111, w1
     return
 
+.macro prepare_program_read_probe source
+    mov #0x5000, w15
+    clr w3
+    mov #0x010f, w0
+    mov w0, SR
+    lnk #0
+    mov #0x5000, w15
+    mov #0x0005, w0
+    mov w0, TBLPAG
+    mov #\source, w1
+    mov #0xa5a5, w0
+    mov w0, _system_program_read_buffer
+.endm
+
+.global _system_program_read_high_probe
+_system_program_read_high_probe:
+    prepare_program_read_probe 0x5800
+    mov #0xaaaa, w2
+    tblrdh [w1], w2
+    mov #0x1111, w3
+    return
+
+.global _system_program_read_high_byte_probe
+_system_program_read_high_byte_probe:
+    prepare_program_read_probe 0x5800
+    mov #0xaaaa, w2
+    tblrdh.b [w1], w2
+    mov #0x1111, w3
+    return
+
+.global _system_program_read_low_byte_probe
+_system_program_read_low_byte_probe:
+    prepare_program_read_probe 0x5801
+    mov #0xaaaa, w2
+    tblrdl.b [w1], w2
+    mov #0x1111, w3
+    return
+
+.global _system_program_read_collision_probe
+_system_program_read_collision_probe:
+    prepare_program_read_probe 0x5800
+    mov #_system_program_read_buffer+1, w2
+    tblrdl [w1++], [w2++]
+    mov #0x1111, w3
+    return
+
+.global _system_program_read_stack_probe
+_system_program_read_stack_probe:
+    prepare_program_read_probe 0x5800
+    mov #0xaaaa, w2
+    mov #0xa5a5, w0
+    mov w0, [w15]
+    tblrdl [w1], [w15++]
+    mov #0x1111, w3
+    return
+
 .global _system_program_target_bra_dispatch
 _system_program_target_bra_dispatch:
     goto _system_program_target_bra_probe
@@ -855,6 +921,28 @@ __AddressError:
     mov w0, _system_program_target_trap_state+18
     mov CORCON, w0
     mov w0, _system_program_target_trap_state+20
+    mov w1, _system_program_read_trap_state
+    mov w2, _system_program_read_trap_state+2
+    mov w3, _system_program_read_trap_state+4
+    mov w15, _system_program_read_trap_state+6
+    mov INTCON1, w0
+    mov w0, _system_program_read_trap_state+8
+    mov [w15-4], w0
+    mov w0, _system_program_read_trap_state+10
+    mov [w15-2], w0
+    mov w0, _system_program_read_trap_state+12
+    mov INTTREG, w0
+    mov w0, _system_program_read_trap_state+14
+    mov SR, w0
+    mov w0, _system_program_read_trap_state+16
+    mov CORCON, w0
+    mov w0, _system_program_read_trap_state+18
+    mov TBLPAG, w0
+    mov w0, _system_program_read_trap_state+20
+    mov _system_program_read_buffer, w0
+    mov w0, _system_program_read_trap_state+22
+    mov 0x5000, w0
+    mov w0, _system_program_read_trap_state+24
 .global _system_address_trap_complete
 _system_address_trap_complete:
     bra _system_address_trap_complete
