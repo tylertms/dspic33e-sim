@@ -427,7 +427,8 @@ static void print_inventory(const SfrAccessCensus* census) {
         "[sfr-access-inventory] definitions=%u addresses=%u aliases=%" PRIu32
         " mux-defaults=%" PRIu32 " mux-alternates=%u normal-bits=%u "
         "read-only-bits=%u reserved-bits=%u write-only-bits=%u "
-        "side-effect-bits=%u alternate-normal-bits=%u "
+        "side-effect-bits=%u split-access-addresses=%u split-access-bits=%u "
+        "alternate-normal-bits=%u "
         "alternate-read-only-bits=%u alternate-reserved-bits=%u "
         "alternate-write-only-bits=%u alternate-side-effect-bits=%u\n",
         DSPIC33_SFR_ACCESS_DEFINITION_COUNT, DSPIC33_SFR_ACCESS_ADDRESS_COUNT,
@@ -435,6 +436,8 @@ static void print_inventory(const SfrAccessCensus* census) {
         DSPIC33_SFR_ACCESS_NORMAL_BIT_COUNT, DSPIC33_SFR_ACCESS_READ_ONLY_BIT_COUNT,
         DSPIC33_SFR_ACCESS_RESERVED_BIT_COUNT, DSPIC33_SFR_ACCESS_WRITE_ONLY_BIT_COUNT,
         DSPIC33_SFR_ACCESS_SIDE_EFFECT_BIT_COUNT,
+        DSPIC33_SFR_ACCESS_SPLIT_ACCESS_ADDRESS_COUNT,
+        DSPIC33_SFR_ACCESS_SPLIT_ACCESS_BIT_COUNT,
         DSPIC33_SFR_MUX_ACCESS_NORMAL_BIT_COUNT,
         DSPIC33_SFR_MUX_ACCESS_READ_ONLY_BIT_COUNT,
         DSPIC33_SFR_MUX_ACCESS_RESERVED_BIT_COUNT,
@@ -526,6 +529,10 @@ int main(void) {
                            sizeof(dspic33_sfr_mux_access_expectations[0]) ==
                        DSPIC33_SFR_ACCESS_MUX_ALTERNATE_COUNT,
                    "SFR mux access expectation count");
+    _Static_assert(sizeof(dspic33_sfr_split_access_expectations) /
+                           sizeof(dspic33_sfr_split_access_expectations[0]) ==
+                       DSPIC33_SFR_ACCESS_SPLIT_ACCESS_ADDRESS_COUNT,
+                   "SFR split access expectation count");
     _Static_assert(sizeof(dspic33_sfr_conditional_access_expectations) /
                            sizeof(dspic33_sfr_conditional_access_expectations[0]) ==
                        DSPIC33_SFR_ACCESS_CONDITIONAL_COUNT,

@@ -54,6 +54,10 @@ static const uint16_t gpio_latch_addresses[DSPIC33_GPIO_PORT_COUNT] = {
     0x0e04u, 0x0e14u, 0x0e24u, 0x0e34u, 0x0e44u, 0x0e54u, 0x0e64u};
 static const uint16_t gpio_analog_addresses[DSPIC33_GPIO_PORT_COUNT] = {
     0x0e0eu, 0x0e1eu, 0x0e2eu, 0x0e3eu, 0x0e4eu, 0u, 0x0e6eu};
+static const uint16_t gpio_port_masks[DSPIC33_GPIO_PORT_COUNT] = {
+    0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x313fu, 0xf3cfu};
+static const uint16_t gpio_input_only_masks[DSPIC33_GPIO_PORT_COUNT] = {
+    0u, 0u, 0u, 0u, 0u, 0u, 0x000cu};
 
 typedef struct {
     uint16_t address;
@@ -8534,10 +8538,15 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
         if ((address & 0xfffeu) == gpio_port_addresses[port]) {
             uint16_t tris = raw_word(cpu, gpio_tris_addresses[port]);
             uint16_t lat = raw_word(cpu, gpio_latch_addresses[port]);
-            uint16_t pins = (uint16_t)((cpu->io.gpio[port] & tris) | (lat & ~tris));
-            if (gpio_analog_addresses[port] != 0u) {
-                pins &= (uint16_t)~raw_word(cpu, gpio_analog_addresses[port]);
+            uint16_t inputs = (uint16_t)(tris | gpio_input_only_masks[port]);
+            uint16_t analog = gpio_analog_addresses[port] != 0u
+                                  ? raw_word(cpu, gpio_analog_addresses[port])
+                                  : 0u;
+            if (port == 6u && (raw_word(cpu, USB_CON) & USB_ENABLE) != 0u) {
+                analog |= 0x000cu;
             }
+            uint16_t pins =
+                (uint16_t)((cpu->io.gpio[port] & inputs & ~analog) | (lat & ~inputs));
             return (uint8_t)(pins >> ((address & 1u) * 8u));
         }
     }
@@ -8983,15 +8992,17 @@ void dspic33_adc_input(Dspic33* cpu, uint8_t channel, uint16_t value) {
 }
 
 void dspic33_gpio_input(Dspic33* cpu, uint8_t port, uint16_t value) {
-    if (port < DSPIC33_GPIO_PORT_COUNT && cpu->io.gpio[port] != value) {
-        cpu->io.gpio[port] = value;
-        dspic33_raise_interrupt(cpu, 19u);
+    if (port < DSPIC33_GPIO_PORT_COUNT) {
+        cpu->io.gpio[port] = (uint16_t)(value & gpio_port_masks[port]);
     }
 }
 
 void dspic33_device_reset(Dspic33* cpu) {
+    uint16_t gpio[DSPIC33_GPIO_PORT_COUNT];
     size_t index;
+    memcpy(gpio, cpu->io.gpio, sizeof(gpio));
     memset(&cpu->io, 0, sizeof(cpu->io));
+    memcpy(cpu->io.gpio, gpio, sizeof(gpio));
     memcpy(cpu->io.qei.filtered_inputs, cpu->qei_inputs, sizeof(cpu->qei_inputs));
     memcpy(cpu->io.qei.logical_inputs, cpu->qei_inputs, sizeof(cpu->qei_inputs));
     cpu->io.uart_cts = (uint8_t)((1u << DSPIC33_UART_COUNT) - 1u);

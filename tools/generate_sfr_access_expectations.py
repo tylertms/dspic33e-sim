@@ -61,6 +61,15 @@ DOCUMENTED_SIDE_EFFECT_OVERRIDES = {
     ("QEI2STAT", 0x05C4): 0x2AAA,
     ("VEL2CNT", 0x05CC): 0xFFFF,
 }
+DOCUMENTED_SPLIT_ACCESS_OVERRIDES = {
+    ("PORTA", 0x0E02): 0xC6FF,
+    ("PORTB", 0x0E12): 0xFFFF,
+    ("PORTC", 0x0E22): 0xF01E,
+    ("PORTD", 0x0E32): 0xFFFF,
+    ("PORTE", 0x0E42): 0x03FF,
+    ("PORTF", 0x0E52): 0x313F,
+    ("PORTG", 0x0E62): 0xF3C3,
+}
 DOCUMENTED_NORMAL_OVERRIDES = {
     ("IEC8", 0x0830): 0x7FC0,
 }
@@ -80,6 +89,7 @@ DOCUMENTED_READ_ONLY_OVERRIDES = {
     ("QEI2IOC", 0x05C2): 0x000F,
     ("PTCON", 0x0C00): 0x1000,
     ("STCON", 0x0C0E): 0x1000,
+    ("PORTG", 0x0E62): 0x000C,
 }
 DOCUMENTED_DEPENDENT_READ_ONLY_OVERRIDES = {
     ("C1CTRL1", 0x0400): 0x00E0,
@@ -101,6 +111,9 @@ DOCUMENTED_WRITE_ONLY_OVERRIDES = {
 }
 DOCUMENTED_SIDE_EFFECT_OVERRIDE_BITS = sum(
     mask.bit_count() for mask in DOCUMENTED_SIDE_EFFECT_OVERRIDES.values()
+)
+DOCUMENTED_SPLIT_ACCESS_OVERRIDE_BITS = sum(
+    mask.bit_count() for mask in DOCUMENTED_SPLIT_ACCESS_OVERRIDES.values()
 )
 DOCUMENTED_NORMAL_OVERRIDE_BITS = sum(
     mask.bit_count() for mask in DOCUMENTED_NORMAL_OVERRIDES.values()
@@ -191,6 +204,7 @@ def access_masks(register):
     identity = (register["name"], address)
     normal_override = DOCUMENTED_NORMAL_OVERRIDES.get(identity, 0)
     side_effect_override = DOCUMENTED_SIDE_EFFECT_OVERRIDES.get(identity, 0)
+    split_access_override = DOCUMENTED_SPLIT_ACCESS_OVERRIDES.get(identity, 0)
     read_only_override = DOCUMENTED_READ_ONLY_OVERRIDES.get(identity, 0)
     dependent_read_only_override = DOCUMENTED_DEPENDENT_READ_ONLY_OVERRIDES.get(
         identity, 0
@@ -201,6 +215,7 @@ def access_masks(register):
     ) | DOCUMENTED_DEVICE_MODE_RESERVED_OVERRIDES.get(identity, 0)
     override = (
         side_effect_override
+        | split_access_override
         | read_only_override
         | write_only_override
         | reserved_override
@@ -212,10 +227,18 @@ def access_masks(register):
         )
     if (
         side_effect_override & read_only_override
+        or side_effect_override & split_access_override
         or side_effect_override & write_only_override
+        or split_access_override & read_only_override
+        or split_access_override & write_only_override
         or read_only_override & write_only_override
         or reserved_override
-        & (side_effect_override | read_only_override | write_only_override)
+        & (
+            side_effect_override
+            | split_access_override
+            | read_only_override
+            | write_only_override
+        )
     ):
         raise ValueError(
             f"documented access overrides overlap for {register['name']} "
@@ -238,6 +261,7 @@ def access_masks(register):
         "reserved": (pattern_mask(access, "-") & ~normal_override) | reserved_override,
         "write_only": pattern_mask(access, "w") | write_only_override,
         "side_effect": side_effect | side_effect_override,
+        "split_access": split_access_override,
     }
 
 
@@ -247,6 +271,7 @@ def validate_documented_overrides(defaults):
     }
     expected = (
         set(DOCUMENTED_SIDE_EFFECT_OVERRIDES)
+        | set(DOCUMENTED_SPLIT_ACCESS_OVERRIDES)
         | set(DOCUMENTED_NORMAL_OVERRIDES)
         | set(DOCUMENTED_READ_ONLY_OVERRIDES)
         | set(DOCUMENTED_DEPENDENT_READ_ONLY_OVERRIDES)
@@ -473,6 +498,11 @@ def render(defaults, muxes, conditionals):
         "",
         "typedef struct {",
         "    uint16_t address;",
+        "    uint16_t mask;",
+        "} Dspic33SfrSplitAccessExpectation;",
+        "",
+        "typedef struct {",
+        "    uint16_t address;",
         "    uint16_t selector_address;",
         "    uint16_t selector_mask;",
         "    uint16_t selector_value;",
@@ -529,6 +559,23 @@ def render(defaults, muxes, conditionals):
             f"{len(register['aliases'])}u"
             "},"
         )
+    lines.extend(
+        [
+            "};",
+            "",
+            "static const Dspic33SfrSplitAccessExpectation dspic33_sfr_split_access_expectations[] =",
+            "    {",
+        ]
+    )
+    split_access_entries = []
+    for register in defaults:
+        masks = access_masks(register)
+        if masks["split_access"] != 0:
+            split_access_entries.append(
+                f"{{{register['address']}u, 0x{masks['split_access']:04x}u}},"
+            )
+    for offset in range(0, len(split_access_entries), 4):
+        lines.append("        " + " ".join(split_access_entries[offset : offset + 4]))
     lines.extend(
         [
             "};",
@@ -591,12 +638,14 @@ def render(defaults, muxes, conditionals):
             f"    DSPIC33_SFR_ACCESS_MUX_DEFAULT_COUNT = {EXPECTED_MUX_DEFAULTS}u,",
             f"    DSPIC33_SFR_ACCESS_MUX_ALTERNATE_COUNT = {EXPECTED_MUX_ALTERNATES}u,",
             f"    DSPIC33_SFR_ACCESS_CONDITIONAL_COUNT = {EXPECTED_CONDITIONALS}u,",
-            f"    DSPIC33_SFR_ACCESS_NORMAL_BIT_COUNT = {EXPECTED_ACCESS_BITS['n'] + DOCUMENTED_NORMAL_OVERRIDE_BITS - DOCUMENTED_SIDE_EFFECT_OVERRIDE_BITS - DOCUMENTED_READ_ONLY_OVERRIDE_BITS - DOCUMENTED_WRITE_ONLY_OVERRIDE_BITS - DOCUMENTED_RESERVED_OVERRIDE_BITS - DOCUMENTED_DEVICE_MODE_RESERVED_OVERRIDE_BITS}u,",
+            f"    DSPIC33_SFR_ACCESS_SPLIT_ACCESS_ADDRESS_COUNT = {len(DOCUMENTED_SPLIT_ACCESS_OVERRIDES)}u,",
+            f"    DSPIC33_SFR_ACCESS_NORMAL_BIT_COUNT = {EXPECTED_ACCESS_BITS['n'] + DOCUMENTED_NORMAL_OVERRIDE_BITS - DOCUMENTED_SIDE_EFFECT_OVERRIDE_BITS - DOCUMENTED_SPLIT_ACCESS_OVERRIDE_BITS - DOCUMENTED_READ_ONLY_OVERRIDE_BITS - DOCUMENTED_WRITE_ONLY_OVERRIDE_BITS - DOCUMENTED_RESERVED_OVERRIDE_BITS - DOCUMENTED_DEVICE_MODE_RESERVED_OVERRIDE_BITS}u,",
             f"    DSPIC33_SFR_ACCESS_READ_ONLY_BIT_COUNT = {EXPECTED_ACCESS_BITS['r'] + DOCUMENTED_READ_ONLY_OVERRIDE_BITS}u,",
             f"    DSPIC33_SFR_ACCESS_DEPENDENT_READ_ONLY_BIT_COUNT = {DOCUMENTED_DEPENDENT_READ_ONLY_OVERRIDE_BITS}u,",
             f"    DSPIC33_SFR_ACCESS_RESERVED_BIT_COUNT = {EXPECTED_ACCESS_BITS['-'] - DOCUMENTED_NORMAL_OVERRIDE_BITS + DOCUMENTED_RESERVED_OVERRIDE_BITS + DOCUMENTED_DEVICE_MODE_RESERVED_OVERRIDE_BITS}u,",
             f"    DSPIC33_SFR_ACCESS_WRITE_ONLY_BIT_COUNT = {EXPECTED_ACCESS_BITS['w'] + DOCUMENTED_WRITE_ONLY_OVERRIDE_BITS}u,",
             f"    DSPIC33_SFR_ACCESS_SIDE_EFFECT_BIT_COUNT = {EXPECTED_ACCESS_BITS['c'] + EXPECTED_ACCESS_BITS['s'] + DOCUMENTED_SIDE_EFFECT_OVERRIDE_BITS}u,",
+            f"    DSPIC33_SFR_ACCESS_SPLIT_ACCESS_BIT_COUNT = {DOCUMENTED_SPLIT_ACCESS_OVERRIDE_BITS}u,",
             f"    DSPIC33_SFR_MUX_ACCESS_NORMAL_BIT_COUNT = {EXPECTED_MUX_ACCESS_BITS.get('n', 0)}u,",
             f"    DSPIC33_SFR_MUX_ACCESS_READ_ONLY_BIT_COUNT = {EXPECTED_MUX_ACCESS_BITS.get('r', 0)}u,",
             f"    DSPIC33_SFR_MUX_ACCESS_RESERVED_BIT_COUNT = {EXPECTED_MUX_ACCESS_BITS.get('-', 0)}u,",

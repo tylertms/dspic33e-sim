@@ -51,6 +51,7 @@ add_executable(
 add_executable(opentec_simulator_rtcc_conformance conformance/rtcc.c)
 add_executable(opentec_simulator_qei_conformance conformance/qei.c)
 add_executable(opentec_simulator_dci_conformance conformance/dci.c)
+add_executable(opentec_simulator_gpio_conformance conformance/gpio.c)
 add_executable(opentec_simulator_sfr_reset_conformance conformance/sfr_reset.c)
 add_executable(
     opentec_simulator_sfr_access_conformance conformance/sfr_access.c
@@ -123,6 +124,9 @@ target_link_libraries(
     opentec_simulator_dci_conformance PRIVATE opentec_simulator_core
 )
 target_link_libraries(
+    opentec_simulator_gpio_conformance PRIVATE opentec_simulator_core
+)
+target_link_libraries(
     opentec_simulator_sfr_reset_conformance PRIVATE opentec_simulator_core
 )
 target_include_directories(
@@ -155,6 +159,7 @@ set(opentec_simulator_targets
     opentec_simulator_rtcc_conformance
     opentec_simulator_qei_conformance
     opentec_simulator_dci_conformance
+    opentec_simulator_gpio_conformance
     opentec_simulator_sfr_reset_conformance
     opentec_simulator_sfr_access_conformance
 )
