@@ -13,6 +13,7 @@ typedef struct {
 
 enum {
     OPCODE_NOP = 0x000000u,
+    OPCODE_POWER_SAVE_SLEEP = 0xfe4000u,
     OPCODE_RETURN = 0x060000u,
     OPCODE_RETFIE = 0x064000u,
     OPCODE_RETLW_0X123_W2 = 0x051232u,
@@ -70,6 +71,15 @@ enum {
     OPCODE_MOV_W2_0X9000 = 0x8c8002u,
     OPCODE_MOV_DOUBLE_W2_W1_POST_INCREMENT = 0xbe9882u,
     OPCODE_MOV_DOUBLE_W1_POST_INCREMENT_W2 = 0xbe0131u,
+    OPCODE_MOV_DOUBLE_W4_W6 = 0xbe0314u,
+    OPCODE_MOV_W0_IFS0 = 0x884000u,
+    OPCODE_MOV_IFS0_W2 = 0x804002u,
+    OPCODE_BSET_BYTE_IFS0_BIT_0 = 0xa80800u,
+    OPCODE_BSET_BYTE_CORCON_BIT_1 = 0xa82044u,
+    OPCODE_BTSS_IFS0_BIT_0 = 0xae0800u,
+    OPCODE_PUSH_IFS0 = 0xf80800u,
+    OPCODE_CLEAR_TMR2 = 0xef2106u,
+    OPCODE_SET_TMR2 = 0xefa106u,
     OPCODE_ADD_W2_W4_POST_INCREMENT_W5_POST_DECREMENT = 0x4112b4u,
     OPCODE_ADD_W2_W4_POST_INCREMENT_W5 = 0x4102b4u,
     OPCODE_COMPARE_ZERO_W4_POST_INCREMENT = 0xe00034u,
@@ -2125,6 +2135,267 @@ static void instruction_cycle_cases(ProcessorConformance* state, Dspic33* cpu) {
            "RETFIE with pending exception consumes five cycles");
 }
 
+static void non_cpu_sfr_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_BSET_BYTE_IFS0_BIT_0);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 2u &&
+               (dspic33_read_word(cpu, 0x0800u) & 1u) != 0u,
+           "non-CPU SFR bit RMW consumes two cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_BSET_BYTE_IFS0_BIT_0);
+    load_instruction(state, cpu, 2u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x0014u, 0x000100u);
+    load_instruction(state, cpu, 0x0100u, OPCODE_NOP);
+    dspic33_write_word(cpu, 0x0820u, 0x0001u);
+    dspic33_write_word(cpu, 0x0840u, 0x0004u);
+    dspic33_write_word(cpu, 0x08c2u, 0x8000u);
+    cpu->disicnt = 2u;
+    cpu->w[15] = 0x5000u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 2u &&
+               cpu->disicnt == 0u,
+           "non-CPU SFR wait cycle completes DISI countdown");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0102u &&
+               cpu->w[15] == 0x5004u,
+           "non-CPU SFR wait cycle releases new interrupt before next instruction");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_BSET_BYTE_IFS0_BIT_0);
+    load_instruction(state, cpu, 2u, OPCODE_NOP);
+    load_instruction(state, cpu, 4u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x0014u, 0x000100u);
+    load_instruction(state, cpu, 0x0100u, OPCODE_NOP);
+    dspic33_write_word(cpu, 0x0820u, 0x0001u);
+    dspic33_write_word(cpu, 0x0840u, 0x0004u);
+    dspic33_write_word(cpu, 0x08c2u, 0x8000u);
+    cpu->interrupt_depth = 1u;
+    cpu->sr = 0x0060u;
+    cpu->w[15] = 0x5000u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 2u &&
+               cpu->interrupt_count == 0u,
+           "nested non-CPU SFR wait retains new interrupt deferral");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 4u &&
+               cpu->interrupt_count == 0u,
+           "nested new interrupt deferral spans following instruction");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0102u &&
+               cpu->interrupt_count == 1u,
+           "nested new interrupt dispatches after deferred instruction");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_POWER_SAVE_SLEEP);
+    load_instruction(state, cpu, 0x0014u, 0x000100u);
+    load_instruction(state, cpu, 0x0100u, OPCODE_NOP);
+    dspic33_write_word(cpu, 0x0820u, 0x0001u);
+    dspic33_write_word(cpu, 0x0840u, 0x0004u);
+    dspic33_write_word(cpu, 0x08c2u, 0x8000u);
+    dspic33_raise_interrupt(cpu, 0u);
+    cpu->w[15] = 0x5000u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0100u &&
+               cpu->power_state == DSPIC33_POWER_ACTIVE && cpu->interrupt_count == 1u &&
+               cpu->w[15] == 0x5004u && dspic33_read_word(cpu, 0x5000u) == 2u,
+           "power-save instruction completes before wake dispatch");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0102u &&
+               cpu->interrupt_count == 1u && cpu->w[15] == 0x5004u,
+           "power-save wake dispatch executes handler");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_POWER_SAVE_SLEEP);
+    load_instruction(state, cpu, 0x0014u, 0x000100u);
+    load_instruction(state, cpu, 0x0100u, OPCODE_NOP);
+    dspic33_write_word(cpu, 0x0820u, 0x0001u);
+    dspic33_write_word(cpu, 0x0840u, 0x0004u);
+    dspic33_write_word(cpu, 0x08c2u, 0x8000u);
+    dspic33_raise_interrupt(cpu, 0u);
+    cpu->pc = 1u;
+    cpu->w[15] = 0x5000u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0102u &&
+               cpu->interrupt_count == 1u && cpu->w[15] == 0x5004u,
+           "odd PC does not inherit preceding power-save dispatch ordering");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_IFS0_W2);
+    dspic33_write_word(cpu, 0x0800u, 0x1234u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 2u &&
+               cpu->w[2] == 0x1234u,
+           "direct non-CPU SFR read consumes two cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    dspic33_set_working_register(cpu, 1u, 0x0800u);
+    dspic33_write_word(cpu, 0x0800u, 0x4321u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 2u &&
+               cpu->w[1] == 0x0802u && cpu->w[2] == 0x4321u,
+           "indirect non-CPU SFR read consumes two cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W0_IFS0);
+    cpu->w[0] = 0x2468u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 1u &&
+               dspic33_read_word(cpu, 0x0800u) == 0x2468u,
+           "non-CPU SFR write remains one cycle");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_BSET_BYTE_CORCON_BIT_1);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 1u &&
+               cpu->corcon == 0x0022u,
+           "CPU SFR read-modify-write remains one cycle");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_DOUBLE_W4_W6);
+    dspic33_set_working_register(cpu, 4u, 0x0800u);
+    dspic33_write_word(cpu, 0x0800u, 0x1357u);
+    dspic33_write_word(cpu, 0x0802u, 0x2468u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 2u &&
+               cpu->w[6] == 0x1357u && cpu->w[7] == 0x2468u,
+           "double non-CPU SFR read retains two-cycle base timing");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_DOUBLE_W4_W6);
+    dspic33_set_working_register(cpu, 4u, 0x1000u);
+    dspic33_write_word(cpu, 0x1000u, 0x1357u);
+    dspic33_write_word(cpu, 0x1002u, 0x2468u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 2u &&
+               cpu->w[6] == 0x1357u && cpu->w[7] == 0x2468u,
+           "double RAM read retains two-cycle base timing");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_DOUBLE_W2_W1_POST_INCREMENT);
+    dspic33_set_working_register(cpu, 1u, 0x0800u);
+    cpu->w[2] = 0x1357u;
+    cpu->w[3] = 0x2468u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 2u &&
+               cpu->w[1] == 0x0804u && dspic33_read_word(cpu, 0x0800u) == 0x1357u &&
+               dspic33_read_word(cpu, 0x0802u) == 0x2468u,
+           "double non-CPU SFR write retains two-cycle base timing");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_BTSS_IFS0_BIT_0);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 2u && cpu->pc == 2u,
+           "non-taken non-CPU SFR bit skip adds one cycle");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_BTSS_IFS0_BIT_0);
+    load_instruction(state, cpu, 2u, OPCODE_NOP);
+    dspic33_write_word(cpu, 0x0800u, 1u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 3u && cpu->pc == 4u,
+           "one-word non-CPU SFR bit skip adds one cycle");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_BTSS_IFS0_BIT_0);
+    load_instruction(state, cpu, 2u, OPCODE_NOP);
+    dspic33_write_word(cpu, 0x0800u, 1u);
+    cpu->cycles = UINT64_MAX - 1u;
+    cpu->disicnt = 2u;
+    dspic33_step(cpu);
+    expect(state, cpu->cycles == UINT64_MAX - 1u && cpu->disicnt == 2u,
+           "failed non-CPU SFR wait advance inhibits final cycle");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_BTSS_IFS0_BIT_0);
+    load_instruction(state, cpu, 2u, OPCODE_NOP);
+    dspic33_write_word(cpu, 0x0800u, 1u);
+    cpu->cycles = UINT64_MAX - 2u;
+    cpu->disicnt = 3u;
+    cpu->pending_soft_traps[0].trap = 4u;
+    cpu->pending_soft_traps[0].vector = 0x00000cu;
+    cpu->pending_soft_traps[0].priority = 11u;
+    cpu->pending_soft_traps[0].delay = 3u;
+    cpu->pending_soft_traps[0].active = true;
+    dspic33_step(cpu);
+    expect(state,
+           cpu->cycles == UINT64_MAX && cpu->disicnt == 1u &&
+               cpu->pending_soft_traps[0].active &&
+               cpu->pending_soft_traps[0].delay == 3u,
+           "failed final non-CPU SFR wait cycle inhibits trap bookkeeping");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_BTSS_IFS0_BIT_0);
+    load_instruction(state, cpu, 2u, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 4u, 0u);
+    dspic33_write_word(cpu, 0x0800u, 1u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 4u && cpu->pc == 6u,
+           "two-word non-CPU SFR bit skip adds one cycle");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_PUSH_IFS0);
+    cpu->w[15] = 0x5000u;
+    dspic33_write_word(cpu, 0x0800u, 0x55aau);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 2u &&
+               cpu->w[15] == 0x5002u && dspic33_read_word(cpu, 0x5000u) == 0x55aau,
+           "non-CPU SFR PUSH source consumes two cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_INDEXED);
+    dspic33_set_working_register(cpu, 9u, 0x0800u);
+    dspic33_set_working_register(cpu, 11u, 0x0802u);
+    dspic33_set_working_register(cpu, 12u, 0u);
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 2u,
+           "dual DSP non-CPU SFR reads add one cycle");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_CLEAR_TMR2);
+    dspic33_write_word(cpu, 0x0110u, 0x0008u);
+    dspic33_write_word(cpu, 0x010au, 0xaaaau);
+    dspic33_write_word(cpu, 0x0108u, 0x5555u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 1u &&
+               dspic33_read_word(cpu, 0x0108u) == 0x5555u && cpu->data[0x0106u] == 0u &&
+               cpu->data[0x0107u] == 0u,
+           "CLR non-CPU SFR is a one-cycle pure write");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_SET_TMR2);
+    dspic33_write_word(cpu, 0x0110u, 0x0008u);
+    dspic33_write_word(cpu, 0x010au, 0xaaaau);
+    dspic33_write_word(cpu, 0x0108u, 0x5555u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 1u &&
+               dspic33_read_word(cpu, 0x0108u) == 0x5555u &&
+               cpu->data[0x0106u] == 0xffu && cpu->data[0x0107u] == 0xffu,
+           "SETM non-CPU SFR is a one-cycle pure write");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    dspic33_set_working_register(cpu, 1u, 0x0056u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 1u &&
+               cpu->w[1] == 0x0058u && cpu->w[2] == 0u,
+           "unimplemented CPU SFR hole read remains one cycle");
+
+    reset_processor_conformance(cpu, 0u);
+    cpu->instruction_active = true;
+    cpu->current_instruction_cycles = 1u;
+    dspic33_read_word(cpu, 0x0800u);
+    expect(state, !cpu->non_cpu_sfr_read && cpu->current_instruction_cycles == 1u,
+           "raw non-CPU SFR read bypasses CPU instruction timing");
+    cpu->instruction_active = false;
+    cpu->current_instruction_cycles = 0u;
+
+    cpu->non_cpu_sfr_read = true;
+    dspic33_reset(cpu, 0u);
+    expect(state, !cpu->non_cpu_sfr_read, "reset clears non-CPU SFR timing state");
+}
+
 static void move_double_stack_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
     reset_processor_conformance(cpu, 0u);
     cpu->stop_on_trap = true;
@@ -2661,6 +2932,7 @@ int main(void) {
         repeat_exception_cases(&state, &cpu);
         repeat_interrupt_cases(&state, &cpu);
         instruction_cycle_cases(&state, &cpu);
+        non_cpu_sfr_timing_cases(&state, &cpu);
         call_stack_timing_case(&state, &cpu);
         move_double_stack_timing_cases(&state, &cpu);
         return_instruction_cycle_cases(&state, &cpu);

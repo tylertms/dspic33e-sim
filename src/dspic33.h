@@ -563,6 +563,7 @@ typedef struct {
     uint32_t address_error_return;
     bool instruction_active;
     uint8_t current_instruction_cycles;
+    bool non_cpu_sfr_read;
     bool address_error;
     bool address_error_access_allowed;
     bool address_error_working_state_completed;

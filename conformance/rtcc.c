@@ -594,6 +594,7 @@ static void interrupt_output_power_cases(RtccConformance* state, Dspic33* cpu) {
     enable_clock(cpu);
     configure_interrupt(cpu, 3u);
     cpu->disicnt = 2u;
+    dspic33_load_program_word(cpu, cpu->pc, 0u);
     cpu->power_state = DSPIC33_POWER_SLEEP;
     set_calendar(cpu, 0x0000u, 0x0000u, 0x0101u, 0x0000u);
     dspic33_write_word(cpu, RTCC_ALARM_CONTROL, RTCC_ALARM_ENABLE);

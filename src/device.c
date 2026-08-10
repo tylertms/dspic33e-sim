@@ -7738,6 +7738,7 @@ static void update_nvm_control(Dspic33* cpu, uint16_t requested) {
     uint16_t control = raw_word(cpu, NVM_CONTROL);
     uint32_t target =
         ((uint32_t)raw_word(cpu, NVM_ADDRESS_HIGH) << 16u) | raw_word(cpu, NVM_ADDRESS);
+    uint64_t completion_delay = cpu->non_cpu_sfr_read ? 3u : 2u;
     bool write_requested = (requested & NVM_WRITE) != 0u;
     if (cpu->nvm.active) {
         raw_write_word(cpu, NVM_CONTROL,
@@ -7748,7 +7749,8 @@ static void update_nvm_control(Dspic33* cpu, uint16_t requested) {
         return;
     }
     if ((control & NVM_WRITE_ENABLE) == 0u || !nvm_key_authorized(cpu) ||
-        cpu->cycles > UINT64_MAX - 2u || !nvm_target_valid(control, target)) {
+        cpu->cycles > UINT64_MAX - completion_delay ||
+        !nvm_target_valid(control, target)) {
         fail_nvm_write(cpu);
         return;
     }
@@ -7757,9 +7759,9 @@ static void update_nvm_control(Dspic33* cpu, uint16_t requested) {
     memcpy(cpu->nvm.latches, cpu->write_latches, sizeof(cpu->nvm.latches));
     cpu->nvm.key_stage = 0u;
     cpu->nvm.active = true;
-    cpu->nvm.completion_cycle = cpu->cycles + 2u;
+    cpu->nvm.completion_cycle = cpu->cycles + completion_delay;
     raw_write_word(cpu, NVM_CONTROL, (uint16_t)(control | NVM_WRITE | NVM_WRITE_ERROR));
-    if (!dspic33_schedule(cpu, DSPIC33_EVENT_NVM, 0u, 0u, 2u)) {
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_NVM, 0u, 0u, completion_delay)) {
         fail_nvm_write(cpu);
     }
 }

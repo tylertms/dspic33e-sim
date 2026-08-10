@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 58
+_system_conformance_terminal_count = 61
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -126,6 +126,12 @@ _run_system_probe:
     bra z, _system_repeat_divide_probe
     cp w0, #58
     bra z, _system_repeat_irq_probe
+    cp w0, #59
+    bra z, _system_sfr_wait_bset_probe
+    cp w0, #60
+    bra z, _system_sfr_wait_move_probe
+    cp w0, #61
+    bra z, _system_sfr_wait_move_double_probe
     return
 
 .global _system_sleep_probe
@@ -197,6 +203,78 @@ _system_repeat_irq_target:
 .global _system_repeat_irq_complete
 _system_repeat_irq_complete:
     bra _system_repeat_irq_complete
+
+.global _system_sfr_wait_bset_probe
+_system_sfr_wait_bset_probe:
+    mov #59, w0
+    mov w0, _system_probe_selector
+    mov #0x5000, w15
+    clr w0
+    mov w0, SR
+    mov w0, IFS1
+    mov w0, IEC1
+    mov w0, IPC5
+    bset INTCON2, #15
+    mov #4, w0
+    mov w0, IPC5
+    mov #0x0010, w1
+    mov w1, IEC1
+    disi #2
+    bset IFS1, #4
+.global _system_sfr_wait_bset_repeat
+_system_sfr_wait_bset_repeat:
+    repeat #2
+    nop
+    return
+
+.global _system_sfr_wait_move_probe
+_system_sfr_wait_move_probe:
+    mov #60, w0
+    mov w0, _system_probe_selector
+    mov #0x5000, w15
+    clr w0
+    mov w0, SR
+    mov w0, IFS1
+    mov w0, IEC1
+    mov w0, IPC5
+    bset INTCON2, #15
+    mov #4, w0
+    mov w0, IPC5
+    mov #0x0010, w1
+    mov w1, IEC1
+    disi #3
+    mov w1, IFS1
+    mov IFS1, w2
+.global _system_sfr_wait_move_repeat
+_system_sfr_wait_move_repeat:
+    repeat #2
+    nop
+    return
+
+.global _system_sfr_wait_move_double_probe
+_system_sfr_wait_move_double_probe:
+    mov #61, w0
+    mov w0, _system_probe_selector
+    mov #0x5000, w15
+    clr w0
+    mov w0, SR
+    mov w0, IFS1
+    mov w0, IEC1
+    mov w0, IPC5
+    bset INTCON2, #15
+    mov #4, w0
+    mov w0, IPC5
+    mov #0x0010, w1
+    mov w1, IEC1
+    mov #IFS1, w4
+    disi #4
+    mov w1, IFS1
+    mov.d [w4], w6
+.global _system_sfr_wait_move_double_repeat
+_system_sfr_wait_move_double_repeat:
+    repeat #2
+    nop
+    return
 
 .global _system_sftac_probe
 _system_sftac_probe:
@@ -1224,6 +1302,10 @@ _system_repeat_math_complete:
 
 .global __INT1Interrupt
 __INT1Interrupt:
+    mov SR, w3
+    mov _system_probe_selector, w0
+    cp w0, #59
+    bra geu, _system_sfr_wait_interrupt
     mov w15, _system_repeat_irq_state
     mov [w15-4], w0
     mov w0, _system_repeat_irq_state+2
@@ -1233,7 +1315,7 @@ __INT1Interrupt:
     mov w0, _system_repeat_irq_state+4
     mov RCOUNT, w0
     mov w0, _system_repeat_irq_state+6
-    mov SR, w0
+    mov w3, w0
     and #0x00f0, w0
     mov w0, _system_repeat_irq_state+8
     mov CORCON, w0
@@ -1243,6 +1325,23 @@ __INT1Interrupt:
     mov w0, IEC1
     mov w0, IFS1
     retfie
+
+_system_sfr_wait_interrupt:
+    mov w15, _system_sfr_wait_state
+    mov [w15-4], w0
+    mov w0, _system_sfr_wait_state+2
+    mov [w15-2], w0
+    mov #0x107f, w1
+    and w0, w1, w0
+    mov w0, _system_sfr_wait_state+4
+    mov RCOUNT, w0
+    mov w0, _system_sfr_wait_state+6
+    mov w3, _system_sfr_wait_state+8
+    mov CORCON, w0
+    mov w0, _system_sfr_wait_state+10
+.global _system_sfr_wait_complete
+_system_sfr_wait_complete:
+    bra _system_sfr_wait_complete
 
 .global __SoftTrapError
 __SoftTrapError:
