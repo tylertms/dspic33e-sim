@@ -43,6 +43,7 @@
 #define DSPIC33_PMP_QUEUE_SIZE 8192u
 #define DSPIC33_INPUT_CAPTURE_COUNT 16u
 #define DSPIC33_INPUT_CAPTURE_FIFO_SIZE 4u
+#define DSPIC33_OUTPUT_COMPARE_COUNT 16u
 
 typedef enum {
     DSPIC33_EVENT_INTERRUPT,
@@ -64,6 +65,7 @@ typedef enum {
     DSPIC33_EVENT_CRC,
     DSPIC33_EVENT_PMP,
     DSPIC33_EVENT_INPUT_CAPTURE,
+    DSPIC33_EVENT_OUTPUT_COMPARE,
     DSPIC33_EVENT_AUX_PLL
 } Dspic33EventType;
 
@@ -182,6 +184,13 @@ typedef struct {
     uint16_t input_high;
     uint8_t interrupt_count[DSPIC33_INPUT_CAPTURE_COUNT];
 } Dspic33InputCapture;
+
+typedef struct {
+    uint16_t active_r[DSPIC33_OUTPUT_COMPARE_COUNT];
+    uint16_t active_rs[DSPIC33_OUTPUT_COMPARE_COUNT];
+    uint16_t generation[DSPIC33_OUTPUT_COMPARE_COUNT];
+    uint16_t output_high;
+} Dspic33OutputCompare;
 
 typedef enum {
     DSPIC33_I2C_START,
@@ -389,6 +398,7 @@ typedef struct {
     Dspic33Crc crc;
     Dspic33Pmp pmp;
     Dspic33InputCapture input_capture;
+    Dspic33OutputCompare output_compare;
     Dspic33UsbPending usb_pending[DSPIC33_USB_PENDING_COUNT];
     Dspic33UsbQueue usb_tx;
     uint8_t usb_next_bank[DSPIC33_USB_ENDPOINT_COUNT][2];
@@ -557,6 +567,8 @@ bool dspic33_pmp_transmit(Dspic33* cpu, Dspic33PmpTransfer* transfer);
 bool dspic33_input_capture_input(Dspic33* cpu, uint8_t channel, bool high,
                                  uint64_t delay);
 bool dspic33_input_capture_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t delay);
+bool dspic33_output_compare_output(const Dspic33* cpu, uint8_t channel, bool* high);
+bool dspic33_output_compare_pin(const Dspic33* cpu, uint8_t pin, bool* high);
 bool dspic33_timer_pulse(Dspic33* cpu, uint8_t timer, uint32_t pulses, uint64_t delay);
 bool dspic33_timer_gate(Dspic33* cpu, uint8_t timer, bool high, uint64_t delay);
 bool dspic33_adc_trigger(Dspic33* cpu, uint8_t module, uint8_t source, uint64_t delay);

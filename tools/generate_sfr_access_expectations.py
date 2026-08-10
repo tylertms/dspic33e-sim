@@ -35,6 +35,9 @@ EXPECTED_MUX_ACCESS_BITS = {
 DOCUMENTED_SIDE_EFFECT_OVERRIDES = {
     ("U1EIR", 0x04C4): 0x0040,
 }
+DOCUMENTED_NORMAL_OVERRIDES = {
+    ("IEC8", 0x0830): 0x7FC0,
+}
 DOCUMENTED_READ_ONLY_OVERRIDES = {
     ("DMAPWC", 0x0BF0): 0x7FFF,
     ("DMARQC", 0x0BF2): 0x7FFF,
@@ -47,6 +50,9 @@ DOCUMENTED_WRITE_ONLY_OVERRIDES = {
 }
 DOCUMENTED_SIDE_EFFECT_OVERRIDE_BITS = sum(
     mask.bit_count() for mask in DOCUMENTED_SIDE_EFFECT_OVERRIDES.values()
+)
+DOCUMENTED_NORMAL_OVERRIDE_BITS = sum(
+    mask.bit_count() for mask in DOCUMENTED_NORMAL_OVERRIDES.values()
 )
 DOCUMENTED_READ_ONLY_OVERRIDE_BITS = sum(
     mask.bit_count() for mask in DOCUMENTED_READ_ONLY_OVERRIDES.values()
@@ -97,10 +103,16 @@ def access_masks(register):
     side_effect = pattern_mask(access, "cs")
     address = int(register["address"], 16)
     identity = (register["name"], address)
+    normal_override = DOCUMENTED_NORMAL_OVERRIDES.get(identity, 0)
     side_effect_override = DOCUMENTED_SIDE_EFFECT_OVERRIDES.get(identity, 0)
     read_only_override = DOCUMENTED_READ_ONLY_OVERRIDES.get(identity, 0)
     write_only_override = DOCUMENTED_WRITE_ONLY_OVERRIDES.get(identity, 0)
     override = side_effect_override | read_only_override | write_only_override
+    if normal_override & ~pattern_mask(access, "-"):
+        raise ValueError(
+            f"documented normal override is not DFP-reserved for "
+            f"{register['name']} at 0x{address:04x}"
+        )
     if (
         side_effect_override & read_only_override
         or side_effect_override & write_only_override
@@ -116,9 +128,9 @@ def access_masks(register):
             f"{register['name']} at 0x{address:04x}"
         )
     return {
-        "normal": normal & ~override,
+        "normal": (normal & ~override) | normal_override,
         "read_only": pattern_mask(access, "r") | read_only_override,
-        "reserved": pattern_mask(access, "-"),
+        "reserved": pattern_mask(access, "-") & ~normal_override,
         "write_only": pattern_mask(access, "w") | write_only_override,
         "side_effect": side_effect | side_effect_override,
     }
@@ -130,6 +142,7 @@ def validate_documented_overrides(defaults):
     }
     expected = (
         set(DOCUMENTED_SIDE_EFFECT_OVERRIDES)
+        | set(DOCUMENTED_NORMAL_OVERRIDES)
         | set(DOCUMENTED_READ_ONLY_OVERRIDES)
         | set(DOCUMENTED_WRITE_ONLY_OVERRIDES)
     )
@@ -322,9 +335,9 @@ def render(defaults, muxes):
             f"    DSPIC33_SFR_ACCESS_ALIAS_COUNT = {len(EXPECTED_ALIASES)}u,",
             f"    DSPIC33_SFR_ACCESS_MUX_DEFAULT_COUNT = {EXPECTED_MUX_DEFAULTS}u,",
             f"    DSPIC33_SFR_ACCESS_MUX_ALTERNATE_COUNT = {EXPECTED_MUX_ALTERNATES}u,",
-            f"    DSPIC33_SFR_ACCESS_NORMAL_BIT_COUNT = {EXPECTED_ACCESS_BITS['n'] - DOCUMENTED_SIDE_EFFECT_OVERRIDE_BITS - DOCUMENTED_READ_ONLY_OVERRIDE_BITS - DOCUMENTED_WRITE_ONLY_OVERRIDE_BITS}u,",
+            f"    DSPIC33_SFR_ACCESS_NORMAL_BIT_COUNT = {EXPECTED_ACCESS_BITS['n'] + DOCUMENTED_NORMAL_OVERRIDE_BITS - DOCUMENTED_SIDE_EFFECT_OVERRIDE_BITS - DOCUMENTED_READ_ONLY_OVERRIDE_BITS - DOCUMENTED_WRITE_ONLY_OVERRIDE_BITS}u,",
             f"    DSPIC33_SFR_ACCESS_READ_ONLY_BIT_COUNT = {EXPECTED_ACCESS_BITS['r'] + DOCUMENTED_READ_ONLY_OVERRIDE_BITS}u,",
-            f"    DSPIC33_SFR_ACCESS_RESERVED_BIT_COUNT = {EXPECTED_ACCESS_BITS['-']}u,",
+            f"    DSPIC33_SFR_ACCESS_RESERVED_BIT_COUNT = {EXPECTED_ACCESS_BITS['-'] - DOCUMENTED_NORMAL_OVERRIDE_BITS}u,",
             f"    DSPIC33_SFR_ACCESS_WRITE_ONLY_BIT_COUNT = {EXPECTED_ACCESS_BITS['w'] + DOCUMENTED_WRITE_ONLY_OVERRIDE_BITS}u,",
             f"    DSPIC33_SFR_ACCESS_SIDE_EFFECT_BIT_COUNT = {EXPECTED_ACCESS_BITS['c'] + EXPECTED_ACCESS_BITS['s'] + DOCUMENTED_SIDE_EFFECT_OVERRIDE_BITS}u,",
             f"    DSPIC33_SFR_MUX_ACCESS_NORMAL_BIT_COUNT = {EXPECTED_MUX_ACCESS_BITS.get('n', 0)}u,",
