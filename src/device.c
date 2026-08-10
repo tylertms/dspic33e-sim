@@ -7251,6 +7251,9 @@ static void complete_nvm_event(Dspic33* cpu) {
     raw_write_word(
         cpu, NVM_CONTROL,
         (uint16_t)(raw_word(cpu, NVM_CONTROL) & ~(NVM_WRITE | NVM_WRITE_ERROR)));
+    if (dspic33_watchdog_complete_nvm(cpu)) {
+        return;
+    }
     dspic33_raise_interrupt(cpu, 15u);
 }
 
@@ -7910,6 +7913,7 @@ static void complete_oscillator_switch(Dspic33* cpu, uint32_t generation) {
         control |= OSCILLATOR_PLL_LOCK;
     }
     cpu->oscillator.active = false;
+    cpu->watchdog.ticks = 0u;
     raw_write_word(cpu, OSCILLATOR_CONTROL, control);
 }
 
@@ -8663,6 +8667,10 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
         dma_register_write_mask(base, &writable)) {
         raw_write_word(cpu, base,
                        (uint16_t)((previous & ~writable) | (requested & writable)));
+    }
+    if (base == 0x0740u && (cpu->configuration[10u] & 0x80u) == 0u &&
+        (previous & 0x0020u) == 0u && (raw_word(cpu, base) & 0x0020u) != 0u) {
+        cpu->watchdog.ticks = 0u;
     }
     pps_update_shadow(cpu, base);
     update_gpio_latch(cpu, address, requested);

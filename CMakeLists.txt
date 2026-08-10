@@ -59,6 +59,7 @@ add_executable(
 add_executable(
     opentec_simulator_oscillator_conformance conformance/oscillator.c
 )
+add_executable(opentec_simulator_watchdog_conformance conformance/watchdog.c)
 add_executable(
     opentec_simulator_interrupt_control_conformance
     conformance/interrupt_control.c
@@ -149,6 +150,9 @@ target_link_libraries(
     opentec_simulator_oscillator_conformance PRIVATE opentec_simulator_core
 )
 target_link_libraries(
+    opentec_simulator_watchdog_conformance PRIVATE opentec_simulator_core
+)
+target_link_libraries(
     opentec_simulator_interrupt_control_conformance
     PRIVATE opentec_simulator_core
 )
@@ -192,6 +196,7 @@ set(opentec_simulator_targets
     opentec_simulator_pps_conformance
     opentec_simulator_auxiliary_clock_conformance
     opentec_simulator_oscillator_conformance
+    opentec_simulator_watchdog_conformance
     opentec_simulator_interrupt_control_conformance
     opentec_simulator_core_sfr_conformance
     opentec_simulator_sfr_reset_conformance

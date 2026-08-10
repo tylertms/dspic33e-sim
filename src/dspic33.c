@@ -25,6 +25,7 @@ typedef enum {
     DSPIC33_RESET_HARDWARE
 } Dspic33ResetKind;
 static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind kind);
+static void clear_watchdog(Dspic33* cpu);
 static void enter_trap(Dspic33* cpu, uint16_t trap, uint32_t vector, uint8_t priority,
                        uint16_t status, uint32_t return_pc);
 static void schedule_soft_trap(Dspic33* cpu, uint16_t trap, uint32_t vector,
@@ -3206,6 +3207,7 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     }
     if ((opcode & 0xfffffeu) == 0xfe4000u) {
         uint16_t rcon = (uint16_t)(dspic33_read_word(cpu, 0x0740u) & ~0x001cu);
+        cpu->watchdog.ticks = 0u;
         if ((opcode & 1u) == 0u) {
             rcon |= 0x0008u;
             dspic33_device_abort_oscillator_switch(cpu);
@@ -3220,6 +3222,7 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         return true;
     }
     if (opcode == 0xfe6000u) {
+        clear_watchdog(cpu);
         return true;
     }
     if (opcode == 0x000000u || opcode == 0x00075au ||
@@ -3370,6 +3373,7 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
     cpu->events.sequence = 0u;
     memset(&cpu->nvm, 0, sizeof(cpu->nvm));
     memset(&cpu->oscillator, 0, sizeof(cpu->oscillator));
+    memset(&cpu->watchdog, 0, sizeof(cpu->watchdog));
     for (size_t index = 0u; index < DSPIC33_WRITE_LATCH_WORDS; index++) {
         cpu->write_latches[index] = 0x00ffffffu;
     }
@@ -3504,9 +3508,73 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
     cpu->async_events_enabled = async_events_enabled;
     cpu->stop_on_trap = stop_on_trap;
     cpu->illegal_reset = kind == DSPIC33_RESET_ILLEGAL;
-    rcon = (uint16_t)((rcon | cause) & 0xcaffu);
+    rcon = (uint16_t)((rcon | cause) & 0xcadfu);
     cpu->data[0x0740u] = (uint8_t)rcon;
     cpu->data[0x0741u] = (uint8_t)(rcon >> 8u);
+}
+
+static bool watchdog_enabled(const Dspic33* cpu) {
+    return (cpu->configuration[10u] & 0x80u) != 0u ||
+           (cpu->data[0x0740u] & 0x20u) != 0u;
+}
+
+static uint32_t watchdog_period(const Dspic33* cpu) {
+    uint8_t configuration = cpu->configuration[10u];
+    uint32_t prescaler = (configuration & 0x10u) != 0u ? 128u : 32u;
+    return prescaler << (configuration & 0x0fu);
+}
+
+static void watchdog_timeout(Dspic33* cpu) {
+    cpu->watchdog.ticks = 0u;
+    if (cpu->power_state != DSPIC33_POWER_ACTIVE) {
+        cpu->data[0x0740u] |= 0x10u;
+        cpu->power_state = DSPIC33_POWER_ACTIVE;
+        cpu->stop_reason = DSPIC33_RUNNING;
+        return;
+    }
+    if (cpu->nvm.active) {
+        cpu->watchdog.reset_pending = true;
+        return;
+    }
+    perform_warm_reset(cpu, 0x0010u, DSPIC33_RESET_HARDWARE);
+}
+
+static void clear_watchdog(Dspic33* cpu) {
+    uint32_t period = watchdog_period(cpu);
+    if (watchdog_enabled(cpu) && (cpu->configuration[10u] & 0x40u) == 0u &&
+        cpu->watchdog.ticks < period - period / 4u) {
+        watchdog_timeout(cpu);
+        return;
+    }
+    cpu->watchdog.ticks = 0u;
+}
+
+void dspic33_watchdog_advance_lprc(Dspic33* cpu, uint64_t ticks) {
+    while (ticks != 0u && watchdog_enabled(cpu)) {
+        uint32_t period = watchdog_period(cpu);
+        uint32_t remaining = period - cpu->watchdog.ticks;
+        if (ticks < remaining) {
+            cpu->watchdog.ticks += (uint32_t)ticks;
+            return;
+        }
+        ticks -= remaining;
+        watchdog_timeout(cpu);
+        if (cpu->watchdog.reset_pending) {
+            return;
+        }
+    }
+    if (!watchdog_enabled(cpu)) {
+        cpu->watchdog.ticks = 0u;
+    }
+}
+
+bool dspic33_watchdog_complete_nvm(Dspic33* cpu) {
+    if (!cpu->watchdog.reset_pending) {
+        return false;
+    }
+    cpu->watchdog.reset_pending = false;
+    perform_warm_reset(cpu, 0x0010u, DSPIC33_RESET_HARDWARE);
+    return true;
 }
 
 void dspic33_configuration_mismatch_reset(Dspic33* cpu) {
@@ -3945,6 +4013,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         }
         cpu->previous_working_register_writes = 0u;
         cpu->power_state = DSPIC33_POWER_ACTIVE;
+        cpu->watchdog.ticks = 0u;
         cpu->stop_reason = DSPIC33_RUNNING;
     } else {
         power_save_next = (cpu->pc & 1u) == 0u && cpu->pc < DSPIC33_PROGRAM_LIMIT &&
@@ -4154,6 +4223,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     }
     if (cpu->power_state != DSPIC33_POWER_ACTIVE && dspic33_device_wake(cpu)) {
         cpu->power_state = DSPIC33_POWER_ACTIVE;
+        cpu->watchdog.ticks = 0u;
         cpu->stop_reason = DSPIC33_RUNNING;
     }
     return cpu->stop_reason;

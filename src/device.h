@@ -16,6 +16,7 @@ void dspic33_device_latch_interrupt(Dspic33* cpu, uint8_t vector, uint8_t priori
 void dspic33_device_latch_math_error(Dspic33* cpu, uint16_t cause);
 void dspic33_device_return_interrupt(Dspic33* cpu);
 void dspic33_device_abort_oscillator_switch(Dspic33* cpu);
+bool dspic33_watchdog_complete_nvm(Dspic33* cpu);
 void dspic33_raise_dma_address_trap(Dspic33* cpu);
 void dspic33_raise_dma_collision_trap(Dspic33* cpu);
 

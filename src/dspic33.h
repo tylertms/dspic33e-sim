@@ -574,6 +574,11 @@ typedef struct {
 } Dspic33Oscillator;
 
 typedef struct {
+    uint32_t ticks;
+    bool reset_pending;
+} Dspic33Watchdog;
+
+typedef struct {
     uint32_t* program;
     uint32_t* persistent_program;
     uint32_t write_latches[DSPIC33_WRITE_LATCH_WORDS];
@@ -649,6 +654,7 @@ typedef struct {
     uint8_t gie_disable_deferred_next;
     Dspic33Nvm nvm;
     Dspic33Oscillator oscillator;
+    Dspic33Watchdog watchdog;
     Dspic33EventQueue events;
     uint8_t qei_inputs[DSPIC33_QEI_COUNT];
     Dspic33Io io;
@@ -661,6 +667,7 @@ void dspic33_set_working_register(Dspic33* cpu, uint8_t reg, uint16_t value);
 void dspic33_destroy(Dspic33* cpu);
 bool dspic33_copy(Dspic33* destination, const Dspic33* source);
 void dspic33_reset(Dspic33* cpu, uint32_t entry);
+void dspic33_watchdog_advance_lprc(Dspic33* cpu, uint64_t ticks);
 bool dspic33_load_program_word(Dspic33* cpu, uint32_t address, uint32_t word);
 void dspic33_complete_nvm(Dspic33* cpu);
 bool dspic33_load_configuration_word(Dspic33* cpu, uint32_t address, uint32_t word);
