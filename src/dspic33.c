@@ -2326,7 +2326,10 @@ static uint64_t instruction_cycles(const Dspic33* cpu, uint32_t opcode,
     if ((opcode & 0xff0000u) == 0x050000u) {
         return cpu->address_error || exception_pending(cpu) ? 5u : 6u;
     }
-    if ((opcode & 0xfe0000u) == 0xba0000u) {
+    if ((opcode & 0xff0000u) == 0xba0000u) {
+        return 5u;
+    }
+    if ((opcode & 0xff0000u) == 0xbb0000u) {
         return 2u;
     }
     if ((opcode & 0xfffff0u) == 0x088000u || (opcode & 0xff8000u) == 0x080000u) {

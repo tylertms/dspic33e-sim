@@ -468,10 +468,11 @@ static void program_read_address_error_cases(ProcessorConformance* state,
     load_instruction(state, cpu, 0x0200u, 0xabcdefu);
     cpu->tblpag = 0u;
     cpu->w[2] = 0x0200u;
+    cpu->disicnt = 6u;
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[3] == 0xcdefu &&
-               cpu->cycles == 2u,
-           "implemented table read consumes two cycles");
+               cpu->cycles == 5u && cpu->disicnt == 1u,
+           "implemented table read consumes five cycles");
 
     reset_processor_conformance(cpu, 0u);
     prepare_address_trap(state, cpu);
@@ -480,8 +481,8 @@ static void program_read_address_error_cases(ProcessorConformance* state,
     cpu->w[2] = 0x5800u;
     cpu->w[3] = 0xa5a5u;
     cpu->corcon |= 0x0004u;
-    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 2u,
-           "table read from unimplemented main program traps in two cycles");
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 5u,
+           "table read from unimplemented main program traps in five cycles");
     expect(state,
            cpu->w[2] == 0x5800u && cpu->w[3] == 0u && cpu->last_trap_return == 2u &&
                cpu->w[15] == 0x5004u && (cpu->corcon & 0x0004u) != 0u,
@@ -494,8 +495,8 @@ static void program_read_address_error_cases(ProcessorConformance* state,
     cpu->w[2] = 0x5800u;
     cpu->w[4] = 0x1000u;
     dspic33_write_word(cpu, 0x1000u, 0xa5a5u);
-    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED,
-           "unimplemented table read with indirect destination traps");
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 5u,
+           "unimplemented table read with indirect destination traps in five cycles");
     expect(state, cpu->w[4] == 0x1002u && dspic33_read_word(cpu, 0x1000u) == 0u,
            "table read trap completes pointer update and zero result write");
 
@@ -507,8 +508,8 @@ static void program_read_address_error_cases(ProcessorConformance* state,
     cpu->w[3] = 0xa5a5u;
     expect(state,
            dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->w[2] == 0x5800u &&
-               cpu->w[3] == 0u && cpu->cycles == 2u,
-           "unimplemented high table word read returns zero in two cycles");
+               cpu->w[3] == 0u && cpu->cycles == 5u,
+           "unimplemented high table word read returns zero in five cycles");
 
     reset_processor_conformance(cpu, 0u);
     prepare_address_trap(state, cpu);
@@ -518,8 +519,8 @@ static void program_read_address_error_cases(ProcessorConformance* state,
     cpu->w[3] = 0xa5a5u;
     expect(state,
            dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->w[2] == 0x5800u &&
-               cpu->w[3] == 0xa500u && cpu->cycles == 2u,
-           "unimplemented high table byte read clears the low byte in two cycles");
+               cpu->w[3] == 0xa500u && cpu->cycles == 5u,
+           "unimplemented high table byte read clears the low byte in five cycles");
 
     reset_processor_conformance(cpu, 0u);
     prepare_address_trap(state, cpu);
@@ -529,8 +530,8 @@ static void program_read_address_error_cases(ProcessorConformance* state,
     cpu->w[3] = 0xa5a5u;
     expect(state,
            dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->w[2] == 0x5801u &&
-               cpu->w[3] == 0xa500u && cpu->cycles == 2u,
-           "unimplemented low table byte read accepts odd source in two cycles");
+               cpu->w[3] == 0xa500u && cpu->cycles == 5u,
+           "unimplemented low table byte read accepts odd source in five cycles");
 
     reset_processor_conformance(cpu, 0u);
     prepare_address_trap(state, cpu);
@@ -539,8 +540,8 @@ static void program_read_address_error_cases(ProcessorConformance* state,
     cpu->w[2] = 0x5800u;
     cpu->w[4] = 0x1001u;
     dspic33_write_word(cpu, 0x1000u, 0xa5a5u);
-    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 2u,
-           "unimplemented table read and odd destination coalesce in two cycles");
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 5u,
+           "unimplemented table read and odd destination coalesce in five cycles");
     expect(state,
            cpu->w[2] == 0x5802u && cpu->w[4] == 0x1001u &&
                dspic33_read_word(cpu, 0x1000u) == 0xa5a5u &&
@@ -553,8 +554,8 @@ static void program_read_address_error_cases(ProcessorConformance* state,
     cpu->tblpag = 5u;
     cpu->w[2] = 0x5800u;
     dspic33_write_word(cpu, 0x5000u, 0xa5a5u);
-    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 2u,
-           "unimplemented table read through stack pointer traps in two cycles");
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 5u,
+           "unimplemented table read through stack pointer traps in five cycles");
     expect(state,
            cpu->w[2] == 0x5800u && cpu->w[15] == 0x5006u &&
                dspic33_read_word(cpu, 0x5000u) == 0u &&
