@@ -3,7 +3,7 @@
 .equ _conformance_y_scratch, 0x9000
 
 .global _multiply_conformance_cases
-_multiply_conformance_cases = 163
+_multiply_conformance_cases = 168
 .global _multiply_conformance_group_complete
 _multiply_conformance_group_complete = 0
 
@@ -998,6 +998,55 @@ _run_multiply_conformance:
     record_multiply_pair 0x07a8, 0xf30111
     mov w12, w6
     mov w13, w7
+
+    mov #1, w0
+    mov w0, CORCON
+    prepare_dsp_case 0x000f
+    mov #0x1111, w0
+    mov w0, _conformance_scratch
+    mov #0x2222, w0
+    mov #_conformance_y_scratch+2, w1
+    mov w0, [w1]
+
+    mov #3, w4
+    mov #4, w5
+    mov #_conformance_scratch, w8
+    mov #_conformance_y_scratch+2, w10
+    mpy w4*w5, A, [w8]+=2, w4, [w10]+=2, w4
+    record_accumulator_case 0x07a9, w4, w8, w10
+
+    mov #3, w4
+    mov #4, w5
+    mov #_conformance_scratch, w8
+    mov #_conformance_y_scratch+2, w10
+    mpy w4*w5, A, [w8]+=2, w5, [w10]+=2, w5
+    record_accumulator_case 0x07aa, w5, w8, w10
+
+    mov #3, w4
+    mov #4, w5
+    mov #_conformance_scratch, w8
+    mov #_conformance_y_scratch+2, w10
+    push w6
+    mpy w4*w5, A, [w8]+=2, w6, [w10]+=2, w6
+    mov w6, w3
+    pop w6
+    record_accumulator_case 0x07ab, w3, w8, w10
+
+    mov w7, w13
+    mov #3, w4
+    mov #4, w5
+    mov #_conformance_scratch, w8
+    mov #_conformance_y_scratch+2, w10
+    mpy w4*w5, A, [w8]+=2, w7, [w10]+=2, w7
+    mov w7, w3
+    mov w13, w7
+    record_accumulator_case 0x07ac, w3, w8, w10
+
+    mov #_conformance_scratch, w8
+    mov #_conformance_y_scratch+2, w10
+    movsac A, [w8]+=2, w4, [w10]+=2, w4
+    record_accumulator_case 0x07ad, w4, w8, w10
+
     pop w0
     mov w0, YMODEND
     pop w0

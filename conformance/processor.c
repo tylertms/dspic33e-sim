@@ -192,7 +192,12 @@ enum {
     OPCODE_DSP_WRITE_BACK = 0xc393b1u,
     OPCODE_DSP_CLEAR_DIRECT = 0xc300d0u,
     OPCODE_DSP_MOVSAC_WRITE_BACK = 0xc707f1u,
-    OPCODE_DSP_ED = 0xf0405fu
+    OPCODE_DSP_ED = 0xf0405fu,
+    OPCODE_DSP_PREFETCH_W4_COLLISION = 0xc00047u,
+    OPCODE_DSP_PREFETCH_W5_COLLISION = 0xc01447u,
+    OPCODE_DSP_PREFETCH_W6_COLLISION = 0xc02847u,
+    OPCODE_DSP_PREFETCH_W7_COLLISION = 0xc03c47u,
+    OPCODE_DSP_MOVSAC_W4_COLLISION = 0xc70046u
 };
 
 static void expect(ProcessorConformance* state, bool condition, const char* name) {
@@ -4504,6 +4509,67 @@ static void valid_dsp_register_pair_cases(ProcessorConformance* state, Dspic33* 
     }
 }
 
+static void dsp_prefetch_destination_collision_cases(ProcessorConformance* state,
+                                                     Dspic33* cpu) {
+    static const struct {
+        uint32_t opcode;
+        uint8_t destination;
+        const char* execution;
+    } cases[] = {
+        {OPCODE_DSP_PREFETCH_W4_COLLISION, 4u, "DSP prefetch collision resolves W4"},
+        {OPCODE_DSP_PREFETCH_W5_COLLISION, 5u, "DSP prefetch collision resolves W5"},
+        {OPCODE_DSP_PREFETCH_W6_COLLISION, 6u, "DSP prefetch collision resolves W6"},
+        {OPCODE_DSP_PREFETCH_W7_COLLISION, 7u, "DSP prefetch collision resolves W7"},
+    };
+    size_t index;
+
+    for (index = 0u; index < sizeof(cases) / sizeof(cases[0]); index++) {
+        dspic33_reset(cpu, 0u);
+        load_instruction(state, cpu, 0u, cases[index].opcode);
+        dspic33_set_working_register(cpu, 4u, 3u);
+        dspic33_set_working_register(cpu, 5u, 4u);
+        dspic33_set_working_register(cpu, 6u, 0x6666u);
+        dspic33_set_working_register(cpu, 7u, 0x7777u);
+        dspic33_set_working_register(cpu, 8u, 0x5000u);
+        dspic33_set_working_register(cpu, 10u, 0x9002u);
+        dspic33_write_word(cpu, 0x5000u, 0x1111u);
+        dspic33_write_word(cpu, 0x9002u, 0x2222u);
+        cpu->corcon = 0x0001u;
+        cpu->sr = 0x000fu;
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 1u &&
+                   cpu->accumulator[0] == 12 &&
+                   cpu->w[cases[index].destination] == 0x2222u,
+               cases[index].execution);
+        expect(
+            state,
+            cpu->w[8] == 0x5002u && cpu->w[10] == 0x9004u && cpu->sr == 0x000fu &&
+                cpu->corcon == 0x0001u && cpu->illegal_reset_count == 0u,
+            "DSP prefetch collision completes both lanes and preserves control state");
+    }
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_MOVSAC_W4_COLLISION);
+    dspic33_set_working_register(cpu, 4u, 0x4444u);
+    dspic33_set_working_register(cpu, 8u, 0x5000u);
+    dspic33_set_working_register(cpu, 10u, 0x9002u);
+    dspic33_write_word(cpu, 0x5000u, 0x1111u);
+    dspic33_write_word(cpu, 0x9002u, 0x2222u);
+    cpu->accumulator[0] = 0x123456789a;
+    cpu->accumulator[1] = -0x123456789a;
+    cpu->corcon = 0x0001u;
+    cpu->sr = 0x010fu;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 1u &&
+               cpu->w[4] == 0x2222u && cpu->w[8] == 0x5002u && cpu->w[10] == 0x9004u,
+           "MOVSAC prefetch collision resolves W4 after both lanes complete");
+    expect(state,
+           cpu->accumulator[0] == 0x123456789a &&
+               cpu->accumulator[1] == -0x123456789a && cpu->sr == 0x010fu &&
+               cpu->corcon == 0x0001u && cpu->illegal_reset_count == 0u,
+           "MOVSAC prefetch collision preserves accumulators and control state");
+}
+
 static void illegal_condition_reset_cases(ProcessorConformance* state, Dspic33* cpu) {
     static const uint16_t preserved_addresses[] = {
         0x0742u, 0x0744u, 0x0746u, 0x0748u, 0x074eu, 0x0758u, 0x075au,
@@ -4917,6 +4983,7 @@ int main(void) {
         invalid_move_double_cases(&state, &cpu);
         invalid_dsp_encoding_cases(&state, &cpu);
         valid_dsp_register_pair_cases(&state, &cpu);
+        dsp_prefetch_destination_collision_cases(&state, &cpu);
         illegal_condition_reset_cases(&state, &cpu);
         dspic33_destroy(&cpu);
     }
