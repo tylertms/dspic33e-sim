@@ -2,9 +2,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "device.h"
 #include "dspic33.h"
+#include "elf_image.h"
+#include "hex_image.h"
 
 typedef struct {
     uint32_t cases;
@@ -29,7 +32,15 @@ enum {
     TBLRDL_W2_W3 = 0xba0192u,
     TBLRDL_BYTE_W2_W3 = 0xba4192u,
     TBLRDH_W2_W3 = 0xba8192u,
-    TBLRDH_BYTE_W2_W3 = 0xbac192u
+    TBLRDH_BYTE_W2_W3 = 0xbac192u,
+    OPCODE_NOP = 0x000000u,
+    OPCODE_RESET = 0xfe0000u,
+    OPCODE_RETFIE = 0x064000u,
+    OPCODE_MOV_LITERAL_0X1234_W2 = 0x212342u,
+    OPCODE_MOV_W1_W2 = 0x780111u,
+    OPCODE_BTSC_W2_BIT_0 = 0xa70002u,
+    OPCODE_DO_1 = 0x080001u,
+    OPCODE_GOTO_0X100 = 0x040100u
 };
 
 static void expect(NvmConformance* state, bool condition, const char* name) {
@@ -47,10 +58,7 @@ static bool interrupt_flag(Dspic33* cpu) {
 }
 
 static uint32_t program_word(const Dspic33* cpu, uint32_t address) {
-    if (address < DSPIC33_PROGRAM_LIMIT) {
-        return cpu->program[address / 2u];
-    }
-    return cpu->persistent_program[(address - DSPIC33_PERSISTENT_PROGRAM_BASE) / 2u];
+    return dspic33_read_program_word(cpu, address);
 }
 
 static void configure_operation(Dspic33* cpu, uint16_t operation, uint32_t address,
@@ -625,6 +633,409 @@ static void erase_operation_cases(NvmConformance* state, Dspic33* cpu) {
            "page following word unchanged");
 }
 
+static void write_u16(uint8_t* bytes, uint32_t offset, uint16_t value) {
+    bytes[offset] = (uint8_t)value;
+    bytes[offset + 1u] = (uint8_t)(value >> 8u);
+}
+
+static void write_u32(uint8_t* bytes, uint32_t offset, uint32_t value) {
+    bytes[offset] = (uint8_t)value;
+    bytes[offset + 1u] = (uint8_t)(value >> 8u);
+    bytes[offset + 2u] = (uint8_t)(value >> 16u);
+    bytes[offset + 3u] = (uint8_t)(value >> 24u);
+}
+
+static void auxiliary_loader_cases(NvmConformance* state, Dspic33* cpu) {
+    static uint8_t hex_bytes[] = ":0200000400FFFB\n:0480000056341200E0\n:00000001FF\n";
+    uint8_t elf_bytes[136] = {0u};
+    HexImage hex = {hex_bytes, sizeof(hex_bytes) - 1u, false};
+    ElfImage elf = {elf_bytes, sizeof(elf_bytes)};
+    char error[128] = {0};
+
+    dspic33_reset(cpu, 0u);
+    expect(state, hex_image_load_program(&hex, cpu, error, sizeof(error)),
+           "Intel HEX loads auxiliary program section");
+    expect(state,
+           dspic33_read_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE) ==
+               0x00123456u,
+           "Intel HEX auxiliary word retained");
+
+    elf_bytes[0] = 0x7fu;
+    elf_bytes[1] = 'E';
+    elf_bytes[2] = 'L';
+    elf_bytes[3] = 'F';
+    elf_bytes[4] = 1u;
+    elf_bytes[5] = 1u;
+    write_u16(elf_bytes, 16u, 2u);
+    write_u16(elf_bytes, 18u, 118u);
+    write_u32(elf_bytes, 32u, 52u);
+    write_u16(elf_bytes, 46u, 40u);
+    write_u16(elf_bytes, 48u, 2u);
+    write_u32(elf_bytes, 96u, 1u);
+    write_u32(elf_bytes, 100u, 0x40000000u);
+    write_u32(elf_bytes, 104u, DSPIC33_AUXILIARY_PROGRAM_BASE + 2u);
+    write_u32(elf_bytes, 108u, 132u);
+    write_u32(elf_bytes, 112u, 4u);
+    write_u32(elf_bytes, 132u, 0x00654321u);
+    memset(error, 0, sizeof(error));
+    expect(state, elf_image_load_program(&elf, cpu, error, sizeof(error)),
+           "ELF loads auxiliary program section");
+    expect(state,
+           dspic33_read_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 2u) ==
+               0x00654321u,
+           "ELF auxiliary word retained");
+}
+
+static void auxiliary_access_and_execution_cases(NvmConformance* state, Dspic33* cpu) {
+    Dspic33 copy;
+    uint16_t value;
+    bool initialized;
+
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_program_range_implemented(DSPIC33_AUXILIARY_PROGRAM_BASE, 2u) &&
+               dspic33_program_range_implemented(0x007ffffeu, 2u) &&
+               !dspic33_program_range_implemented(DSPIC33_PROGRAM_LIMIT, 2u) &&
+               !dspic33_program_range_implemented(DSPIC33_AUXILIARY_PROGRAM_LIMIT, 2u),
+           "program map distinguishes primary gap and auxiliary segment");
+    expect(
+        state,
+        dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE, 0x00123456u) &&
+            dspic33_load_program_word(cpu, 0x007ffffeu, 0x00654321u),
+        "host loads auxiliary boundary words");
+    expect(state,
+           !dspic33_load_program_word(cpu, DSPIC33_PROGRAM_LIMIT, 0u) &&
+               !dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_LIMIT, 0u),
+           "host rejects unimplemented program addresses");
+    expect(state,
+           dspic33_read_program_byte(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE) == 0x56u &&
+               dspic33_read_program_byte(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 1u) ==
+                   0x34u &&
+               dspic33_read_program_byte(cpu, 0x007fffffu) == 0x43u,
+           "host reads auxiliary byte lanes");
+    expect(state,
+           read_table(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE, TBLRDL_W2_W3, &value) &&
+               value == 0x3456u,
+           "TBLRDL reads auxiliary low word");
+    expect(state,
+           read_table(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE, TBLRDH_W2_W3, &value) &&
+               value == 0x0012u,
+           "TBLRDH reads auxiliary high byte");
+    expect(state,
+           read_table(cpu, 0x007ffffeu, TBLRDL_W2_W3, &value) && value == 0x4321u,
+           "table read reaches auxiliary final word");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_load_program_word(cpu, 0u, OPCODE_MOV_W1_W2);
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE, 0x00123456u);
+    dspic33_set_working_register(cpu, 1u, 0xc000u);
+    cpu->dsrpag = 0x02ffu;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0x3456u &&
+               cpu->cycles == 5u,
+           "PSV low word reads auxiliary Flash");
+    dspic33_reset(cpu, 0u);
+    dspic33_load_program_word(cpu, 0u, OPCODE_MOV_W1_W2);
+    dspic33_set_working_register(cpu, 1u, 0xc000u);
+    cpu->dsrpag = 0x03ffu;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0x0012u &&
+               cpu->cycles == 5u,
+           "PSV high byte reads auxiliary Flash");
+
+    dspic33_reset(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE);
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE,
+                              OPCODE_MOV_LITERAL_0X1234_W2);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0x1234u &&
+               cpu->pc == DSPIC33_AUXILIARY_PROGRAM_BASE + 2u,
+           "CPU executes auxiliary instruction");
+
+    dspic33_reset(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE);
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE,
+                              OPCODE_BTSC_W2_BIT_0);
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 2u, OPCODE_NOP);
+    cpu->w[2] = 0u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               cpu->pc == DSPIC33_AUXILIARY_PROGRAM_BASE + 4u && cpu->cycles == 2u,
+           "skip decodes following auxiliary instruction");
+
+    dspic33_reset(cpu, 0x007ffffcu);
+    dspic33_load_program_word(cpu, 0x007ffffcu, OPCODE_BTSC_W2_BIT_0);
+    dspic33_load_program_word(cpu, 0x007ffffeu, OPCODE_NOP);
+    cpu->w[2] = 0u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0u && cpu->cycles == 2u,
+           "taken skip wraps across auxiliary program limit");
+
+    dspic33_reset(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE);
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE, OPCODE_DO_1);
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 2u, 1u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->do_depth == 1u &&
+               cpu->do_start[0] == DSPIC33_AUXILIARY_PROGRAM_BASE + 4u &&
+               cpu->do_end[0] == DSPIC33_AUXILIARY_PROGRAM_BASE + 6u,
+           "DO reads auxiliary extension word");
+
+    dspic33_reset(cpu, 0x007ffffeu);
+    dspic33_load_program_word(cpu, 0x007ffffeu, OPCODE_NOP);
+    dspic33_load_program_word(cpu, 0u, OPCODE_MOV_LITERAL_0X1234_W2);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0u &&
+               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0x1234u,
+           "23-bit PC wraps from auxiliary final word to primary reset word");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_load_configuration_word(cpu, 0xf8000eu, 0xffdbu);
+    dspic33_load_program_word(cpu, 0u, OPCODE_RESET);
+    dspic33_load_program_word(cpu, 0x007ffffcu, OPCODE_GOTO_0X100);
+    dspic33_load_program_word(cpu, 0x007ffffeu, 0u);
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x007ffffcu,
+           "RSTPRI selects auxiliary reset vector");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0100u,
+           "auxiliary reset GOTO uses final two words");
+    dspic33_load_configuration_word(cpu, 0xf8000eu, 0xffdfu);
+
+    dspic33_reset(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE);
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE, OPCODE_NOP);
+    dspic33_load_program_word(cpu, 0x007ffffau,
+                              DSPIC33_AUXILIARY_PROGRAM_BASE + 0x0100u);
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x0100u,
+                              OPCODE_NOP);
+    dspic33_load_program_word(cpu, 0x0014u, 0x0200u);
+    cpu->w[15] = 0x5000u;
+    dspic33_write_word(cpu, 0x0820u, 0x0001u);
+    dspic33_write_word(cpu, 0x0840u, 0x0004u);
+    dspic33_raise_interrupt(cpu, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_interrupt == 0u &&
+               cpu->interrupt_log_entry[0] == DSPIC33_AUXILIARY_PROGRAM_BASE &&
+               cpu->pc == DSPIC33_AUXILIARY_PROGRAM_BASE + 0x0102u &&
+               dspic33_read_word(cpu, 0x5000u) == 0xc000u &&
+               (dspic33_read_word(cpu, 0x5002u) & 0x007fu) == 0x007fu,
+           "auxiliary execution routes IRQ through single vector");
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x0102u,
+                              OPCODE_RETFIE);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               cpu->pc == DSPIC33_AUXILIARY_PROGRAM_BASE,
+           "RETFIE restores auxiliary return address");
+
+    dspic33_reset(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE);
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE, OPCODE_MOV_W1_W2);
+    dspic33_load_program_word(cpu, 0x007ffffau,
+                              DSPIC33_AUXILIARY_PROGRAM_BASE + 0x0200u);
+    dspic33_set_working_register(cpu, 1u, 0x1001u);
+    cpu->w[15] = 0x5000u;
+    cpu->stop_on_trap = true;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->last_trap == 1u &&
+               cpu->last_trap_return == DSPIC33_AUXILIARY_PROGRAM_BASE + 2u &&
+               cpu->pc == DSPIC33_AUXILIARY_PROGRAM_BASE + 0x0200u,
+           "auxiliary execution routes trap through single vector");
+
+    dspic33_reset(cpu, 0x007ffffeu);
+    dspic33_load_program_word(cpu, 0x007ffffeu, OPCODE_MOV_W1_W2);
+    dspic33_load_program_word(cpu, 0x000006u, 0x000100u);
+    dspic33_load_program_word(cpu, 0x007ffffau,
+                              DSPIC33_AUXILIARY_PROGRAM_BASE + 0x0300u);
+    dspic33_set_working_register(cpu, 1u, 0x1001u);
+    cpu->w[15] = 0x5000u;
+    cpu->stop_on_trap = true;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->last_trap == 1u &&
+               cpu->last_trap_return == 0u &&
+               cpu->pc == DSPIC33_AUXILIARY_PROGRAM_BASE + 0x0300u &&
+               dspic33_read_word(cpu, 0x5000u) == 0u &&
+               (dspic33_read_word(cpu, 0x5002u) & 0x007fu) == 0u,
+           "final auxiliary instruction retains trap vector provenance");
+
+    initialized = dspic33_initialize(&copy);
+    expect(state, initialized, "initialize auxiliary program copy");
+    if (initialized) {
+        dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE, 0x00010203u);
+        expect(state, dspic33_copy(&copy, cpu), "copy auxiliary program state");
+        dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE, 0x00040506u);
+        expect(state,
+               dspic33_read_program_word(&copy, DSPIC33_AUXILIARY_PROGRAM_BASE) ==
+                       0x00010203u &&
+                   dspic33_read_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE) ==
+                       0x00040506u,
+               "auxiliary program copies remain independent");
+        dspic33_reset(&copy, 0u);
+        expect(state,
+               dspic33_read_program_word(&copy, DSPIC33_AUXILIARY_PROGRAM_BASE) ==
+                   0x00010203u,
+               "reset preserves auxiliary Flash");
+        dspic33_destroy(&copy);
+    }
+}
+
+static void auxiliary_nvm_cases(NvmConformance* state, Dspic33* cpu) {
+    uint32_t index;
+    uint64_t instructions;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE, 0x00f0f0f0u);
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 2u, 0x000f0f0fu);
+    cpu->write_latches[0] = 0x00123456u;
+    cpu->write_latches[1] = 0x00654321u;
+    expect(state, start_operation(cpu, 1u, DSPIC33_AUXILIARY_PROGRAM_BASE),
+           "auxiliary pair operation starts");
+    expect(state, finish_operation(cpu), "auxiliary pair operation completes");
+    expect(state,
+           program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE) == 0x00103050u &&
+               program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 2u) == 0x00050301u,
+           "auxiliary pair programs both words");
+
+    dspic33_reset(cpu, 0u);
+    for (index = 0u; index < DSPIC33_WRITE_LATCH_WORDS; index++) {
+        dspic33_load_program_word(
+            cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x100u + index * 2u, 0x00ffffffu);
+        cpu->write_latches[index] = 0x00330000u | index;
+    }
+    expect(state, start_operation(cpu, 2u, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x17au),
+           "auxiliary row operation starts");
+    expect(state, finish_operation(cpu), "auxiliary row operation completes");
+    expect(state,
+           program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x100u) == 0x00330000u &&
+               program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x1feu) ==
+                   0x0033007fu,
+           "auxiliary row programs exact aligned range");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE, 0u);
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x400u, 0u);
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x7feu, 0u);
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x800u,
+                              0x00123456u);
+    expect(state, start_operation(cpu, 3u, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x456u),
+           "auxiliary page erase starts");
+    expect(state, finish_operation(cpu), "auxiliary page erase completes");
+    expect(
+        state,
+        program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE) == 0x00ffffffu &&
+            program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x400u) == 0x00ffffffu &&
+            program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x7feu) == 0x00ffffffu &&
+            program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x800u) == 0x00123456u,
+        "auxiliary page erase preserves adjacent page");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_load_program_word(cpu, 0x007ffffcu, 0x00ffffffu);
+    dspic33_load_program_word(cpu, 0x007ffffeu, 0x00ffffffu);
+    cpu->write_latches[0] = 0x00010203u;
+    cpu->write_latches[1] = 0x00040506u;
+    expect(state, start_operation(cpu, 1u, 0x007ffffeu), "auxiliary final pair starts");
+    expect(state, finish_operation(cpu), "auxiliary final pair completes");
+    expect(state,
+           program_word(cpu, 0x007ffffcu) == 0x00010203u &&
+               program_word(cpu, 0x007ffffeu) == 0x00040506u,
+           "auxiliary final pair aligns within segment");
+
+    dspic33_reset(cpu, 0u);
+    for (index = 0u; index < DSPIC33_WRITE_LATCH_WORDS; index++) {
+        dspic33_load_program_word(cpu, 0x007fff00u + index * 2u, 0x00ffffffu);
+        cpu->write_latches[index] = 0x00660000u | index;
+    }
+    expect(state, start_operation(cpu, 2u, 0x007ffffeu), "auxiliary final row starts");
+    expect(state, finish_operation(cpu), "auxiliary final row completes");
+    expect(state,
+           program_word(cpu, 0x007fff00u) == 0x00660000u &&
+               program_word(cpu, 0x007ffffeu) == 0x0066007fu,
+           "auxiliary final row remains within segment");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_load_program_word(cpu, 0x007ff800u, 0u);
+    dspic33_load_program_word(cpu, 0x007ffffeu, 0u);
+    expect(state, start_operation(cpu, 3u, 0x007ffffeu), "auxiliary final page starts");
+    expect(state, finish_operation(cpu), "auxiliary final page completes");
+    expect(state,
+           program_word(cpu, 0x007ff800u) == 0x00ffffffu &&
+               program_word(cpu, 0x007ffffeu) == 0x00ffffffu,
+           "auxiliary final page remains within segment");
+
+    dspic33_reset(cpu, 0u);
+    configure_operation(cpu, 1u, DSPIC33_AUXILIARY_PROGRAM_LIMIT, true);
+    expect(state, execute_start_sequence(cpu, false),
+           "auxiliary out-of-range pair sequence executes");
+    expect(state, !cpu->nvm.active, "auxiliary out-of-range pair rejected");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_load_program_word(cpu, 0x2000u, 0x00010203u);
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE, 0x00040506u);
+    dspic33_load_configuration_word(cpu, 0xf80004u, 0xff30u);
+    dspic33_load_configuration_word(cpu, 0xf80010u, 0xff30u);
+    expect(state, start_operation(cpu, 0x0au, 0u), "auxiliary bulk erase starts");
+    expect(state, finish_operation(cpu), "auxiliary bulk erase completes");
+    expect(state,
+           program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE) == 0x00ffffffu &&
+               program_word(cpu, 0x2000u) == 0x00010203u,
+           "auxiliary bulk erase preserves primary Flash");
+    expect(state,
+           dspic33_read_configuration_byte(cpu, 0xf80010u) == 0xcfu &&
+               dspic33_read_configuration_byte(cpu, 0xf80011u) == 0xffu &&
+               dspic33_read_configuration_byte(cpu, 0xf80004u) == 0x30u,
+           "auxiliary bulk erase restores only FAS");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_load_program_word(cpu, 0x2000u, 0x00010203u);
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE, 0x00040506u);
+    dspic33_load_configuration_word(cpu, 0xf80004u, 0xff30u);
+    dspic33_load_configuration_word(cpu, 0xf80010u, 0xff30u);
+    expect(state, start_operation(cpu, 0x0du, 0u), "primary bulk erase starts");
+    expect(state, finish_operation(cpu), "primary bulk erase completes");
+    expect(state,
+           program_word(cpu, 0x2000u) == 0x00ffffffu &&
+               program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE) == 0x00040506u,
+           "primary bulk erase preserves auxiliary Flash");
+    expect(state,
+           dspic33_read_configuration_byte(cpu, 0xf80004u) == 0xcfu &&
+               dspic33_read_configuration_byte(cpu, 0xf80005u) == 0xffu &&
+               dspic33_read_configuration_byte(cpu, 0xf80010u) == 0x30u,
+           "primary bulk erase restores only FGS");
+
+    dspic33_reset(cpu, 0u);
+    cpu->write_latches[0] = 0x00112233u;
+    cpu->write_latches[1] = 0x00445566u;
+    expect(state, start_operation(cpu, 1u, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x1000u),
+           "opposite-segment auxiliary program starts");
+    dspic33_load_program_word(cpu, cpu->pc, OPCODE_NOP);
+    instructions = cpu->instructions;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && !cpu->nvm.active &&
+               cpu->instructions == instructions + 1u,
+           "primary execution continues during auxiliary programming");
+
+    dspic33_reset(cpu, 0u);
+    cpu->write_latches[0] = 0x00112233u;
+    cpu->write_latches[1] = 0x00445566u;
+    expect(state, start_operation(cpu, 1u, 0x3000u),
+           "opposite-segment primary program starts");
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x1800u,
+                              OPCODE_NOP);
+    cpu->pc = DSPIC33_AUXILIARY_PROGRAM_BASE + 0x1800u;
+    instructions = cpu->instructions;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && !cpu->nvm.active &&
+               cpu->instructions == instructions + 1u,
+           "auxiliary execution continues during primary programming");
+
+    dspic33_reset(cpu, 0u);
+    cpu->write_latches[0] = 0x00112233u;
+    cpu->write_latches[1] = 0x00445566u;
+    expect(state, start_operation(cpu, 1u, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x2000u),
+           "same-segment auxiliary program starts");
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x2800u,
+                              OPCODE_NOP);
+    cpu->pc = DSPIC33_AUXILIARY_PROGRAM_BASE + 0x2800u;
+    instructions = cpu->instructions;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && !cpu->nvm.active &&
+               cpu->instructions == instructions,
+           "auxiliary execution stalls during auxiliary programming");
+}
+
 static void stall_and_interrupt_cases(NvmConformance* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     dspic33_load_program_word(cpu, 0x0032u, 0x000100u);
@@ -769,6 +1180,9 @@ int main(void) {
         pair_and_capture_cases(&state, &cpu);
         row_operation_cases(&state, &cpu);
         erase_operation_cases(&state, &cpu);
+        auxiliary_loader_cases(&state, &cpu);
+        auxiliary_access_and_execution_cases(&state, &cpu);
+        auxiliary_nvm_cases(&state, &cpu);
         stall_and_interrupt_cases(&state, &cpu);
         async_suppression_cases(&state, &cpu);
         reset_copy_and_failure_cases(&state, &cpu);

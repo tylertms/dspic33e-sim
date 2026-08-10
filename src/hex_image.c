@@ -231,7 +231,7 @@ bool hex_image_load_program(const HexImage* image, Dspic33* cpu, char* error,
                 uint32_t word = (uint32_t)data[index] |
                                 ((uint32_t)data[index + 1u] << 8u) |
                                 ((uint32_t)data[index + 2u] << 16u);
-                if (program_address < DSPIC33_PROGRAM_LIMIT &&
+                if (dspic33_program_range_implemented(program_address, 2u) &&
                     !dspic33_load_program_word(cpu, program_address, word)) {
                     set_error(error, error_size, "Intel HEX program data is invalid");
                     return false;

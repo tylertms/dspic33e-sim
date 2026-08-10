@@ -3911,7 +3911,10 @@ static bool service_interrupt(Dspic33* cpu) {
     cpu->interrupt_log_irq[log_index] = best_irq;
     cpu->interrupt_log_entry[log_index] = cpu->pc;
     cpu->interrupt_log_return[log_index] = 0u;
-    cpu->pc = cpu->program[(0x0014u + best_irq * 2u) / 2u] & 0x007ffffeu;
+    cpu->pc = dspic33_read_program_word(cpu, cpu->pc >= DSPIC33_AUXILIARY_PROGRAM_BASE
+                                                 ? 0x007ffffau
+                                                 : 0x0014u + best_irq * 2u) &
+              0x007ffffeu;
     cpu->last_interrupt = best_irq;
     cpu->interrupt_count++;
     cpu->interrupt_depth++;
@@ -7456,18 +7459,16 @@ bool dspic33_device_advance(Dspic33* cpu, uint64_t cycles) {
     }
     cpu->gie_disable_deferred = cpu->gie_disable_deferred_next;
     cpu->gie_disable_deferred_next = 0u;
-    return true;
-}
-
-bool dspic33_device_advance_nvm(Dspic33* cpu) {
-    if (!dspic33_device_advance(cpu, 1u)) {
-        return false;
-    }
-    if (cpu->nvm.active && cpu->cycles >= cpu->nvm.completion_cycle) {
+    if (cpu->nvm.active && cpu->nvm.completion_cycle != 0u &&
+        cpu->cycles >= cpu->nvm.completion_cycle) {
         complete_nvm_event(cpu);
         remove_nvm_events(cpu);
     }
     return true;
+}
+
+bool dspic33_device_advance_nvm(Dspic33* cpu) {
+    return dspic33_device_advance(cpu, 1u);
 }
 
 static void update_timer_register(Dspic33* cpu, uint16_t address) {
@@ -8578,7 +8579,7 @@ static void fail_nvm_write(Dspic33* cpu) {
 }
 
 static bool nvm_program_range_valid(uint32_t address, uint32_t size) {
-    return address < DSPIC33_PROGRAM_LIMIT && size <= DSPIC33_PROGRAM_LIMIT - address;
+    return dspic33_program_range_implemented(address, size);
 }
 
 static bool nvm_target_valid(uint16_t control, uint32_t address) {
@@ -8596,6 +8597,9 @@ static bool nvm_target_valid(uint16_t control, uint32_t address) {
     case 3u:
         address &= 0x00fff800u;
         return nvm_program_range_valid(address, 0x800u);
+    case 0x0au:
+    case 0x0du:
+        return true;
     default:
         return false;
     }

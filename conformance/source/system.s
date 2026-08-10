@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 70
+_system_conformance_terminal_count = 71
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -150,6 +150,8 @@ _run_system_probe:
     bra z, _system_psv_program_double_fault_probe
     cp w0, #70
     bra z, _system_psv_repeat_probe
+    cp w0, #71
+    bra z, _system_auxiliary_program_probe
     return
 
 .global _system_sleep_probe
@@ -528,6 +530,39 @@ _system_psv_repeat_probe:
 .global _system_psv_repeat_complete
 _system_psv_repeat_complete:
     bra _system_psv_repeat_complete
+
+.global _system_auxiliary_program_probe
+_system_auxiliary_program_probe:
+    mov #0x5000, w15
+    clr IFS0
+    clr IEC0
+    clr IPC0
+    bset INTCON2, #15
+    mov #4, w0
+    mov w0, IPC0
+    bset IEC0, #0
+    goto 0x7fc000
+
+.global _system_auxiliary_program_capture
+_system_auxiliary_program_capture:
+    mov w3, _system_auxiliary_program_state
+    mov INTTREG, w0
+    mov w0, _system_auxiliary_program_state+2
+    mov [w15-4], w0
+    mov w0, _system_auxiliary_program_state+4
+    mov [w15-2], w0
+    mov w0, _system_auxiliary_program_state+6
+    mov w15, _system_auxiliary_program_state+8
+    mov #0x007f, w0
+    mov w0, TBLPAG
+    mov #0xc000, w0
+    tblrdl [w0], w4
+    mov w4, _system_auxiliary_program_state+10
+    mov #0x7171, w0
+    mov w0, _system_auxiliary_program_state+12
+.global _system_auxiliary_program_complete
+_system_auxiliary_program_complete:
+    bra _system_auxiliary_program_complete
 
 .global _system_sftac_probe
 _system_sftac_probe:

@@ -1327,7 +1327,9 @@ static uint32_t stopped_opcode(const Dspic33* cpu) {
     if (cpu->unsupported_opcode != 0u) {
         return cpu->unsupported_opcode;
     }
-    return cpu->pc < DSPIC33_PROGRAM_LIMIT ? cpu->program[cpu->pc / 2u] : 0u;
+    return dspic33_program_range_implemented(cpu->pc, 2u)
+               ? dspic33_read_program_word(cpu, cpu->pc)
+               : 0u;
 }
 
 static bool run_image(Runner* runner, Dspic33* cpu, bool candidate,

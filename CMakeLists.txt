@@ -36,7 +36,10 @@ add_executable(opentec_simulator_can_conformance conformance/can.c)
 add_executable(opentec_simulator_usb_conformance conformance/usb.c)
 add_executable(opentec_simulator_uart_conformance conformance/uart.c)
 add_executable(opentec_simulator_i2c_conformance conformance/i2c.c)
-add_executable(opentec_simulator_nvm_conformance conformance/nvm.c)
+add_executable(
+    opentec_simulator_nvm_conformance conformance/nvm.c src/elf_image.c
+                                      src/hex_image.c
+)
 add_executable(opentec_simulator_crc_conformance conformance/crc.c)
 add_executable(opentec_simulator_pmp_conformance conformance/pmp.c)
 add_executable(

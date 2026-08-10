@@ -163,7 +163,7 @@ bool elf_image_load_program(const ElfImage* image, Dspic33* cpu, char* error,
                               "ELF configuration exceeds device memory");
                     return false;
                 }
-            } else if (address < DSPIC33_PROGRAM_LIMIT &&
+            } else if (dspic33_program_range_implemented(address, 2u) &&
                        !dspic33_load_program_word(cpu, address, word)) {
                 set_error(error, error_size, "ELF program exceeds device memory");
                 return false;

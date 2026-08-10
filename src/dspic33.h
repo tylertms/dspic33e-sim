@@ -8,7 +8,10 @@
 #define DSPIC33_DATA_SIZE 0x100000u
 #define DSPIC33_PROGRAM_LIMIT 0x55800u
 #define DSPIC33_AUXILIARY_PROGRAM_BASE 0x7fc000u
+#define DSPIC33_AUXILIARY_PROGRAM_LIMIT 0x800000u
 #define DSPIC33_PROGRAM_WORDS (DSPIC33_PROGRAM_LIMIT / 2u)
+#define DSPIC33_AUXILIARY_PROGRAM_WORDS                                                \
+    ((DSPIC33_AUXILIARY_PROGRAM_LIMIT - DSPIC33_AUXILIARY_PROGRAM_BASE) / 2u)
 #define DSPIC33_PERSISTENT_PROGRAM_BASE 0x1000000u
 #define DSPIC33_PERSISTENT_PROGRAM_LIMIT 0x1010000u
 #define DSPIC33_PERSISTENT_PROGRAM_WORDS                                               \
@@ -549,6 +552,7 @@ typedef struct {
     uint8_t priority;
     uint8_t delay;
     bool active;
+    bool auxiliary_program;
 } Dspic33PendingSoftTrap;
 
 typedef struct {
@@ -580,6 +584,7 @@ typedef struct {
 
 typedef struct {
     uint32_t* program;
+    uint32_t* auxiliary_program;
     uint32_t* persistent_program;
     uint32_t write_latches[DSPIC33_WRITE_LATCH_WORDS];
     uint8_t* data;
@@ -628,6 +633,7 @@ typedef struct {
     uint16_t last_trap;
     Dspic33PendingSoftTrap pending_soft_traps[4];
     uint32_t address_error_return;
+    uint32_t current_instruction_pc;
     bool instruction_active;
     uint8_t current_instruction_cycles;
     uint16_t instruction_working_register_writes;
@@ -669,8 +675,10 @@ bool dspic33_copy(Dspic33* destination, const Dspic33* source);
 void dspic33_reset(Dspic33* cpu, uint32_t entry);
 void dspic33_watchdog_advance_lprc(Dspic33* cpu, uint64_t ticks);
 bool dspic33_load_program_word(Dspic33* cpu, uint32_t address, uint32_t word);
+bool dspic33_program_range_implemented(uint32_t address, uint32_t size);
 void dspic33_complete_nvm(Dspic33* cpu);
 bool dspic33_load_configuration_word(Dspic33* cpu, uint32_t address, uint32_t word);
+uint32_t dspic33_read_program_word(const Dspic33* cpu, uint32_t address);
 uint8_t dspic33_read_program_byte(const Dspic33* cpu, uint32_t address);
 uint8_t dspic33_read_configuration_byte(const Dspic33* cpu, uint32_t address);
 void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value);

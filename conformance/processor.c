@@ -488,14 +488,17 @@ static void program_target_address_error_cases(ProcessorConformance* state,
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_GOTO_LONG_W0);
+    load_instruction(state, cpu, DSPIC33_AUXILIARY_PROGRAM_BASE, OPCODE_NOP);
     cpu->w[0] = 0xc000u;
     cpu->w[1] = 0x007fu;
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x7fc000u &&
                cpu->cycles == 4u && cpu->last_trap == UINT16_MAX,
-           "auxiliary GOTO.L target retains existing bounds behavior");
-    expect(state, dspic33_step(cpu) == DSPIC33_PROGRAM_BOUNDS,
-           "auxiliary target remains outside implemented fetch space");
+           "auxiliary GOTO.L target is accepted");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               cpu->pc == DSPIC33_AUXILIARY_PROGRAM_BASE + 2u,
+           "auxiliary target executes through mapped Flash");
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_CALL_W0);
@@ -817,6 +820,7 @@ static void program_read_address_error_cases(ProcessorConformance* state,
            "soft-trap target cannot inherit sequential hole authorization");
 
     reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, DSPIC33_AUXILIARY_PROGRAM_BASE, OPCODE_NOP);
     cpu->pc = DSPIC33_AUXILIARY_PROGRAM_BASE - 2u;
     cpu->sequential_program_hole_pc = cpu->pc;
     expect(state,
@@ -824,8 +828,10 @@ static void program_read_address_error_cases(ProcessorConformance* state,
                cpu->pc == DSPIC33_AUXILIARY_PROGRAM_BASE &&
                cpu->sequential_program_hole_pc == 0u && cpu->cycles == 1u,
            "sequential hole provenance ends at auxiliary program boundary");
-    expect(state, dspic33_step(cpu) == DSPIC33_PROGRAM_BOUNDS,
-           "auxiliary program boundary retains existing bounds behavior");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               cpu->pc == DSPIC33_AUXILIARY_PROGRAM_BASE + 2u,
+           "auxiliary program boundary enters implemented Flash");
 }
 
 static void skip_boundary_cases(ProcessorConformance* state, Dspic33* cpu) {
@@ -1540,11 +1546,12 @@ static void pseudo_linear_page_cases(ProcessorConformance* state, Dspic33* cpu) 
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_MOV_W1_PRE_DECREMENT_W2);
+    load_instruction(state, cpu, 0x7ffffeu, 0x005a5au);
     cpu->w[1] = 0x8000u;
     cpu->dsrpag = 0x0300u;
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0xfffeu &&
-               cpu->w[2] == 0u && cpu->dsrpag == 0x02ffu,
+               cpu->w[2] == 0x5a5au && cpu->dsrpag == 0x02ffu,
            "PSV high-byte page underflows into low-word page");
 
     reset_processor_conformance(cpu, 0u);
