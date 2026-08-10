@@ -97,6 +97,9 @@ DOCUMENTED_DEPENDENT_READ_ONLY_OVERRIDES = {
     ("QEI1IOC", 0x01C2): 0x000F,
     ("QEI2IOC", 0x05C2): 0x000F,
 }
+DOCUMENTED_DEPENDENT_NORMAL_OVERRIDES = {
+    ("AD1CON1", 0x0320): (0x0008, 0x0320, 0x0400, 0x0000, 0x0400),
+}
 DOCUMENTED_RESERVED_OVERRIDES = {
     ("AD2CON2", 0x0362): 0x0040,
     ("C1INTE", 0x040C): 0x0010,
@@ -123,6 +126,10 @@ DOCUMENTED_READ_ONLY_OVERRIDE_BITS = sum(
 )
 DOCUMENTED_DEPENDENT_READ_ONLY_OVERRIDE_BITS = sum(
     mask.bit_count() for mask in DOCUMENTED_DEPENDENT_READ_ONLY_OVERRIDES.values()
+)
+DOCUMENTED_DEPENDENT_NORMAL_OVERRIDE_BITS = sum(
+    descriptor[0].bit_count()
+    for descriptor in DOCUMENTED_DEPENDENT_NORMAL_OVERRIDES.values()
 )
 DOCUMENTED_WRITE_ONLY_OVERRIDE_BITS = sum(
     mask.bit_count() for mask in DOCUMENTED_WRITE_ONLY_OVERRIDES.values()
@@ -209,6 +216,8 @@ def access_masks(register):
     dependent_read_only_override = DOCUMENTED_DEPENDENT_READ_ONLY_OVERRIDES.get(
         identity, 0
     )
+    dependent_normal = DOCUMENTED_DEPENDENT_NORMAL_OVERRIDES.get(identity)
+    dependent_normal_override = dependent_normal[0] if dependent_normal else 0
     write_only_override = DOCUMENTED_WRITE_ONLY_OVERRIDES.get(identity, 0)
     reserved_override = DOCUMENTED_RESERVED_OVERRIDES.get(
         identity, 0
@@ -216,6 +225,7 @@ def access_masks(register):
     override = (
         side_effect_override
         | split_access_override
+        | dependent_normal_override
         | read_only_override
         | write_only_override
         | reserved_override
@@ -228,14 +238,19 @@ def access_masks(register):
     if (
         side_effect_override & read_only_override
         or side_effect_override & split_access_override
+        or side_effect_override & dependent_normal_override
         or side_effect_override & write_only_override
+        or split_access_override & dependent_normal_override
         or split_access_override & read_only_override
         or split_access_override & write_only_override
+        or dependent_normal_override & read_only_override
+        or dependent_normal_override & write_only_override
         or read_only_override & write_only_override
         or reserved_override
         & (
             side_effect_override
             | split_access_override
+            | dependent_normal_override
             | read_only_override
             | write_only_override
         )
@@ -262,6 +277,7 @@ def access_masks(register):
         "write_only": pattern_mask(access, "w") | write_only_override,
         "side_effect": side_effect | side_effect_override,
         "split_access": split_access_override,
+        "dependent_normal": dependent_normal_override,
     }
 
 
@@ -269,9 +285,13 @@ def validate_documented_overrides(defaults):
     identities = {
         (register["name"], int(register["address"], 16)) for register in defaults
     }
+    registers_by_address = {
+        int(register["address"], 16): register for register in defaults
+    }
     expected = (
         set(DOCUMENTED_SIDE_EFFECT_OVERRIDES)
         | set(DOCUMENTED_SPLIT_ACCESS_OVERRIDES)
+        | set(DOCUMENTED_DEPENDENT_NORMAL_OVERRIDES)
         | set(DOCUMENTED_NORMAL_OVERRIDES)
         | set(DOCUMENTED_READ_ONLY_OVERRIDES)
         | set(DOCUMENTED_DEPENDENT_READ_ONLY_OVERRIDES)
@@ -282,6 +302,19 @@ def validate_documented_overrides(defaults):
     found = identities & expected
     if found != expected:
         raise ValueError(f"documented access overrides found are {sorted(found)}")
+    for identity, descriptor in DOCUMENTED_DEPENDENT_NORMAL_OVERRIDES.items():
+        _, selector_address, selector_mask, normal_value, restricted_value = descriptor
+        selector = registers_by_address.get(selector_address)
+        if selector is None or selector_mask & ~pattern_mask(selector["access"], "n"):
+            raise ValueError(f"dependent normal selector is invalid for {identity[0]}")
+        if (normal_value | restricted_value) & ~selector_mask:
+            raise ValueError(
+                f"dependent normal selector value is invalid for {identity[0]}"
+            )
+        if normal_value == restricted_value:
+            raise ValueError(
+                f"dependent normal selector states match for {identity[0]}"
+            )
 
 
 def load_inventory(path):
@@ -503,6 +536,15 @@ def render(defaults, muxes, conditionals):
         "",
         "typedef struct {",
         "    uint16_t address;",
+        "    uint16_t mask;",
+        "    uint16_t selector_address;",
+        "    uint16_t selector_mask;",
+        "    uint16_t normal_value;",
+        "    uint16_t restricted_value;",
+        "} Dspic33SfrDependentNormalExpectation;",
+        "",
+        "typedef struct {",
+        "    uint16_t address;",
         "    uint16_t selector_address;",
         "    uint16_t selector_mask;",
         "    uint16_t selector_value;",
@@ -580,6 +622,25 @@ def render(defaults, muxes, conditionals):
         [
             "};",
             "",
+            "static const Dspic33SfrDependentNormalExpectation",
+            "    dspic33_sfr_dependent_normal_expectations[] = {",
+        ]
+    )
+    for register in defaults:
+        masks = access_masks(register)
+        if masks["dependent_normal"] != 0:
+            descriptor = DOCUMENTED_DEPENDENT_NORMAL_OVERRIDES[
+                (register["name"], int(register["address"], 16))
+            ]
+            lines.append(
+                f"        {{{register['address']}u, 0x{masks['dependent_normal']:04x}u, "
+                f"0x{descriptor[1]:04x}u, 0x{descriptor[2]:04x}u, "
+                f"0x{descriptor[3]:04x}u, 0x{descriptor[4]:04x}u}},"
+            )
+    lines.extend(
+        [
+            "};",
+            "",
             "static const Dspic33SfrMuxAccessExpectation dspic33_sfr_mux_access_expectations[] = {",
         ]
     )
@@ -639,13 +700,15 @@ def render(defaults, muxes, conditionals):
             f"    DSPIC33_SFR_ACCESS_MUX_ALTERNATE_COUNT = {EXPECTED_MUX_ALTERNATES}u,",
             f"    DSPIC33_SFR_ACCESS_CONDITIONAL_COUNT = {EXPECTED_CONDITIONALS}u,",
             f"    DSPIC33_SFR_ACCESS_SPLIT_ACCESS_ADDRESS_COUNT = {len(DOCUMENTED_SPLIT_ACCESS_OVERRIDES)}u,",
-            f"    DSPIC33_SFR_ACCESS_NORMAL_BIT_COUNT = {EXPECTED_ACCESS_BITS['n'] + DOCUMENTED_NORMAL_OVERRIDE_BITS - DOCUMENTED_SIDE_EFFECT_OVERRIDE_BITS - DOCUMENTED_SPLIT_ACCESS_OVERRIDE_BITS - DOCUMENTED_READ_ONLY_OVERRIDE_BITS - DOCUMENTED_WRITE_ONLY_OVERRIDE_BITS - DOCUMENTED_RESERVED_OVERRIDE_BITS - DOCUMENTED_DEVICE_MODE_RESERVED_OVERRIDE_BITS}u,",
+            f"    DSPIC33_SFR_ACCESS_DEPENDENT_NORMAL_ADDRESS_COUNT = {len(DOCUMENTED_DEPENDENT_NORMAL_OVERRIDES)}u,",
+            f"    DSPIC33_SFR_ACCESS_NORMAL_BIT_COUNT = {EXPECTED_ACCESS_BITS['n'] + DOCUMENTED_NORMAL_OVERRIDE_BITS - DOCUMENTED_SIDE_EFFECT_OVERRIDE_BITS - DOCUMENTED_SPLIT_ACCESS_OVERRIDE_BITS - DOCUMENTED_DEPENDENT_NORMAL_OVERRIDE_BITS - DOCUMENTED_READ_ONLY_OVERRIDE_BITS - DOCUMENTED_WRITE_ONLY_OVERRIDE_BITS - DOCUMENTED_RESERVED_OVERRIDE_BITS - DOCUMENTED_DEVICE_MODE_RESERVED_OVERRIDE_BITS}u,",
             f"    DSPIC33_SFR_ACCESS_READ_ONLY_BIT_COUNT = {EXPECTED_ACCESS_BITS['r'] + DOCUMENTED_READ_ONLY_OVERRIDE_BITS}u,",
             f"    DSPIC33_SFR_ACCESS_DEPENDENT_READ_ONLY_BIT_COUNT = {DOCUMENTED_DEPENDENT_READ_ONLY_OVERRIDE_BITS}u,",
             f"    DSPIC33_SFR_ACCESS_RESERVED_BIT_COUNT = {EXPECTED_ACCESS_BITS['-'] - DOCUMENTED_NORMAL_OVERRIDE_BITS + DOCUMENTED_RESERVED_OVERRIDE_BITS + DOCUMENTED_DEVICE_MODE_RESERVED_OVERRIDE_BITS}u,",
             f"    DSPIC33_SFR_ACCESS_WRITE_ONLY_BIT_COUNT = {EXPECTED_ACCESS_BITS['w'] + DOCUMENTED_WRITE_ONLY_OVERRIDE_BITS}u,",
             f"    DSPIC33_SFR_ACCESS_SIDE_EFFECT_BIT_COUNT = {EXPECTED_ACCESS_BITS['c'] + EXPECTED_ACCESS_BITS['s'] + DOCUMENTED_SIDE_EFFECT_OVERRIDE_BITS}u,",
             f"    DSPIC33_SFR_ACCESS_SPLIT_ACCESS_BIT_COUNT = {DOCUMENTED_SPLIT_ACCESS_OVERRIDE_BITS}u,",
+            f"    DSPIC33_SFR_ACCESS_DEPENDENT_NORMAL_BIT_COUNT = {DOCUMENTED_DEPENDENT_NORMAL_OVERRIDE_BITS}u,",
             f"    DSPIC33_SFR_MUX_ACCESS_NORMAL_BIT_COUNT = {EXPECTED_MUX_ACCESS_BITS.get('n', 0)}u,",
             f"    DSPIC33_SFR_MUX_ACCESS_READ_ONLY_BIT_COUNT = {EXPECTED_MUX_ACCESS_BITS.get('r', 0)}u,",
             f"    DSPIC33_SFR_MUX_ACCESS_RESERVED_BIT_COUNT = {EXPECTED_MUX_ACCESS_BITS.get('-', 0)}u,",

@@ -22,6 +22,15 @@ typedef struct {
 
 typedef struct {
     uint16_t address;
+    uint16_t mask;
+    uint16_t selector_address;
+    uint16_t selector_mask;
+    uint16_t normal_value;
+    uint16_t restricted_value;
+} Dspic33SfrDependentNormalExpectation;
+
+typedef struct {
+    uint16_t address;
     uint16_t selector_address;
     uint16_t selector_mask;
     uint16_t selector_value;
@@ -292,7 +301,7 @@ static const Dspic33SfrAccessExpectation dspic33_sfr_access_expectations[] = {
     {0x031au, 0x0000u, 0xffffu, 0x0000u, 0x0000u, 0x0000u, 0x0000u, 0x00u, 0u},
     {0x031cu, 0x0000u, 0xffffu, 0x0000u, 0x0000u, 0x0000u, 0x0000u, 0x00u, 0u},
     {0x031eu, 0x0000u, 0xffffu, 0x0000u, 0x0000u, 0x0000u, 0x0000u, 0x00u, 0u},
-    {0x0320u, 0xb7feu, 0x0000u, 0x0000u, 0x4800u, 0x0000u, 0x0001u, 0x00u, 0u},
+    {0x0320u, 0xb7f6u, 0x0000u, 0x0000u, 0x4800u, 0x0000u, 0x0001u, 0x00u, 0u},
     {0x0322u, 0xe77fu, 0x0080u, 0x0000u, 0x1800u, 0x0000u, 0x0000u, 0x00u, 0u},
     {0x0324u, 0x9fffu, 0x0000u, 0x0000u, 0x6000u, 0x0000u, 0x0000u, 0x00u, 0u},
     {0x0326u, 0x0707u, 0x0000u, 0x0000u, 0xf8f8u, 0x0000u, 0x0000u, 0x00u, 0u},
@@ -1040,6 +1049,11 @@ static const Dspic33SfrSplitAccessExpectation dspic33_sfr_split_access_expectati
         {0x0e42u, 0x03ffu}, {0x0e52u, 0x313fu}, {0x0e62u, 0xf3c3u},
 };
 
+static const Dspic33SfrDependentNormalExpectation
+    dspic33_sfr_dependent_normal_expectations[] = {
+        {0x0320u, 0x0008u, 0x0320u, 0x0400u, 0x0000u, 0x0400u},
+};
+
 static const Dspic33SfrMuxAccessExpectation dspic33_sfr_mux_access_expectations[] = {
     {0x0420u, 0x0400u, 0x0001u, 0x0001u, 0x0000u, 0xffffu, 0x0000u, 0x0000u, 0x0000u,
      0x0000u, 0x0000u},
@@ -1223,13 +1237,15 @@ enum {
     DSPIC33_SFR_ACCESS_MUX_ALTERNATE_COUNT = 16u,
     DSPIC33_SFR_ACCESS_CONDITIONAL_COUNT = 68u,
     DSPIC33_SFR_ACCESS_SPLIT_ACCESS_ADDRESS_COUNT = 7u,
-    DSPIC33_SFR_ACCESS_NORMAL_BIT_COUNT = 10100u,
+    DSPIC33_SFR_ACCESS_DEPENDENT_NORMAL_ADDRESS_COUNT = 1u,
+    DSPIC33_SFR_ACCESS_NORMAL_BIT_COUNT = 10099u,
     DSPIC33_SFR_ACCESS_READ_ONLY_BIT_COUNT = 1985u,
     DSPIC33_SFR_ACCESS_DEPENDENT_READ_ONLY_BIT_COUNT = 14u,
     DSPIC33_SFR_ACCESS_RESERVED_BIT_COUNT = 2928u,
     DSPIC33_SFR_ACCESS_WRITE_ONLY_BIT_COUNT = 157u,
     DSPIC33_SFR_ACCESS_SIDE_EFFECT_BIT_COUNT = 381u,
     DSPIC33_SFR_ACCESS_SPLIT_ACCESS_BIT_COUNT = 81u,
+    DSPIC33_SFR_ACCESS_DEPENDENT_NORMAL_BIT_COUNT = 1u,
     DSPIC33_SFR_MUX_ACCESS_NORMAL_BIT_COUNT = 244u,
     DSPIC33_SFR_MUX_ACCESS_READ_ONLY_BIT_COUNT = 0u,
     DSPIC33_SFR_MUX_ACCESS_RESERVED_BIT_COUNT = 12u,

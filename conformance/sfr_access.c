@@ -57,6 +57,15 @@ typedef struct {
 } SfrConditionalCensus;
 
 typedef struct {
+    uint32_t addresses;
+    uint32_t normal_write_failures;
+    uint32_t restricted_read_failures;
+    uint32_t restricted_write_failures;
+    uint32_t resurrection_failures;
+    uint32_t failures;
+} SfrDependentNormalCensus;
+
+typedef struct {
     uint32_t implemented_words;
     uint32_t absent_words;
     uint32_t absent_ranges;
@@ -422,12 +431,72 @@ static void inspect_conditional_register(
     }
 }
 
+static uint16_t
+dependent_normal_request(Dspic33* cpu,
+                         const Dspic33SfrDependentNormalExpectation* expectation,
+                         uint16_t selector_value, uint16_t value) {
+    if (expectation->address != expectation->selector_address) {
+        return value;
+    }
+    return (uint16_t)((dspic33_read_word(cpu, expectation->address) &
+                       ~(expectation->selector_mask | expectation->mask)) |
+                      selector_value | value);
+}
+
+static void inspect_dependent_normal_register(
+    SfrDependentNormalCensus* census, Dspic33* cpu,
+    const Dspic33SfrDependentNormalExpectation* expectation) {
+    uint16_t normal;
+    uint16_t restricted_read;
+    uint16_t restricted_write;
+    uint16_t resurrected;
+    prepare_register(cpu, expectation->selector_address, expectation->selector_mask,
+                     expectation->normal_value);
+    dspic33_write_word(cpu, expectation->address,
+                       dependent_normal_request(cpu, expectation,
+                                                expectation->normal_value,
+                                                expectation->mask));
+    normal =
+        (uint16_t)(dspic33_read_word(cpu, expectation->address) & expectation->mask);
+    select_register(cpu, expectation->selector_address, expectation->selector_mask,
+                    expectation->restricted_value);
+    restricted_read =
+        (uint16_t)(dspic33_read_word(cpu, expectation->address) & expectation->mask);
+    dspic33_write_word(cpu, expectation->address,
+                       dependent_normal_request(cpu, expectation,
+                                                expectation->restricted_value,
+                                                expectation->mask));
+    restricted_write =
+        (uint16_t)(dspic33_read_word(cpu, expectation->address) & expectation->mask);
+    select_register(cpu, expectation->selector_address, expectation->selector_mask,
+                    expectation->normal_value);
+    resurrected =
+        (uint16_t)(dspic33_read_word(cpu, expectation->address) & expectation->mask);
+    census->addresses++;
+    census->normal_write_failures += normal != expectation->mask;
+    census->restricted_read_failures += restricted_read != 0u;
+    census->restricted_write_failures += restricted_write != 0u;
+    census->resurrection_failures += resurrected != 0u;
+    census->failures += normal != expectation->mask || restricted_read != 0u ||
+                        restricted_write != 0u || resurrected != 0u;
+    if (normal != expectation->mask || restricted_read != 0u ||
+        restricted_write != 0u || resurrected != 0u) {
+        printf("[sfr-dependent-normal-failed] address=0x%04x normal=0x%04x "
+               "restricted-read=0x%04x restricted-write=0x%04x "
+               "resurrected=0x%04x\n",
+               (unsigned)expectation->address, (unsigned)normal,
+               (unsigned)restricted_read, (unsigned)restricted_write,
+               (unsigned)resurrected);
+    }
+}
+
 static void print_inventory(const SfrAccessCensus* census) {
     printf(
         "[sfr-access-inventory] definitions=%u addresses=%u aliases=%" PRIu32
         " mux-defaults=%" PRIu32 " mux-alternates=%u normal-bits=%u "
         "read-only-bits=%u reserved-bits=%u write-only-bits=%u "
         "side-effect-bits=%u split-access-addresses=%u split-access-bits=%u "
+        "dependent-normal-addresses=%u dependent-normal-bits=%u "
         "alternate-normal-bits=%u "
         "alternate-read-only-bits=%u alternate-reserved-bits=%u "
         "alternate-write-only-bits=%u alternate-side-effect-bits=%u\n",
@@ -438,6 +507,8 @@ static void print_inventory(const SfrAccessCensus* census) {
         DSPIC33_SFR_ACCESS_SIDE_EFFECT_BIT_COUNT,
         DSPIC33_SFR_ACCESS_SPLIT_ACCESS_ADDRESS_COUNT,
         DSPIC33_SFR_ACCESS_SPLIT_ACCESS_BIT_COUNT,
+        DSPIC33_SFR_ACCESS_DEPENDENT_NORMAL_ADDRESS_COUNT,
+        DSPIC33_SFR_ACCESS_DEPENDENT_NORMAL_BIT_COUNT,
         DSPIC33_SFR_MUX_ACCESS_NORMAL_BIT_COUNT,
         DSPIC33_SFR_MUX_ACCESS_READ_ONLY_BIT_COUNT,
         DSPIC33_SFR_MUX_ACCESS_RESERVED_BIT_COUNT,
@@ -501,6 +572,16 @@ static void print_conditional_summary(const SfrConditionalCensus* census) {
            census->access.reserved_bits, census->access.write_only_bits);
 }
 
+static void print_dependent_normal_summary(const SfrDependentNormalCensus* census) {
+    printf("[sfr-dependent-normal-summary] addresses=%" PRIu32
+           " normal-write-failures=%" PRIu32 " restricted-read-failures=%" PRIu32
+           " restricted-write-failures=%" PRIu32 " resurrection-failures=%" PRIu32
+           " failures=%" PRIu32 "\n",
+           census->addresses, census->normal_write_failures,
+           census->restricted_read_failures, census->restricted_write_failures,
+           census->resurrection_failures, census->failures);
+}
+
 static void print_map_summary(const SfrMapCensus* census) {
     printf("[sfr-map-summary] words=%u implemented=%" PRIu32 " absent=%" PRIu32
            " absent-ranges=%" PRIu32 " direct-byte-checks=%" PRIu32
@@ -519,6 +600,7 @@ int main(void) {
     SfrAccessCensus census = {0u};
     SfrMuxCensus mux_census = {0u};
     SfrConditionalCensus conditional_census = {0u};
+    SfrDependentNormalCensus dependent_normal_census = {0u};
     SfrMapCensus map_census;
     uint32_t index;
     _Static_assert(sizeof(dspic33_sfr_access_expectations) /
@@ -533,6 +615,10 @@ int main(void) {
                            sizeof(dspic33_sfr_split_access_expectations[0]) ==
                        DSPIC33_SFR_ACCESS_SPLIT_ACCESS_ADDRESS_COUNT,
                    "SFR split access expectation count");
+    _Static_assert(sizeof(dspic33_sfr_dependent_normal_expectations) /
+                           sizeof(dspic33_sfr_dependent_normal_expectations[0]) ==
+                       DSPIC33_SFR_ACCESS_DEPENDENT_NORMAL_ADDRESS_COUNT,
+                   "SFR dependent normal expectation count");
     _Static_assert(sizeof(dspic33_sfr_conditional_access_expectations) /
                            sizeof(dspic33_sfr_conditional_access_expectations[0]) ==
                        DSPIC33_SFR_ACCESS_CONDITIONAL_COUNT,
@@ -556,24 +642,33 @@ int main(void) {
             &conditional_census, &cpu,
             &dspic33_sfr_conditional_access_expectations[index]);
     }
+    for (index = 0u; index < DSPIC33_SFR_ACCESS_DEPENDENT_NORMAL_ADDRESS_COUNT;
+         index++) {
+        inspect_dependent_normal_register(
+            &dependent_normal_census, &cpu,
+            &dspic33_sfr_dependent_normal_expectations[index]);
+    }
     map_census = inspect_sfr_map(&cpu);
     dspic33_destroy(&cpu);
     print_inventory(&census);
     print_access_summary(&census);
     print_mux_summary(&mux_census);
     print_conditional_summary(&conditional_census);
+    print_dependent_normal_summary(&dependent_normal_census);
     print_map_summary(&map_census);
     if (census.aliases != DSPIC33_SFR_ACCESS_ALIAS_COUNT ||
         census.mux_defaults != DSPIC33_SFR_ACCESS_MUX_DEFAULT_COUNT ||
         census.dependent_read_only_bits !=
             DSPIC33_SFR_ACCESS_DEPENDENT_READ_ONLY_BIT_COUNT ||
         mux_census.addresses != DSPIC33_SFR_ACCESS_MUX_ALTERNATE_COUNT ||
-        conditional_census.addresses != DSPIC33_SFR_ACCESS_CONDITIONAL_COUNT) {
+        conditional_census.addresses != DSPIC33_SFR_ACCESS_CONDITIONAL_COUNT ||
+        dependent_normal_census.addresses !=
+            DSPIC33_SFR_ACCESS_DEPENDENT_NORMAL_ADDRESS_COUNT) {
         return 2;
     }
     return census.unresolved_addresses == 0u && mux_census.unresolved_addresses == 0u &&
                    conditional_census.unresolved_addresses == 0u &&
-                   map_census.failures == 0u
+                   dependent_normal_census.failures == 0u && map_census.failures == 0u
                ? 0
                : 1;
 }

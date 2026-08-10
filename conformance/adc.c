@@ -136,6 +136,9 @@ static void register_cases(AdcConformance* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0360u, 0x4c01u);
     expect(state, dspic33_read_word(cpu, 0x0360u) == 0u,
            "adc two unimplemented resolution and done");
+    dspic33_write_word(cpu, 0x0320u, 0x0008u);
+    expect(state, dspic33_read_word(cpu, 0x0320u) == 0x0008u,
+           "ten bit simultaneous sampling available");
     dspic33_write_word(cpu, 0x0322u, 0x0300u);
     dspic33_write_word(cpu, 0x0326u, 0x0707u);
     dspic33_write_word(cpu, 0x0320u, 0x0408u);
@@ -145,6 +148,15 @@ static void register_cases(AdcConformance* state, Dspic33* cpu) {
            "twelve bit channel selection unavailable");
     expect(state, dspic33_read_word(cpu, 0x0326u) == 0u,
            "twelve bit extra channels unavailable");
+    dspic33_write_word(cpu, 0x0320u, 0u);
+    expect(state, dspic33_read_word(cpu, 0x0320u) == 0u,
+           "return to ten bit mode does not restore simultaneous sampling");
+    dspic33_write_word(cpu, 0x0360u, 0x0008u);
+    expect(state, dspic33_read_word(cpu, 0x0360u) == 0x0008u,
+           "adc two simultaneous sampling available");
+    dspic33_write_word(cpu, 0x0360u, 0x0408u);
+    expect(state, dspic33_read_word(cpu, 0x0360u) == 0x0008u,
+           "adc two rejects resolution while retaining simultaneous sampling");
     dspic33_write_word(cpu, 0x0320u, 0x8400u);
     dspic33_write_word(cpu, 0x0320u, 0x8000u);
     expect(state, (dspic33_read_word(cpu, 0x0320u) & 0x0400u) != 0u,
