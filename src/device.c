@@ -785,6 +785,9 @@ static bool can_queue_pop(Dspic33CanQueue* queue, Dspic33CanFrame* frame) {
 static bool event_less(const Dspic33Event* left, const Dspic33Event* right) {
     bool left_dma_completion;
     bool right_dma_completion;
+    if (left->paused != right->paused) {
+        return !left->paused;
+    }
     if (left->cycle != right->cycle) {
         return left->cycle < right->cycle;
     }
@@ -830,9 +833,11 @@ bool dspic33_schedule(Dspic33* cpu, Dspic33EventType type, uint16_t source,
     }
     event.cycle = cpu->device_cycles + delay;
     event.sequence = cpu->events.sequence++;
+    event.paused_remaining = 0u;
     event.value = value;
     event.source = source;
     event.type = type;
+    event.paused = false;
     index = cpu->events.count++;
     while (index != 0u) {
         parent = (index - 1u) / 2u;
@@ -844,6 +849,31 @@ bool dspic33_schedule(Dspic33* cpu, Dspic33EventType type, uint16_t source,
     }
     cpu->events.items[index] = event;
     return true;
+}
+
+void dspic33_reorder_events(Dspic33* cpu) {
+    size_t parent;
+    if (cpu->events.count < 2u) {
+        return;
+    }
+    for (parent = cpu->events.count / 2u; parent != 0u; parent--) {
+        Dspic33Event event = cpu->events.items[parent - 1u];
+        size_t index = parent - 1u;
+        size_t child = index * 2u + 1u;
+        while (child < cpu->events.count) {
+            if (child + 1u < cpu->events.count &&
+                event_less(&cpu->events.items[child + 1u], &cpu->events.items[child])) {
+                child++;
+            }
+            if (!event_less(&cpu->events.items[child], &event)) {
+                break;
+            }
+            cpu->events.items[index] = cpu->events.items[child];
+            index = child;
+            child = index * 2u + 1u;
+        }
+        cpu->events.items[index] = event;
+    }
 }
 
 static Dspic33Event event_pop(Dspic33EventQueue* queue) {
@@ -4370,7 +4400,8 @@ bool dspic33_device_advance(Dspic33* cpu, uint64_t cycles) {
     if (cpu->async_events_enabled) {
         target = cpu->device_cycles + cycles;
         for (;;) {
-            if (cpu->events.count == 0u || cpu->events.items[0].cycle > target) {
+            if (cpu->events.count == 0u || cpu->events.items[0].paused ||
+                cpu->events.items[0].cycle > target) {
                 if (cpu->device_cycles == target) {
                     break;
                 }

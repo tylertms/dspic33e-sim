@@ -91,6 +91,79 @@ static bool module_enabled(const Dspic33* cpu, uint8_t channel) {
            (raw_word(cpu, (uint16_t)(bases[channel] + I2C_CON)) & I2C_ENABLE) != 0u;
 }
 
+static Dspic33Event* scheduled_event(Dspic33* cpu, uint64_t sequence) {
+    size_t index;
+    for (index = 0u; index < cpu->events.count; index++) {
+        if (cpu->events.items[index].sequence == sequence) {
+            return &cpu->events.items[index];
+        }
+    }
+    return NULL;
+}
+
+static void pause_events(Dspic33* cpu, uint8_t channel) {
+    size_t index;
+    bool changed = false;
+    for (index = 0u; index < cpu->events.count; index++) {
+        Dspic33Event* event = &cpu->events.items[index];
+        if (event->type != DSPIC33_EVENT_I2C || event->source != channel ||
+            event->paused) {
+            continue;
+        }
+        event->paused_remaining = event->cycle - cpu->device_cycles;
+        event->paused = true;
+        changed = true;
+    }
+    if (changed) {
+        dspic33_reorder_events(cpu);
+    }
+}
+
+static void resume_events(Dspic33* cpu, uint8_t channel) {
+    size_t index;
+    bool changed = false;
+    for (index = 0u; index < cpu->events.count; index++) {
+        Dspic33Event* event = &cpu->events.items[index];
+        if (event->type != DSPIC33_EVENT_I2C || event->source != channel ||
+            !event->paused) {
+            continue;
+        }
+        if (event->paused_remaining > UINT64_MAX - cpu->device_cycles) {
+            cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+            continue;
+        }
+        event->cycle = cpu->device_cycles + event->paused_remaining;
+        event->paused_remaining = 0u;
+        event->paused = false;
+        changed = true;
+    }
+    if (changed) {
+        dspic33_reorder_events(cpu);
+    }
+}
+
+static void update_power_state(Dspic33* cpu, uint16_t address, uint16_t previous,
+                               uint16_t requested) {
+    static const uint16_t addresses[DSPIC33_I2C_COUNT] = {0x0760u, 0x0764u};
+    static const uint16_t masks[DSPIC33_I2C_COUNT] = {0x0080u, 0x0002u};
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_I2C_COUNT; channel++) {
+        bool was_disabled;
+        bool disabled;
+        if (address != addresses[channel]) {
+            continue;
+        }
+        was_disabled = (previous & masks[channel]) != 0u;
+        disabled = (requested & masks[channel]) != 0u;
+        if (!was_disabled && disabled) {
+            pause_events(cpu, channel);
+        } else if (was_disabled && !disabled) {
+            resume_events(cpu, channel);
+        }
+        return;
+    }
+}
+
 static bool transfer_push(Dspic33I2cQueue* queue, const Dspic33I2cTransfer* transfer) {
     uint8_t index;
     if (queue->count == DSPIC33_I2C_QUEUE_SIZE) {
@@ -186,16 +259,38 @@ static uint32_t internal_event_value(const Dspic33* cpu, uint8_t channel, uint8_
            payload;
 }
 
+static bool schedule_event(Dspic33* cpu, uint8_t channel, uint32_t value,
+                           uint64_t delay) {
+    uint64_t sequence = cpu->events.sequence;
+    Dspic33Event* event;
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_I2C, channel, value, delay)) {
+        return false;
+    }
+    event = scheduled_event(cpu, sequence);
+    if (event == NULL) {
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+        return false;
+    }
+    event->paused_remaining = 0u;
+    event->paused = false;
+    if (module_disabled(cpu, channel)) {
+        event->paused_remaining = delay;
+        event->paused = true;
+        dspic33_reorder_events(cpu);
+    }
+    return true;
+}
+
 static bool schedule_internal(Dspic33* cpu, uint8_t channel, uint8_t kind,
                               uint16_t payload, uint64_t delay) {
-    return dspic33_schedule(cpu, DSPIC33_EVENT_I2C, channel,
-                            internal_event_value(cpu, channel, kind, payload), delay);
+    return schedule_event(cpu, channel,
+                          internal_event_value(cpu, channel, kind, payload), delay);
 }
 
 static bool schedule_external(Dspic33* cpu, uint8_t channel, uint8_t kind,
                               uint16_t payload, uint64_t delay) {
-    return dspic33_schedule(cpu, DSPIC33_EVENT_I2C, channel,
-                            ((uint32_t)kind << I2C_EVENT_KIND_SHIFT) | payload, delay);
+    return schedule_event(cpu, channel,
+                          ((uint32_t)kind << I2C_EVENT_KIND_SHIFT) | payload, delay);
 }
 
 static void raise_master(Dspic33* cpu, uint8_t channel) {
@@ -618,6 +713,7 @@ bool dspic33_i2c_write_register(Dspic33* cpu, uint16_t address, uint16_t previou
     uint8_t channel;
     uint16_t offset;
     uint16_t base = (uint16_t)(address & 0xfffeu);
+    update_power_state(cpu, base, previous, requested);
     if (!channel_for_address(base, &channel, &offset)) {
         return false;
     }
@@ -700,7 +796,7 @@ void dspic33_i2c_process_event(Dspic33* cpu, uint8_t channel, uint32_t value) {
     }
     if (cpu->power_state == DSPIC33_POWER_IDLE &&
         (raw_word(cpu, (uint16_t)(bases[channel] + I2C_CON)) & 0x2000u) != 0u) {
-        dspic33_schedule(cpu, DSPIC33_EVENT_I2C, channel, value, 1u);
+        schedule_event(cpu, channel, value, 1u);
         return;
     }
     if (kind == I2C_EVENT_CONTROL) {
