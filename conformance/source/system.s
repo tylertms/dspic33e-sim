@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 56
+_system_conformance_terminal_count = 57
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -122,6 +122,8 @@ _run_system_probe:
     bra z, _system_sequential_hole_dispatch
     cp w0, #56
     bra z, _system_do_boundary_dispatch
+    cp w0, #57
+    bra z, _system_repeat_divide_probe
     return
 
 .global _system_sleep_probe
@@ -146,6 +148,22 @@ _system_divide_zero_probe:
     mov #42, w2
     clr w3
     repeat #17
+    div.s w2, w3
+    return
+
+.global _system_repeat_divide_probe
+_system_repeat_divide_probe:
+    mov #57, w0
+    mov w0, _system_probe_selector
+    mov #0x5000, w15
+    clr INTCON1
+    bset INTCON2, #15
+    set_status 0x010f
+    mov #42, w2
+    clr w3
+    repeat #17
+.global _system_repeat_divide_target
+_system_repeat_divide_target:
     div.s w2, w3
     return
 
@@ -1125,6 +1143,9 @@ _system_stack_trap_complete:
 
 .global __MathError
 __MathError:
+    mov _system_probe_selector, w0
+    cp w0, #57
+    bra z, _system_repeat_math_handler
     mov [w15-4], w0
     mov w0, _system_trap_state
     mov [w15-2], w0
@@ -1146,6 +1167,29 @@ __MathError:
 .global _system_math_trap_complete
 _system_math_trap_complete:
     bra _system_math_trap_complete
+
+_system_repeat_math_handler:
+    mov w15, _system_repeat_trap_state
+    mov [w15-4], w0
+    mov w0, _system_repeat_trap_state+2
+    mov [w15-2], w0
+    mov #0x107f, w1
+    and w0, w1, w0
+    mov w0, _system_repeat_trap_state+4
+    mov RCOUNT, w0
+    mov w0, _system_repeat_trap_state+6
+    mov SR, w0
+    and #0x00f0, w0
+    mov w0, _system_repeat_trap_state+8
+    mov CORCON, w0
+    mov w0, _system_repeat_trap_state+10
+    mov INTCON1, w0
+    mov w0, _system_repeat_trap_state+12
+    mov INTTREG, w0
+    mov w0, _system_repeat_trap_state+14
+.global _system_repeat_math_complete
+_system_repeat_math_complete:
+    bra _system_repeat_math_complete
 
 .global __SoftTrapError
 __SoftTrapError:

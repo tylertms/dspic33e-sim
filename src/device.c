@@ -3139,6 +3139,11 @@ void dspic33_device_latch_interrupt(Dspic33* cpu, uint8_t vector, uint8_t priori
     raw_write_word(cpu, 0x08c8u, (uint16_t)(((uint16_t)priority << 8u) | vector));
 }
 
+void dspic33_device_latch_math_error(Dspic33* cpu, uint16_t cause) {
+    raw_write_word(cpu, 0x08c0u, (uint16_t)(raw_word(cpu, 0x08c0u) | cause | 0x0010u));
+    dspic33_set_math_error_source(cpu, true);
+}
+
 static bool select_interrupt(const Dspic33* cpu, uint16_t* selected_irq,
                              uint8_t* selected_priority) {
     uint8_t current = (uint8_t)((cpu->sr >> 5u) & 0x07u);
@@ -3216,6 +3221,9 @@ static bool service_interrupt(Dspic33* cpu) {
     cpu->interrupt_count++;
     cpu->interrupt_depth++;
     dspic33_device_latch_interrupt(cpu, (uint8_t)(best_irq + 8u), best_priority);
+    cpu->repeat_active = 0u;
+    cpu->repeat_pc = 0u;
+    cpu->sr &= (uint16_t)~0x0010u;
     return true;
 }
 
@@ -3263,6 +3271,8 @@ void dspic33_device_return_interrupt(Dspic33* cpu) {
         cpu->corcon &= (uint16_t)~0x0008u;
     }
     cpu->corcon = (uint16_t)((cpu->corcon & ~0x0004u) | ((low & 1u) << 2u));
+    cpu->repeat_active = (cpu->sr & 0x0010u) != 0u;
+    cpu->repeat_pc = cpu->repeat_active != 0u ? cpu->pc : 0u;
     if (cpu->interrupt_depth != 0u) {
         cpu->interrupt_depth--;
     }
@@ -7808,6 +7818,16 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
         (raw_word(cpu, base) & 0x0020u) == 0u) {
         raw_write_word(cpu, DMA_PWC, 0u);
         raw_write_word(cpu, DMA_RQC, 0u);
+    }
+    if (base == 0x08c0u) {
+        uint16_t current =
+            (uint16_t)((raw_word(cpu, base) & ~0x00c0u) | (requested & 0x00c0u));
+        raw_write_word(cpu, base, current);
+        if ((current & 0x0010u) == 0u) {
+            dspic33_set_math_error_source(cpu, false);
+        } else if ((previous & 0x0010u) == 0u) {
+            dspic33_set_math_error_source(cpu, true);
+        }
     }
     if (base == 0x0758u) {
         raw_write_word(cpu, base,

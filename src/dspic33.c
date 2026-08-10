@@ -1692,9 +1692,7 @@ static bool execute_accumulator_shift(Dspic33* cpu, uint32_t opcode) {
             ? (int16_t)(encoded_amount >= 32u ? encoded_amount - 64u : encoded_amount)
             : (int16_t)cpu->w[opcode & 0x0fu];
     if (amount < -16 || amount > 16) {
-        dspic33_write_word(cpu, 0x08c0u,
-                           (uint16_t)(dspic33_read_word(cpu, 0x08c0u) | 0x0090u));
-        schedule_soft_trap(cpu, 4u, 0x00000cu, 11u, 2u);
+        dspic33_device_latch_math_error(cpu, 0x0080u);
         return true;
     }
     apply_accumulator_result(
@@ -2059,7 +2057,7 @@ static void enter_trap(Dspic33* cpu, uint16_t trap, uint32_t vector, uint8_t pri
     cpu->interrupt_depth++;
     dspic33_device_latch_interrupt(cpu, (uint8_t)trap, priority);
     cpu->repeat_active = 0u;
-    cpu->rcount = 0u;
+    cpu->repeat_pc = 0u;
     cpu->sr &= (uint16_t)~0x0010u;
     if (cpu->stop_on_trap) {
         cpu->stop_reason = DSPIC33_TRAPPED;
@@ -2097,6 +2095,20 @@ static void schedule_soft_trap(Dspic33* cpu, uint16_t trap, uint32_t vector,
     available->priority = priority;
     available->delay = delay;
     available->active = true;
+}
+
+void dspic33_set_math_error_source(Dspic33* cpu, bool active) {
+    size_t index;
+    if (active) {
+        schedule_soft_trap(cpu, 4u, 0x00000cu, 11u, 2u);
+        return;
+    }
+    for (index = 0u; index < 4u; index++) {
+        if (cpu->pending_soft_traps[index].active &&
+            cpu->pending_soft_traps[index].trap == 4u) {
+            cpu->pending_soft_traps[index].active = false;
+        }
+    }
 }
 
 static void schedule_stack_error(Dspic33* cpu, uint8_t delay) {
@@ -2138,7 +2150,9 @@ static bool service_pending_soft_trap(Dspic33* cpu) {
         uint16_t trap = selected->trap;
         uint32_t vector = selected->vector;
         uint8_t priority = selected->priority;
-        selected->active = false;
+        if (trap != 4u || (dspic33_read_word(cpu, 0x08c0u) & 0x0010u) == 0u) {
+            selected->active = false;
+        }
         enter_trap(cpu, trap, vector, priority, 0u, cpu->pc);
         return true;
     }
@@ -2236,7 +2250,9 @@ static bool execute_divide(Dspic33* cpu, uint32_t opcode) {
     int64_t remainder;
     int64_t quotient;
     if (divisor == 0u) {
-        enter_trap(cpu, 4u, 0x00000cu, 11u, 0x0050u, cpu->pc - 2u);
+        if (cpu->repeat_active != 0u && cpu->rcount == 17u) {
+            dspic33_device_latch_math_error(cpu, 0x0040u);
+        }
         return true;
     }
     if (cpu->repeat_active != 0u && cpu->rcount != 0u) {
@@ -2276,7 +2292,9 @@ static bool execute_fractional_divide(Dspic33* cpu, uint32_t opcode) {
     int32_t remainder;
     bool overflow;
     if (divisor == 0) {
-        enter_trap(cpu, 4u, 0x00000cu, 11u, 0x0050u, cpu->pc - 2u);
+        if (cpu->repeat_active != 0u && cpu->rcount == 17u) {
+            dspic33_device_latch_math_error(cpu, 0x0040u);
+        }
         return true;
     }
     if (cpu->repeat_active != 0u && cpu->rcount != 0u) {

@@ -40,6 +40,11 @@ enum {
     OPCODE_CPSLT = 0xe68010u,
     OPCODE_COMPARE_SKIP_BYTE = 0x000400u,
     OPCODE_SFTAC_A_W5 = 0xc80005u,
+    OPCODE_DIV_SW_W2_W3 = 0xd80103u,
+    OPCODE_DIV_SD_W4_W3 = 0xd82a43u,
+    OPCODE_DIV_UW_W2_W3 = 0xd88103u,
+    OPCODE_DIV_UD_W4_W3 = 0xd8aa43u,
+    OPCODE_DIVF_W2_W3 = 0xd91003u,
     OPCODE_LNK_0 = 0xfa0000u,
     OPCODE_ULNK = 0xfa8000u,
     OPCODE_MOV_ODD_W15 = 0x25001fu,
@@ -1789,6 +1794,149 @@ static void earlier_deadline_case(ProcessorConformance* state, Dspic33* cpu) {
            "ready stack trap preempts math handler");
 }
 
+static void repeat_exception_cases(ProcessorConformance* state, Dspic33* cpu) {
+    static const uint32_t divide_opcodes[] = {OPCODE_DIV_SW_W2_W3, OPCODE_DIV_SD_W4_W3,
+                                              OPCODE_DIV_UW_W2_W3, OPCODE_DIV_UD_W4_W3,
+                                              OPCODE_DIVF_W2_W3};
+    size_t index;
+
+    for (index = 0u; index < sizeof(divide_opcodes) / sizeof(divide_opcodes[0]);
+         index++) {
+        reset_processor_conformance(cpu, 0u);
+        load_instruction(state, cpu, 0x00000cu, 0x000120u);
+        load_instruction(state, cpu, 0u, 0x090011u);
+        load_instruction(state, cpu, 2u, divide_opcodes[index]);
+        cpu->w[0] = 0xaaaau;
+        cpu->w[1] = 0xbbbbu;
+        cpu->w[2] = 0x2222u;
+        cpu->w[3] = 0u;
+        cpu->w[4] = 0x4444u;
+        cpu->w[5] = 0x5555u;
+        cpu->w[15] = 0x5000u;
+        cpu->stop_on_trap = true;
+        expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+               "initialize repeated divide");
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+                   cpu->rcount == 16u && cpu->repeat_active != 0u &&
+                   (dspic33_read_word(cpu, 0x08c0u) & 0x0050u) == 0x0050u &&
+                   pending_trap(cpu, 4u) != NULL && pending_trap(cpu, 4u)->delay == 1u,
+               "first divide cycle latches delayed math trap");
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->last_trap == 4u &&
+                   cpu->last_trap_return == 2u && cpu->pc == 0x000120u &&
+                   cpu->rcount == 15u && cpu->repeat_active == 0u &&
+                   (cpu->sr & 0x0010u) == 0u && cpu->cycles == 3u,
+               "second divide cycle enters math trap");
+        expect(state,
+               cpu->w[15] == 0x5004u && dspic33_read_word(cpu, 0x5000u) == 2u &&
+                   (dspic33_read_word(cpu, 0x5002u) & 0x1000u) != 0u &&
+                   dspic33_read_word(cpu, 0x08c8u) == 0x0b04u,
+               "divide math trap preserves repeat frame state");
+    }
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0x00000cu, 0x000100u);
+    load_instruction(state, cpu, 0x000100u, OPCODE_RETFIE);
+    load_instruction(state, cpu, 0u, 0x090011u);
+    load_instruction(state, cpu, 2u, OPCODE_DIV_SW_W2_W3);
+    cpu->w[2] = 42u;
+    cpu->w[3] = 0u;
+    cpu->w[15] = 0x5000u;
+    cpu->stop_on_trap = false;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "initialize recursive math repeat");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "latch recursive math source");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000100u &&
+               cpu->trap_count == 1u && cpu->rcount == 15u,
+           "enter first repeated divide math trap");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000100u &&
+               cpu->trap_count == 2u && cpu->last_trap_return == 2u &&
+               cpu->rcount == 15u && cpu->w[15] == 0x5004u && cpu->cycles == 8u,
+           "uncleared MATHERR re-enters before repeated instruction");
+    dspic33_write_word(cpu, 0x08c0u, 0x0040u);
+    expect(state,
+           dspic33_read_word(cpu, 0x08c0u) == 0x0040u && pending_trap(cpu, 4u) == NULL,
+           "clearing MATHERR preserves cause and clears level source");
+    dspic33_write_word(cpu, 0x08c0u, 0u);
+    expect(state, dspic33_read_word(cpu, 0x08c0u) == 0u,
+           "software clears independent DIV0ERR cause");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+               cpu->repeat_active != 0u && cpu->repeat_pc == 2u && cpu->rcount == 15u &&
+               (cpu->sr & 0x0010u) != 0u && cpu->cycles == 14u,
+           "RETFIE restores suspended repeat state");
+
+    dspic33_write_word(cpu, 0x08c0u, 0x0010u);
+    expect(state,
+           dspic33_read_word(cpu, 0x08c0u) == 0x0010u &&
+               pending_trap(cpu, 4u) != NULL && pending_trap(cpu, 4u)->delay == 2u,
+           "software MATHERR schedules delayed level source");
+    dspic33_write_word(cpu, 0x08c0u, 0u);
+    expect(state,
+           dspic33_read_word(cpu, 0x08c0u) == 0u && pending_trap(cpu, 4u) == NULL,
+           "software MATHERR clear cancels pending level source");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, 0x090010u);
+    load_instruction(state, cpu, 2u, OPCODE_DIV_SW_W2_W3);
+    cpu->w[2] = 42u;
+    cpu->w[3] = 0u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "initialize short repeated divide");
+    while (cpu->repeat_active != 0u) {
+        expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+               "execute short repeated divide cycle");
+    }
+    expect(state, dspic33_read_word(cpu, 0x08c0u) == 0u && cpu->trap_count == 0u,
+           "repeat count below seventeen does not latch DIV0");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, 0x090012u);
+    load_instruction(state, cpu, 2u, OPCODE_DIV_SW_W2_W3);
+    load_instruction(state, cpu, 0x00000cu, 0x000120u);
+    cpu->w[2] = 42u;
+    cpu->w[3] = 0u;
+    cpu->w[15] = 0x5000u;
+    cpu->stop_on_trap = true;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "initialize long repeated divide");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->rcount == 17u,
+           "leading nonstandard divide iteration completes without trap");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->rcount == 16u,
+           "RCOUNT seventeen latches delayed DIV0");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->rcount == 15u &&
+               cpu->last_trap_return == 2u,
+           "nonstandard long repeat enters delayed DIV0 at proven stage");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_REPEAT_2);
+    load_instruction(state, cpu, 2u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x000014u, 0x000100u);
+    load_instruction(state, cpu, 0x000100u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x000102u, OPCODE_RETFIE);
+    cpu->w[15] = 0x5000u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "initialize interruptible repeat");
+    dspic33_write_word(cpu, 0x0820u, 0x0001u);
+    dspic33_write_word(cpu, 0x0840u, 0x0004u);
+    dspic33_raise_interrupt(cpu, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000102u &&
+               cpu->repeat_active == 0u && cpu->rcount == 2u &&
+               (cpu->sr & 0x0010u) == 0u &&
+               (dspic33_read_word(cpu, 0x5002u) & 0x1000u) != 0u,
+           "interrupt entry suspends repeat and stacks RA");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+               cpu->repeat_active != 0u && cpu->repeat_pc == 2u && cpu->rcount == 2u &&
+               (cpu->sr & 0x0010u) != 0u,
+           "interrupt RETFIE restores repeat state");
+}
+
 static void call_stack_timing_case(ProcessorConformance* state, Dspic33* cpu) {
     reset_processor_conformance(cpu, 0u);
     cpu->stop_on_trap = true;
@@ -2405,6 +2553,7 @@ int main(void) {
         invalid_ulnk_case(&state, &cpu);
         simultaneous_trap_case(&state, &cpu);
         earlier_deadline_case(&state, &cpu);
+        repeat_exception_cases(&state, &cpu);
         instruction_cycle_cases(&state, &cpu);
         call_stack_timing_case(&state, &cpu);
         move_double_stack_timing_cases(&state, &cpu);
