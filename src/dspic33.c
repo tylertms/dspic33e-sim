@@ -347,11 +347,17 @@ typedef struct {
     bool unimplemented_data_page;
 } OperandResolution;
 
-typedef enum {
-    DSP_X_PREFETCH_BASE,
-    DSP_X_PREFETCH_MAPPED,
-    DSP_X_PREFETCH_DEFERRED
-} DspXPrefetchMapping;
+typedef struct {
+    uint32_t address;
+    uint16_t updated_register;
+    uint16_t updated_data_page;
+    uint8_t base_register;
+    bool present;
+    bool access_valid;
+    bool update_valid;
+    bool updates_register;
+    bool updates_data_page;
+} DspPrefetchOutcome;
 
 static const int8_t dsp_prefetch_updates[16] = {
     0, 2, 4, 6, 0, -6, -4, -2, 0, 2, 4, 6, 0, -6, -4, -2,
@@ -421,6 +427,12 @@ static bool resolve_operand_address(const Dspic33* cpu, const uint16_t* register
         effective_address = (int32_t)registers[reg] + delta;
         resolution->wrapped = effective_address < 0 || effective_address > UINT16_MAX;
         resolution->address = modulo_address(cpu, reg, effective_address, delta, false);
+        if (data_page != 0u && registers[reg] >= 0x8000u &&
+            (effective_address < 0x8000 || effective_address > UINT16_MAX) &&
+            !modulo_addressing_enabled(cpu, reg, false) &&
+            (reg < 14u || (reg == 14u && (cpu->corcon & 0x0004u) == 0u))) {
+            resolution->address = (uint16_t)(resolution->address | 0x8000u);
+        }
     }
     resolution->effective_address = effective_address;
     resolution->access_register = (uint16_t)resolution->address;
@@ -1937,8 +1949,12 @@ static bool dsp_x_address_valid(uint16_t address, uint16_t page) {
     return address < 0x8000u || page >= 0x0200u || (page == 1u && address <= 0x8ffeu);
 }
 
-static DspXPrefetchMapping resolve_dsp_x_prefetch(Dspic33* cpu, uint8_t operation,
-                                                  OperandResolution* resolution) {
+static bool dsp_y_address_valid(uint16_t address) {
+    return address >= 0x9000u && address <= 0xdffeu;
+}
+
+static bool resolve_dsp_x_prefetch(const Dspic33* cpu, uint8_t operation,
+                                   DspPrefetchOutcome* outcome) {
     uint8_t base_register = (uint8_t)(8u + (operation >= 8u ? 1u : 0u));
     int8_t update = dsp_prefetch_updates[operation];
     uint8_t mode = update == 0 ? 1u : update > 0 ? 3u : 2u;
@@ -1949,31 +1965,58 @@ static DspXPrefetchMapping resolve_dsp_x_prefetch(Dspic33* cpu, uint8_t operatio
     } else if (width == 0u) {
         width = 2u;
     }
-    OperandResolution preview;
+    OperandResolution resolution;
     if (!resolve_operand_address(cpu, cpu->w, mode, base_register, 12u, width, false,
-                                 &preview)) {
-        return DSP_X_PREFETCH_DEFERRED;
+                                 &resolution)) {
+        return false;
     }
-    if (preview.wrapped && operation == 12u && cpu->w[base_register] >= 0x8000u &&
-        !modulo_addressing_enabled(cpu, base_register, false)) {
-        return DSP_X_PREFETCH_DEFERRED;
+    outcome->address = resolution.address;
+    outcome->updated_register = resolution.updated_register;
+    outcome->updated_data_page = resolution.updated_data_page;
+    outcome->base_register = base_register;
+    outcome->present = true;
+    outcome->access_valid =
+        dsp_x_address_valid(resolution.access_register, resolution.access_data_page);
+    outcome->update_valid =
+        !resolution.updates_register ||
+        dsp_x_address_valid(resolution.updated_register,
+                            resolution.updates_data_page ? resolution.updated_data_page
+                                                         : cpu->dsrpag);
+    outcome->updates_register = resolution.updates_register;
+    outcome->updates_data_page = resolution.updates_data_page;
+    return true;
+}
+
+static bool resolve_dsp_y_prefetch(const Dspic33* cpu, uint8_t operation,
+                                   DspPrefetchOutcome* outcome) {
+    uint8_t base_register = (uint8_t)(10u + (operation >= 8u ? 1u : 0u));
+    int32_t delta =
+        operation == 12u ? (int16_t)cpu->w[12] : dsp_prefetch_updates[operation];
+    uint16_t address = cpu->w[base_register];
+    if (operation == 12u) {
+        address =
+            modulo_address(cpu, base_register, (int32_t)address + delta, delta, true);
     }
-    if (!dsp_x_address_valid(preview.access_register, preview.access_data_page)) {
-        return DSP_X_PREFETCH_DEFERRED;
+    outcome->address = address;
+    outcome->updated_register = modulo_address(
+        cpu, base_register, (int32_t)cpu->w[base_register] + delta, delta, true);
+    outcome->base_register = base_register;
+    outcome->present = true;
+    outcome->access_valid = dsp_y_address_valid(address);
+    outcome->updates_register = operation != 12u;
+    outcome->update_valid =
+        !outcome->updates_register || dsp_y_address_valid(outcome->updated_register);
+    return true;
+}
+
+static bool resolve_dsp_prefetch(const Dspic33* cpu, uint8_t operation, bool y_space,
+                                 DspPrefetchOutcome* outcome) {
+    memset(outcome, 0, sizeof(*outcome));
+    if (operation == 4u) {
+        return true;
     }
-    if (preview.updates_register) {
-        uint16_t updated_page =
-            preview.updates_data_page ? preview.updated_data_page : cpu->dsrpag;
-        if (!dsp_x_address_valid(preview.updated_register, updated_page)) {
-            return DSP_X_PREFETCH_DEFERRED;
-        }
-    }
-    if (preview.access_register < 0x8000u) {
-        return DSP_X_PREFETCH_BASE;
-    }
-    return operand_resolution(cpu, mode, base_register, 12u, width, false, resolution)
-               ? DSP_X_PREFETCH_MAPPED
-               : DSP_X_PREFETCH_DEFERRED;
+    return y_space ? resolve_dsp_y_prefetch(cpu, operation, outcome)
+                   : resolve_dsp_x_prefetch(cpu, operation, outcome);
 }
 
 static bool validate_dsp_alignments(Dspic33* cpu, uint8_t x_operation,
@@ -1984,45 +2027,46 @@ static bool validate_dsp_alignments(Dspic33* cpu, uint8_t x_operation,
                                    check_data_alignment(cpu, cpu->w[13])));
 }
 
-static bool dsp_prefetch_value(Dspic33* cpu, uint8_t operation, bool y_space,
-                               uint16_t* value) {
-    uint8_t base_register;
-    int32_t delta;
-    uint16_t address;
-    OperandResolution resolution;
-    DspXPrefetchMapping mapping;
-    if (operation == 4u) {
-        return false;
+static void commit_dsp_prefetch(Dspic33* cpu, const DspPrefetchOutcome* outcome) {
+    if (outcome->updates_data_page) {
+        cpu->dsrpag = outcome->updated_data_page & 0x03ffu;
     }
-    if (!y_space) {
-        mapping = resolve_dsp_x_prefetch(cpu, operation, &resolution);
-        if (mapping == DSP_X_PREFETCH_MAPPED) {
-            *value = read_data_word(cpu, resolution.address);
-            return true;
-        }
+    if (outcome->updates_register) {
+        write_working_register(cpu, outcome->base_register, outcome->updated_register);
     }
-    base_register = (uint8_t)((y_space ? 10u : 8u) + (operation >= 8u ? 1u : 0u));
-    address = cpu->w[base_register];
-    if (operation == 12u) {
-        delta = (int16_t)cpu->w[12];
-        address = modulo_address(cpu, base_register, (int32_t)address + delta, delta,
-                                 y_space);
-    }
-    *value = read_data_word(cpu, address);
-    delta = dsp_prefetch_updates[operation];
-    write_working_register(cpu, base_register,
-                           modulo_address(cpu, base_register,
-                                          (int32_t)cpu->w[base_register] + delta, delta,
-                                          y_space));
-    return true;
 }
 
-static void execute_dsp_prefetch(Dspic33* cpu, uint8_t operation, uint8_t destination,
-                                 bool y_space) {
-    uint16_t value;
-    if (dsp_prefetch_value(cpu, operation, y_space, &value)) {
-        write_working_register(cpu, destination, value);
+static void raise_dsp_prefetch_error(Dspic33* cpu) {
+    if (!cpu->address_error) {
+        cpu->address_error = true;
+        cpu->address_error_return = cpu->pc;
     }
+    cpu->address_error_access_allowed = false;
+    cpu->address_error_working_state_completed = true;
+    cpu->address_error_accumulator_state_completed = true;
+}
+
+static bool execute_dsp_prefetches(Dspic33* cpu, uint8_t x_operation,
+                                   uint8_t y_operation, uint16_t* x_value,
+                                   uint16_t* y_value, bool* x_present,
+                                   bool* y_present) {
+    DspPrefetchOutcome x;
+    DspPrefetchOutcome y;
+    if (!resolve_dsp_prefetch(cpu, x_operation, false, &x) ||
+        !resolve_dsp_prefetch(cpu, y_operation, true, &y)) {
+        return false;
+    }
+    *x_value = x.present && x.access_valid ? read_data_word(cpu, x.address) : 0u;
+    *y_value = y.present && y.access_valid ? read_data_word(cpu, y.address) : 0u;
+    commit_dsp_prefetch(cpu, &x);
+    commit_dsp_prefetch(cpu, &y);
+    *x_present = x.present;
+    *y_present = y.present;
+    if ((x.present && (!x.access_valid || !x.update_valid)) ||
+        (y.present && (!y.access_valid || !y.update_valid))) {
+        raise_dsp_prefetch_error(cpu);
+    }
+    return true;
 }
 
 static void execute_dsp_write_back(Dspic33* cpu, uint8_t accumulator, uint8_t mode) {
@@ -2042,6 +2086,10 @@ static bool execute_dsp_clear_or_move(Dspic33* cpu, uint32_t opcode) {
     uint8_t write_back = (uint8_t)(opcode & 3u);
     uint8_t x_operation = (uint8_t)((opcode >> 6u) & 0x0fu);
     uint8_t y_operation = (uint8_t)((opcode >> 2u) & 0x0fu);
+    uint16_t x_value;
+    uint16_t y_value;
+    bool x_present;
+    bool y_present;
     if (write_back == 3u) {
         return false;
     }
@@ -2052,10 +2100,16 @@ static bool execute_dsp_clear_or_move(Dspic33* cpu, uint32_t opcode) {
         cpu->accumulator[accumulator] = 0;
         clear_accumulator_status(cpu, accumulator);
     }
-    execute_dsp_prefetch(cpu, x_operation, (uint8_t)(4u + ((opcode >> 12u) & 3u)),
-                         false);
-    execute_dsp_prefetch(cpu, y_operation, (uint8_t)(4u + ((opcode >> 10u) & 3u)),
-                         true);
+    if (!execute_dsp_prefetches(cpu, x_operation, y_operation, &x_value, &y_value,
+                                &x_present, &y_present)) {
+        return false;
+    }
+    if (x_present) {
+        write_working_register(cpu, (uint8_t)(4u + ((opcode >> 12u) & 3u)), x_value);
+    }
+    if (y_present) {
+        write_working_register(cpu, (uint8_t)(4u + ((opcode >> 10u) & 3u)), y_value);
+    }
     if (write_back < 2u) {
         execute_dsp_write_back(cpu, accumulator, write_back);
     }
@@ -2085,8 +2139,11 @@ static bool execute_euclidean_distance(Dspic33* cpu, uint32_t opcode) {
     if ((cpu->corcon & 1u) == 0u) {
         product *= 2;
     }
-    if (!dsp_prefetch_value(cpu, x_operation, false, &x_value) ||
-        !dsp_prefetch_value(cpu, y_operation, true, &y_value)) {
+    bool x_present;
+    bool y_present;
+    if (!execute_dsp_prefetches(cpu, x_operation, y_operation, &x_value, &y_value,
+                                &x_present, &y_present) ||
+        !x_present || !y_present) {
         return false;
     }
     apply_accumulator_result(cpu, accumulator,
@@ -2109,6 +2166,10 @@ static bool execute_dsp_multiply(Dspic33* cpu, uint32_t opcode) {
     uint8_t write_back = (uint8_t)(opcode & 3u);
     uint8_t x_operation = (uint8_t)((opcode >> 6u) & 0x0fu);
     uint8_t y_operation = (uint8_t)((opcode >> 2u) & 0x0fu);
+    uint16_t x_value;
+    uint16_t y_value;
+    bool x_present;
+    bool y_present;
     bool replace = square ? write_back == 1u : write_back == 3u;
     bool subtract = (opcode & 0x004000u) != 0u;
     if (!dsp_multiply_registers(opcode, &left_register, &right_register) ||
@@ -2131,10 +2192,16 @@ static bool execute_dsp_multiply(Dspic33* cpu, uint32_t opcode) {
         result = cpu->accumulator[accumulator] + (subtract ? -product : product);
     }
     apply_accumulator_result(cpu, accumulator, result);
-    execute_dsp_prefetch(cpu, x_operation, (uint8_t)(4u + ((opcode >> 12u) & 3u)),
-                         false);
-    execute_dsp_prefetch(cpu, y_operation, (uint8_t)(4u + ((opcode >> 10u) & 3u)),
-                         true);
+    if (!execute_dsp_prefetches(cpu, x_operation, y_operation, &x_value, &y_value,
+                                &x_present, &y_present)) {
+        return false;
+    }
+    if (x_present) {
+        write_working_register(cpu, (uint8_t)(4u + ((opcode >> 12u) & 3u)), x_value);
+    }
+    if (y_present) {
+        write_working_register(cpu, (uint8_t)(4u + ((opcode >> 10u) & 3u)), y_value);
+    }
     if (!square && !replace && write_back < 2u) {
         execute_dsp_write_back(cpu, accumulator, write_back);
     }
@@ -3088,6 +3155,7 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
     cpu->address_error = false;
     cpu->address_error_access_allowed = false;
     cpu->address_error_working_state_completed = false;
+    cpu->address_error_accumulator_state_completed = false;
     cpu->address_error_control_state_completed = false;
     cpu->sequential_program_hole_pc = 0u;
     cpu->illegal_reset = false;
@@ -3663,6 +3731,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     cpu->address_error = false;
     cpu->address_error_access_allowed = false;
     cpu->address_error_working_state_completed = false;
+    cpu->address_error_accumulator_state_completed = false;
     cpu->address_error_control_state_completed = false;
     if (!execute(cpu, opcode) && !cpu->address_error && !cpu->illegal_reset) {
         cpu->instruction_active = false;
@@ -3694,13 +3763,16 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
             cpu->initialized_working_registers = initialized_working_registers;
             cpu->sr = status;
         }
-        memcpy(cpu->accumulator, accumulators, sizeof(accumulators));
+        if (!cpu->address_error_accumulator_state_completed) {
+            memcpy(cpu->accumulator, accumulators, sizeof(accumulators));
+        }
         if (!cpu->address_error_control_state_completed) {
             cpu->corcon = control;
         }
         cpu->address_error = false;
         cpu->address_error_access_allowed = false;
         cpu->address_error_working_state_completed = false;
+        cpu->address_error_accumulator_state_completed = false;
         cpu->address_error_control_state_completed = false;
         if (control_state_completed) {
             enter_address_trap(cpu, return_pc);

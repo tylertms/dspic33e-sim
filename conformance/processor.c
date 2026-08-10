@@ -67,6 +67,7 @@ enum {
     OPCODE_MOV_W1_PRE_DECREMENT_W2 = 0x780141u,
     OPCODE_MOV_W1_PRE_INCREMENT_W2 = 0x780151u,
     OPCODE_MOV_W1_W0_OFFSET_W2 = 0x780161u,
+    OPCODE_MOV_W15_W0_OFFSET_W2 = 0x78016fu,
     OPCODE_MOV_W2_W1_POST_DECREMENT = 0x781082u,
     OPCODE_MOV_W2_W1_PRE_INCREMENT = 0x782882u,
     OPCODE_MOV_W2_W1_PRE_DECREMENT = 0x782082u,
@@ -153,10 +154,14 @@ enum {
     OPCODE_DSP_X_W8_DECREMENT_6_Y_W10_DECREMENT = 0xc0055fu,
     OPCODE_DSP_X_W8_DECREMENT_4_Y_W10_DECREMENT = 0xc0059fu,
     OPCODE_DSP_X_W8_DECREMENT_Y_W10_DECREMENT = 0xc005dfu,
+    OPCODE_DSP_X_NO_UPDATE_Y_W10_DECREMENT = 0xc0041fu,
     OPCODE_DSP_Y_W10_DECREMENT = 0xc0051fu,
     OPCODE_DSP_INDEXED = 0xc00732u,
     OPCODE_DSP_DIRECT_W13 = 0xc00110u,
-    OPCODE_DSP_WRITE_BACK = 0xc393b1u
+    OPCODE_DSP_WRITE_BACK = 0xc393b1u,
+    OPCODE_DSP_CLEAR_DIRECT = 0xc300d0u,
+    OPCODE_DSP_MOVSAC_WRITE_BACK = 0xc707f1u,
+    OPCODE_DSP_ED = 0xf0405fu
 };
 
 static void expect(ProcessorConformance* state, bool condition, const char* name) {
@@ -1537,15 +1542,50 @@ static void pseudo_linear_page_cases(ProcessorConformance* state, Dspic33* cpu) 
                cpu->w[2] == 0x6666u && cpu->dsrpag == 0x0200u,
            "modulo wrap leaves the PSV page unchanged");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_W0_OFFSET_W2);
+    reset_processor_conformance(cpu, 0x0100u);
+    load_instruction(state, cpu, 0x0100u, OPCODE_MOV_W1_W0_OFFSET_W2);
+    expect(state, dspic33_load_program_word(cpu, 0u, 0x00abcdu),
+           "load indexed wrap PSV value");
     cpu->w[0] = 2u;
     cpu->w[1] = 0xfffeu;
     cpu->dsrpag = 0x0200u;
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0xfffeu &&
+               cpu->w[2] == 0xabcdu && cpu->dsrpag == 0x0200u,
+           "indexed overflow wraps within the current PSV page");
+
+    reset_processor_conformance(cpu, 0x0100u);
+    load_instruction(state, cpu, 0x0100u, OPCODE_MOV_W1_W0_OFFSET_W2);
+    expect(state, dspic33_load_program_word(cpu, 0x7ffeu, 0x00bcdeu),
+           "load indexed underflow PSV value");
+    cpu->w[0] = 0xfffeu;
+    cpu->w[1] = 0x8000u;
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x8000u &&
+               cpu->w[2] == 0xbcdeu && cpu->dsrpag == 0x0200u,
+           "indexed underflow wraps within the current PSV page");
+
+    reset_processor_conformance(cpu, 0x0100u);
+    load_instruction(state, cpu, 0x0100u, OPCODE_MOV_W15_W0_OFFSET_W2);
+    cpu->w[0] = 2u;
+    cpu->w[15] = 0xfffeu;
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[15] == 0xfffeu &&
                cpu->w[2] == 2u && cpu->dsrpag == 0x0200u,
-           "indexed wrap leaves the PSV page unchanged");
+           "indexed W15 overflow remains in base data space");
+
+    reset_processor_conformance(cpu, 0x0100u);
+    load_instruction(state, cpu, 0x0100u, OPCODE_MOV_W15_W0_OFFSET_W2);
+    dspic33_write_word(cpu, 0x7ffeu, 0xdef0u);
+    cpu->w[0] = 0xfffeu;
+    cpu->w[15] = 0x8000u;
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[15] == 0x8000u &&
+               cpu->w[2] == 0xdef0u && cpu->dsrpag == 0x0200u,
+           "indexed W15 underflow remains in base data space");
 
     reset_processor_conformance(cpu, 0u);
     prepare_address_trap(state, cpu);
@@ -2722,10 +2762,11 @@ static void non_cpu_sfr_timing_cases(ProcessorConformance* state, Dspic33* cpu) 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_DSP_INDEXED);
     dspic33_set_working_register(cpu, 9u, 0x0800u);
-    dspic33_set_working_register(cpu, 11u, 0x0802u);
+    dspic33_set_working_register(cpu, 11u, 0x9000u);
     dspic33_set_working_register(cpu, 12u, 0u);
+    dspic33_write_word(cpu, 0x9000u, 0x1234u);
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 2u,
-           "dual DSP non-CPU SFR reads add one cycle");
+           "DSP X non-CPU SFR read adds one cycle");
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_CLEAR_TMR2);
@@ -3041,6 +3082,44 @@ static void dsp_x_prefetch_page_cases(ProcessorConformance* state, Dspic33* cpu)
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_DSP_INDEXED);
+    expect(state, dspic33_load_program_word(cpu, 0x8000u, 0x00cdefu),
+           "load indexed DSP X overflow value");
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 5u, 4u);
+    dspic33_set_working_register(cpu, 9u, 0xfffeu);
+    dspic33_set_working_register(cpu, 11u, 0x8ffeu);
+    dspic33_set_working_register(cpu, 12u, 2u);
+    dspic33_write_word(cpu, 0x9000u, 0x9abcu);
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 0x0201u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->accumulator[0] == 12 &&
+               cpu->w[4] == 0xcdefu && cpu->w[5] == 0x9abcu && cpu->w[9] == 0xfffeu &&
+               cpu->w[11] == 0x8ffeu && cpu->w[12] == 2u && cpu->dsrpag == 0x0201u &&
+               cpu->cycles == 5u,
+           "indexed DSP X overflow wraps within the current PSV page");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_INDEXED);
+    expect(state, dspic33_load_program_word(cpu, 0x7ffeu, 0x00def0u),
+           "load indexed DSP X underflow value");
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 5u, 4u);
+    dspic33_set_working_register(cpu, 9u, 0x8000u);
+    dspic33_set_working_register(cpu, 11u, 0x9002u);
+    dspic33_set_working_register(cpu, 12u, 0xfffeu);
+    dspic33_write_word(cpu, 0x9000u, 0x9abcu);
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->accumulator[0] == 12 &&
+               cpu->w[4] == 0xdef0u && cpu->w[5] == 0x9abcu && cpu->w[9] == 0x8000u &&
+               cpu->w[11] == 0x9002u && cpu->w[12] == 0xfffeu &&
+               cpu->dsrpag == 0x0200u && cpu->cycles == 5u,
+           "indexed DSP X underflow wraps within the current PSV page");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_INDEXED);
     expect(state, dspic33_load_program_word(cpu, 0x7ff8u, 0x00def0u),
            "load indexed modulo DSP X PSV value");
     dspic33_set_working_register(cpu, 4u, 3u);
@@ -3095,6 +3174,161 @@ static void dsp_x_prefetch_page_cases(ProcessorConformance* state, Dspic33* cpu)
                cpu->dsrpag == 0x03ffu && cpu->cycles == 1u && cpu->corcon == 0x0021u &&
                cpu->sr == 0u,
            "DSP Y prefetch ignores DSRPAG without X activity");
+}
+
+static void dsp_prefetch_address_error_cases(ProcessorConformance* state,
+                                             Dspic33* cpu) {
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_X_NO_UPDATE_Y_W10_DECREMENT);
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 5u, 4u);
+    dspic33_set_working_register(cpu, 8u, 0x9000u);
+    dspic33_set_working_register(cpu, 10u, 0x9002u);
+    dspic33_write_word(cpu, 0x9000u, 0xa5a5u);
+    dspic33_write_word(cpu, 0x9002u, 0x6789u);
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 1u;
+    expect_address_trap(state, cpu, "DSP X prefetch outside X space traps");
+    expect(state,
+           cpu->accumulator[0] == 12 && cpu->w[4] == 0u && cpu->w[5] == 0x6789u &&
+               cpu->w[8] == 0x9000u && cpu->w[10] == 0x9000u && cpu->w[15] == 0x5004u &&
+               dspic33_read_word(cpu, 0x5000u) == 2u &&
+               dspic33_read_word(cpu, 0x5002u) == 0u && cpu->sr == 0x00c0u &&
+               cpu->corcon == 0x0029u,
+           "invalid DSP X returns zero while valid Y and arithmetic complete");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_X_W8_INCREMENT_Y_W10_DECREMENT);
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 5u, 4u);
+    dspic33_set_working_register(cpu, 8u, 0x8000u);
+    dspic33_set_working_register(cpu, 10u, 0x8000u);
+    dspic33_write_word(cpu, 0x8000u, 0x5a5au);
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 1u;
+    expect_address_trap(state, cpu, "DSP Y prefetch outside Y space traps");
+    expect(state,
+           cpu->accumulator[0] == 12 && cpu->w[4] == 0x5a5au && cpu->w[5] == 0u &&
+               cpu->w[8] == 0x8002u && cpu->w[10] == 0x7ffeu,
+           "invalid DSP Y returns zero while valid X and arithmetic complete");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_X_NO_UPDATE_Y_W10_DECREMENT);
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 5u, 4u);
+    dspic33_set_working_register(cpu, 8u, 0xe000u);
+    dspic33_set_working_register(cpu, 10u, 0xe000u);
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 1u;
+    expect_address_trap(state, cpu, "dual unimplemented DSP prefetches trap once");
+    expect(state,
+           cpu->accumulator[0] == 12 && cpu->w[4] == 0u && cpu->w[5] == 0u &&
+               cpu->w[8] == 0xe000u && cpu->w[10] == 0xdffeu && cpu->trap_count == 1u,
+           "dual invalid DSP lanes return zero and complete pointer state");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_X_W8_INCREMENT_Y_W10_DECREMENT);
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 5u, 4u);
+    dspic33_set_working_register(cpu, 8u, 0x8ffeu);
+    dspic33_set_working_register(cpu, 10u, 0x9002u);
+    dspic33_write_word(cpu, 0x8ffeu, 0x1357u);
+    dspic33_write_word(cpu, 0x9002u, 0x2468u);
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 1u;
+    expect_address_trap(state, cpu, "DSP X invalid post-update address traps");
+    expect(state,
+           cpu->accumulator[0] == 12 && cpu->w[4] == 0x1357u && cpu->w[5] == 0x2468u &&
+               cpu->w[8] == 0x9000u && cpu->w[10] == 0x9000u,
+           "DSP X post-update trap preserves fetched values and pointer updates");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_X_W8_INCREMENT_Y_W10_DECREMENT);
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 5u, 4u);
+    dspic33_set_working_register(cpu, 8u, 0x8000u);
+    dspic33_set_working_register(cpu, 10u, 0x9000u);
+    dspic33_write_word(cpu, 0x8000u, 0x3579u);
+    dspic33_write_word(cpu, 0x9000u, 0x468au);
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 1u;
+    expect_address_trap(state, cpu, "DSP Y invalid post-update address traps");
+    expect(state,
+           cpu->accumulator[0] == 12 && cpu->w[4] == 0x3579u && cpu->w[5] == 0x468au &&
+               cpu->w[8] == 0x8002u && cpu->w[10] == 0x8ffeu,
+           "DSP Y post-update trap preserves fetched values and pointer updates");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_CLEAR_DIRECT);
+    dspic33_set_working_register(cpu, 8u, 0x9000u);
+    cpu->accumulator[0] = 0x123456u;
+    cpu->accumulator[1] = 0u;
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 1u;
+    expect_address_trap(state, cpu, "CLR with invalid DSP X prefetch traps");
+    expect(state,
+           cpu->accumulator[0] == 0 && cpu->w[4] == 0u && cpu->w[8] == 0x9006u &&
+               cpu->w[13] == 0u,
+           "CLR accumulator, prefetch destination, pointer and direct write-back "
+           "complete");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_MOVSAC_WRITE_BACK);
+    dspic33_set_working_register(cpu, 4u, 1u);
+    dspic33_set_working_register(cpu, 5u, 1u);
+    dspic33_set_working_register(cpu, 9u, 0x9000u);
+    dspic33_set_working_register(cpu, 11u, 0x9000u);
+    dspic33_set_working_register(cpu, 12u, 0u);
+    dspic33_set_working_register(cpu, 13u, 0x5100u);
+    dspic33_write_word(cpu, 0x5100u, 0xa55au);
+    cpu->accumulator[0] = 0x123456u;
+    cpu->accumulator[1] = 0x654321u;
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 1u;
+    expect_address_trap(state, cpu, "MOVSAC indirect write-back prefetch fault traps");
+    expect(state,
+           cpu->accumulator[0] == 0x123456 && cpu->accumulator[1] == 0x654321 &&
+               cpu->w[4] == 0u && cpu->w[5] == 0u && cpu->w[9] == 0x8ffeu &&
+               cpu->w[13] == 0x5102u && dspic33_read_word(cpu, 0x5100u) == 0xa55au,
+           "DSP prefetch fault inhibits memory write while pointer update completes");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_ED);
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 8u, 0x9000u);
+    dspic33_set_working_register(cpu, 10u, 0x9002u);
+    dspic33_write_word(cpu, 0x9002u, 2u);
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 1u;
+    expect_address_trap(state, cpu, "ED invalid DSP X prefetch traps");
+    expect(state,
+           cpu->accumulator[0] == 9 && cpu->w[4] == 0xfffeu && cpu->w[8] == 0x9002u &&
+               cpu->w[10] == 0x9000u,
+           "ED result, distance destination and pointers complete before trap");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_X_W8_INCREMENT_Y_W10_DECREMENT);
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 5u, 4u);
+    dspic33_set_working_register(cpu, 8u, 0x8001u);
+    dspic33_set_working_register(cpu, 10u, 0x9002u);
+    cpu->accumulator[0] = 0x123456;
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 1u;
+    expect_address_trap(state, cpu, "misaligned DSP X prefetch traps");
+    expect(state,
+           cpu->accumulator[0] == 0x123456 && cpu->w[4] == 3u && cpu->w[5] == 4u &&
+               cpu->w[8] == 0x8001u && cpu->w[10] == 0x9002u,
+           "DSP alignment fault rolls back accumulator and working state");
 }
 
 static void move_double_stack_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
@@ -3519,6 +3753,8 @@ static void illegal_condition_reset_cases(ProcessorConformance* state, Dspic33* 
            "illegal reset clears address error access state");
     expect(state, !cpu->address_error_working_state_completed,
            "illegal reset clears address error working state");
+    expect(state, !cpu->address_error_accumulator_state_completed,
+           "illegal reset clears address error accumulator state");
     expect(state, !cpu->address_error_control_state_completed,
            "illegal reset clears address error control state");
     expect(state, cpu->address_error_return == 0u,
@@ -3588,6 +3824,7 @@ static void illegal_condition_reset_cases(ProcessorConformance* state, Dspic33* 
     expect(state,
            !cpu->address_error && !cpu->address_error_access_allowed &&
                !cpu->address_error_working_state_completed &&
+               !cpu->address_error_accumulator_state_completed &&
                !cpu->address_error_control_state_completed &&
                cpu->address_error_return == 0u,
            "table destination reset clears address error lifecycle state");
@@ -3696,6 +3933,7 @@ int main(void) {
         non_cpu_sfr_timing_cases(&state, &cpu);
         psv_timing_cases(&state, &cpu);
         dsp_x_prefetch_page_cases(&state, &cpu);
+        dsp_prefetch_address_error_cases(&state, &cpu);
         call_stack_timing_case(&state, &cpu);
         move_double_stack_timing_cases(&state, &cpu);
         return_instruction_cycle_cases(&state, &cpu);

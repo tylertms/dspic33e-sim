@@ -648,10 +648,10 @@ _run_multiply_conformance:
     mov #0x1111, w0
     mov w0, _conformance_scratch
     mov #0x2222, w0
-    mov #_conformance_y_scratch, w1
+    mov #_conformance_y_scratch+2, w1
     mov w0, [w1]
     mov #_conformance_scratch, w8
-    mov #_conformance_y_scratch, w10
+    mov #_conformance_y_scratch+2, w10
     mov #3, w4
     mov #4, w5
     mpy w4*w5, A, [w8]+=2, w4, [w10]-=2, w5
@@ -870,10 +870,10 @@ _run_multiply_conformance:
     mov #0x007f, w0
     mov w0, _conformance_scratch
     mov #0x0028, w0
-    mov #_conformance_y_scratch, w1
+    mov #_conformance_y_scratch+2, w1
     mov w0, [w1]
     mov #_conformance_scratch, w8
-    mov #_conformance_y_scratch, w10
+    mov #_conformance_y_scratch+2, w10
     mov #0x009a, w4
     ed w4*w4, A, [w8]+=2, [w10]-=2, w4
     record_accumulator 0x078b, ACCAL, ACCAH, ACCAU

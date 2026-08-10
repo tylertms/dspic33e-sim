@@ -609,6 +609,7 @@ typedef struct {
     bool address_error;
     bool address_error_access_allowed;
     bool address_error_working_state_completed;
+    bool address_error_accumulator_state_completed;
     bool address_error_control_state_completed;
     uint32_t sequential_program_hole_pc;
     bool illegal_reset;

@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 64
+_system_conformance_terminal_count = 65
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -138,6 +138,8 @@ _run_system_probe:
     bra z, _system_pseudo_linear_move_double_probe
     cp w0, #64
     bra z, _system_dsp_x_prefetch_probe
+    cp w0, #65
+    bra z, _system_dsp_x_fault_probe
     return
 
 .global _system_sleep_probe
@@ -375,6 +377,31 @@ _system_dsp_x_prefetch_probe:
 .global _system_dsp_x_prefetch_complete
 _system_dsp_x_prefetch_complete:
     bra _system_dsp_x_prefetch_complete
+
+.global _system_dsp_x_fault_probe
+_system_dsp_x_fault_probe:
+    mov #65, w0
+    mov w0, _system_probe_selector
+    mov #0x5200, w15
+    clr INTCON1
+    mov #0x0021, w0
+    mov w0, CORCON
+    clr w0
+    mov w0, SR
+    mov #1, w0
+    mov w0, DSRPAG
+    mov #3, w4
+    mov #4, w5
+    mov #0x9000, w8
+    mov #0x9002, w10
+    mov #0xa5a5, w0
+    mov w0, [w8]
+    mov #0x6789, w0
+    mov w0, [w10]
+.global _system_dsp_x_fault_instruction
+_system_dsp_x_fault_instruction:
+    .pword 0xc0041f
+    return
 
 .global _system_sftac_probe
 _system_sftac_probe:
@@ -1322,6 +1349,31 @@ __AddressError:
     mov w0, _system_program_read_trap_state+22
     mov 0x5000, w0
     mov w0, _system_program_read_trap_state+24
+    mov ACCAL, w0
+    mov w0, _system_dsp_x_fault_state
+    mov ACCAH, w0
+    mov w0, _system_dsp_x_fault_state+2
+    mov ACCAU, w0
+    mov w0, _system_dsp_x_fault_state+4
+    mov w4, _system_dsp_x_fault_state+6
+    mov w5, _system_dsp_x_fault_state+8
+    mov w8, _system_dsp_x_fault_state+10
+    mov w10, _system_dsp_x_fault_state+12
+    mov DSRPAG, w0
+    mov w0, _system_dsp_x_fault_state+14
+    mov INTCON1, w0
+    mov w0, _system_dsp_x_fault_state+16
+    mov [w15-4], w0
+    mov w0, _system_dsp_x_fault_state+18
+    mov [w15-2], w0
+    mov w0, _system_dsp_x_fault_state+20
+    mov INTTREG, w0
+    mov w0, _system_dsp_x_fault_state+22
+    mov SR, w0
+    mov w0, _system_dsp_x_fault_state+24
+    mov CORCON, w0
+    mov w0, _system_dsp_x_fault_state+26
+    mov w15, _system_dsp_x_fault_state+28
 .global _system_address_trap_complete
 _system_address_trap_complete:
     bra _system_address_trap_complete
