@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 71
+_system_conformance_terminal_count = 74
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -152,6 +152,12 @@ _run_system_probe:
     bra z, _system_psv_repeat_probe
     cp w0, #71
     bra z, _system_auxiliary_program_probe
+    cp w0, #72
+    bra z, _system_move_file_load_fault_probe
+    cp w0, #73
+    bra z, _system_move_file_rmw_fault_probe
+    cp w0, #74
+    bra z, _system_move_file_store_fault_probe
     return
 
 .global _system_sleep_probe
@@ -563,6 +569,62 @@ _system_auxiliary_program_capture:
 .global _system_auxiliary_program_complete
 _system_auxiliary_program_complete:
     bra _system_auxiliary_program_complete
+
+.global _system_move_file_load_fault_probe
+_system_move_file_load_fault_probe:
+    mov #72, w0
+    mov w0, _system_probe_selector
+    mov #0xbf90, w4
+    bra _system_move_file_fault_setup
+
+.global _system_move_file_rmw_fault_probe
+_system_move_file_rmw_fault_probe:
+    mov #73, w0
+    mov w0, _system_probe_selector
+    mov #0xbfb0, w4
+    bra _system_move_file_fault_setup
+
+.global _system_move_file_store_fault_probe
+_system_move_file_store_fault_probe:
+    mov #74, w0
+    mov w0, _system_probe_selector
+    mov #0xb7b0, w4
+
+_system_move_file_fault_setup:
+    mov #0x5000, w15
+    clr INTCON1
+    bset INTCON2, #15
+    mov #0x1111, w1
+    mov #0x3333, w3
+    mov #0x5a5a, w2
+    mov w2, 0x1000
+    mov #0xbf90, w5
+    cp w4, w5
+    bra z, _system_move_file_load_fault_execute
+    mov #0xbfb0, w5
+    cp w4, w5
+    bra z, _system_move_file_rmw_fault_execute
+_system_move_file_store_fault_execute:
+    set_status 0x010d
+    mov #0xa5a5, w0
+.global _system_move_file_store_fault_instruction
+_system_move_file_store_fault_instruction:
+    .pword 0xb7b001
+    return
+_system_move_file_load_fault_execute:
+    set_status 0x010d
+    mov #0xa5a5, w0
+.global _system_move_file_load_fault_instruction
+_system_move_file_load_fault_instruction:
+    .pword 0xbf9001
+    return
+_system_move_file_rmw_fault_execute:
+    set_status 0x010d
+    mov #0xa5a5, w0
+.global _system_move_file_rmw_fault_instruction
+_system_move_file_rmw_fault_instruction:
+    .pword 0xbfb001
+    return
 
 .global _system_sftac_probe
 _system_sftac_probe:
@@ -1353,6 +1415,19 @@ _system_skip_two_word_complete = 0x55802
 
 .global __AddressError
 __AddressError:
+    mov w0, _system_move_file_fault_state
+    mov SR, w0
+    mov w0, _system_move_file_fault_state+6
+    mov _system_probe_selector, w0
+    cp w0, #72
+    bra z, _system_move_file_fault_handler
+    cp w0, #73
+    bra z, _system_move_file_fault_handler
+    cp w0, #74
+    bra z, _system_move_file_fault_handler
+    mov _system_move_file_fault_state+6, w0
+    mov w0, SR
+    mov _system_move_file_fault_state, w0
     mov w0, _system_program_target_trap_state
     mov w1, _system_program_target_trap_state+2
     mov w15, _system_program_target_trap_state+4
@@ -1586,6 +1661,24 @@ __AddressError:
     mov w0, _system_psv_program_fault_state+26
 .global _system_address_trap_complete
 _system_address_trap_complete:
+    bra _system_address_trap_complete
+
+_system_move_file_fault_handler:
+    mov w1, _system_move_file_fault_state+2
+    mov w3, _system_move_file_fault_state+4
+    mov INTCON1, w0
+    mov w0, _system_move_file_fault_state+8
+    mov [w15-4], w0
+    mov w0, _system_move_file_fault_state+10
+    mov [w15-2], w0
+    mov w0, _system_move_file_fault_state+12
+    mov INTTREG, w0
+    mov w0, _system_move_file_fault_state+14
+    mov w15, _system_move_file_fault_state+16
+    mov 0x1000, w0
+    mov w0, _system_move_file_fault_state+18
+    mov _system_probe_selector, w0
+    mov w0, _system_move_file_fault_state+20
     bra _system_address_trap_complete
 
 .global __StackError

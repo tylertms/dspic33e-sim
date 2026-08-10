@@ -5221,6 +5221,732 @@ static void file_multiply_encoding_matrix_cases(ProcessorConformance* state,
     expect(state, cases == 16384u, "file multiply encoding matrix is exhaustive");
 }
 
+static void prepare_move_matrix_case(Dspic33* cpu) {
+    cpu->pc = 0u;
+    cpu->sr = 0x010fu;
+    cpu->corcon = 0x0005u;
+    cpu->previous_working_register_writes = 0u;
+    cpu->unsupported_opcode = 0u;
+    cpu->last_trap = UINT16_MAX;
+    cpu->last_interrupt = UINT16_MAX;
+    cpu->address_error = false;
+    cpu->illegal_reset = false;
+    cpu->stop_reason = DSPIC33_RUNNING;
+    cpu->instruction_active = false;
+    cpu->repeat_active = 0u;
+    cpu->do_depth = 0u;
+    cpu->events.count = 0u;
+}
+
+static void run_invalid_move_matrix_case(ProcessorConformance* state, Dspic33* cpu,
+                                         uint32_t opcode) {
+    uint64_t illegal_resets;
+    bool matches;
+    uint8_t reg;
+
+    prepare_invalid_dsp_matrix_case(cpu);
+    dspic33_set_working_register(cpu, 15u, 0x5000u);
+    illegal_resets = cpu->illegal_reset_count;
+    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset &&
+              cpu->illegal_reset_count == illegal_resets + 1u &&
+              cpu->software_reset_count == 0u && cpu->trap_count == 0u &&
+              cpu->last_trap == UINT16_MAX && cpu->pc == 0u && cpu->w[15] == 0x1000u &&
+              cpu->initialized_working_registers == 0x8000u &&
+              (dspic33_read_word(cpu, 0x0740u) & 0x4000u) != 0u &&
+              dspic33_read_word(cpu, 0x5000u) == 0xa5a5u;
+    for (reg = 0u; reg < 15u; reg++) {
+        matches = matches && cpu->w[reg] == 0u;
+    }
+    expect_dsp_matrix_case(state, matches, opcode, "illegal move encoding");
+}
+
+static void move_literal_encoding_matrix_cases(ProcessorConformance* state,
+                                               Dspic33* cpu) {
+    uint32_t cases = 0u;
+    uint32_t literal;
+    uint8_t destination;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    for (literal = 0u; literal <= UINT16_MAX; literal++) {
+        for (destination = 0u; destination < 16u; destination++) {
+            uint32_t opcode = 0x200000u | (literal << 4u) | (uint32_t)destination;
+            uint16_t expected =
+                destination == 15u ? (uint16_t)(literal & 0xfffeu) : (uint16_t)literal;
+            uint64_t cycles;
+            bool matches;
+
+            prepare_move_matrix_case(cpu);
+            dspic33_set_working_register(cpu, destination, 0x5a5au);
+            cycles = cpu->cycles;
+            matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+                      dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+                      cpu->cycles - cycles == 1u && cpu->w[destination] == expected &&
+                      cpu->sr == 0x010fu && cpu->unsupported_opcode == 0u &&
+                      !cpu->illegal_reset && cpu->last_trap == UINT16_MAX;
+            expect_dsp_matrix_case(state, matches, opcode, "MOV literal encoding");
+            cases++;
+        }
+    }
+    expect(state, cases == 1048576u, "MOV literal encoding matrix is exhaustive");
+
+    cases = 0u;
+    for (literal = 0u; literal <= UINT8_MAX; literal++) {
+        for (destination = 0u; destination < 16u; destination++) {
+            uint32_t opcode = 0xb3c000u | (literal << 4u) | (uint32_t)destination;
+            uint16_t expected = (uint16_t)(0x5a00u | literal);
+            uint64_t cycles;
+            bool matches;
+            if (destination == 15u) {
+                expected &= 0xfffeu;
+            }
+            prepare_move_matrix_case(cpu);
+            dspic33_set_working_register(cpu, destination, 0x5a5au);
+            cycles = cpu->cycles;
+            matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+                      dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+                      cpu->cycles - cycles == 1u && cpu->w[destination] == expected &&
+                      cpu->sr == 0x010fu && cpu->unsupported_opcode == 0u &&
+                      !cpu->illegal_reset && cpu->last_trap == UINT16_MAX;
+            expect_dsp_matrix_case(state, matches, opcode, "MOV byte literal encoding");
+            cases++;
+        }
+    }
+    expect(state, cases == 4096u, "MOV byte literal encoding matrix is exhaustive");
+}
+
+static void move_register_encoding_matrix_cases(ProcessorConformance* state,
+                                                Dspic33* cpu) {
+    uint32_t cases = 0u;
+    uint32_t opcode;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    for (opcode = 0xfd0000u; opcode <= 0xfd0fffu; opcode++) {
+        bool legal = (opcode & 0xfff870u) == 0xfd0000u;
+        if (!legal) {
+            run_invalid_move_matrix_case(state, cpu, opcode);
+        } else {
+            uint8_t source = (uint8_t)(opcode & 0x0fu);
+            uint8_t destination = (uint8_t)((opcode >> 7u) & 0x0fu);
+            uint16_t source_value = (uint16_t)(0x1100u | source);
+            uint16_t destination_value = (uint16_t)(0x2200u | destination);
+            uint16_t expected_source;
+            uint16_t expected_destination;
+            uint64_t cycles;
+            bool matches;
+
+            prepare_move_matrix_case(cpu);
+            dspic33_set_working_register(cpu, source, source_value);
+            dspic33_set_working_register(cpu, destination, destination_value);
+            if (source == destination) {
+                dspic33_set_working_register(cpu, source, source_value);
+            }
+            expected_destination = cpu->w[source];
+            expected_source = cpu->w[destination];
+            if (source == 15u) {
+                expected_source &= 0xfffeu;
+            }
+            if (destination == 15u) {
+                expected_destination &= 0xfffeu;
+            }
+            cycles = cpu->cycles;
+            matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+                      dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+                      cpu->cycles - cycles == 1u && cpu->w[source] == expected_source &&
+                      cpu->w[destination] == expected_destination &&
+                      cpu->sr == 0x010fu && cpu->unsupported_opcode == 0u &&
+                      !cpu->illegal_reset;
+            expect_dsp_matrix_case(state, matches, opcode, "EXCH encoding");
+        }
+        cases++;
+    }
+    expect(state, cases == 4096u, "EXCH encoding matrix is exhaustive");
+
+    cases = 0u;
+    for (opcode = 0xfd8000u; opcode <= 0xfdffffu; opcode++) {
+        bool legal = (opcode & 0xffbff0u) == 0xfd8000u;
+        if (!legal) {
+            run_invalid_move_matrix_case(state, cpu, opcode);
+        } else {
+            uint8_t reg = (uint8_t)(opcode & 0x0fu);
+            bool byte_mode = (opcode & 0x004000u) != 0u;
+            uint16_t expected = byte_mode ? 0xa5a5u : 0x5aa5u;
+            uint64_t cycles;
+            bool matches;
+            if (reg == 15u) {
+                expected &= 0xfffeu;
+            }
+            prepare_move_matrix_case(cpu);
+            dspic33_set_working_register(cpu, reg, 0xa55au);
+            cycles = cpu->cycles;
+            matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+                      dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+                      cpu->cycles - cycles == 1u && cpu->w[reg] == expected &&
+                      cpu->sr == 0x010fu && cpu->unsupported_opcode == 0u &&
+                      !cpu->illegal_reset;
+            expect_dsp_matrix_case(state, matches, opcode, "SWAP encoding");
+        }
+        cases++;
+    }
+    expect(state, cases == 32768u, "SWAP encoding matrix is exhaustive");
+}
+
+static void movpag_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu) {
+    uint32_t cases = 0u;
+    uint32_t opcode;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    for (opcode = 0xfec000u; opcode <= 0xfecfffu; opcode++) {
+        uint8_t page_register = (uint8_t)((opcode >> 10u) & 3u);
+        uint16_t literal = (uint16_t)(opcode & 0x03ffu);
+        if (page_register == 3u) {
+            run_invalid_move_matrix_case(state, cpu, opcode);
+        } else {
+            uint16_t expected = page_register == 0u   ? literal
+                                : page_register == 1u ? (uint16_t)(literal & 0x01ffu)
+                                                      : (uint16_t)(literal & 0x00ffu);
+            uint64_t cycles;
+            bool matches;
+            prepare_move_matrix_case(cpu);
+            cpu->dsrpag = 0x0155u;
+            cpu->dswpag = 0x00aau;
+            cpu->tblpag = 0x005au;
+            cycles = cpu->cycles;
+            matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+                      dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+                      cpu->cycles - cycles == 1u && cpu->unsupported_opcode == 0u &&
+                      !cpu->illegal_reset;
+            if (page_register == 0u) {
+                matches = matches && cpu->dsrpag == expected;
+            } else if (page_register == 1u) {
+                matches = matches && cpu->dswpag == expected;
+            } else {
+                matches = matches && cpu->tblpag == expected;
+            }
+            expect_dsp_matrix_case(state, matches, opcode, "MOVPAG literal encoding");
+        }
+        cases++;
+    }
+    expect(state, cases == 4096u, "MOVPAG literal encoding matrix is exhaustive");
+
+    cases = 0u;
+    for (opcode = 0xfed000u; opcode <= 0xfedfffu; opcode++) {
+        bool fields_valid = (opcode & 0x0003f0u) == 0u;
+        uint8_t page_register = (uint8_t)((opcode >> 10u) & 3u);
+        if (!fields_valid || page_register == 3u) {
+            run_invalid_move_matrix_case(state, cpu, opcode);
+        } else {
+            uint8_t source = (uint8_t)(opcode & 0x0fu);
+            uint16_t value = (uint16_t)(0x03a0u | source);
+            uint16_t expected;
+            uint64_t cycles;
+            bool matches;
+            prepare_move_matrix_case(cpu);
+            dspic33_set_working_register(cpu, source, value);
+            value = cpu->w[source];
+            expected = page_register == 0u   ? (uint16_t)(value & 0x03ffu)
+                       : page_register == 1u ? (uint16_t)(value & 0x01ffu)
+                                             : (uint16_t)(value & 0x00ffu);
+            cpu->dsrpag = 0x0155u;
+            cpu->dswpag = 0x00aau;
+            cpu->tblpag = 0x005au;
+            cycles = cpu->cycles;
+            matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+                      dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+                      cpu->cycles - cycles == 1u && cpu->unsupported_opcode == 0u &&
+                      !cpu->illegal_reset;
+            if (page_register == 0u) {
+                matches = matches && cpu->dsrpag == expected;
+            } else if (page_register == 1u) {
+                matches = matches && cpu->dswpag == expected;
+            } else {
+                matches = matches && cpu->tblpag == expected;
+            }
+            expect_dsp_matrix_case(state, matches, opcode, "MOVPAG register encoding");
+        }
+        cases++;
+    }
+    expect(state, cases == 4096u, "MOVPAG register encoding matrix is exhaustive");
+}
+
+typedef struct {
+    uint16_t address;
+    bool direct;
+} MoveMatrixOperand;
+
+static MoveMatrixOperand resolve_move_matrix_operand(uint16_t registers[16],
+                                                     uint8_t mode, uint8_t reg,
+                                                     uint8_t offset_reg,
+                                                     uint8_t width) {
+    MoveMatrixOperand operand = {0u, mode == 0u};
+    int32_t adjusted;
+    if (mode == 0u) {
+        return operand;
+    }
+    if (mode == 1u) {
+        operand.address = registers[reg];
+        return operand;
+    }
+    if (mode == 2u || mode == 3u) {
+        operand.address = registers[reg];
+        adjusted =
+            (int32_t)registers[reg] + (mode == 3u ? (int32_t)width : -(int32_t)width);
+        registers[reg] = reg == 15u ? (uint16_t)adjusted & 0xfffeu : (uint16_t)adjusted;
+        return operand;
+    }
+    if (mode == 4u || mode == 5u) {
+        adjusted =
+            (int32_t)registers[reg] + (mode == 5u ? (int32_t)width : -(int32_t)width);
+        operand.address = (uint16_t)adjusted;
+        registers[reg] = reg == 15u ? (uint16_t)adjusted & 0xfffeu : (uint16_t)adjusted;
+        return operand;
+    }
+    operand.address = (uint16_t)(registers[reg] + registers[offset_reg]);
+    return operand;
+}
+
+static void prepare_move_registers(Dspic33* cpu, uint16_t expected[16], uint16_t base,
+                                   uint16_t stride) {
+    uint8_t reg;
+    prepare_move_matrix_case(cpu);
+    for (reg = 0u; reg < 16u; reg++) {
+        uint16_t value = (uint16_t)(base + (uint16_t)reg * stride);
+        dspic33_set_working_register(cpu, reg, value);
+        expected[reg] = cpu->w[reg];
+    }
+}
+
+static bool move_matrix_registers_match(const Dspic33* cpu,
+                                        const uint16_t expected[16]) {
+    uint8_t reg;
+    for (reg = 0u; reg < 16u; reg++) {
+        if (cpu->w[reg] != expected[reg]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void generic_move_encoding_matrix_cases(ProcessorConformance* state,
+                                               Dspic33* cpu) {
+    uint32_t cases = 0u;
+    uint32_t opcode;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    for (opcode = 0x780000u; opcode <= 0x7fffffu; opcode++) {
+        uint8_t source_register = (uint8_t)(opcode & 0x0fu);
+        uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
+        uint8_t destination_register = (uint8_t)((opcode >> 7u) & 0x0fu);
+        uint8_t destination_mode = (uint8_t)((opcode >> 11u) & 0x07u);
+        uint8_t offset_register = (uint8_t)((opcode >> 15u) & 0x0fu);
+        bool byte_mode = (opcode & 0x004000u) != 0u;
+        uint8_t width = byte_mode ? 1u : 2u;
+        uint16_t expected[16];
+        MoveMatrixOperand source;
+        MoveMatrixOperand destination;
+        uint16_t value;
+        uint64_t cycles;
+        bool matches;
+
+        prepare_move_registers(cpu, expected, 0x2000u, 2u);
+        source = resolve_move_matrix_operand(expected, source_mode, source_register,
+                                             offset_register, width);
+        if (source.direct) {
+            value = byte_mode ? (uint8_t)expected[source_register]
+                              : expected[source_register];
+        } else if (byte_mode) {
+            dspic33_write_byte(cpu, source.address, 0xa5u);
+            value = 0x00a5u;
+        } else {
+            dspic33_write_word(cpu, source.address, 0xa55au);
+            value = 0xa55au;
+        }
+        destination = resolve_move_matrix_operand(
+            expected, destination_mode, destination_register, offset_register, width);
+        if (destination.direct) {
+            if (byte_mode) {
+                expected[destination_register] =
+                    (uint16_t)((expected[destination_register] & 0xff00u) | value);
+            } else {
+                expected[destination_register] = value;
+            }
+            if (destination_register == 15u) {
+                expected[destination_register] &= 0xfffeu;
+            }
+        }
+        cycles = cpu->cycles;
+        matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+                  dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+                  cpu->cycles - cycles == 1u && cpu->sr == 0x010fu &&
+                  cpu->unsupported_opcode == 0u && !cpu->illegal_reset &&
+                  cpu->last_trap == UINT16_MAX &&
+                  move_matrix_registers_match(cpu, expected);
+        if (!destination.direct) {
+            matches =
+                matches &&
+                (byte_mode ? dspic33_read_byte(cpu, destination.address) == value
+                           : dspic33_read_word(cpu, destination.address) == value);
+        }
+        expect_dsp_matrix_case(state, matches, opcode, "generic MOV encoding");
+        cases++;
+    }
+    expect(state, cases == 524288u, "generic MOV encoding matrix is exhaustive");
+}
+
+static int16_t move_offset_literal(uint32_t opcode, bool byte_mode) {
+    uint16_t encoded =
+        (uint16_t)((((opcode >> 15u) & 0x0fu) << 6u) |
+                   (((opcode >> 11u) & 0x07u) << 3u) | ((opcode >> 4u) & 0x07u));
+    int16_t offset = (int16_t)(encoded | ((encoded & 0x0200u) != 0u ? 0xfc00u : 0u));
+    return byte_mode ? offset : (int16_t)(offset * 2);
+}
+
+static void offset_move_encoding_matrix_cases(ProcessorConformance* state,
+                                              Dspic33* cpu) {
+    uint32_t cases = 0u;
+    uint32_t opcode;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    for (opcode = 0x900000u; opcode <= 0x9fffffu; opcode++) {
+        uint8_t source = (uint8_t)(opcode & 0x0fu);
+        uint8_t destination = (uint8_t)((opcode >> 7u) & 0x0fu);
+        bool byte_mode = (opcode & 0x004000u) != 0u;
+        bool store = (opcode & 0x080000u) != 0u;
+        int16_t offset = move_offset_literal(opcode, byte_mode);
+        uint16_t expected[16];
+        uint16_t address;
+        uint16_t value;
+        uint64_t cycles;
+        bool matches;
+
+        prepare_move_registers(cpu, expected, 0x4000u, 2u);
+        if (store) {
+            address = (uint16_t)(expected[destination] + offset);
+            value = byte_mode ? (uint8_t)expected[source] : expected[source];
+        } else {
+            address = (uint16_t)(expected[source] + offset);
+            value = byte_mode ? 0x00a5u : 0xa55au;
+            if (byte_mode) {
+                dspic33_write_byte(cpu, address, (uint8_t)value);
+                expected[destination] =
+                    (uint16_t)((expected[destination] & 0xff00u) | value);
+            } else {
+                dspic33_write_word(cpu, address, value);
+                expected[destination] = value;
+            }
+            if (destination == 15u) {
+                expected[destination] &= 0xfffeu;
+            }
+        }
+        cycles = cpu->cycles;
+        matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+                  dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+                  cpu->cycles - cycles == 1u && cpu->sr == 0x010fu &&
+                  cpu->unsupported_opcode == 0u && !cpu->illegal_reset &&
+                  cpu->last_trap == UINT16_MAX &&
+                  move_matrix_registers_match(cpu, expected);
+        if (store) {
+            matches = matches && (byte_mode ? dspic33_read_byte(cpu, address) == value
+                                            : dspic33_read_word(cpu, address) == value);
+        }
+        expect_dsp_matrix_case(state, matches, opcode, "offset MOV encoding");
+        cases++;
+    }
+    expect(state, cases == 1048576u, "offset MOV encoding matrix is exhaustive");
+}
+
+static void move_double_encoding_matrix_cases(ProcessorConformance* state,
+                                              Dspic33* cpu) {
+    uint32_t legal_loads = 0u;
+    uint32_t legal_stores = 0u;
+    uint32_t invalid = 0u;
+    uint32_t opcode;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    for (opcode = 0xbe0000u; opcode <= 0xbeffffu; opcode++) {
+        uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
+        uint8_t source_register = (uint8_t)(opcode & 0x0fu);
+        uint8_t destination_mode = (uint8_t)((opcode >> 11u) & 0x07u);
+        uint8_t destination_register = (uint8_t)((opcode >> 7u) & 0x0fu);
+        bool load = (opcode & 0xfff880u) == 0xbe0000u && source_mode <= 5u &&
+                    (source_mode != 0u || (source_register & 1u) == 0u);
+        bool store = (opcode & 0xffc071u) == 0xbe8000u && destination_mode >= 1u &&
+                     destination_mode <= 5u;
+        if (!load && !store) {
+            run_invalid_move_matrix_case(state, cpu, opcode);
+            invalid++;
+            continue;
+        }
+        uint16_t expected[16];
+        MoveMatrixOperand source;
+        MoveMatrixOperand destination;
+        uint16_t low;
+        uint16_t high;
+        uint64_t cycles;
+        bool matches;
+
+        prepare_move_registers(cpu, expected, 0x3000u, 4u);
+        source =
+            resolve_move_matrix_operand(expected, source_mode, source_register, 0u, 4u);
+        if (source.direct) {
+            source_register &= 0x0eu;
+            low = expected[source_register];
+            high = expected[source_register + 1u];
+        } else {
+            dspic33_write_word(cpu, source.address, 0x1111u);
+            dspic33_write_word(cpu, (uint16_t)(source.address + 2u), 0x2222u);
+            low = 0x1111u;
+            high = 0x2222u;
+        }
+        destination = resolve_move_matrix_operand(expected, destination_mode,
+                                                  destination_register, 0u, 4u);
+        if (destination.direct) {
+            destination_register &= 0x0eu;
+            expected[destination_register] = low;
+            expected[destination_register + 1u] = high;
+            if (destination_register + 1u == 15u) {
+                expected[15] &= 0xfffeu;
+            }
+        }
+        cycles = cpu->cycles;
+        matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+                  dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+                  cpu->cycles - cycles == 2u && cpu->sr == 0x010fu &&
+                  cpu->unsupported_opcode == 0u && !cpu->illegal_reset &&
+                  cpu->last_trap == UINT16_MAX &&
+                  move_matrix_registers_match(cpu, expected);
+        if (!destination.direct) {
+            matches =
+                matches && dspic33_read_word(cpu, destination.address) == low &&
+                dspic33_read_word(cpu, (uint16_t)(destination.address + 2u)) == high;
+        }
+        expect_dsp_matrix_case(state, matches, opcode, "MOV.D encoding");
+        if (load) {
+            legal_loads++;
+        } else {
+            legal_stores++;
+        }
+    }
+    expect(state, legal_loads == 704u, "MOV.D load encodings are exhaustive");
+    expect(state, legal_stores == 640u, "MOV.D store encodings are exhaustive");
+    expect(state, invalid == 64192u, "MOV.D illegal encodings are exhaustive");
+}
+
+static void move_data_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu) {
+    uint32_t cases = 0u;
+    uint32_t opcode;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    for (opcode = 0x800000u; opcode <= 0x8fffffu; opcode++) {
+        bool store = (opcode & 0x080000u) != 0u;
+        uint8_t reg = (uint8_t)(opcode & 0x0fu);
+        uint16_t encoded_address =
+            (uint16_t)((((opcode >> 4u) & 0x7fffu) << 1u) & 0xffffu);
+        uint32_t address;
+        uint16_t transfer_value;
+        uint64_t cycles;
+        Dspic33StopReason reason;
+        bool matches;
+
+        if (opcode == 0x880000u || encoded_address >= 0xe000u) {
+            dspic33_reset(cpu, 0u);
+            dspic33_set_async_events(cpu, false);
+        }
+        prepare_move_matrix_case(cpu);
+        cpu->dsrpag = 1u;
+        cpu->dswpag = 1u;
+        dspic33_set_working_register(cpu, 15u, 0x5000u);
+        address = encoded_address < 0x8000u
+                      ? encoded_address
+                      : (uint32_t)(0x8000u | (encoded_address & 0x7fffu));
+        if (store) {
+            dspic33_set_working_register(
+                cpu, reg, address >= 0x1000u ? (uint16_t)(0xa500u | reg) : 0u);
+            transfer_value = cpu->w[reg];
+        } else {
+            dspic33_set_working_register(cpu, reg, 0x5a5au);
+            transfer_value = 0xa55au;
+            if (address >= 0x1000u && encoded_address < 0xe000u) {
+                dspic33_write_word(cpu, address, 0xa55au);
+            }
+        }
+        cycles = cpu->cycles;
+        matches = dspic33_load_program_word(cpu, 0u, opcode);
+        reason = dspic33_step(cpu);
+        if (encoded_address >= 0xe000u) {
+            matches = matches && reason == DSPIC33_TRAPPED && cpu->pc == 0x000140u &&
+                      cpu->last_trap == 1u && cpu->last_trap_return == 2u;
+        } else {
+            matches = matches && reason == DSPIC33_RUNNING && cpu->pc == 2u &&
+                      cpu->last_trap == UINT16_MAX;
+        }
+        matches = matches && cpu->cycles > cycles && cpu->unsupported_opcode == 0u &&
+                  !cpu->illegal_reset;
+        if (address >= 0x1000u && encoded_address < 0xe000u) {
+            matches = matches &&
+                      (store ? dspic33_read_word(cpu, address) == transfer_value
+                             : cpu->w[reg] == (reg == 15u ? (transfer_value & 0xfffeu)
+                                                          : transfer_value));
+        }
+        expect_dsp_matrix_case(state, matches, opcode, "direct data MOV encoding");
+        cases++;
+    }
+    expect(state, cases == 1048576u, "direct data MOV encoding matrix is exhaustive");
+}
+
+static uint16_t move_matrix_logic_status(uint16_t status, uint16_t value,
+                                         bool byte_mode) {
+    uint16_t mask = byte_mode ? 0x00ffu : 0xffffu;
+    uint16_t sign = byte_mode ? 0x0080u : 0x8000u;
+    value &= mask;
+    status &= (uint16_t)~0x000au;
+    if (value == 0u) {
+        status |= 0x0002u;
+    }
+    if ((value & sign) != 0u) {
+        status |= 0x0008u;
+    }
+    return status;
+}
+
+static uint16_t move_matrix_file_value(uint16_t address, bool byte_mode) {
+    switch (address & 3u) {
+    case 0u:
+        return 0u;
+    case 1u:
+        return byte_mode ? 0x0080u : 0x8000u;
+    default:
+        return byte_mode ? 0x0034u : 0x1234u;
+    }
+}
+
+static void file_move_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu) {
+    uint32_t cases = 0u;
+    uint16_t address;
+    uint8_t byte_mode;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    expect(state, dspic33_load_program_word(cpu, 0x000006u, 0x000140u),
+           "load file MOV address trap vector");
+    for (byte_mode = 0u; byte_mode < 2u; byte_mode++) {
+        for (address = 0u; address < 0x2000u; address++) {
+            uint32_t opcode = 0xb7a000u | ((uint32_t)byte_mode << 14u) | address;
+            uint64_t cycles;
+            Dspic33StopReason reason;
+            bool matches;
+
+            dspic33_reset(cpu, 0u);
+            dspic33_set_async_events(cpu, false);
+            prepare_move_matrix_case(cpu);
+            dspic33_set_working_register(cpu, 0u, address >= 0x1000u ? 0xa5a5u : 0u);
+            dspic33_set_working_register(cpu, 15u, 0x5000u);
+            cycles = cpu->cycles;
+            matches = dspic33_load_program_word(cpu, 0u, opcode);
+            reason = dspic33_step(cpu);
+            if (byte_mode == 0u && (address & 1u) != 0u) {
+                matches = matches && reason == DSPIC33_TRAPPED &&
+                          cpu->pc == 0x000140u && cpu->last_trap == 1u &&
+                          cpu->last_trap_return == 2u;
+            } else {
+                matches = matches && reason == DSPIC33_RUNNING && cpu->pc == 2u &&
+                          cpu->last_trap == UINT16_MAX;
+            }
+            matches = matches && cpu->cycles > cycles &&
+                      cpu->unsupported_opcode == 0u && !cpu->illegal_reset;
+            if (address >= 0x1000u && (byte_mode != 0u || (address & 1u) == 0u)) {
+                matches = matches && (byte_mode != 0u
+                                          ? dspic33_read_byte(cpu, address) == 0xa5u
+                                          : dspic33_read_word(cpu, address) == 0xa5a5u);
+            }
+            expect_dsp_matrix_case(state, matches, opcode, "WREG-to-file MOV encoding");
+            cases++;
+        }
+    }
+    expect(state, cases == 16384u, "WREG-to-file MOV encoding matrix is exhaustive");
+
+    cases = 0u;
+    for (byte_mode = 0u; byte_mode < 2u; byte_mode++) {
+        uint8_t file_destination;
+        for (file_destination = 0u; file_destination < 2u; file_destination++) {
+            for (address = 0u; address < 0x2000u; address++) {
+                uint32_t opcode = 0xbf8000u | ((uint32_t)byte_mode << 14u) |
+                                  ((uint32_t)file_destination << 13u) | address;
+                uint16_t expected[16];
+                uint16_t value;
+                uint16_t expected_status;
+                uint64_t cycles;
+                Dspic33StopReason reason;
+                bool matches;
+
+                dspic33_reset(cpu, 0u);
+                dspic33_set_async_events(cpu, false);
+                prepare_move_registers(cpu, expected, 0x2000u, 2u);
+                value = move_matrix_file_value(address, byte_mode != 0u);
+                if (address >= 0x1000u) {
+                    if (byte_mode != 0u) {
+                        dspic33_write_byte(cpu, address, (uint8_t)value);
+                    } else {
+                        dspic33_write_word(cpu, address, value);
+                    }
+                } else if (address == 0x002eu) {
+                    value = 2u;
+                } else if (address == 0x0030u) {
+                    value = 0u;
+                } else {
+                    value = byte_mode != 0u ? dspic33_read_byte(cpu, address)
+                                            : dspic33_read_word(cpu, address);
+                }
+                expected_status =
+                    move_matrix_logic_status(0x010fu, value, byte_mode != 0u);
+                if (file_destination == 0u) {
+                    expected[0] = byte_mode != 0u
+                                      ? (uint16_t)((expected[0] & 0xff00u) | value)
+                                      : value;
+                }
+                cycles = cpu->cycles;
+                matches = dspic33_load_program_word(cpu, 0u, opcode);
+                reason = dspic33_step(cpu);
+                if (byte_mode == 0u && (address & 1u) != 0u) {
+                    matches = matches && reason == DSPIC33_TRAPPED &&
+                              cpu->pc == 0x000140u && cpu->last_trap == 1u &&
+                              cpu->last_trap_return == 2u;
+                } else {
+                    matches = matches && reason == DSPIC33_RUNNING && cpu->pc == 2u &&
+                              cpu->last_trap == UINT16_MAX &&
+                              cpu->sr == expected_status &&
+                              move_matrix_registers_match(cpu, expected);
+                }
+                matches = matches && cpu->cycles > cycles &&
+                          cpu->unsupported_opcode == 0u && !cpu->illegal_reset;
+                expect_dsp_matrix_case(state, matches, opcode,
+                                       "file-to-destination MOV encoding");
+                cases++;
+            }
+        }
+    }
+    expect(state, cases == 32768u,
+           "file-to-destination MOV encoding matrix is exhaustive");
+}
+
+static void move_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu) {
+    move_literal_encoding_matrix_cases(state, cpu);
+    move_register_encoding_matrix_cases(state, cpu);
+    movpag_encoding_matrix_cases(state, cpu);
+    generic_move_encoding_matrix_cases(state, cpu);
+    offset_move_encoding_matrix_cases(state, cpu);
+    move_double_encoding_matrix_cases(state, cpu);
+    move_data_encoding_matrix_cases(state, cpu);
+    file_move_encoding_matrix_cases(state, cpu);
+}
+
 static void illegal_condition_reset_cases(ProcessorConformance* state, Dspic33* cpu) {
     static const uint16_t preserved_addresses[] = {
         0x0742u, 0x0744u, 0x0746u, 0x0748u, 0x074eu, 0x0758u, 0x075au,
@@ -5638,6 +6364,7 @@ int main(void) {
         dsp_encoding_matrix_cases(&state, &cpu);
         generic_multiply_encoding_matrix_cases(&state, &cpu);
         file_multiply_encoding_matrix_cases(&state, &cpu);
+        move_encoding_matrix_cases(&state, &cpu);
         illegal_condition_reset_cases(&state, &cpu);
         dspic33_destroy(&cpu);
     }

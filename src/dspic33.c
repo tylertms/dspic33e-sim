@@ -395,6 +395,21 @@ static uint16_t read_data_word(Dspic33* cpu, uint32_t address) {
     return dspic33_read_word(cpu, address);
 }
 
+static uint16_t read_file_word(Dspic33* cpu, uint16_t address) {
+    uint16_t value;
+    if ((address & 1u) == 0u) {
+        return read_data_word(cpu, address);
+    }
+    if (!check_data_alignment(cpu, address)) {
+        cpu->address_error_access_allowed = true;
+        value = read_data_word(cpu, address & 0xfffeu);
+        cpu->address_error_access_allowed = false;
+        cpu->address_error_working_state_completed = true;
+        return value;
+    }
+    return 0u;
+}
+
 static void write_word(Dspic33* cpu, uint32_t address, uint16_t value) {
     dspic33_write_word(cpu, address, value);
 }
@@ -2808,8 +2823,25 @@ static bool execute_fractional_divide(Dspic33* cpu, uint32_t opcode) {
     return true;
 }
 
+static bool reserved_move_encoding(uint32_t opcode) {
+    if ((opcode & 0xfff000u) == 0xfd0000u) {
+        return (opcode & 0xfff870u) != 0xfd0000u;
+    }
+    if ((opcode & 0xff8000u) == 0xfd8000u) {
+        return (opcode & 0xffbff0u) != 0xfd8000u;
+    }
+    if ((opcode & 0xfff000u) == 0xfed000u) {
+        return (opcode & 0xfff3f0u) != 0xfed000u;
+    }
+    return false;
+}
+
 static bool execute(Dspic33* cpu, uint32_t opcode) {
     if ((opcode & 0xff0000u) == 0x3f0000u) {
+        perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+        return true;
+    }
+    if (reserved_move_encoding(opcode)) {
         perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
         return true;
     }
@@ -3112,7 +3144,7 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         uint16_t address = (uint16_t)(opcode & 0x1fffu);
         bool byte_mode = (opcode & 0x004000u) != 0u;
         uint16_t value =
-            byte_mode ? read_data_byte(cpu, address) : read_data_word(cpu, address);
+            byte_mode ? read_data_byte(cpu, address) : read_file_word(cpu, address);
         if ((opcode & 0x002000u) == 0u) {
             if (byte_mode) {
                 write_working_register_byte(cpu, 0u, false, value);
