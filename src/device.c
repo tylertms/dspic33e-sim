@@ -3393,6 +3393,36 @@ static uint16_t uart_dma_error_bits(const Dspic33* cpu, uint16_t address) {
     return 0u;
 }
 
+static bool dma_pad_in_set(uint16_t pad, const uint16_t* pads, size_t count) {
+    size_t index;
+    for (index = 0u; index < count; index++) {
+        if (pad == pads[index]) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool dma_pad_readable(uint16_t pad) {
+    static const uint16_t pads[] = {0x0144u, 0x014cu, 0x0154u, 0x015cu, 0x0226u,
+                                    0x0236u, 0x0248u, 0x0256u, 0x0268u, 0x0290u,
+                                    0x02a8u, 0x02b6u, 0x02c8u, 0x0300u, 0x0340u,
+                                    0x0440u, 0x0540u, 0x0608u};
+    return dma_pad_in_set(pad, pads, sizeof(pads) / sizeof(pads[0]));
+}
+
+static bool dma_pad_writable(uint16_t pad) {
+    static const uint16_t pads[] = {0x0224u, 0x0234u, 0x0248u, 0x0254u, 0x0268u,
+                                    0x0298u, 0x02a8u, 0x02b4u, 0x02c8u, 0x0442u,
+                                    0x0542u, 0x0608u, 0x0904u, 0x0906u, 0x090eu,
+                                    0x0910u, 0x0918u, 0x091au, 0x0922u, 0x0924u};
+    return dma_pad_in_set(pad, pads, sizeof(pads) / sizeof(pads[0]));
+}
+
+bool dspic33_device_dma_pad_valid(uint16_t pad, bool write) {
+    return write ? dma_pad_writable(pad) : dma_pad_readable(pad);
+}
+
 static void dma_disable_channel(Dspic33* cpu, uint8_t channel, uint16_t control) {
     uint16_t base = dma_channel_base(channel);
     uint16_t bit = dma_channel_bit(channel);
@@ -3533,19 +3563,25 @@ static void run_dma(Dspic33* cpu, uint16_t source, uint32_t event_value) {
     cpu->io.dma_transfer_active = true;
     if ((control & DMA_CON_RAM_TO_PERIPHERAL) != 0u) {
         value = dma_read_memory(cpu, address, width);
-        if (dma_write_collision(cpu, pad, width)) {
-            dma_peripheral_write_collision(cpu, channel);
-        } else if (width == 1u) {
-            dspic33_write_byte(cpu, pad, (uint8_t)value);
-        } else {
-            dspic33_write_word(cpu, pad, value);
+        if (dma_pad_writable(pad)) {
+            if (dma_write_collision(cpu, pad, width)) {
+                dma_peripheral_write_collision(cpu, channel);
+            } else if (width == 1u) {
+                dspic33_write_byte(cpu, pad, (uint8_t)value);
+            } else {
+                dspic33_write_word(cpu, pad, value);
+            }
         }
     } else {
-        uart_errors = width == 2u ? uart_dma_error_bits(cpu, pad) : 0u;
-        value = width == 1u ? dspic33_read_byte(cpu, pad) : dspic33_read_word(cpu, pad);
-        value |= uart_errors;
+        value = 0u;
+        if (dma_pad_readable(pad)) {
+            uart_errors = width == 2u ? uart_dma_error_bits(cpu, pad) : 0u;
+            value =
+                width == 1u ? dspic33_read_byte(cpu, pad) : dspic33_read_word(cpu, pad);
+            value |= uart_errors;
+        }
         dma_write_memory(cpu, address, width, value);
-        if ((control & DMA_CON_NULL_WRITE) != 0u) {
+        if ((control & DMA_CON_NULL_WRITE) != 0u && dma_pad_writable(pad)) {
             if (dma_write_collision(cpu, pad, width)) {
                 dma_peripheral_write_collision(cpu, channel);
             } else if (width == 1u) {
