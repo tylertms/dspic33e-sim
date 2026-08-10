@@ -98,6 +98,15 @@ enum {
     OPCODE_MOV_DOUBLE_W2_W4_PRE_INCREMENT = 0xbeaa02u,
     OPCODE_MOV_W0_IFS0 = 0x884000u,
     OPCODE_MOV_IFS0_W2 = 0x804002u,
+    OPCODE_MOV_FILE_WORD_0X1000 = 0xbfb000u,
+    OPCODE_MOV_FILE_BYTE_0X1001 = 0xbff001u,
+    OPCODE_MOV_FILE_WORD_W0 = 0xbfa000u,
+    OPCODE_MOV_FILE_BYTE_W0 = 0xbfe000u,
+    OPCODE_MOV_FILE_WORD_CORCON = 0xbfa044u,
+    OPCODE_MOV_FILE_WORD_PORTB = 0xbfae12u,
+    OPCODE_MOV_FILE_BYTE_PORTB = 0xbfee12u,
+    OPCODE_MOV_0X1000_WREG = 0xbf9000u,
+    OPCODE_MOV_BYTE_0X1001_WREG = 0xbfd001u,
     OPCODE_BSET_BYTE_IFS0_BIT_0 = 0xa80800u,
     OPCODE_BSET_BYTE_CORCON_BIT_1 = 0xa82044u,
     OPCODE_BTSS_IFS0_BIT_0 = 0xae0800u,
@@ -2550,6 +2559,126 @@ static void register_move_instruction_cases(ProcessorConformance* state, Dspic33
            "EXCH accepts identical source and destination");
 }
 
+static void direct_file_move_cases(ProcessorConformance* state, Dspic33* cpu) {
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_FILE_WORD_0X1000);
+    dspic33_write_word(cpu, 0x1000u, 0x8000u);
+    cpu->w[0] = 0x5a5au;
+    cpu->sr = 0x0107u;
+    cpu->io.cpu_write_valid = false;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_read_word(cpu, 0x1000u) == 0x8000u && cpu->w[0] == 0x5a5au &&
+               cpu->sr == 0x010du && cpu->cycles == 1u && cpu->io.cpu_write_valid &&
+               cpu->io.cpu_write_address == 0x1000u && cpu->io.cpu_write_width == 2u &&
+               cpu->io.cpu_write_previous == 0x8000u,
+           "word file destination writes back RAM before updating flags");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_FILE_BYTE_0X1001);
+    dspic33_write_word(cpu, 0x1000u, 0x8000u);
+    cpu->w[0] = 0x5a5au;
+    cpu->sr = 0x0107u;
+    cpu->io.cpu_write_valid = false;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_read_word(cpu, 0x1000u) == 0x8000u && cpu->w[0] == 0x5a5au &&
+               cpu->sr == 0x010du && cpu->cycles == 1u && cpu->io.cpu_write_valid &&
+               cpu->io.cpu_write_address == 0x1001u && cpu->io.cpu_write_width == 1u &&
+               cpu->io.cpu_write_previous == 0x0080u,
+           "byte file destination writes back RAM before updating flags");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_FILE_WORD_W0);
+    cpu->w[0] = 0u;
+    cpu->initialized_working_registers &= (uint16_t)~0x0001u;
+    cpu->sr = 0x010du;
+    cpu->io.cpu_write_valid = false;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[0] == 0u &&
+               cpu->sr == 0x0107u && cpu->cycles == 1u &&
+               (cpu->initialized_working_registers & 0x0001u) != 0u &&
+               cpu->io.cpu_write_valid && cpu->io.cpu_write_address == 0u &&
+               cpu->io.cpu_write_width == 2u,
+           "word file destination initializes working-register alias");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_FILE_BYTE_W0);
+    cpu->w[0] = 0x0080u;
+    cpu->initialized_working_registers &= (uint16_t)~0x0001u;
+    cpu->sr = 0x0107u;
+    cpu->io.cpu_write_valid = false;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[0] == 0x0080u &&
+               cpu->sr == 0x010du && cpu->cycles == 1u &&
+               (cpu->initialized_working_registers & 0x0001u) == 0u &&
+               cpu->io.cpu_write_valid && cpu->io.cpu_write_address == 0u &&
+               cpu->io.cpu_write_width == 1u,
+           "byte file destination preserves uninitialized working-register alias");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_0X1000_WREG);
+    dspic33_write_word(cpu, 0x1000u, 0x8000u);
+    cpu->sr = 0x0107u;
+    cpu->io.cpu_write_valid = false;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[0] == 0x8000u &&
+               cpu->sr == 0x010du && cpu->cycles == 1u && !cpu->io.cpu_write_valid,
+           "word WREG destination does not write back source file");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_BYTE_0X1001_WREG);
+    dspic33_write_word(cpu, 0x1000u, 0x8000u);
+    cpu->w[0] = 0x5a5au;
+    cpu->sr = 0x0107u;
+    cpu->io.cpu_write_valid = false;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[0] == 0x5a80u &&
+               cpu->sr == 0x010du && cpu->cycles == 1u && !cpu->io.cpu_write_valid,
+           "byte WREG destination does not write back source file");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_FILE_WORD_CORCON);
+    cpu->sr = 0x010du;
+    cpu->io.cpu_write_valid = false;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->corcon == 0x0020u &&
+               cpu->sr == 0x0105u && cpu->cycles == 1u && cpu->io.cpu_write_valid,
+           "CPU SFR file destination writes back in one cycle");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_FILE_WORD_PORTB);
+    dspic33_gpio_input(cpu, 1u, 0u);
+    dspic33_write_word(cpu, 0x0e10u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e14u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e1eu, 0u);
+    cpu->w[0] = 0x5a5au;
+    cpu->sr = 0x010du;
+    cpu->io.cpu_write_valid = false;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_read_word(cpu, 0x0e14u) == 0u && cpu->w[0] == 0x5a5au &&
+               cpu->sr == 0x0107u && cpu->cycles == 2u && cpu->io.cpu_write_valid &&
+               cpu->io.cpu_write_address == 0x0e12u && cpu->io.cpu_write_width == 2u,
+           "non-CPU SFR word file destination writes pins back to latch");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_FILE_BYTE_PORTB);
+    dspic33_gpio_input(cpu, 1u, 0u);
+    dspic33_write_word(cpu, 0x0e10u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e14u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e1eu, 0u);
+    cpu->w[0] = 0x5a5au;
+    cpu->sr = 0x010du;
+    cpu->io.cpu_write_valid = false;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_read_word(cpu, 0x0e14u) == 0u && cpu->w[0] == 0x5a5au &&
+               cpu->sr == 0x0107u && cpu->cycles == 2u && cpu->io.cpu_write_valid &&
+               cpu->io.cpu_write_address == 0x0e12u && cpu->io.cpu_write_width == 1u,
+           "non-CPU SFR byte file destination writes pins back to latch");
+}
+
 static void non_cpu_sfr_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_BSET_BYTE_IFS0_BIT_0);
@@ -4157,6 +4286,7 @@ int main(void) {
         repeat_interrupt_cases(&state, &cpu);
         instruction_cycle_cases(&state, &cpu);
         register_move_instruction_cases(&state, &cpu);
+        direct_file_move_cases(&state, &cpu);
         non_cpu_sfr_timing_cases(&state, &cpu);
         psv_timing_cases(&state, &cpu);
         dsp_x_prefetch_page_cases(&state, &cpu);

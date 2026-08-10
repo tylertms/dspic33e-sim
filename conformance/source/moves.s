@@ -2,7 +2,7 @@
 .include "conformance.inc"
 
 .global _move_conformance_cases
-_move_conformance_cases = 68
+_move_conformance_cases = 71
 .global _move_conformance_group_complete
 _move_conformance_group_complete = 0
 
@@ -465,6 +465,39 @@ _run_move_conformance:
     movpag w1, TBLPAG
     mov TBLPAG, w2
     record_case 0x0543, w2, w1
+
+    mov #0x8000, w1
+    mov w1, _conformance_scratch+10
+    set_status 0x0107
+    mov _conformance_scratch+10
+    mov w0, w3
+    mov _conformance_scratch+10, w2
+    record_case 0x0544, w2, w3
+
+    mov #0x0080, w1
+    mov w1, _conformance_scratch+12
+    set_status 0x0107
+    mov.b _conformance_scratch+12
+    mov w0, w3
+    mov _conformance_scratch+12, w2
+    record_case 0x0545, w2, w3
+
+    mov TRISB, w8
+    mov LATB, w9
+    mov ANSELB, w10
+    mov #0xffff, w1
+    mov w1, TRISB
+    mov w1, LATB
+    clr w1
+    mov w1, ANSELB
+    set_status 0x010d
+    mov PORTB
+    mov w0, w3
+    mov LATB, w2
+    record_case 0x0546, w2, w3
+    mov w8, TRISB
+    mov w9, LATB
+    mov w10, ANSELB
 
     mov #1, w0
     mov w0, DSRPAG

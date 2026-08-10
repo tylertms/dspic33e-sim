@@ -2921,6 +2921,10 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
             } else {
                 write_working_register(cpu, 0u, value);
             }
+        } else if (byte_mode) {
+            dspic33_write_byte(cpu, address, (uint8_t)value);
+        } else {
+            dspic33_write_word(cpu, address, value);
         }
         update_logic_flags(cpu, value, byte_mode);
         return true;
