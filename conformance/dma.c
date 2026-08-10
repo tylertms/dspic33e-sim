@@ -50,6 +50,11 @@ static uint16_t stored_word(const Dspic33* cpu, uint16_t address) {
     return (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[address + 1u] << 8u));
 }
 
+static void store_peripheral_word(Dspic33* cpu, uint16_t value) {
+    cpu->data[DMA_TEST_READ_PAD] = (uint8_t)value;
+    cpu->data[DMA_TEST_READ_PAD + 1u] = (uint8_t)(value >> 8u);
+}
+
 static bool interrupt_flag(Dspic33* cpu, uint8_t channel) {
     uint8_t irq = dma_irqs[channel];
     return (dspic33_read_word(cpu, (uint16_t)(0x0800u + (irq / 16u) * 2u)) &
@@ -195,14 +200,14 @@ static void direction_and_width_cases(DmaConformance* state, Dspic33* cpu) {
            "byte RAM to peripheral");
 
     dspic33_reset(cpu, 0u);
-    dspic33_write_word(cpu, DMA_TEST_READ_PAD, 0x369cu);
+    store_peripheral_word(cpu, 0x369cu);
     configure_channel(cpu, 0u, 0x0001u, 0x46u, 0x2000u, 0u, DMA_TEST_READ_PAD, 0u);
     expect(state, request(cpu, 0x46u, 0u), "word peripheral request");
     expect(state, dspic33_read_word(cpu, 0x2000u) == 0x369cu, "word peripheral to RAM");
 
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, 0x2000u, 0xcc00u);
-    dspic33_write_word(cpu, DMA_TEST_READ_PAD, 0x12abu);
+    store_peripheral_word(cpu, 0x12abu);
     configure_channel(cpu, 0u, 0x4001u, 0x47u, 0x2000u, 0u, DMA_TEST_READ_PAD, 0u);
     expect(state, request(cpu, 0x47u, 0u), "byte peripheral request");
     expect(state, dspic33_read_word(cpu, 0x2000u) == 0xccabu, "byte peripheral to RAM");
@@ -248,15 +253,15 @@ static void invalid_write_cases(DmaConformance* state, Dspic33* cpu) {
 static void addressing_cases(DmaConformance* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     configure_channel(cpu, 0u, 0x0000u, 0x50u, 0x2200u, 0u, DMA_TEST_READ_PAD, 2u);
-    dspic33_write_word(cpu, DMA_TEST_READ_PAD, 0x1111u);
+    store_peripheral_word(cpu, 0x1111u);
     expect(state, request(cpu, 0x50u, 0u), "post-increment first request");
     expect(state, dspic33_read_word(cpu, 0x0b04u) == 0x2200u,
            "post-increment preserves start register");
-    dspic33_write_word(cpu, DMA_TEST_READ_PAD, 0x2222u);
+    store_peripheral_word(cpu, 0x2222u);
     expect(state, request(cpu, 0x50u, 0u), "post-increment second request");
     expect(state, dspic33_read_word(cpu, 0x0b04u) == 0x2200u,
            "post-increment keeps start register stable");
-    dspic33_write_word(cpu, DMA_TEST_READ_PAD, 0x3333u);
+    store_peripheral_word(cpu, 0x3333u);
     expect(state, request(cpu, 0x50u, 0u), "post-increment third request");
     expect(state,
            dspic33_read_word(cpu, 0x2200u) == 0x1111u &&
@@ -266,11 +271,11 @@ static void addressing_cases(DmaConformance* state, Dspic33* cpu) {
 
     dspic33_reset(cpu, 0u);
     configure_channel(cpu, 0u, 0x0000u, 0x53u, 0x2200u, 0u, DMA_TEST_READ_PAD, 3u);
-    dspic33_write_word(cpu, DMA_TEST_READ_PAD, 0x7777u);
+    store_peripheral_word(cpu, 0x7777u);
     expect(state, request(cpu, 0x53u, 0u) && request(cpu, 0x53u, 0u),
            "post-increment before mode switch");
     dspic33_write_word(cpu, 0x0b00u, 0x8010u);
-    dspic33_write_word(cpu, DMA_TEST_READ_PAD, 0x8888u);
+    store_peripheral_word(cpu, 0x8888u);
     expect(state, request(cpu, 0x53u, 0u) && request(cpu, 0x53u, 0u),
            "fixed requests after mode switch");
     expect(state,
@@ -280,9 +285,9 @@ static void addressing_cases(DmaConformance* state, Dspic33* cpu) {
 
     dspic33_reset(cpu, 0u);
     configure_channel(cpu, 0u, 0x0010u, 0x51u, 0x2200u, 0u, DMA_TEST_READ_PAD, 2u);
-    dspic33_write_word(cpu, DMA_TEST_READ_PAD, 0x4444u);
+    store_peripheral_word(cpu, 0x4444u);
     expect(state, request(cpu, 0x51u, 0u), "fixed first request");
-    dspic33_write_word(cpu, DMA_TEST_READ_PAD, 0x5555u);
+    store_peripheral_word(cpu, 0x5555u);
     expect(state, request(cpu, 0x51u, 0u), "fixed second request");
     expect(state,
            dspic33_read_word(cpu, 0x2200u) == 0x5555u &&
@@ -291,7 +296,7 @@ static void addressing_cases(DmaConformance* state, Dspic33* cpu) {
 
     dspic33_reset(cpu, 0u);
     configure_channel(cpu, 0u, 0x0021u, 0x52u, 0x2400u, 0u, DMA_TEST_READ_PAD, 0u);
-    dspic33_write_word(cpu, DMA_TEST_READ_PAD, 0x6a6au);
+    store_peripheral_word(cpu, 0x6a6au);
     expect(state, request(cpu, 0x52u, 0x0034u), "peripheral indirect request");
     expect(state, dspic33_read_word(cpu, 0x2434u) == 0x6a6au,
            "peripheral indirect address");
@@ -353,7 +358,7 @@ static void operating_mode_cases(DmaConformance* state, Dspic33* cpu) {
 static void interrupt_and_null_cases(DmaConformance* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     configure_channel(cpu, 0u, 0x1000u, 0x70u, 0x2700u, 0u, DMA_TEST_READ_PAD, 3u);
-    dspic33_write_word(cpu, DMA_TEST_READ_PAD, 0x1111u);
+    store_peripheral_word(cpu, 0x1111u);
     expect(state, request(cpu, 0x70u, 0u), "half first request");
     expect(state, !interrupt_flag(cpu, 0u), "half interrupt not early");
     expect(state, request(cpu, 0x70u, 0u), "half second request");
@@ -365,7 +370,7 @@ static void interrupt_and_null_cases(DmaConformance* state, Dspic33* cpu) {
 
     dspic33_reset(cpu, 0u);
     configure_channel(cpu, 0u, 0x1001u, 0x71u, 0x2700u, 0u, DMA_TEST_READ_PAD, 2u);
-    dspic33_write_word(cpu, DMA_TEST_READ_PAD, 0x2222u);
+    store_peripheral_word(cpu, 0x2222u);
     expect(state, request(cpu, 0x71u, 0u), "odd half first request");
     expect(state, !interrupt_flag(cpu, 0u), "odd half not early");
     expect(state, request(cpu, 0x71u, 0u), "odd half second request");
@@ -392,7 +397,7 @@ static void interrupt_and_null_cases(DmaConformance* state, Dspic33* cpu) {
            "invalid read PAD supplies zero and completes without a handler");
 
     dspic33_reset(cpu, 0u);
-    dspic33_write_word(cpu, DMA_TEST_READ_PAD, 0x6a6au);
+    store_peripheral_word(cpu, 0x6a6au);
     configure_channel(cpu, 0u, 0x0801u, 0x74u, 0x2700u, 0u, DMA_TEST_READ_PAD, 0u);
     expect(state, request(cpu, 0x74u, 0u), "read-only NULLW PAD request");
     expect(state,
@@ -404,7 +409,7 @@ static void interrupt_and_null_cases(DmaConformance* state, Dspic33* cpu) {
     configure_channel(cpu, 0u, 0x0801u, 0x75u, 0x2700u, 0u, DMA_TEST_READ_PAD, 0u);
     expect(state, dspic33_dma_request(cpu, 0x75u, 0u, 1u),
            "queue read-only NULLW with concurrent CPU write");
-    dspic33_write_word(cpu, DMA_TEST_READ_PAD, 0x5b5bu);
+    store_peripheral_word(cpu, 0x5b5bu);
     expect(state,
            dspic33_device_advance(cpu, 1u) && dspic33_read_word(cpu, 0x0bf0u) == 0u &&
                cpu->trap_count == 0u,
@@ -657,7 +662,7 @@ static void memory_collision_cases(DmaConformance* state, Dspic33* cpu) {
 
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, 0x3400u, 0xaaaau);
-    dspic33_write_word(cpu, DMA_TEST_READ_PAD, 0x3333u);
+    store_peripheral_word(cpu, 0x3333u);
     configure_channel(cpu, 0u, 0x0001u, 0xc2u, 0x3400u, 0u, DMA_TEST_READ_PAD, 0u);
     expect(state, dspic33_dma_request(cpu, 0xc2u, 0u, 1u),
            "queue concurrent DMA memory write");

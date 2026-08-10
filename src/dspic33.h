@@ -47,6 +47,8 @@
 #define DSPIC33_COMPARATOR_COUNT 3u
 #define DSPIC33_COMPARATOR_INPUT_COUNT 4u
 #define DSPIC33_QEI_COUNT 2u
+#define DSPIC33_DCI_BUFFER_COUNT 4u
+#define DSPIC33_DCI_QUEUE_SIZE 64u
 
 typedef enum {
     DSPIC33_EVENT_INTERRUPT,
@@ -72,6 +74,7 @@ typedef enum {
     DSPIC33_EVENT_COMPARATOR,
     DSPIC33_EVENT_RTCC,
     DSPIC33_EVENT_QEI,
+    DSPIC33_EVENT_DCI,
     DSPIC33_EVENT_AUX_PLL
 } Dspic33EventType;
 
@@ -244,6 +247,43 @@ typedef struct {
     bool index_latched[DSPIC33_QEI_COUNT];
     bool pmd_disabled[DSPIC33_QEI_COUNT];
 } Dspic33Qei;
+
+typedef struct {
+    uint64_t cycle;
+    uint16_t value;
+    uint8_t slot;
+    bool driven;
+} Dspic33DciTransfer;
+
+typedef struct {
+    Dspic33DciTransfer transfers[DSPIC33_DCI_QUEUE_SIZE];
+    uint8_t head;
+    uint8_t count;
+} Dspic33DciQueue;
+
+typedef struct {
+    Dspic33DciQueue output;
+    uint16_t receive[DSPIC33_DCI_BUFFER_COUNT];
+    uint16_t transmit[DSPIC33_DCI_BUFFER_COUNT];
+    uint16_t last_transmit[DSPIC33_DCI_BUFFER_COUNT];
+    uint16_t input;
+    uint16_t generation;
+    uint16_t pmd_generation;
+    uint8_t receive_unread;
+    uint8_t receive_overflow;
+    uint8_t receive_buffered;
+    uint8_t transmit_written;
+    uint8_t transmit_underflow;
+    uint8_t transmit_buffered;
+    uint8_t buffer;
+    uint8_t slot;
+    bool started;
+    bool initialized;
+    bool disable_pending;
+    bool internal_scheduled;
+    bool pmd_disabled;
+    bool transmit_empty;
+} Dspic33Dci;
 
 typedef enum {
     DSPIC33_I2C_START,
@@ -458,6 +498,7 @@ typedef struct {
     Dspic33Comparator comparator;
     Dspic33Rtcc rtcc;
     Dspic33Qei qei;
+    Dspic33Dci dci;
     Dspic33UsbPending usb_pending[DSPIC33_USB_PENDING_COUNT];
     Dspic33UsbQueue usb_tx;
     uint8_t usb_next_bank[DSPIC33_USB_ENDPOINT_COUNT][2];
@@ -641,6 +682,9 @@ bool dspic33_rtcc_output(const Dspic33* cpu, bool* high);
 bool dspic33_qei_input(Dspic33* cpu, uint8_t channel, Dspic33QeiInput input, bool high,
                        uint64_t delay);
 bool dspic33_qei_compare_output(const Dspic33* cpu, uint8_t channel, bool* high);
+void dspic33_dci_input(Dspic33* cpu, uint16_t value);
+bool dspic33_dci_clock(Dspic33* cpu, uint16_t value, bool frame_sync, uint64_t delay);
+bool dspic33_dci_transmit(Dspic33* cpu, Dspic33DciTransfer* transfer);
 bool dspic33_timer_pulse(Dspic33* cpu, uint8_t timer, uint32_t pulses, uint64_t delay);
 bool dspic33_timer_gate(Dspic33* cpu, uint8_t timer, bool high, uint64_t delay);
 bool dspic33_adc_trigger(Dspic33* cpu, uint8_t module, uint8_t source, uint64_t delay);

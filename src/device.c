@@ -510,7 +510,46 @@ enum {
     QEI_GREATER_EQUAL_HIGH = 0x001eu,
     QEI_LESS_EQUAL_LOW = 0x0020u,
     QEI_LESS_EQUAL_HIGH = 0x0022u,
-    QEI_PMD_EVENT_BASE = 0x0100u
+    QEI_PMD_EVENT_BASE = 0x0100u,
+    DCI_BASE = 0x0280u,
+    DCI_CONTROL1 = 0x0280u,
+    DCI_CONTROL2 = 0x0282u,
+    DCI_CONTROL3 = 0x0284u,
+    DCI_STATUS = 0x0286u,
+    DCI_TRANSMIT_SLOTS = 0x0288u,
+    DCI_RECEIVE_SLOTS = 0x028cu,
+    DCI_RECEIVE_BASE = 0x0290u,
+    DCI_TRANSMIT_BASE = 0x0298u,
+    DCI_CONTROL_ENABLE = 0x8000u,
+    DCI_CONTROL_STOP_IDLE = 0x2000u,
+    DCI_CONTROL_LOOPBACK = 0x0800u,
+    DCI_CONTROL_EXTERNAL_CLOCK = 0x0400u,
+    DCI_CONTROL_EXTERNAL_FRAME = 0x0100u,
+    DCI_CONTROL_UNDERFLOW_LAST = 0x0080u,
+    DCI_CONTROL_TRISTATE = 0x0040u,
+    DCI_CONTROL_DATA_JUSTIFY = 0x0020u,
+    DCI_CONTROL_MODE_MASK = 0x0003u,
+    DCI_CONTROL_SUPPORTED_MASK = 0xadc3u,
+    DCI_CONTROL2_BUFFER_MASK = 0x0c00u,
+    DCI_CONTROL2_FRAME_MASK = 0x01e0u,
+    DCI_CONTROL2_WORD_MASK = 0x000fu,
+    DCI_STATUS_SLOT_MASK = 0x0f00u,
+    DCI_STATUS_RECEIVE_OVERFLOW = 0x0008u,
+    DCI_STATUS_RECEIVE_FULL = 0x0004u,
+    DCI_STATUS_TRANSMIT_UNDERFLOW = 0x0002u,
+    DCI_STATUS_TRANSMIT_EMPTY = 0x0001u,
+    DCI_PMD_ADDRESS = 0x0760u,
+    DCI_PMD = 0x0100u,
+    DCI_TRANSFER_IRQ = 60u,
+    DCI_ERROR_IRQ = 59u,
+    DCI_DMA_REQUEST = 0x3cu,
+    DCI_EVENT_START = 0u,
+    DCI_EVENT_INTERNAL = 1u,
+    DCI_EVENT_EXTERNAL = 2u,
+    DCI_EVENT_EXTERNAL_FRAME = 3u,
+    DCI_EVENT_PMD = UINT16_MAX,
+    DCI_EVENT_DISABLED = 0x00000001u,
+    DCI_EVENT_GENERATION_SHIFT = 1u
 };
 
 static bool usb_schedule_bus_event(Dspic33* cpu, Dspic33UsbBusEvent event,
@@ -521,54 +560,57 @@ static const Dspic33RegisterMask register_masks[] = {
     {0x004eu, 0xfffeu}, {0x0050u, 0xffffu}, {0x0104u, 0xa076u}, {0x0110u, 0xa07au},
     {0x0112u, 0xa072u}, {0x011eu, 0xa07au}, {0x0120u, 0xa072u}, {0x012cu, 0xa07au},
     {0x012eu, 0xa072u}, {0x013au, 0xa07au}, {0x013cu, 0xa072u}, {0x01c0u, 0xbf7fu},
-    {0x01c2u, 0xfff0u}, {0x01c4u, 0x3fffu}, {0x05c0u, 0xbf7fu}, {0x05c2u, 0xfff0u},
-    {0x05c4u, 0x3fffu}, {0x0600u, 0xbfffu}, {0x0602u, 0x7fffu}, {0x060eu, 0x4040u},
-    {0x0620u, 0xffffu}, {0x0622u, 0xffffu}, {0x0624u, 0xffffu}, {0x0626u, 0xa7ffu},
-    {0x0640u, 0xa038u}, {0x0642u, 0x1f1fu}, {0x0644u, 0xfffeu}, {0x0646u, 0xffffu},
-    {0x0648u, 0xffffu}, {0x064au, 0xffffu}, {0x064cu, 0xffffu}, {0x064eu, 0xffffu},
-    {0x0680u, 0x3f3fu}, {0x0682u, 0x3f3fu}, {0x0684u, 0x3f3fu}, {0x0686u, 0x3f3fu},
-    {0x0688u, 0x3f3fu}, {0x068au, 0x3f3fu}, {0x068cu, 0x3f3fu}, {0x068eu, 0x3f3fu},
-    {0x0690u, 0x3f3fu}, {0x0692u, 0x3f3fu}, {0x0696u, 0x3f3fu}, {0x0698u, 0x3f3fu},
-    {0x069au, 0x3f3fu}, {0x069cu, 0x3f3fu}, {0x069eu, 0x3f3fu}, {0x06a0u, 0x7f00u},
-    {0x06a2u, 0x7f7fu}, {0x06a4u, 0x7f7fu}, {0x06a6u, 0x7f7fu}, {0x06a8u, 0x7f7fu},
-    {0x06aau, 0x7f7fu}, {0x06acu, 0x7f7fu}, {0x06aeu, 0x7f7fu}, {0x06b0u, 0x7f7fu},
-    {0x06b2u, 0x7f7fu}, {0x06b4u, 0x7f7fu}, {0x06b6u, 0x7f7fu}, {0x06b8u, 0x7f7fu},
-    {0x06bau, 0x7f7fu}, {0x06bcu, 0x7f7fu}, {0x06beu, 0x7f7fu}, {0x06c0u, 0x7f7fu},
-    {0x06c2u, 0x7f7fu}, {0x06c4u, 0x7f7fu}, {0x06c6u, 0x7f7fu}, {0x06c8u, 0x7f7fu},
-    {0x06cau, 0x007fu}, {0x06ceu, 0x007fu}, {0x06d0u, 0x7f7fu}, {0x06d2u, 0x007fu},
-    {0x06d4u, 0x7f7fu}, {0x06d6u, 0x7f7fu}, {0x06d8u, 0x7f7fu}, {0x06dau, 0x7f7fu},
-    {0x06dcu, 0x007fu}, {0x06deu, 0x7f7fu}, {0x06e0u, 0x007fu}, {0x06e2u, 0x7f7fu},
-    {0x06e4u, 0x7f7fu}, {0x06e6u, 0x7f7fu}, {0x06e8u, 0x7f7fu}, {0x06eau, 0x7f7fu},
-    {0x06ecu, 0x7f7fu}, {0x06eeu, 0x7f7fu}, {0x06f0u, 0x7f7fu}, {0x06f2u, 0x007fu},
-    {0x06f4u, 0x7f7fu}, {0x06f6u, 0x007fu}, {0x0728u, 0x700fu}, {0x072cu, 0x00ffu},
-    {0x072eu, 0x00ffu}, {0x0740u, 0xcbffu}, {0x0744u, 0xffdfu}, {0x0746u, 0x01ffu},
-    {0x0748u, 0x003fu}, {0x074eu, 0xbf00u}, {0x075au, 0x183fu}, {0x0760u, 0xffffu},
-    {0x0762u, 0xffffu}, {0x0764u, 0xf7abu}, {0x0766u, 0x0021u}, {0x0768u, 0xffffu},
-    {0x076au, 0x3f03u}, {0x076cu, 0x00f0u}, {0x0800u, 0xffffu}, {0x0802u, 0xffffu},
-    {0x0804u, 0xffffu}, {0x0806u, 0x7fffu}, {0x0808u, 0x0afeu}, {0x080au, 0xdfeeu},
-    {0x080cu, 0xc3efu}, {0x080eu, 0xffc0u}, {0x0810u, 0x7fdfu}, {0x0820u, 0xffffu},
-    {0x0822u, 0xffffu}, {0x0824u, 0xffffu}, {0x0826u, 0x7fffu}, {0x0828u, 0x0afeu},
-    {0x082au, 0xdfeeu}, {0x082cu, 0xffefu}, {0x082eu, 0xffc0u}, {0x0830u, 0x7fdfu},
-    {0x0840u, 0x7777u}, {0x0842u, 0x7777u}, {0x0844u, 0x7777u}, {0x0846u, 0x7777u},
-    {0x0848u, 0x7777u}, {0x084au, 0x7777u}, {0x084cu, 0x7777u}, {0x084eu, 0x7777u},
-    {0x0850u, 0x7777u}, {0x0852u, 0x7777u}, {0x0854u, 0x7777u}, {0x0856u, 0x7777u},
-    {0x0858u, 0x7777u}, {0x085au, 0x7777u}, {0x085cu, 0x7777u}, {0x085eu, 0x0777u},
-    {0x0860u, 0x7770u}, {0x0862u, 0x7777u}, {0x0864u, 0x7070u}, {0x0868u, 0x7770u},
-    {0x086au, 0x7700u}, {0x086cu, 0x7777u}, {0x086eu, 0x7777u}, {0x0870u, 0x7777u},
-    {0x087au, 0x7700u}, {0x087cu, 0x7777u}, {0x087eu, 0x7777u}, {0x0880u, 0x7777u},
-    {0x0882u, 0x7707u}, {0x0884u, 0x7777u}, {0x0886u, 0x0777u}, {0x0e00u, 0xc6ffu},
-    {0x0e04u, 0xc6ffu}, {0x0e06u, 0xc03fu}, {0x0e08u, 0xc6ffu}, {0x0e0au, 0xc6ffu},
-    {0x0e0cu, 0xc6ffu}, {0x0e0eu, 0x06c0u}, {0x0e10u, 0xffffu}, {0x0e14u, 0xffffu},
-    {0x0e18u, 0xffffu}, {0x0e1au, 0xffffu}, {0x0e1cu, 0xffffu}, {0x0e1eu, 0xffffu},
-    {0x0e20u, 0xf01eu}, {0x0e24u, 0xf01eu}, {0x0e28u, 0xf01eu}, {0x0e2au, 0xf01eu},
-    {0x0e2cu, 0xf01eu}, {0x0e2eu, 0x601eu}, {0x0e30u, 0xffffu}, {0x0e34u, 0xffffu},
-    {0x0e36u, 0xff3fu}, {0x0e38u, 0xffffu}, {0x0e3au, 0xffffu}, {0x0e3cu, 0xffffu},
-    {0x0e3eu, 0x00c0u}, {0x0e40u, 0x03ffu}, {0x0e44u, 0x03ffu}, {0x0e48u, 0x03ffu},
-    {0x0e4au, 0x03ffu}, {0x0e4cu, 0x03ffu}, {0x0e4eu, 0x03ffu}, {0x0e50u, 0x313fu},
-    {0x0e54u, 0x313fu}, {0x0e56u, 0x313fu}, {0x0e58u, 0x313fu}, {0x0e5au, 0x313fu},
-    {0x0e5cu, 0x313fu}, {0x0e60u, 0xf3c3u}, {0x0e64u, 0xf3c3u}, {0x0e66u, 0xf003u},
-    {0x0e68u, 0xf3cfu}, {0x0e6au, 0xf3c3u}, {0x0e6cu, 0xf3c3u}, {0x0e6eu, 0x03c0u},
-    {0x0efeu, 0x0003u}};
+    {0x01c2u, 0xfff0u}, {0x01c4u, 0x3fffu}, {0x0280u, 0xafe3u}, {0x0282u, 0x0defu},
+    {0x0284u, 0x0fffu}, {0x0286u, 0x0000u}, {0x0288u, 0xffffu}, {0x028cu, 0xffffu},
+    {0x0290u, 0x0000u}, {0x0292u, 0x0000u}, {0x0294u, 0x0000u}, {0x0296u, 0x0000u},
+    {0x0298u, 0xffffu}, {0x029au, 0xffffu}, {0x029cu, 0xffffu}, {0x029eu, 0xffffu},
+    {0x05c0u, 0xbf7fu}, {0x05c2u, 0xfff0u}, {0x05c4u, 0x3fffu}, {0x0600u, 0xbfffu},
+    {0x0602u, 0x7fffu}, {0x060eu, 0x4040u}, {0x0620u, 0xffffu}, {0x0622u, 0xffffu},
+    {0x0624u, 0xffffu}, {0x0626u, 0xa7ffu}, {0x0640u, 0xa038u}, {0x0642u, 0x1f1fu},
+    {0x0644u, 0xfffeu}, {0x0646u, 0xffffu}, {0x0648u, 0xffffu}, {0x064au, 0xffffu},
+    {0x064cu, 0xffffu}, {0x064eu, 0xffffu}, {0x0680u, 0x3f3fu}, {0x0682u, 0x3f3fu},
+    {0x0684u, 0x3f3fu}, {0x0686u, 0x3f3fu}, {0x0688u, 0x3f3fu}, {0x068au, 0x3f3fu},
+    {0x068cu, 0x3f3fu}, {0x068eu, 0x3f3fu}, {0x0690u, 0x3f3fu}, {0x0692u, 0x3f3fu},
+    {0x0696u, 0x3f3fu}, {0x0698u, 0x3f3fu}, {0x069au, 0x3f3fu}, {0x069cu, 0x3f3fu},
+    {0x069eu, 0x3f3fu}, {0x06a0u, 0x7f00u}, {0x06a2u, 0x7f7fu}, {0x06a4u, 0x7f7fu},
+    {0x06a6u, 0x7f7fu}, {0x06a8u, 0x7f7fu}, {0x06aau, 0x7f7fu}, {0x06acu, 0x7f7fu},
+    {0x06aeu, 0x7f7fu}, {0x06b0u, 0x7f7fu}, {0x06b2u, 0x7f7fu}, {0x06b4u, 0x7f7fu},
+    {0x06b6u, 0x7f7fu}, {0x06b8u, 0x7f7fu}, {0x06bau, 0x7f7fu}, {0x06bcu, 0x7f7fu},
+    {0x06beu, 0x7f7fu}, {0x06c0u, 0x7f7fu}, {0x06c2u, 0x7f7fu}, {0x06c4u, 0x7f7fu},
+    {0x06c6u, 0x7f7fu}, {0x06c8u, 0x7f7fu}, {0x06cau, 0x007fu}, {0x06ceu, 0x007fu},
+    {0x06d0u, 0x7f7fu}, {0x06d2u, 0x007fu}, {0x06d4u, 0x7f7fu}, {0x06d6u, 0x7f7fu},
+    {0x06d8u, 0x7f7fu}, {0x06dau, 0x7f7fu}, {0x06dcu, 0x007fu}, {0x06deu, 0x7f7fu},
+    {0x06e0u, 0x007fu}, {0x06e2u, 0x7f7fu}, {0x06e4u, 0x7f7fu}, {0x06e6u, 0x7f7fu},
+    {0x06e8u, 0x7f7fu}, {0x06eau, 0x7f7fu}, {0x06ecu, 0x7f7fu}, {0x06eeu, 0x7f7fu},
+    {0x06f0u, 0x7f7fu}, {0x06f2u, 0x007fu}, {0x06f4u, 0x7f7fu}, {0x06f6u, 0x007fu},
+    {0x0728u, 0x700fu}, {0x072cu, 0x00ffu}, {0x072eu, 0x00ffu}, {0x0740u, 0xcbffu},
+    {0x0744u, 0xffdfu}, {0x0746u, 0x01ffu}, {0x0748u, 0x003fu}, {0x074eu, 0xbf00u},
+    {0x075au, 0x183fu}, {0x0760u, 0xffffu}, {0x0762u, 0xffffu}, {0x0764u, 0xf7abu},
+    {0x0766u, 0x0021u}, {0x0768u, 0xffffu}, {0x076au, 0x3f03u}, {0x076cu, 0x00f0u},
+    {0x0800u, 0xffffu}, {0x0802u, 0xffffu}, {0x0804u, 0xffffu}, {0x0806u, 0x7fffu},
+    {0x0808u, 0x0afeu}, {0x080au, 0xdfeeu}, {0x080cu, 0xc3efu}, {0x080eu, 0xffc0u},
+    {0x0810u, 0x7fdfu}, {0x0820u, 0xffffu}, {0x0822u, 0xffffu}, {0x0824u, 0xffffu},
+    {0x0826u, 0x7fffu}, {0x0828u, 0x0afeu}, {0x082au, 0xdfeeu}, {0x082cu, 0xffefu},
+    {0x082eu, 0xffc0u}, {0x0830u, 0x7fdfu}, {0x0840u, 0x7777u}, {0x0842u, 0x7777u},
+    {0x0844u, 0x7777u}, {0x0846u, 0x7777u}, {0x0848u, 0x7777u}, {0x084au, 0x7777u},
+    {0x084cu, 0x7777u}, {0x084eu, 0x7777u}, {0x0850u, 0x7777u}, {0x0852u, 0x7777u},
+    {0x0854u, 0x7777u}, {0x0856u, 0x7777u}, {0x0858u, 0x7777u}, {0x085au, 0x7777u},
+    {0x085cu, 0x7777u}, {0x085eu, 0x0777u}, {0x0860u, 0x7770u}, {0x0862u, 0x7777u},
+    {0x0864u, 0x7070u}, {0x0868u, 0x7770u}, {0x086au, 0x7700u}, {0x086cu, 0x7777u},
+    {0x086eu, 0x7777u}, {0x0870u, 0x7777u}, {0x087au, 0x7700u}, {0x087cu, 0x7777u},
+    {0x087eu, 0x7777u}, {0x0880u, 0x7777u}, {0x0882u, 0x7707u}, {0x0884u, 0x7777u},
+    {0x0886u, 0x0777u}, {0x0e00u, 0xc6ffu}, {0x0e04u, 0xc6ffu}, {0x0e06u, 0xc03fu},
+    {0x0e08u, 0xc6ffu}, {0x0e0au, 0xc6ffu}, {0x0e0cu, 0xc6ffu}, {0x0e0eu, 0x06c0u},
+    {0x0e10u, 0xffffu}, {0x0e14u, 0xffffu}, {0x0e18u, 0xffffu}, {0x0e1au, 0xffffu},
+    {0x0e1cu, 0xffffu}, {0x0e1eu, 0xffffu}, {0x0e20u, 0xf01eu}, {0x0e24u, 0xf01eu},
+    {0x0e28u, 0xf01eu}, {0x0e2au, 0xf01eu}, {0x0e2cu, 0xf01eu}, {0x0e2eu, 0x601eu},
+    {0x0e30u, 0xffffu}, {0x0e34u, 0xffffu}, {0x0e36u, 0xff3fu}, {0x0e38u, 0xffffu},
+    {0x0e3au, 0xffffu}, {0x0e3cu, 0xffffu}, {0x0e3eu, 0x00c0u}, {0x0e40u, 0x03ffu},
+    {0x0e44u, 0x03ffu}, {0x0e48u, 0x03ffu}, {0x0e4au, 0x03ffu}, {0x0e4cu, 0x03ffu},
+    {0x0e4eu, 0x03ffu}, {0x0e50u, 0x313fu}, {0x0e54u, 0x313fu}, {0x0e56u, 0x313fu},
+    {0x0e58u, 0x313fu}, {0x0e5au, 0x313fu}, {0x0e5cu, 0x313fu}, {0x0e60u, 0xf3c3u},
+    {0x0e64u, 0xf3c3u}, {0x0e66u, 0xf003u}, {0x0e68u, 0xf3cfu}, {0x0e6au, 0xf3c3u},
+    {0x0e6cu, 0xf3c3u}, {0x0e6eu, 0x03c0u}, {0x0efeu, 0x0003u}};
 
 static const Dspic33ResetValue reset_values[] = {
     {0x004au, 0x0001u}, {0x004eu, 0x0001u}, {0x0102u, 0xffffu}, {0x010cu, 0xffffu},
@@ -2949,6 +2991,532 @@ static bool qei_read_register(Dspic33* cpu, uint16_t address, uint8_t* value) {
         cpu->io.qei.interval_hold_locked[channel] = false;
     } else if (offset == QEI_VELOCITY && qei_read_complete(cpu, address)) {
         raw_write_word(cpu, (uint16_t)(qei_bases[channel] + QEI_VELOCITY), 0u);
+    }
+    return true;
+}
+
+static uint8_t dci_buffer_count(const Dspic33* cpu) {
+    return (uint8_t)(((raw_word(cpu, DCI_CONTROL2) & DCI_CONTROL2_BUFFER_MASK) >> 10u) +
+                     1u);
+}
+
+static uint8_t dci_frame_count(const Dspic33* cpu) {
+    return (uint8_t)(((raw_word(cpu, DCI_CONTROL2) & DCI_CONTROL2_FRAME_MASK) >> 5u) +
+                     1u);
+}
+
+static uint8_t dci_word_width(const Dspic33* cpu) {
+    return (uint8_t)((raw_word(cpu, DCI_CONTROL2) & DCI_CONTROL2_WORD_MASK) + 1u);
+}
+
+static uint16_t dci_word_mask(const Dspic33* cpu) {
+    uint8_t width = dci_word_width(cpu);
+    return width == 16u ? UINT16_MAX : (uint16_t)(UINT16_MAX << (16u - width));
+}
+
+static uint8_t dci_active_transmit_buffers(const Dspic33* cpu) {
+    uint16_t transmit_slots = raw_word(cpu, DCI_TRANSMIT_SLOTS);
+    uint16_t active_slots =
+        (uint16_t)(transmit_slots | raw_word(cpu, DCI_RECEIVE_SLOTS));
+    uint8_t count = dci_buffer_count(cpu);
+    uint8_t buffer = 0u;
+    uint8_t active = 0u;
+    uint8_t frame;
+    for (frame = 0u; frame < count; frame++) {
+        uint8_t slot;
+        for (slot = 0u; slot < dci_frame_count(cpu); slot++) {
+            uint16_t bit = (uint16_t)(1u << slot);
+            if ((transmit_slots & bit) != 0u) {
+                active |= (uint8_t)(1u << buffer);
+            }
+            if ((active_slots & bit) != 0u) {
+                buffer = (uint8_t)((buffer + 1u) % count);
+            }
+        }
+    }
+    return active;
+}
+
+static bool dci_configuration_supported(const Dspic33* cpu) {
+    uint16_t control = raw_word(cpu, DCI_CONTROL1);
+    uint16_t divider = raw_word(cpu, DCI_CONTROL3);
+    return (control & DCI_CONTROL_MODE_MASK) == 0u &&
+           (control & (uint16_t)~DCI_CONTROL_SUPPORTED_MASK) == 0u &&
+           dci_word_width(cpu) >= 4u &&
+           (((control & DCI_CONTROL_EXTERNAL_CLOCK) != 0u && divider == 0u) ||
+            ((control & DCI_CONTROL_EXTERNAL_CLOCK) == 0u && divider != 0u));
+}
+
+static uint64_t dci_bit_cycles(const Dspic33* cpu) {
+    return ((uint64_t)(raw_word(cpu, DCI_CONTROL3) & 0x0fffu) + 1u) * 2u;
+}
+
+static uint64_t dci_word_cycles(const Dspic33* cpu) {
+    uint64_t bit_cycles = dci_bit_cycles(cpu);
+    uint8_t width = dci_word_width(cpu);
+    return bit_cycles > UINT64_MAX / width ? UINT64_MAX : bit_cycles * width;
+}
+
+static bool dci_output_push(Dspic33* cpu, uint16_t value, uint8_t slot, bool driven) {
+    Dspic33DciQueue* queue = &cpu->io.dci.output;
+    uint8_t tail;
+    if (queue->count == DSPIC33_DCI_QUEUE_SIZE) {
+        return false;
+    }
+    tail = (uint8_t)((queue->head + queue->count) % DSPIC33_DCI_QUEUE_SIZE);
+    queue->transfers[tail].cycle = cpu->device_cycles;
+    queue->transfers[tail].value = value;
+    queue->transfers[tail].slot = slot;
+    queue->transfers[tail].driven = driven;
+    queue->count++;
+    return true;
+}
+
+static bool dci_output_pop(Dspic33DciQueue* queue, Dspic33DciTransfer* transfer) {
+    if (queue->count == 0u) {
+        return false;
+    }
+    *transfer = queue->transfers[queue->head];
+    queue->head = (uint8_t)((queue->head + 1u) % DSPIC33_DCI_QUEUE_SIZE);
+    queue->count--;
+    return true;
+}
+
+static void dci_refresh_status(Dspic33* cpu) {
+    Dspic33Dci* dci = &cpu->io.dci;
+    uint16_t status = (uint16_t)((uint16_t)dci->slot << 8u);
+    if (dci->receive_overflow != 0u) {
+        status |= DCI_STATUS_RECEIVE_OVERFLOW;
+    }
+    if (dci->receive_unread != 0u) {
+        status |= DCI_STATUS_RECEIVE_FULL;
+    }
+    if (dci->transmit_underflow != 0u) {
+        status |= DCI_STATUS_TRANSMIT_UNDERFLOW;
+    }
+    if (dci->transmit_empty) {
+        status |= DCI_STATUS_TRANSMIT_EMPTY;
+    }
+    raw_write_word(cpu, DCI_STATUS, status);
+}
+
+static void dci_abort(Dspic33* cpu) {
+    Dspic33Dci* dci = &cpu->io.dci;
+    dci->generation++;
+    dci->started = false;
+    dci->initialized = false;
+    dci->disable_pending = false;
+    dci->internal_scheduled = false;
+    dci->buffer = 0u;
+    dci->slot = 0u;
+    dci->receive_buffered = 0u;
+    dci->transmit_buffered = 0u;
+    raw_write_word(cpu, DCI_CONTROL1,
+                   (uint16_t)(raw_word(cpu, DCI_CONTROL1) & ~DCI_CONTROL_ENABLE));
+    dci_refresh_status(cpu);
+}
+
+static bool dci_schedule_internal(Dspic33* cpu, uint16_t source, uint64_t delay) {
+    Dspic33Dci* dci = &cpu->io.dci;
+    if (dci->internal_scheduled) {
+        return true;
+    }
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_DCI, source, dci->generation, delay)) {
+        dci_abort(cpu);
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+        return false;
+    }
+    dci->internal_scheduled = true;
+    return true;
+}
+
+static bool dci_clock_running(const Dspic33* cpu) {
+    uint16_t control = raw_word(cpu, DCI_CONTROL1);
+    if (cpu->io.dci.pmd_disabled || cpu->power_state == DSPIC33_POWER_SLEEP) {
+        return false;
+    }
+    return cpu->power_state != DSPIC33_POWER_IDLE ||
+           (control & DCI_CONTROL_STOP_IDLE) == 0u;
+}
+
+static bool dci_dma_request(Dspic33* cpu) {
+    if (dci_buffer_count(cpu) != 1u) {
+        return true;
+    }
+    if (dspic33_dma_request(cpu, DCI_DMA_REQUEST, 0u, 0u)) {
+        return true;
+    }
+    dci_abort(cpu);
+    cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    return false;
+}
+
+static bool dci_transfer_buffers(Dspic33* cpu, bool receive, bool transmit) {
+    Dspic33Dci* dci = &cpu->io.dci;
+    uint8_t count = dci_buffer_count(cpu);
+    uint8_t index;
+    bool error = false;
+    for (index = 0u; index < count; index++) {
+        uint8_t bit = (uint8_t)(1u << index);
+        if (receive && (dci->receive_buffered & bit) != 0u) {
+            if ((dci->receive_unread & bit) != 0u) {
+                dci->receive_overflow |= bit;
+                error = true;
+            }
+            raw_write_word(cpu, (uint16_t)(DCI_RECEIVE_BASE + index * 2u),
+                           dci->receive[index]);
+            dci->receive_unread |= bit;
+        }
+        if (transmit && (dci->transmit_buffered & bit) != 0u) {
+            if ((dci->transmit_written & bit) != 0u) {
+                uint16_t value =
+                    raw_word(cpu, (uint16_t)(DCI_TRANSMIT_BASE + index * 2u));
+                dci->transmit[index] = value;
+                dci->last_transmit[index] = value;
+            } else {
+                dci->transmit_underflow |= bit;
+                dci->transmit[index] =
+                    (raw_word(cpu, DCI_CONTROL1) & DCI_CONTROL_UNDERFLOW_LAST) != 0u
+                        ? dci->last_transmit[index]
+                        : 0u;
+                error = true;
+            }
+            dci->transmit_written &= (uint8_t)~bit;
+        }
+    }
+    dci->receive_buffered = 0u;
+    dci->transmit_buffered = 0u;
+    if (transmit) {
+        dci->transmit_empty = true;
+    }
+    dci_refresh_status(cpu);
+    if (receive || transmit) {
+        dspic33_raise_interrupt(cpu, DCI_TRANSFER_IRQ);
+        if (!dci_dma_request(cpu)) {
+            return false;
+        }
+    }
+    if (error) {
+        dspic33_raise_interrupt(cpu, DCI_ERROR_IRQ);
+    }
+    return true;
+}
+
+static bool dci_startup_transfer(Dspic33* cpu) {
+    Dspic33Dci* dci = &cpu->io.dci;
+    uint8_t active_transmit = dci_active_transmit_buffers(cpu);
+    dci->started = true;
+    dci->initialized = true;
+    dci->buffer = 0u;
+    dci->slot = 0u;
+    dci->transmit_buffered = active_transmit;
+    return active_transmit == 0u || dci_transfer_buffers(cpu, false, true);
+}
+
+static bool dci_finish_frame(Dspic33* cpu) {
+    Dspic33Dci* dci = &cpu->io.dci;
+    bool complete = true;
+    if (dci->disable_pending &&
+        (dci->receive_buffered != 0u || dci->transmit_buffered != 0u)) {
+        complete = dci_transfer_buffers(cpu, dci->receive_buffered != 0u,
+                                        dci->transmit_buffered != 0u);
+    }
+    if (dci->disable_pending) {
+        dci->generation++;
+        dci->started = false;
+        dci->initialized = false;
+        dci->disable_pending = false;
+        dci->internal_scheduled = false;
+        dci->buffer = 0u;
+        dci->slot = 0u;
+        dci_refresh_status(cpu);
+    }
+    return complete;
+}
+
+static bool dci_process_word(Dspic33* cpu, uint16_t input) {
+    Dspic33Dci* dci = &cpu->io.dci;
+    uint16_t control = raw_word(cpu, DCI_CONTROL1);
+    uint16_t transmit_slots = raw_word(cpu, DCI_TRANSMIT_SLOTS);
+    uint16_t receive_slots = raw_word(cpu, DCI_RECEIVE_SLOTS);
+    uint8_t bit = (uint8_t)(1u << dci->buffer);
+    uint16_t slot_bit = (uint16_t)(1u << dci->slot);
+    bool transmit = (transmit_slots & slot_bit) != 0u;
+    bool receive = (receive_slots & slot_bit) != 0u;
+    bool driven = transmit || (control & DCI_CONTROL_TRISTATE) == 0u;
+    uint16_t output =
+        transmit ? (uint16_t)(dci->transmit[dci->buffer] & dci_word_mask(cpu)) : 0u;
+    if (!dci_output_push(cpu, output, dci->slot, driven)) {
+        dci_abort(cpu);
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+        return false;
+    }
+    if (transmit) {
+        dci->transmit_buffered |= bit;
+    }
+    if (receive) {
+        dci->receive[dci->buffer] = (control & DCI_CONTROL_LOOPBACK) != 0u
+                                        ? output
+                                        : (uint16_t)(input & dci_word_mask(cpu));
+        dci->receive_buffered |= bit;
+    }
+    if (transmit || receive) {
+        dci->buffer++;
+        if (dci->buffer == dci_buffer_count(cpu) &&
+            !dci_transfer_buffers(cpu, dci->receive_buffered != 0u,
+                                  dci->transmit_buffered != 0u)) {
+            return false;
+        }
+        if (dci->buffer == dci_buffer_count(cpu)) {
+            dci->buffer = 0u;
+        }
+    }
+    dci->slot++;
+    if (dci->slot == dci_frame_count(cpu)) {
+        dci->slot = 0u;
+        if (!dci_finish_frame(cpu)) {
+            return false;
+        }
+        if ((control & DCI_CONTROL_EXTERNAL_FRAME) != 0u) {
+            dci->started = false;
+        }
+    }
+    dci_refresh_status(cpu);
+    return true;
+}
+
+static void dci_run_internal(Dspic33* cpu, uint16_t generation) {
+    Dspic33Dci* dci = &cpu->io.dci;
+    uint16_t control = raw_word(cpu, DCI_CONTROL1);
+    uint64_t delay;
+    if (generation != dci->generation) {
+        return;
+    }
+    dci->internal_scheduled = false;
+    if (((control & DCI_CONTROL_ENABLE) == 0u && !dci->disable_pending) ||
+        (control & DCI_CONTROL_EXTERNAL_CLOCK) != 0u) {
+        return;
+    }
+    delay = dci_word_cycles(cpu);
+    if (delay == UINT64_MAX) {
+        dci_abort(cpu);
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+        return;
+    }
+    if (!dci_configuration_supported(cpu) || !dci_clock_running(cpu) || !dci->started) {
+        dci_schedule_internal(cpu, DCI_EVENT_INTERNAL, delay);
+        return;
+    }
+    if (dci_process_word(cpu, dci->input) &&
+        ((raw_word(cpu, DCI_CONTROL1) & DCI_CONTROL_ENABLE) != 0u ||
+         dci->disable_pending) &&
+        (!(raw_word(cpu, DCI_CONTROL1) & DCI_CONTROL_EXTERNAL_FRAME) || dci->started)) {
+        dci_schedule_internal(cpu, DCI_EVENT_INTERNAL, delay);
+    }
+}
+
+static void dci_run_external(Dspic33* cpu, uint16_t value, bool frame_sync) {
+    Dspic33Dci* dci = &cpu->io.dci;
+    uint16_t control = raw_word(cpu, DCI_CONTROL1);
+    if ((control & DCI_CONTROL_ENABLE) == 0u && !dci->disable_pending) {
+        return;
+    }
+    if (!dci_configuration_supported(cpu) || dci->pmd_disabled ||
+        (cpu->power_state == DSPIC33_POWER_IDLE &&
+         (control & DCI_CONTROL_STOP_IDLE) != 0u)) {
+        return;
+    }
+    dci->input = value;
+    frame_sync = frame_sync && (control & DCI_CONTROL_EXTERNAL_FRAME) != 0u;
+    if ((control & DCI_CONTROL_EXTERNAL_CLOCK) == 0u && !frame_sync) {
+        return;
+    }
+    if (!dci->initialized) {
+        if ((control & DCI_CONTROL_EXTERNAL_CLOCK) == 0u) {
+            return;
+        }
+        if (!dci_startup_transfer(cpu)) {
+            return;
+        }
+    }
+    if ((control & DCI_CONTROL_EXTERNAL_FRAME) != 0u && !frame_sync &&
+        dci->slot == 0u) {
+        dci->started = false;
+    }
+    if ((control & DCI_CONTROL_EXTERNAL_FRAME) != 0u && frame_sync && !dci->started) {
+        dci->slot = 0u;
+        dci->started = true;
+    }
+    if (!dci->started) {
+        if ((control & DCI_CONTROL_EXTERNAL_FRAME) != 0u) {
+            return;
+        }
+        dci->started = true;
+    }
+    if ((control & DCI_CONTROL_EXTERNAL_CLOCK) != 0u) {
+        dci_process_word(cpu, value);
+    } else if (frame_sync && !dci->internal_scheduled) {
+        dci_schedule_internal(cpu, DCI_EVENT_INTERNAL, dci_word_cycles(cpu));
+    }
+}
+
+static void run_dci(Dspic33* cpu, uint16_t source, uint32_t value) {
+    Dspic33Dci* dci = &cpu->io.dci;
+    if (source == DCI_EVENT_PMD) {
+        uint16_t generation = (uint16_t)(value >> DCI_EVENT_GENERATION_SHIFT);
+        if (generation == dci->pmd_generation) {
+            dci->pmd_disabled = (value & DCI_EVENT_DISABLED) != 0u;
+        }
+        return;
+    }
+    if (source == DCI_EVENT_START) {
+        if ((uint16_t)value != dci->generation) {
+            return;
+        }
+        dci->internal_scheduled = false;
+        if (dci->pmd_disabled ||
+            (raw_word(cpu, DCI_CONTROL1) & DCI_CONTROL_ENABLE) == 0u) {
+            return;
+        }
+        if (dci_startup_transfer(cpu)) {
+            if ((raw_word(cpu, DCI_CONTROL1) & DCI_CONTROL_EXTERNAL_FRAME) != 0u) {
+                dci->started = false;
+            } else {
+                dci_schedule_internal(cpu, DCI_EVENT_INTERNAL, dci_word_cycles(cpu));
+            }
+        }
+        return;
+    }
+    if (source == DCI_EVENT_INTERNAL) {
+        dci_run_internal(cpu, (uint16_t)value);
+        return;
+    }
+    if (source == DCI_EVENT_EXTERNAL || source == DCI_EVENT_EXTERNAL_FRAME) {
+        dci_run_external(cpu, (uint16_t)value, source == DCI_EVENT_EXTERNAL_FRAME);
+    }
+}
+
+static void dci_start(Dspic33* cpu) {
+    Dspic33Dci* dci = &cpu->io.dci;
+    uint16_t control = raw_word(cpu, DCI_CONTROL1);
+    uint16_t clock = raw_word(cpu, DCI_CONTROL3);
+    uint64_t start_delay;
+    dci->generation++;
+    dci->started = false;
+    dci->initialized = false;
+    dci->disable_pending = false;
+    dci->internal_scheduled = false;
+    dci->buffer = 0u;
+    dci->slot = 0u;
+    dci->receive_buffered = 0u;
+    dci->transmit_buffered = 0u;
+    if (!dci_configuration_supported(cpu)) {
+        return;
+    }
+    if ((control & DCI_CONTROL_EXTERNAL_CLOCK) != 0u) {
+        return;
+    }
+    if (clock == 0u) {
+        return;
+    }
+    start_delay = dci_bit_cycles(cpu) * 3u;
+    dci_schedule_internal(cpu, DCI_EVENT_START, start_delay);
+}
+
+static void dci_disable(Dspic33* cpu) {
+    Dspic33Dci* dci = &cpu->io.dci;
+    if (!dci->started || dci->slot == 0u) {
+        dci_abort(cpu);
+        return;
+    }
+    dci->disable_pending = true;
+}
+
+static void dci_update_pmd(Dspic33* cpu, uint16_t previous) {
+    Dspic33Dci* dci = &cpu->io.dci;
+    uint16_t current = raw_word(cpu, DCI_PMD_ADDRESS);
+    bool disabled;
+    if (((previous ^ current) & DCI_PMD) == 0u) {
+        return;
+    }
+    disabled = (current & DCI_PMD) != 0u;
+    dci->pmd_generation++;
+    if (!dspic33_schedule(
+            cpu, DSPIC33_EVENT_DCI, DCI_EVENT_PMD,
+            ((uint32_t)dci->pmd_generation << DCI_EVENT_GENERATION_SHIFT) |
+                (disabled ? DCI_EVENT_DISABLED : 0u),
+            1u)) {
+        raw_write_word(cpu, DCI_PMD_ADDRESS, previous);
+        dci->pmd_generation++;
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    }
+}
+
+static void update_dci_register(Dspic33* cpu, uint16_t address, uint16_t previous) {
+    Dspic33Dci* dci = &cpu->io.dci;
+    if (address == DCI_PMD_ADDRESS) {
+        dci_update_pmd(cpu, previous);
+        return;
+    }
+    if (address < DCI_BASE || address > DCI_TRANSMIT_BASE + 6u) {
+        return;
+    }
+    if (dci->pmd_disabled) {
+        raw_write_word(cpu, address, previous);
+        return;
+    }
+    if (address == DCI_CONTROL1) {
+        bool was_enabled = (previous & DCI_CONTROL_ENABLE) != 0u;
+        bool enabled = (raw_word(cpu, DCI_CONTROL1) & DCI_CONTROL_ENABLE) != 0u;
+        if (!was_enabled && enabled) {
+            dci_start(cpu);
+        } else if (was_enabled && !enabled) {
+            dci_disable(cpu);
+        }
+        return;
+    }
+    if (address >= DCI_TRANSMIT_BASE && address <= DCI_TRANSMIT_BASE + 6u) {
+        uint8_t index = (uint8_t)((address - DCI_TRANSMIT_BASE) / 2u);
+        uint8_t bit = (uint8_t)(1u << index);
+        if (index < dci_buffer_count(cpu)) {
+            dci->transmit_written |= bit;
+            dci->transmit_underflow &= (uint8_t)~bit;
+        }
+        if ((dci_active_transmit_buffers(cpu) & bit) != 0u) {
+            dci->transmit_empty = false;
+        }
+        dci_refresh_status(cpu);
+    }
+}
+
+static bool dci_read_register(Dspic33* cpu, uint16_t address, uint8_t* value) {
+    Dspic33Dci* dci = &cpu->io.dci;
+    uint16_t base = (uint16_t)(address & 0xfffeu);
+    if (base < DCI_BASE || base > DCI_TRANSMIT_BASE + 6u || base == 0x028au ||
+        base == 0x028eu) {
+        return false;
+    }
+    if (dci->pmd_disabled) {
+        *value = 0u;
+        return true;
+    }
+    if (base >= DCI_TRANSMIT_BASE) {
+        *value = 0u;
+        return true;
+    }
+    if (base >= DCI_RECEIVE_BASE && base <= DCI_RECEIVE_BASE + 6u &&
+        ((!cpu->io.cpu_read_valid && !cpu->io.dma_transfer_active) ||
+         (cpu->io.dma_transfer_active && cpu->io.dma_transfer_width == 1u) ||
+         (!cpu->io.dma_transfer_active && cpu->io.cpu_read_width == 1u) ||
+         (cpu->io.dma_transfer_active && cpu->io.dma_transfer_width == 2u &&
+          (address & 1u) != 0u) ||
+         (!cpu->io.dma_transfer_active && cpu->io.cpu_read_valid &&
+          address == cpu->io.cpu_read_address + 1u))) {
+        uint8_t index = (uint8_t)((base - DCI_RECEIVE_BASE) / 2u);
+        uint8_t bit = (uint8_t)(1u << index);
+        dci->receive_unread &= (uint8_t)~bit;
+        dci->receive_overflow &= (uint8_t)~bit;
+        dci_refresh_status(cpu);
     }
     return true;
 }
@@ -6649,6 +7217,9 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
     case DSPIC33_EVENT_QEI:
         run_qei(cpu, event->source, event->value);
         break;
+    case DSPIC33_EVENT_DCI:
+        run_dci(cpu, event->source, event->value);
+        break;
     case DSPIC33_EVENT_NVM:
         complete_nvm_event(cpu);
         break;
@@ -7854,6 +8425,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     update_comparator_register(cpu, base, previous, requested);
     update_rtcc_register(cpu, address, previous);
     update_qei_register(cpu, base, previous, requested);
+    update_dci_register(cpu, base, previous);
     update_oscillator(cpu, base);
     update_uart_register(cpu, base, previous, requested);
     if (base == NVM_KEY && (cpu->io.cpu_write_width == 2u || address == NVM_KEY)) {
@@ -7883,6 +8455,9 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
     if (qei_read_register(cpu, address, &value)) {
         return value;
     }
+    if (dci_read_register(cpu, address, &value)) {
+        return value;
+    }
     if (base >= RTCC_ALARM_VALUE && base <= RTCC_CONTROL) {
         if (cpu->io.rtcc.pmd_disabled) {
             return 0u;
@@ -7902,9 +8477,6 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
     }
     if (address == USB_IR && (raw_word(cpu, USB_CON) & USB_HOST_ENABLE) == 0u) {
         return (uint8_t)(value & ~USB_ATTACH_INTERRUPT);
-    }
-    if ((address & 0xfffeu) >= 0x0298u && (address & 0xfffeu) <= 0x029eu) {
-        return 0u;
     }
     if (!cpu->io.comparator.pmd_disabled && address >= COMPARATOR_BASE + 1u &&
         address < COMPARATOR_BASE + DSPIC33_COMPARATOR_COUNT * COMPARATOR_STRIDE &&
@@ -8185,6 +8757,18 @@ bool dspic33_qei_compare_output(const Dspic33* cpu, uint8_t channel, bool* high)
             (mode == 2u && position <= less_equal) ||
             (mode == 3u && (position >= greater_equal || position <= less_equal));
     return true;
+}
+
+void dspic33_dci_input(Dspic33* cpu, uint16_t value) { cpu->io.dci.input = value; }
+
+bool dspic33_dci_clock(Dspic33* cpu, uint16_t value, bool frame_sync, uint64_t delay) {
+    return dspic33_schedule(cpu, DSPIC33_EVENT_DCI,
+                            frame_sync ? DCI_EVENT_EXTERNAL_FRAME : DCI_EVENT_EXTERNAL,
+                            value, delay);
+}
+
+bool dspic33_dci_transmit(Dspic33* cpu, Dspic33DciTransfer* transfer) {
+    return transfer != NULL && dci_output_pop(&cpu->io.dci.output, transfer);
 }
 
 bool dspic33_timer_pulse(Dspic33* cpu, uint8_t timer, uint32_t pulses, uint64_t delay) {
