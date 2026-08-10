@@ -66,6 +66,8 @@ enum {
     OPCODE_BSET_BYTE_W4_POST_DECREMENT = 0xa07424u,
     OPCODE_BSET_WORD_W4_POST_INCREMENT = 0xa09034u,
     OPCODE_TBLRDL_W2_W3 = 0xba0192u,
+    OPCODE_TBLRDL_W2_W4_POST_INCREMENT = 0xba1a12u,
+    OPCODE_TBLWTL_W2_W3 = 0xbb0982u,
     OPCODE_MOV_W0_SPLIM = 0x880100u,
     OPCODE_MOV_SENTINEL_W1 = 0x211111u,
     OPCODE_MOV_W0_W2 = 0x780110u,
@@ -237,6 +239,21 @@ static void program_target_address_error_cases(ProcessorConformance* state,
 
     reset_processor_conformance(cpu, 0u);
     prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_RETLW_0X123_W2);
+    dspic33_write_word(cpu, 0x5000u, 0x5800u);
+    dspic33_write_word(cpu, 0x5002u, 0x0005u);
+    cpu->call_depth = 1u;
+    cpu->w[2] = 0xa5a5u;
+    cpu->w[15] = 0x5004u;
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 5u,
+           "unimplemented RETLW target traps in five cycles");
+    expect(state,
+           cpu->last_trap_return == 2u && cpu->w[2] == 0x0123u &&
+               cpu->w[15] == 0x5004u && cpu->call_depth == 0u,
+           "RETLW completes frame pop and literal before target trap");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
     load_instruction(state, cpu, 0x557dau, OPCODE_BRA_0X55800);
     cpu->pc = 0x557dau;
     cpu->corcon |= 0x0004u;
@@ -344,6 +361,65 @@ static void program_target_address_error_cases(ProcessorConformance* state,
     cpu->pc = 0x557eau;
     expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 4u,
            "unimplemented RCALL Wn target traps in four cycles");
+}
+
+static void program_read_address_error_cases(ProcessorConformance* state,
+                                             Dspic33* cpu) {
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_TBLRDL_W2_W3);
+    load_instruction(state, cpu, 0x0200u, 0xabcdefu);
+    cpu->tblpag = 0u;
+    cpu->w[2] = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[3] == 0xcdefu &&
+               cpu->cycles == 2u,
+           "implemented table read consumes two cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_TBLRDL_W2_W3);
+    cpu->tblpag = 5u;
+    cpu->w[2] = 0x5800u;
+    cpu->w[3] = 0xa5a5u;
+    cpu->corcon |= 0x0004u;
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 2u,
+           "table read from unimplemented main program traps in two cycles");
+    expect(state,
+           cpu->w[2] == 0x5800u && cpu->w[3] == 0u && cpu->last_trap_return == 2u &&
+               cpu->w[15] == 0x5004u && (cpu->corcon & 0x0004u) != 0u,
+           "unimplemented table read returns zero and completes pointer state");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_TBLRDL_W2_W4_POST_INCREMENT);
+    cpu->tblpag = 5u;
+    cpu->w[2] = 0x5800u;
+    cpu->w[4] = 0x1000u;
+    dspic33_write_word(cpu, 0x1000u, 0xa5a5u);
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED,
+           "unimplemented table read with indirect destination traps");
+    expect(state, cpu->w[4] == 0x1002u && dspic33_read_word(cpu, 0x1000u) == 0xa5a5u,
+           "table read trap completes pointer update and inhibits data write");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_TBLWTL_W2_W3);
+    cpu->tblpag = 5u;
+    cpu->w[2] = 0x5a5au;
+    cpu->w[3] = 0x5800u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == UINT16_MAX &&
+               (dspic33_read_word(cpu, 0x08c0u) & 0x0008u) == 0u && cpu->cycles == 2u,
+           "table write to unimplemented main program remains valid in two cycles");
+
+    reset_processor_conformance(cpu, 0x557feu);
+    load_instruction(state, cpu, 0x557feu, OPCODE_NOP);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == DSPIC33_PROGRAM_LIMIT,
+           "sequential execution reaches the main program limit unchanged");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_PROGRAM_BOUNDS &&
+               (dspic33_read_word(cpu, 0x08c0u) & 0x0008u) == 0u,
+           "sequential fetch beyond main program remains a bounds stop");
 }
 
 static void prepare_timer_source(Dspic33* cpu) {
@@ -1690,6 +1766,7 @@ int main(void) {
     expect(&state, initialized, "initialize processor conformance");
     if (initialized) {
         program_target_address_error_cases(&state, &cpu);
+        program_read_address_error_cases(&state, &cpu);
         address_error_cases(&state, &cpu);
         data_map_address_error_cases(&state, &cpu);
         page_zero_address_error_cases(&state, &cpu);

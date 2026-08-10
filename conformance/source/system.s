@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 39
+_system_conformance_terminal_count = 41
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -88,6 +88,10 @@ _run_system_probe:
     bra z, _system_program_target_bra_dispatch
     cp w0, #39
     bra z, _system_program_target_rcall_dispatch
+    cp w0, #40
+    bra z, _system_program_target_retlw_probe
+    cp w0, #41
+    bra z, _system_program_read_table_probe
     return
 
 .global _system_sleep_probe
@@ -651,6 +655,41 @@ _system_program_target_retfie_probe:
     mov #0x0f05, w0
     mov w0, [w15++]
     retfie
+    mov #0x1111, w1
+    return
+
+.global _system_program_target_retlw_probe
+_system_program_target_retlw_probe:
+    mov #0x5000, w15
+    clr w0
+    clr w1
+    mov #0x010f, w2
+    mov w2, SR
+    lnk #0
+    mov #0x5000, w15
+    mov #0x5800, w0
+    mov w0, [w15++]
+    mov #0x0005, w0
+    mov w0, [w15++]
+    clr w0
+    retlw #0x122, w1
+    mov #0x1111, w0
+    return
+
+.global _system_program_read_table_probe
+_system_program_read_table_probe:
+    mov #0x5000, w15
+    clr w0
+    clr w1
+    mov #0x010f, w2
+    mov w2, SR
+    lnk #0
+    mov #0x5000, w15
+    mov #0x0005, w0
+    mov w0, TBLPAG
+    mov #0x5800, w1
+    clr w0
+    tblrdl [w1], w0
     mov #0x1111, w1
     return
 

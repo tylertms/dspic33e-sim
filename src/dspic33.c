@@ -33,6 +33,16 @@ static void raise_program_target_error(Dspic33* cpu, uint32_t return_pc) {
     cpu->address_error_control_state_completed = true;
 }
 
+static void raise_program_read_error(Dspic33* cpu) {
+    if (!cpu->address_error) {
+        cpu->address_error = true;
+        cpu->address_error_return = cpu->pc;
+    }
+    cpu->address_error_access_allowed = false;
+    cpu->address_error_working_state_completed = true;
+    cpu->address_error_control_state_completed = true;
+}
+
 static bool check_data_alignment(Dspic33* cpu, uint32_t address) {
     if (!cpu->instruction_active || (address & 1u) == 0u) {
         return true;
@@ -972,6 +982,7 @@ static bool execute_table(Dspic33* cpu, uint32_t opcode) {
     uint32_t address;
     uint32_t word;
     uint16_t value;
+    bool unimplemented_read;
     if ((source_mode != 0u && !address_register_initialized(cpu, source_register)) ||
         (destination_mode != 0u &&
          !address_register_initialized(cpu, destination_register))) {
@@ -994,7 +1005,8 @@ static bool execute_table(Dspic33* cpu, uint32_t opcode) {
         value = 0u;
     }
     address = ((((uint32_t)cpu->tblpag & 0x01ffu) << 16u) | table_offset) & 0x01fffffeu;
-    word = read_program_word(cpu, address);
+    unimplemented_read = !write && program_target_requires_address_error(address);
+    word = unimplemented_read ? 0u : read_program_word(cpu, address);
     if (write) {
         if (high) {
             if (!byte_mode || (table_offset & 1u) == 0u) {
@@ -1021,6 +1033,22 @@ static bool execute_table(Dspic33* cpu, uint32_t opcode) {
         value = (uint16_t)((word >> ((table_offset & 1u) * 8u)) & 0xffu);
     } else {
         value = (uint16_t)word;
+    }
+    if (unimplemented_read) {
+        uint32_t destination_address;
+        if (destination_mode == 0u) {
+            if (byte_mode) {
+                write_working_register_byte(cpu, destination_register, false,
+                                            (uint8_t)value);
+            } else {
+                write_working_register(cpu, destination_register, value);
+            }
+        } else {
+            operand_address(cpu, destination_mode, destination_register, 0u,
+                            byte_mode ? 1u : 2u, true, &destination_address);
+        }
+        raise_program_read_error(cpu);
+        return true;
     }
     if (byte_mode) {
         return write_operand_byte(cpu, destination_mode, destination_register, 0u,
@@ -2050,7 +2078,10 @@ static uint64_t instruction_cycles(const Dspic33* cpu, uint32_t opcode) {
         }
     }
     if ((opcode & 0xff0000u) == 0x050000u) {
-        return exception_pending(cpu) ? 5u : 6u;
+        return cpu->address_error || exception_pending(cpu) ? 5u : 6u;
+    }
+    if ((opcode & 0xfe0000u) == 0xba0000u) {
+        return 2u;
     }
     if ((opcode & 0xff0000u) == 0xbe0000u) {
         return 2u;
@@ -2552,11 +2583,16 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     if ((opcode & 0xff0000u) == 0x050000u) {
         uint16_t literal = (uint16_t)((opcode >> 4u) & 0x03ffu);
         uint8_t destination = (uint8_t)(opcode & 0x0fu);
-        cpu->pc = pop_program_counter(cpu);
+        uint32_t return_pc = cpu->pc;
+        uint32_t target = pop_program_counter(cpu);
+        cpu->pc = target;
         if ((opcode & 0x004000u) != 0u) {
             write_working_register_byte(cpu, destination, false, (uint8_t)literal);
         } else {
             write_working_register(cpu, destination, literal);
+        }
+        if (program_target_requires_address_error(target)) {
+            raise_program_target_error(cpu, return_pc);
         }
         return true;
     }
@@ -3219,6 +3255,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     if (cpu->address_error) {
         uint32_t return_pc = cpu->address_error_return;
         bool control_state_completed = cpu->address_error_control_state_completed;
+        uint64_t cycles = instruction_cycles(cpu, opcode);
         if (!cpu->address_error_working_state_completed) {
             memcpy(cpu->w, working_registers, sizeof(working_registers));
             cpu->initialized_working_registers = initialized_working_registers;
@@ -3237,7 +3274,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         } else {
             enter_trap(cpu, 1u, 0x000006u, 14u, 0x0008u, return_pc);
         }
-        advance_instruction(cpu, instruction_cycles(cpu, opcode));
+        advance_instruction(cpu, cycles);
         return cpu->stop_reason;
     }
     if (cpu->repeat_active != 0u && instruction_pc == cpu->repeat_pc) {
