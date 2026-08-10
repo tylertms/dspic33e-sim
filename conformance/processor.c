@@ -34,6 +34,11 @@ enum {
     OPCODE_BTSS_W2_BIT_0 = 0xa60002u,
     OPCODE_BTSC_W2_BIT_0 = 0xa70002u,
     OPCODE_BTSC_W4_POST_INCREMENT_BIT_0 = 0xa70034u,
+    OPCODE_CPSEQ = 0xe78010u,
+    OPCODE_CPSNE = 0xe70010u,
+    OPCODE_CPSGT = 0xe60010u,
+    OPCODE_CPSLT = 0xe68010u,
+    OPCODE_COMPARE_SKIP_BYTE = 0x000400u,
     OPCODE_SFTAC_A_W5 = 0xc80005u,
     OPCODE_LNK_0 = 0xfa0000u,
     OPCODE_ULNK = 0xfa8000u,
@@ -760,6 +765,184 @@ static void skip_boundary_cases(ProcessorConformance* state, Dspic33* cpu) {
            "skipped extension collision remains outside sequential provenance");
     expect(state, dspic33_step(cpu) == DSPIC33_PROGRAM_BOUNDS,
            "excluded skipped extension collision retains bounds behavior");
+}
+
+static void compare_skip_truth_case(ProcessorConformance* state, Dspic33* cpu,
+                                    uint32_t opcode, uint16_t left, uint16_t right,
+                                    bool taken, const char* name) {
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, opcode | 1u);
+    load_instruction(state, cpu, 2u, OPCODE_NOP);
+    cpu->w[0] = left;
+    cpu->w[1] = right;
+    cpu->sr = 0x010fu;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == (taken ? 4u : 2u) &&
+               cpu->cycles == (taken ? 2u : 1u) && cpu->w[0] == left &&
+               cpu->w[1] == right && cpu->sr == 0x010fu,
+           name);
+}
+
+static void compare_skip_cases(ProcessorConformance* state, Dspic33* cpu) {
+    compare_skip_truth_case(state, cpu, OPCODE_CPSEQ, 0x1234u, 0x1234u, true,
+                            "CPSEQ word takes equal comparison");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSEQ, 0x1234u, 0x4321u, false,
+                            "CPSEQ word rejects unequal comparison");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSEQ | OPCODE_COMPARE_SKIP_BYTE,
+                            0x80ffu, 0x7fffu, true,
+                            "CPSEQ byte ignores high-byte difference");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSEQ | OPCODE_COMPARE_SKIP_BYTE,
+                            0x8000u, 0x0001u, false,
+                            "CPSEQ byte rejects unequal low bytes");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSNE, 0x1234u, 0x4321u, true,
+                            "CPSNE word takes unequal comparison");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSNE, 0x1234u, 0x1234u, false,
+                            "CPSNE word rejects equal comparison");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSNE | OPCODE_COMPARE_SKIP_BYTE,
+                            0x80ffu, 0x7fffu, false,
+                            "CPSNE byte ignores high-byte difference");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSNE | OPCODE_COMPARE_SKIP_BYTE,
+                            0x8000u, 0x0001u, true,
+                            "CPSNE byte takes unequal low bytes");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSGT, 0x0001u, 0xffffu, true,
+                            "CPSGT word uses signed greater-than");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSGT, 0xffffu, 0x0001u, false,
+                            "CPSGT word rejects signed reverse order");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSGT | OPCODE_COMPARE_SKIP_BYTE,
+                            0x007fu, 0x0080u, true,
+                            "CPSGT byte uses signed greater-than");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSGT | OPCODE_COMPARE_SKIP_BYTE,
+                            0x0080u, 0x007fu, false,
+                            "CPSGT byte rejects signed reverse order");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSLT, 0xffffu, 0x0001u, true,
+                            "CPSLT word uses signed less-than");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSLT, 0x0001u, 0xffffu, false,
+                            "CPSLT word rejects signed reverse order");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSLT | OPCODE_COMPARE_SKIP_BYTE,
+                            0x0080u, 0x007fu, true, "CPSLT byte uses signed less-than");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSLT | OPCODE_COMPARE_SKIP_BYTE,
+                            0x007fu, 0x0080u, false,
+                            "CPSLT byte rejects signed reverse order");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_CPSEQ | 1u);
+    load_instruction(state, cpu, 2u, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 4u, 0u);
+    cpu->w[0] = 0x55aau;
+    cpu->w[1] = 0x55aau;
+    cpu->w[15] = 0x5000u;
+    cpu->sr = 0x010fu;
+    dspic33_write_word(cpu, 0x5000u, 0xa5a5u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 6u && cpu->cycles == 3u &&
+               cpu->w[15] == 0x5000u && cpu->call_depth == 0u &&
+               dspic33_read_word(cpu, 0x5000u) == 0xa5a5u && cpu->sr == 0x010fu,
+           "CPSEQ skips complete two-word instruction in three cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_CPSEQ | (15u << 11u) | 14u);
+    load_instruction(state, cpu, 2u, OPCODE_NOP);
+    cpu->w[15] = 0x5000u;
+    cpu->w[14] = 0x5000u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 4u &&
+               cpu->w[15] == 0x5000u && cpu->call_depth == 0u &&
+               cpu->illegal_reset_count == 0u,
+           "CPSEQ treats W15 as comparison data without pointer side effects");
+
+    reset_processor_conformance(cpu, 0x557fcu);
+    prepare_address_trap(state, cpu);
+    cpu->pc = 0x557fcu;
+    load_instruction(state, cpu, 0x557fcu, OPCODE_CPSEQ | 2u);
+    load_instruction(state, cpu, 0x557feu, OPCODE_NOP);
+    cpu->w[0] = 0x1234u;
+    cpu->w[2] = 0x1234u;
+    cpu->sr = 0x010fu;
+    cpu->corcon = 0x0020u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->pc == 0x140u &&
+               cpu->cycles == 2u && cpu->last_trap == 1u &&
+               cpu->last_trap_return == 0x557feu && cpu->w[15] == 0x5004u,
+           "CPSEQ boundary skip traps with caller-specific return PC");
+    expect(state,
+           dspic33_read_word(cpu, 0x5000u) == 0x57feu &&
+               dspic33_read_word(cpu, 0x5002u) == 0x0f05u &&
+               dspic33_read_word(cpu, 0x08c8u) == 0x0e01u && cpu->sr == 0x01cfu &&
+               cpu->corcon == 0x0028u,
+           "CPSEQ boundary trap preserves exact frame and priority state");
+
+    reset_processor_conformance(cpu, 0x557fau);
+    load_instruction(state, cpu, 0x557fau, OPCODE_CPSEQ | 2u);
+    load_instruction(state, cpu, 0x557fcu, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 0x557feu, 0u);
+    cpu->w[0] = 0x55aau;
+    cpu->w[2] = 0x55aau;
+    cpu->w[15] = 0x5000u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == DSPIC33_PROGRAM_LIMIT &&
+               cpu->cycles == 3u &&
+               cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT &&
+               cpu->w[15] == 0x5000u && cpu->call_depth == 0u,
+           "CPSEQ two-word boundary skip establishes sequential provenance");
+    load_instruction(state, cpu, 0x000014u, 0x000100u);
+    load_instruction(state, cpu, 0x000100u, OPCODE_NOP);
+    dspic33_write_word(cpu, 0x0820u, 0x0001u);
+    dspic33_write_word(cpu, 0x0840u, 0x0004u);
+    dspic33_raise_interrupt(cpu, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x102u &&
+               cpu->interrupt_log_entry[0] == DSPIC33_PROGRAM_LIMIT &&
+               cpu->sequential_program_hole_pc == 0u && cpu->cycles == 4u,
+           "interrupt clears CPSEQ two-word skip provenance");
+
+    reset_processor_conformance(cpu, 0x557feu);
+    prepare_address_trap(state, cpu);
+    cpu->pc = 0x557feu;
+    load_instruction(state, cpu, 0x557feu, OPCODE_CPSEQ | 1u);
+    cpu->w[0] = 0x1234u;
+    cpu->w[1] = 0x1234u;
+    cpu->sr = 0x010fu;
+    cpu->corcon = 0x0020u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 2u &&
+               cpu->last_trap_return == DSPIC33_PROGRAM_LIMIT &&
+               dspic33_read_word(cpu, 0x5000u) == 0x5800u &&
+               dspic33_read_word(cpu, 0x5002u) == 0x0f05u,
+           "taken last-word CPSEQ traps as a two-cycle one-word skip");
+
+    reset_processor_conformance(cpu, 0x557feu);
+    load_instruction(state, cpu, 0x557feu, OPCODE_CPSEQ | 1u);
+    cpu->w[0] = 0u;
+    cpu->w[1] = 1u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == DSPIC33_PROGRAM_LIMIT &&
+               cpu->cycles == 1u &&
+               cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT,
+           "untaken last-word CPSEQ enters the hole sequentially in one cycle");
+
+    reset_processor_conformance(cpu, 0x557feu);
+    prepare_address_trap(state, cpu);
+    cpu->pc = 0x557feu;
+    load_instruction(state, cpu, 0x557feu, OPCODE_BTSS_W2_BIT_0);
+    cpu->w[2] = 1u;
+    cpu->sr = 0x010fu;
+    cpu->corcon = 0x0020u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 2u &&
+               cpu->last_trap_return == DSPIC33_PROGRAM_LIMIT &&
+               dspic33_read_word(cpu, 0x5000u) == 0x5800u,
+           "taken last-word BTSS shares the two-cycle Address Error fix");
+
+    reset_processor_conformance(cpu, 0x557feu);
+    prepare_address_trap(state, cpu);
+    cpu->pc = 0x557feu;
+    load_instruction(state, cpu, 0x557feu, OPCODE_BTSC_W4_POST_INCREMENT_BIT_0);
+    dspic33_set_working_register(cpu, 4u, 0x1001u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 1u &&
+               cpu->last_trap_return == DSPIC33_PROGRAM_LIMIT && cpu->w[4] == 0x1001u &&
+               dspic33_read_word(cpu, 0x5000u) == 0x5800u,
+           "last-word indirect BTSC operand fault remains a one-cycle Address Error");
 }
 
 static void prepare_timer_source(Dspic33* cpu) {
@@ -2122,6 +2305,7 @@ int main(void) {
     if (initialized) {
         program_target_address_error_cases(&state, &cpu);
         program_read_address_error_cases(&state, &cpu);
+        compare_skip_cases(&state, &cpu);
         skip_boundary_cases(&state, &cpu);
         address_error_cases(&state, &cpu);
         data_map_address_error_cases(&state, &cpu);

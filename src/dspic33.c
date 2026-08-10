@@ -1164,22 +1164,87 @@ static bool execute_file_binary(Dspic33* cpu, uint32_t opcode) {
     return true;
 }
 
-static void skip_instruction(Dspic33* cpu) {
+typedef enum { SKIP_RETURN_TARGET, SKIP_RETURN_SEQUENTIAL } SkipReturn;
+
+typedef enum {
+    COMPARE_SKIP_NONE,
+    COMPARE_SKIP_EQUAL,
+    COMPARE_SKIP_NOT_EQUAL,
+    COMPARE_SKIP_GREATER_THAN,
+    COMPARE_SKIP_LESS_THAN
+} CompareSkipKind;
+
+static CompareSkipKind compare_skip_kind(uint32_t opcode) {
+    switch (opcode & 0xff83f0u) {
+    case 0xe78010u:
+        return COMPARE_SKIP_EQUAL;
+    case 0xe70010u:
+        return COMPARE_SKIP_NOT_EQUAL;
+    case 0xe60010u:
+        return COMPARE_SKIP_GREATER_THAN;
+    case 0xe68010u:
+        return COMPARE_SKIP_LESS_THAN;
+    default:
+        return COMPARE_SKIP_NONE;
+    }
+}
+
+static void skip_instruction(Dspic33* cpu, SkipReturn return_kind) {
     uint32_t length;
     uint32_t next;
+    uint32_t sequential = cpu->pc;
     uint32_t target;
-    if (cpu->pc >= DSPIC33_PROGRAM_LIMIT) {
+    if (sequential >= DSPIC33_PROGRAM_LIMIT) {
+        raise_program_target_error(cpu, sequential);
         return;
     }
-    next = cpu->program[cpu->pc / 2u];
+    next = cpu->program[sequential / 2u];
     length = instruction_length(next);
-    target = cpu->pc + length;
+    target = sequential + length;
     cpu->pc = target;
     if (length == 2u && target == DSPIC33_PROGRAM_LIMIT) {
-        raise_program_target_error(cpu, target);
+        raise_program_target_error(cpu, return_kind == SKIP_RETURN_TARGET ? target
+                                                                          : sequential);
     } else if (length == 4u && target == DSPIC33_PROGRAM_LIMIT) {
         cpu->sequential_program_hole_pc = target;
     }
+}
+
+static int32_t signed_compare_operand(uint16_t value, bool byte_mode) {
+    uint32_t mask = byte_mode ? 0x00ffu : 0xffffu;
+    uint32_t sign = byte_mode ? 0x0080u : 0x8000u;
+    uint32_t masked = value & mask;
+    return (masked & sign) != 0u ? (int32_t)masked - (int32_t)(mask + 1u)
+                                 : (int32_t)masked;
+}
+
+static bool execute_compare_skip(Dspic33* cpu, uint32_t opcode) {
+    CompareSkipKind kind = compare_skip_kind(opcode);
+    bool byte_mode = (opcode & 0x000400u) != 0u;
+    uint16_t left = cpu->w[(opcode >> 11u) & 0x0fu];
+    uint16_t right = cpu->w[opcode & 0x0fu];
+    bool take;
+    if (byte_mode) {
+        left &= 0x00ffu;
+        right &= 0x00ffu;
+    }
+    if (kind == COMPARE_SKIP_EQUAL) {
+        take = left == right;
+    } else if (kind == COMPARE_SKIP_NOT_EQUAL) {
+        take = left != right;
+    } else if (kind == COMPARE_SKIP_GREATER_THAN) {
+        take = signed_compare_operand(left, byte_mode) >
+               signed_compare_operand(right, byte_mode);
+    } else if (kind == COMPARE_SKIP_LESS_THAN) {
+        take = signed_compare_operand(left, byte_mode) <
+               signed_compare_operand(right, byte_mode);
+    } else {
+        return false;
+    }
+    if (take) {
+        skip_instruction(cpu, SKIP_RETURN_SEQUENTIAL);
+    }
+    return true;
 }
 
 static bool execute_bit(Dspic33* cpu, uint32_t opcode) {
@@ -1254,7 +1319,7 @@ static bool execute_bit(Dspic33* cpu, uint32_t opcode) {
     } else if (kind == 6u || kind == 7u) {
         bool set = (value & mask) != 0u;
         if ((kind == 6u && set) || (kind == 7u && !set)) {
-            skip_instruction(cpu);
+            skip_instruction(cpu, SKIP_RETURN_TARGET);
         }
         return true;
     }
@@ -2099,9 +2164,17 @@ static void advance_instruction(Dspic33* cpu, uint64_t cycles) {
 static uint64_t instruction_cycles(const Dspic33* cpu, uint32_t opcode,
                                    uint32_t instruction_pc) {
     uint8_t bit_kind = (uint8_t)((opcode >> 16u) & 0x07u);
-    if ((opcode & 0xf00000u) == 0xa00000u && bit_kind >= 6u &&
-        cpu->pc > instruction_pc + 2u) {
-        return 1u + (cpu->pc - instruction_pc - 2u) / 2u;
+    bool bit_skip = (opcode & 0xf00000u) == 0xa00000u && bit_kind >= 6u;
+    bool skip = bit_skip || compare_skip_kind(opcode) != COMPARE_SKIP_NONE;
+    if (skip) {
+        if (cpu->address_error && cpu->address_error_control_state_completed &&
+            cpu->address_error_return == DSPIC33_PROGRAM_LIMIT &&
+            instruction_pc + 2u == DSPIC33_PROGRAM_LIMIT) {
+            return 2u;
+        }
+        if (cpu->pc > instruction_pc + 2u) {
+            return 1u + (cpu->pc - instruction_pc - 2u) / 2u;
+        }
     }
     if ((opcode & 0xf00000u) == 0x300000u) {
         bool take;
@@ -2553,6 +2626,9 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     }
     if ((opcode & 0xff0000u) == 0xcf0000u) {
         return execute_find_first(cpu, opcode);
+    }
+    if (compare_skip_kind(opcode) != COMPARE_SKIP_NONE) {
+        return execute_compare_skip(cpu, opcode);
     }
     if ((opcode & 0xff0000u) == 0xd80000u) {
         return execute_divide(cpu, opcode);

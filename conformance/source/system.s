@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 51
+_system_conformance_terminal_count = 54
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -112,6 +112,12 @@ _run_system_probe:
     bra z, _system_skip_one_word_dispatch
     cp w0, #51
     bra z, _system_skip_two_word_dispatch
+    cp w0, #52
+    bra z, _system_skip_one_word_dispatch
+    cp w0, #53
+    bra z, _system_skip_two_word_dispatch
+    cp w0, #54
+    bra z, _system_program_boundary_dispatch
     return
 
 .global _system_sleep_probe
