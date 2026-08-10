@@ -511,6 +511,7 @@ typedef struct {
     Dspic33UsbHandshake usb_last_handshake;
     bool usb_host_pending;
     bool usb_host_attached;
+    uint32_t auxiliary_pll_generation;
     uint8_t oscillator_unlock;
 } Dspic33Io;
 

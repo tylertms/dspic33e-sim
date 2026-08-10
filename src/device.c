@@ -553,7 +553,12 @@ enum {
     DCI_EVENT_EXTERNAL_FRAME = 3u,
     DCI_EVENT_PMD = UINT16_MAX,
     DCI_EVENT_DISABLED = 0x00000001u,
-    DCI_EVENT_GENERATION_SHIFT = 1u
+    DCI_EVENT_GENERATION_SHIFT = 1u,
+    AUXILIARY_CLOCK_CONTROL = 0x0758u,
+    AUXILIARY_PLL_ENABLE = 0x8000u,
+    AUXILIARY_PLL_LOCK = 0x4000u,
+    AUXILIARY_CLOCK_WRITABLE = 0xbee7u,
+    AUXILIARY_PLL_LOCK_DELAY = 32u
 };
 
 static bool usb_schedule_bus_event(Dspic33* cpu, Dspic33UsbBusEvent event,
@@ -7133,6 +7138,15 @@ static void complete_nvm_event(Dspic33* cpu) {
     dspic33_raise_interrupt(cpu, 15u);
 }
 
+static void complete_auxiliary_pll(Dspic33* cpu, uint32_t generation) {
+    uint16_t control = raw_word(cpu, AUXILIARY_CLOCK_CONTROL);
+    if (generation == cpu->io.auxiliary_pll_generation &&
+        (control & AUXILIARY_PLL_ENABLE) != 0u) {
+        raw_write_word(cpu, AUXILIARY_CLOCK_CONTROL,
+                       (uint16_t)(control | AUXILIARY_PLL_LOCK));
+    }
+}
+
 static void remove_nvm_events(Dspic33* cpu) {
     size_t source;
     size_t destination = 0u;
@@ -7229,7 +7243,7 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
         complete_nvm_event(cpu);
         break;
     case DSPIC33_EVENT_AUX_PLL:
-        raw_write_word(cpu, 0x0758u, (uint16_t)(raw_word(cpu, 0x0758u) | 0x4000u));
+        complete_auxiliary_pll(cpu, event->value);
         break;
     }
 }
@@ -8409,12 +8423,20 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
             dspic33_set_math_error_source(cpu, true);
         }
     }
-    if (base == 0x0758u) {
-        raw_write_word(cpu, base,
-                       (uint16_t)((raw_word(cpu, base) & 0x40ffu) | 0xa400u));
-        if ((raw_word(cpu, base) & 0x8000u) != 0u &&
-            (raw_word(cpu, base) & 0x4000u) == 0u) {
-            dspic33_schedule(cpu, DSPIC33_EVENT_AUX_PLL, 0u, 0u, 32u);
+    if (base == AUXILIARY_CLOCK_CONTROL) {
+        uint16_t control = (uint16_t)((previous & ~AUXILIARY_CLOCK_WRITABLE) |
+                                      (requested & AUXILIARY_CLOCK_WRITABLE));
+        raw_write_word(cpu, base, control);
+        if (((previous ^ control) & AUXILIARY_CLOCK_WRITABLE) != 0u) {
+            control &= (uint16_t)~AUXILIARY_PLL_LOCK;
+            cpu->io.auxiliary_pll_generation++;
+            raw_write_word(cpu, base, control);
+            if ((control & AUXILIARY_PLL_ENABLE) != 0u &&
+                !dspic33_schedule(cpu, DSPIC33_EVENT_AUX_PLL, 0u,
+                                  cpu->io.auxiliary_pll_generation,
+                                  AUXILIARY_PLL_LOCK_DELAY)) {
+                cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+            }
         }
     }
     update_timer_register(cpu, base);

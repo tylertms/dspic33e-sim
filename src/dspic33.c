@@ -3258,6 +3258,7 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, bool illegal) {
     uint64_t software_reset_count = cpu->software_reset_count + (!illegal ? 1u : 0u);
     uint64_t illegal_reset_count = cpu->illegal_reset_count + (illegal ? 1u : 0u);
     uint64_t trap_count = cpu->trap_count;
+    uint64_t auxiliary_pll_remaining = 0u;
     uint16_t reset_interrupt = cpu->last_interrupt;
     uint16_t rcon = dspic33_read_word(cpu, 0x0740u);
     uint8_t uart_cts = cpu->io.uart_cts;
@@ -3270,7 +3271,19 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, bool illegal) {
     bool usb_host_attached = cpu->io.usb_host_attached;
     bool async_events_enabled = cpu->async_events_enabled;
     bool stop_on_trap = cpu->stop_on_trap;
+    bool auxiliary_pll_pending = false;
+    uint32_t auxiliary_pll_generation = cpu->io.auxiliary_pll_generation;
     size_t index;
+    for (index = 0u; index < cpu->events.count; index++) {
+        const Dspic33Event* event = &cpu->events.items[index];
+        if (event->type == DSPIC33_EVENT_AUX_PLL &&
+            event->value == auxiliary_pll_generation) {
+            auxiliary_pll_remaining =
+                event->cycle > device_cycles ? event->cycle - device_cycles : 0u;
+            auxiliary_pll_pending = true;
+            break;
+        }
+    }
     for (index = 0u;
          index < sizeof(preserved_addresses) / sizeof(preserved_addresses[0]);
          index++) {
@@ -3316,6 +3329,12 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, bool illegal) {
     cpu->instructions = instructions;
     cpu->cycles = cycles;
     cpu->device_cycles = device_cycles;
+    cpu->io.auxiliary_pll_generation = auxiliary_pll_generation;
+    if (auxiliary_pll_pending &&
+        !dspic33_schedule(cpu, DSPIC33_EVENT_AUX_PLL, 0u, auxiliary_pll_generation,
+                          auxiliary_pll_remaining)) {
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    }
     cpu->interrupt_count = interrupt_count;
     cpu->software_reset_count = software_reset_count;
     cpu->illegal_reset_count = illegal_reset_count;
