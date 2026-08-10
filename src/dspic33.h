@@ -196,7 +196,9 @@ typedef struct {
     Dspic33InputCaptureFifo fifo[DSPIC33_INPUT_CAPTURE_COUNT];
     uint16_t timer[DSPIC33_INPUT_CAPTURE_COUNT];
     uint16_t generation[DSPIC33_INPUT_CAPTURE_COUNT];
+    uint16_t pmd_generation[DSPIC33_INPUT_CAPTURE_COUNT];
     uint16_t input_high;
+    uint16_t pmd_disabled;
     uint8_t interrupt_count[DSPIC33_INPUT_CAPTURE_COUNT];
     uint8_t prescaler_count[DSPIC33_INPUT_CAPTURE_COUNT];
 } Dspic33InputCapture;

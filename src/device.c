@@ -223,13 +223,15 @@ enum {
     INPUT_CAPTURE_MODE_INTERRUPT = 0x0007u,
     INPUT_CAPTURE_STOP_IDLE = 0x2000u,
     INPUT_CAPTURE_SYNC_MASK = 0x001fu,
-    INPUT_CAPTURE_EVENT_KIND_MASK = 0x00000003u,
+    INPUT_CAPTURE_EVENT_KIND_MASK = 0x00000007u,
     INPUT_CAPTURE_EVENT_INPUT = 0u,
     INPUT_CAPTURE_EVENT_CAPTURE = 1u,
     INPUT_CAPTURE_EVENT_INTERRUPT = 2u,
     INPUT_CAPTURE_EVENT_PIN = 3u,
-    INPUT_CAPTURE_EVENT_HIGH = 0x00000004u,
-    INPUT_CAPTURE_EVENT_PAIRED = 0x00000008u,
+    INPUT_CAPTURE_EVENT_PMD = 4u,
+    INPUT_CAPTURE_EVENT_HIGH = 0x00000008u,
+    INPUT_CAPTURE_EVENT_PAIRED = 0x00000010u,
+    INPUT_CAPTURE_EVENT_PMD_DISABLED = 0x00000008u,
     INPUT_CAPTURE_EVENT_GENERATION_SHIFT = 8u,
     OUTPUT_COMPARE_BASE = 0x0900u,
     OUTPUT_COMPARE_STRIDE = 0x000au,
@@ -1532,6 +1534,86 @@ static uint16_t input_capture_base(uint8_t channel) {
     return (uint16_t)(INPUT_CAPTURE_BASE + channel * INPUT_CAPTURE_STRIDE);
 }
 
+static bool input_capture_pmd_disabled(const Dspic33* cpu, uint8_t channel) {
+    return (cpu->io.input_capture.pmd_disabled & (uint16_t)(1u << channel)) != 0u;
+}
+
+static bool input_capture_pair_configured(const Dspic33* cpu, uint8_t channel) {
+    uint8_t first = (uint8_t)(channel & 0xfeu);
+    if (first + 1u >= DSPIC33_INPUT_CAPTURE_COUNT) {
+        return false;
+    }
+    return (raw_word(cpu, (uint16_t)(input_capture_base(first) + 2u)) &
+            INPUT_CAPTURE_32_BIT) != 0u &&
+           (raw_word(cpu, (uint16_t)(input_capture_base((uint8_t)(first + 1u)) + 2u)) &
+            INPUT_CAPTURE_32_BIT) != 0u;
+}
+
+static bool input_capture_event_belongs_to_channel(const Dspic33Event* event,
+                                                   uint8_t channel) {
+    uint32_t kind = event->value & INPUT_CAPTURE_EVENT_KIND_MASK;
+    if (event->source == channel) {
+        return kind == INPUT_CAPTURE_EVENT_CAPTURE ||
+               kind == INPUT_CAPTURE_EVENT_INTERRUPT;
+    }
+    return kind == INPUT_CAPTURE_EVENT_CAPTURE &&
+           (event->value & INPUT_CAPTURE_EVENT_PAIRED) != 0u &&
+           event->source == (uint16_t)(channel & 0xfeu);
+}
+
+static bool input_capture_event_can_resume(const Dspic33* cpu,
+                                           const Dspic33Event* event) {
+    uint32_t kind = event->value & INPUT_CAPTURE_EVENT_KIND_MASK;
+    if (kind == INPUT_CAPTURE_EVENT_CAPTURE &&
+        (event->value & INPUT_CAPTURE_EVENT_PAIRED) != 0u) {
+        return !input_capture_pmd_disabled(cpu, (uint8_t)event->source) &&
+               !input_capture_pmd_disabled(cpu, (uint8_t)(event->source + 1u));
+    }
+    return !input_capture_pmd_disabled(cpu, (uint8_t)event->source);
+}
+
+static void input_capture_pause_events(Dspic33* cpu, uint8_t channel) {
+    size_t index;
+    bool changed = false;
+    for (index = 0u; index < cpu->events.count; index++) {
+        Dspic33Event* event = &cpu->events.items[index];
+        if (event->type != DSPIC33_EVENT_INPUT_CAPTURE || event->paused ||
+            !input_capture_event_belongs_to_channel(event, channel)) {
+            continue;
+        }
+        event->paused_remaining = event->cycle - cpu->device_cycles;
+        event->paused = true;
+        changed = true;
+    }
+    if (changed) {
+        dspic33_reorder_events(cpu);
+    }
+}
+
+static void input_capture_resume_events(Dspic33* cpu, uint8_t channel) {
+    size_t index;
+    bool changed = false;
+    for (index = 0u; index < cpu->events.count; index++) {
+        Dspic33Event* event = &cpu->events.items[index];
+        if (event->type != DSPIC33_EVENT_INPUT_CAPTURE || !event->paused ||
+            !input_capture_event_belongs_to_channel(event, channel) ||
+            !input_capture_event_can_resume(cpu, event)) {
+            continue;
+        }
+        if (event->paused_remaining > UINT64_MAX - cpu->device_cycles) {
+            cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+            continue;
+        }
+        event->cycle = cpu->device_cycles + event->paused_remaining;
+        event->paused_remaining = 0u;
+        event->paused = false;
+        changed = true;
+    }
+    if (changed) {
+        dspic33_reorder_events(cpu);
+    }
+}
+
 static bool input_capture_fifo_push(Dspic33InputCaptureFifo* fifo, uint16_t value) {
     uint8_t index;
     if (fifo->count == DSPIC33_INPUT_CAPTURE_FIFO_SIZE) {
@@ -1599,7 +1681,10 @@ static bool input_capture_configuration_supported(const Dspic33* cpu, uint8_t ch
 
 static bool input_capture_operating(const Dspic33* cpu, uint8_t channel) {
     uint16_t control = raw_word(cpu, input_capture_base(channel));
-    if (!input_capture_configuration_supported(cpu, channel) ||
+    if (input_capture_pmd_disabled(cpu, channel) ||
+        (input_capture_pair_configured(cpu, channel) &&
+         input_capture_pmd_disabled(cpu, (uint8_t)(channel ^ 1u))) ||
+        !input_capture_configuration_supported(cpu, channel) ||
         cpu->power_state == DSPIC33_POWER_SLEEP) {
         return false;
     }
@@ -1737,7 +1822,8 @@ static bool input_capture_edge_matches(Dspic33* cpu, uint8_t channel, bool was_h
 
 static bool input_capture_interrupt_mode(const Dspic33* cpu, uint8_t channel) {
     uint16_t control = raw_word(cpu, input_capture_base(channel));
-    return (control & INPUT_CAPTURE_MODE_MASK) == INPUT_CAPTURE_MODE_INTERRUPT &&
+    return !input_capture_pmd_disabled(cpu, channel) &&
+           (control & INPUT_CAPTURE_MODE_MASK) == INPUT_CAPTURE_MODE_INTERRUPT &&
            (cpu->power_state == DSPIC33_POWER_SLEEP ||
             cpu->power_state == DSPIC33_POWER_IDLE);
 }
@@ -1832,7 +1918,20 @@ static void run_input_capture(Dspic33* cpu, uint16_t source, uint32_t value) {
     if (source >= DSPIC33_INPUT_CAPTURE_COUNT) {
         return;
     }
-    if (kind == INPUT_CAPTURE_EVENT_INPUT) {
+    if (kind == INPUT_CAPTURE_EVENT_PMD) {
+        uint16_t generation = (uint16_t)(value >> INPUT_CAPTURE_EVENT_GENERATION_SHIFT);
+        uint16_t bit = (uint16_t)(1u << source);
+        if (generation != cpu->io.input_capture.pmd_generation[source]) {
+            return;
+        }
+        if ((value & INPUT_CAPTURE_EVENT_PMD_DISABLED) != 0u) {
+            cpu->io.input_capture.pmd_disabled |= bit;
+            input_capture_pause_events(cpu, (uint8_t)source);
+        } else {
+            cpu->io.input_capture.pmd_disabled &= (uint16_t)~bit;
+            input_capture_resume_events(cpu, (uint8_t)source);
+        }
+    } else if (kind == INPUT_CAPTURE_EVENT_INPUT) {
         input_capture_level(cpu, (uint8_t)source,
                             (value & INPUT_CAPTURE_EVENT_HIGH) != 0u);
     } else if (kind == INPUT_CAPTURE_EVENT_CAPTURE) {
@@ -1861,6 +1960,10 @@ static void update_input_capture_register(Dspic33* cpu, uint16_t address,
     base = input_capture_base(channel);
     offset = (uint16_t)(address - base);
     current = raw_word(cpu, base + offset);
+    if (input_capture_pmd_disabled(cpu, channel)) {
+        raw_write_word(cpu, (uint16_t)(base + offset), previous);
+        return;
+    }
     if (offset == 0u) {
         if ((previous & INPUT_CAPTURE_MODE_MASK) != 0u &&
             (current & INPUT_CAPTURE_MODE_MASK) == 0u) {
@@ -1881,6 +1984,50 @@ static void update_input_capture_register(Dspic33* cpu, uint16_t address,
         if ((current & INPUT_CAPTURE_TRIGGER_STATUS) == 0u) {
             cpu->io.input_capture.timer[channel] = 0u;
             raw_write_word(cpu, (uint16_t)(base + 6u), 0u);
+        }
+    }
+}
+
+static void update_input_capture_pmd(Dspic33* cpu, uint16_t address,
+                                     uint16_t previous) {
+    uint8_t first_channel;
+    uint8_t channel;
+    uint16_t changed;
+    uint16_t current;
+    if (address == 0x0762u) {
+        first_channel = 0u;
+    } else if (address == 0x0768u) {
+        first_channel = 8u;
+    } else {
+        return;
+    }
+    current = raw_word(cpu, address);
+    changed = (uint16_t)((previous ^ current) & 0xff00u);
+    for (channel = first_channel; channel < first_channel + 8u; channel++) {
+        uint16_t register_mask = (uint16_t)(1u << (8u + channel - first_channel));
+        if ((changed & register_mask) == 0u) {
+            continue;
+        }
+        cpu->io.input_capture.pmd_generation[channel]++;
+        if (!dspic33_schedule(
+                cpu, DSPIC33_EVENT_INPUT_CAPTURE, channel,
+                INPUT_CAPTURE_EVENT_PMD |
+                    ((current & register_mask) != 0u ? INPUT_CAPTURE_EVENT_PMD_DISABLED
+                                                     : 0u) |
+                    ((uint32_t)cpu->io.input_capture.pmd_generation[channel]
+                     << INPUT_CAPTURE_EVENT_GENERATION_SHIFT),
+                1u)) {
+            uint8_t invalidate;
+            raw_write_word(cpu, address, previous);
+            for (invalidate = first_channel; invalidate < first_channel + 8u;
+                 invalidate++) {
+                if ((changed & (uint16_t)(1u << (8u + invalidate - first_channel))) !=
+                    0u) {
+                    cpu->io.input_capture.pmd_generation[invalidate]++;
+                }
+            }
+            cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+            return;
         }
     }
 }
@@ -8777,6 +8924,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
                        (uint16_t)((previous & ~writable) | (requested & writable)));
     }
     dspic33_i2c_update_pmd(cpu, base, previous);
+    update_input_capture_pmd(cpu, base, previous);
     if (base == 0x0740u && (cpu->configuration[10u] & 0x80u) == 0u &&
         (previous & 0x0020u) == 0u && (raw_word(cpu, base) & 0x0020u) != 0u) {
         cpu->watchdog.ticks = 0u;
@@ -8845,6 +8993,14 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
     uint8_t port;
     uint8_t channel;
     uint8_t timer;
+    if (address >= INPUT_CAPTURE_BASE &&
+        address <
+            INPUT_CAPTURE_BASE + DSPIC33_INPUT_CAPTURE_COUNT * INPUT_CAPTURE_STRIDE) {
+        channel = (uint8_t)((address - INPUT_CAPTURE_BASE) / INPUT_CAPTURE_STRIDE);
+        if (input_capture_pmd_disabled(cpu, channel)) {
+            return 0u;
+        }
+    }
     if (cpu->io.crc.pmd_disabled && base >= CRC_CONTROL && base <= CRC_SHIFT_HIGH) {
         return 0u;
     }

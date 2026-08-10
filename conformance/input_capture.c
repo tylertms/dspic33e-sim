@@ -24,7 +24,9 @@ enum {
     CAPTURE_NOT_EMPTY = 0x0008u,
     CAPTURE_OVERFLOW = 0x0010u,
     CAPTURE_DMA_DESTINATION = 0x3000u,
-    CAPTURE_VECTOR = 0x0200u
+    CAPTURE_VECTOR = 0x0200u,
+    CAPTURE_PMD_LOW = 0x0762u,
+    CAPTURE_PMD_HIGH = 0x0768u
 };
 
 static void expect(InputCaptureConformance* state, bool condition, const char* name) {
@@ -39,6 +41,14 @@ static void expect(InputCaptureConformance* state, bool condition, const char* n
 
 static uint16_t capture_base(uint8_t channel) {
     return (uint16_t)(CAPTURE_BASE + channel * CAPTURE_STRIDE);
+}
+
+static uint16_t capture_pmd_address(uint8_t channel) {
+    return channel < 8u ? CAPTURE_PMD_LOW : CAPTURE_PMD_HIGH;
+}
+
+static uint16_t capture_pmd_mask(uint8_t channel) {
+    return (uint16_t)(1u << (8u + channel % 8u));
 }
 
 static bool interrupt_flag(Dspic33* cpu, uint8_t channel) {
@@ -614,6 +624,239 @@ static void lifecycle_cases(InputCaptureConformance* state, Dspic33* cpu) {
     dspic33_destroy(&copy);
 }
 
+static void pmd_channel_cases(InputCaptureConformance* state, Dspic33* cpu) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_INPUT_CAPTURE_COUNT; channel++) {
+        uint16_t base = capture_base(channel);
+        uint16_t pmd_address = capture_pmd_address(channel);
+        uint16_t pmd_mask = capture_pmd_mask(channel);
+
+        dspic33_reset(cpu, 0u);
+        configure_capture(cpu, channel, 0u, false);
+        dspic33_write_word(cpu, pmd_address, pmd_mask);
+        dspic33_write_word(cpu, base, 0x3c03u);
+        expect(state, dspic33_read_word(cpu, base) == 0x3c03u,
+               "capture PMD write remains accessible for one cycle");
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "capture PMD disable transition advances");
+        expect(state,
+               (cpu->io.input_capture.pmd_disabled & (uint16_t)(1u << channel)) != 0u,
+               "capture PMD disable becomes effective after one cycle");
+        expect(state,
+               dspic33_read_word(cpu, base) == 0u &&
+                   dspic33_read_word(cpu, (uint16_t)(base + 2u)) == 0u &&
+                   dspic33_read_word(cpu, (uint16_t)(base + 4u)) == 0u &&
+                   dspic33_read_word(cpu, (uint16_t)(base + 6u)) == 0u,
+               "capture PMD disabled registers read zero");
+        dspic33_write_word(cpu, base, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 2u), 0u);
+        expect(state, set_level(cpu, channel, true),
+               "capture PMD disabled external edge advances");
+        expect(state, cpu->io.input_capture.fifo[channel].count == 0u,
+               "capture PMD disabled edge is missed");
+
+        dspic33_write_word(cpu, pmd_address, 0u);
+        expect(state, dspic33_read_word(cpu, base) == 0u,
+               "capture PMD enable remains inaccessible for one cycle");
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "capture PMD enable transition advances");
+        expect(state,
+               (cpu->io.input_capture.pmd_disabled & (uint16_t)(1u << channel)) == 0u &&
+                   dspic33_read_word(cpu, base) == 0x3c03u &&
+                   dspic33_read_word(cpu, (uint16_t)(base + 2u)) == CAPTURE_TRIGGER,
+               "capture PMD enable restores preserved registers");
+        expect(state, set_level(cpu, channel, false) && set_level(cpu, channel, true),
+               "capture PMD re-enabled edge advances");
+        expect(state, cpu->io.input_capture.fifo[channel].count == 1u,
+               "capture PMD re-enabled channel captures new edge");
+    }
+}
+
+static void pmd_lifecycle_cases(InputCaptureConformance* state, Dspic33* cpu) {
+    Dspic33 copy;
+    uint16_t base = capture_base(0u);
+    uint16_t pmd_mask = capture_pmd_mask(0u);
+    bool initialized;
+
+    dspic33_reset(cpu, 0u);
+    configure_capture(cpu, 0u, 0u, false);
+    dspic33_write_word(cpu, CAPTURE_PMD_LOW, pmd_mask);
+    expect(state, dspic33_input_capture_input(cpu, 0u, true, 0u),
+           "queue capture beside pending PMD disable");
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "capture PMD disable pauses pending snapshot");
+    expect(state,
+           cpu->io.input_capture.fifo[0].count == 0u && cpu->events.count == 1u &&
+               cpu->events.items[0].paused,
+           "capture PMD preserves pending internal snapshot");
+    dspic33_write_word(cpu, CAPTURE_PMD_LOW, 0u);
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "capture PMD enable resumes pending snapshot");
+    expect(state, cpu->io.input_capture.fifo[0].count == 1u && cpu->events.count == 1u,
+           "capture PMD resumed snapshot completes and leaves delayed IRQ");
+
+    dspic33_reset(cpu, 0u);
+    configure_capture(cpu, 0u, 0u, false);
+    expect(state, set_level(cpu, 0u, true),
+           "capture before PMD interrupt pause advances");
+    dspic33_write_word(cpu, CAPTURE_PMD_LOW, pmd_mask);
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "capture PMD disable pauses delayed interrupt");
+    expect(state,
+           !interrupt_flag(cpu, 0u) && cpu->events.count == 1u &&
+               cpu->events.items[0].paused &&
+               cpu->events.items[0].paused_remaining == 1u,
+           "capture PMD preserves delayed interrupt remaining time");
+    dspic33_write_word(cpu, CAPTURE_PMD_LOW, 0u);
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "capture PMD enable resumes delayed interrupt");
+    expect(state, !interrupt_flag(cpu, 0u),
+           "capture PMD resumed interrupt retains remaining cycle");
+    expect(state, dspic33_device_advance(cpu, 1u) && interrupt_flag(cpu, 0u),
+           "capture PMD resumed interrupt fires after remaining cycle");
+
+    dspic33_reset(cpu, 0u);
+    configure_capture(cpu, 0u, 0u, false);
+    expect(state, dspic33_device_advance(cpu, 5u),
+           "capture timer advances before PMD disable");
+    dspic33_write_word(cpu, CAPTURE_PMD_LOW, pmd_mask);
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "capture timer reaches PMD disable boundary");
+    expect(state, cpu->io.input_capture.timer[0] == 6u,
+           "capture timer includes delayed PMD cycle");
+    expect(state,
+           dspic33_device_advance(cpu, 10u) && cpu->io.input_capture.timer[0] == 6u,
+           "capture timer stops while PMD disabled");
+    dspic33_write_word(cpu, CAPTURE_PMD_LOW, 0u);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && cpu->io.input_capture.timer[0] == 6u,
+           "capture timer remains stopped through PMD enable delay");
+    expect(state,
+           dspic33_device_advance(cpu, 4u) && cpu->io.input_capture.timer[0] == 10u,
+           "capture timer resumes after PMD enable");
+
+    dspic33_reset(cpu, 0u);
+    configure_capture(cpu, 0u, 0u, false);
+    expect(state, set_level(cpu, 0u, true), "seed FIFO before PMD disable");
+    dspic33_write_word(cpu, CAPTURE_PMD_LOW, pmd_mask);
+    expect(state, dspic33_device_advance(cpu, 1u), "disable capture with seeded FIFO");
+    expect(state,
+           dspic33_read_word(cpu, (uint16_t)(base + 4u)) == 0u &&
+               cpu->io.input_capture.fifo[0].count == 1u,
+           "disabled capture FIFO read returns zero without popping");
+    dspic33_write_word(cpu, CAPTURE_PMD_LOW, 0u);
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "enable capture with preserved FIFO");
+    expect(state,
+           dspic33_read_word(cpu, (uint16_t)(base + 4u)) == 1u &&
+               cpu->io.input_capture.fifo[0].count == 0u,
+           "capture PMD preserves FIFO contents until re-enabled read");
+
+    dspic33_reset(cpu, 0u);
+    configure_capture(cpu, 0u, 0u, true);
+    configure_capture(cpu, 1u, 0u, true);
+    dspic33_write_word(cpu, CAPTURE_PMD_LOW, capture_pmd_mask(1u));
+    expect(state, dspic33_input_capture_input(cpu, 0u, true, 0u),
+           "queue paired capture beside high-channel PMD disable");
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "high-channel PMD disable pauses paired snapshot");
+    expect(state,
+           cpu->io.input_capture.fifo[0].count == 0u &&
+               cpu->io.input_capture.fifo[1].count == 0u && cpu->events.count == 1u &&
+               cpu->events.items[0].paused,
+           "either channel PMD disable pauses paired pipeline");
+    dspic33_write_word(cpu, CAPTURE_PMD_LOW, 0u);
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "high-channel PMD enable resumes paired snapshot");
+    expect(state,
+           cpu->io.input_capture.fifo[0].count == 1u &&
+               cpu->io.input_capture.fifo[1].count == 1u,
+           "paired pipeline completes after both channels are enabled");
+
+    dspic33_reset(cpu, 0u);
+    configure_capture(cpu, 0u, 0u, true);
+    configure_capture(cpu, 1u, 0u, true);
+    dspic33_write_word(cpu, CAPTURE_PMD_LOW,
+                       (uint16_t)(capture_pmd_mask(0u) | capture_pmd_mask(1u)));
+    expect(state, dspic33_input_capture_input(cpu, 0u, true, 0u),
+           "queue paired capture beside dual PMD disable");
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "dual PMD disable pauses paired snapshot");
+    dspic33_write_word(cpu, CAPTURE_PMD_LOW, capture_pmd_mask(0u));
+    expect(state, dspic33_device_advance(cpu, 1u), "enable one paired PMD channel");
+    expect(state,
+           cpu->events.count == 1u && cpu->events.items[0].paused &&
+               cpu->io.input_capture.fifo[0].count == 0u &&
+               cpu->io.input_capture.fifo[1].count == 0u,
+           "paired snapshot remains paused until both channels enable");
+    dspic33_write_word(cpu, CAPTURE_PMD_LOW, 0u);
+    expect(state, dspic33_device_advance(cpu, 1u), "enable final paired PMD channel");
+    expect(state,
+           cpu->io.input_capture.fifo[0].count == 1u &&
+               cpu->io.input_capture.fifo[1].count == 1u,
+           "paired snapshot completes after final channel enables");
+
+    initialized = dspic33_initialize(&copy);
+    expect(state, initialized, "initialize capture PMD copy");
+    if (!initialized) {
+        return;
+    }
+    dspic33_reset(cpu, 0u);
+    configure_capture(cpu, 0u, 0u, false);
+    dspic33_write_word(cpu, CAPTURE_PMD_LOW, pmd_mask);
+    expect(state, dspic33_copy(&copy, cpu), "copy pending capture PMD transition");
+    expect(state, dspic33_device_advance(cpu, 1u) && dspic33_device_advance(&copy, 1u),
+           "advance original and copied capture PMD transition");
+    expect(state,
+           cpu->io.input_capture.pmd_disabled == 1u &&
+               copy.io.input_capture.pmd_disabled == 1u,
+           "copy retains pending capture PMD state");
+    dspic33_destroy(&copy);
+
+    dspic33_reset(cpu, 0u);
+    configure_capture(cpu, 0u, 0u, false);
+    dspic33_write_word(cpu, CAPTURE_PMD_LOW, pmd_mask);
+    dspic33_reset(cpu, 0u);
+    expect(state, dspic33_device_advance(cpu, 2u), "advance reset capture PMD queue");
+    expect(state,
+           cpu->io.input_capture.pmd_disabled == 0u &&
+               cpu->io.input_capture.pmd_generation[0] == 0u &&
+               dspic33_read_word(cpu, CAPTURE_PMD_LOW) == 0u && cpu->events.count == 0u,
+           "reset cancels capture PMD transition");
+
+    dspic33_reset(cpu, 0u);
+    configure_capture(cpu, 0u, 0u, false);
+    dspic33_write_word(cpu, CAPTURE_PMD_LOW, pmd_mask);
+    dspic33_write_word(cpu, CAPTURE_PMD_LOW, 0u);
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "advance replaced capture PMD transition");
+    expect(state,
+           cpu->io.input_capture.pmd_disabled == 0u &&
+               dspic33_read_word(cpu, CAPTURE_PMD_LOW) == 0u && cpu->events.count == 0u,
+           "new capture PMD request invalidates stale transition");
+
+    dspic33_write_word(cpu, CAPTURE_PMD_LOW, pmd_mask);
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "complete capture PMD disable before reset");
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           cpu->io.input_capture.pmd_disabled == 0u &&
+               cpu->io.input_capture.pmd_generation[0] == 0u &&
+               dspic33_read_word(cpu, CAPTURE_PMD_LOW) == 0u,
+           "reset clears effective capture PMD state");
+
+    dspic33_reset(cpu, 0u);
+    configure_capture(cpu, 0u, 0u, false);
+    cpu->device_cycles = UINT64_MAX;
+    dspic33_write_word(cpu, CAPTURE_PMD_LOW, pmd_mask);
+    expect(state,
+           cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR &&
+               dspic33_read_word(cpu, CAPTURE_PMD_LOW) == 0u &&
+               cpu->io.input_capture.pmd_disabled == 0u && cpu->events.count == 0u &&
+               dspic33_read_word(cpu, base) == CAPTURE_FP_RISING,
+           "capture PMD scheduling failure rolls back request");
+}
+
 int main(void) {
     Dspic33 cpu;
     InputCaptureConformance state = {0u, 0u, 0u};
@@ -629,6 +872,8 @@ int main(void) {
         paired_cases(&state, &cpu);
         dma_cases(&state, &cpu);
         lifecycle_cases(&state, &cpu);
+        pmd_channel_cases(&state, &cpu);
+        pmd_lifecycle_cases(&state, &cpu);
         dspic33_destroy(&cpu);
     }
     printf("[input-capture-summary] cases=%u passed=%u failed=%u\n", state.cases,
