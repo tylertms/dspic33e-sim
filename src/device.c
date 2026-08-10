@@ -8710,6 +8710,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
         raw_write_word(cpu, base,
                        (uint16_t)((previous & ~writable) | (requested & writable)));
     }
+    dspic33_i2c_update_pmd(cpu, base, previous);
     if (base == 0x0740u && (cpu->configuration[10u] & 0x80u) == 0u &&
         (previous & 0x0020u) == 0u && (raw_word(cpu, base) & 0x0020u) != 0u) {
         cpu->watchdog.ticks = 0u;

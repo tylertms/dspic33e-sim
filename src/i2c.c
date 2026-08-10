@@ -56,6 +56,7 @@ enum {
     I2C_EVENT_COLLISION = 9u,
     I2C_EVENT_SLAVE_TEN_SECOND = 10u,
     I2C_EVENT_SLAVE_TEN_RESTART = 11u,
+    I2C_EVENT_PMD = 12u,
     I2C_EXTERNAL_READ = 0x00000800u,
     I2C_EXTERNAL_TEN_BIT = 0x00000400u
 };
@@ -83,8 +84,7 @@ static bool channel_for_address(uint16_t address, uint8_t* channel, uint16_t* of
 }
 
 static bool module_disabled(const Dspic33* cpu, uint8_t channel) {
-    return channel == 0u ? (raw_word(cpu, 0x0760u) & 0x0080u) != 0u
-                         : (raw_word(cpu, 0x0764u) & 0x0002u) != 0u;
+    return (cpu->io.i2c_pmd_disabled & (uint8_t)(1u << channel)) != 0u;
 }
 
 static bool module_enabled(const Dspic33* cpu, uint8_t channel) {
@@ -107,8 +107,9 @@ static void pause_events(Dspic33* cpu, uint8_t channel) {
     bool changed = false;
     for (index = 0u; index < cpu->events.count; index++) {
         Dspic33Event* event = &cpu->events.items[index];
+        uint8_t kind = (uint8_t)(event->value >> I2C_EVENT_KIND_SHIFT);
         if (event->type != DSPIC33_EVENT_I2C || event->source != channel ||
-            event->paused) {
+            event->paused || kind > I2C_EVENT_TRANSMIT_SHIFT) {
             continue;
         }
         event->paused_remaining = event->cycle - cpu->device_cycles;
@@ -143,23 +144,29 @@ static void resume_events(Dspic33* cpu, uint8_t channel) {
     }
 }
 
-static void update_power_state(Dspic33* cpu, uint16_t address, uint16_t previous,
-                               uint16_t requested) {
+void dspic33_i2c_update_pmd(Dspic33* cpu, uint16_t address, uint16_t previous) {
     static const uint16_t addresses[DSPIC33_I2C_COUNT] = {0x0760u, 0x0764u};
     static const uint16_t masks[DSPIC33_I2C_COUNT] = {0x0080u, 0x0002u};
     uint8_t channel;
     for (channel = 0u; channel < DSPIC33_I2C_COUNT; channel++) {
-        bool was_disabled;
         bool disabled;
         if (address != addresses[channel]) {
             continue;
         }
-        was_disabled = (previous & masks[channel]) != 0u;
-        disabled = (requested & masks[channel]) != 0u;
-        if (!was_disabled && disabled) {
-            pause_events(cpu, channel);
-        } else if (was_disabled && !disabled) {
-            resume_events(cpu, channel);
+        disabled = (raw_word(cpu, address) & masks[channel]) != 0u;
+        if (((previous & masks[channel]) != 0u) == disabled) {
+            return;
+        }
+        cpu->io.i2c_pmd_generation[channel]++;
+        if (!dspic33_schedule(cpu, DSPIC33_EVENT_I2C, channel,
+                              ((uint32_t)I2C_EVENT_PMD << I2C_EVENT_KIND_SHIFT) |
+                                  ((uint32_t)cpu->io.i2c_pmd_generation[channel]
+                                   << I2C_EVENT_GENERATION_SHIFT) |
+                                  (disabled ? 1u : 0u),
+                              1u)) {
+            raw_write_word(cpu, address, previous);
+            cpu->io.i2c_pmd_generation[channel]++;
+            cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
         }
         return;
     }
@@ -274,7 +281,8 @@ static bool schedule_event(Dspic33* cpu, uint8_t channel, uint32_t value,
     }
     event->paused_remaining = 0u;
     event->paused = false;
-    if (module_disabled(cpu, channel)) {
+    if (module_disabled(cpu, channel) &&
+        (uint8_t)(value >> I2C_EVENT_KIND_SHIFT) <= I2C_EVENT_TRANSMIT_SHIFT) {
         event->paused_remaining = delay;
         event->paused = true;
         dspic33_reorder_events(cpu);
@@ -734,7 +742,6 @@ bool dspic33_i2c_write_register(Dspic33* cpu, uint16_t address, uint16_t previou
     uint8_t channel;
     uint16_t offset;
     uint16_t base = (uint16_t)(address & 0xfffeu);
-    update_power_state(cpu, base, previous, requested);
     if (!channel_for_address(base, &channel, &offset)) {
         return false;
     }
@@ -809,6 +816,22 @@ void dspic33_i2c_process_event(Dspic33* cpu, uint8_t channel, uint32_t value) {
     uint8_t generation = (uint8_t)(value >> I2C_EVENT_GENERATION_SHIFT);
     uint16_t payload = (uint16_t)(value & I2C_EVENT_PAYLOAD_MASK);
     if (channel >= DSPIC33_I2C_COUNT) {
+        return;
+    }
+    if (kind == I2C_EVENT_PMD) {
+        uint8_t bit = (uint8_t)(1u << channel);
+        bool disabled;
+        if (generation != cpu->io.i2c_pmd_generation[channel]) {
+            return;
+        }
+        disabled = (payload & 1u) != 0u;
+        if (disabled) {
+            cpu->io.i2c_pmd_disabled |= bit;
+            pause_events(cpu, channel);
+        } else {
+            cpu->io.i2c_pmd_disabled &= (uint8_t)~bit;
+            resume_events(cpu, channel);
+        }
         return;
     }
     if (kind <= I2C_EVENT_TRANSMIT_SHIFT &&

@@ -418,6 +418,8 @@ typedef struct {
     Dspic33I2cResponseQueue i2c_response[DSPIC33_I2C_COUNT];
     uint16_t i2c_slave_address[DSPIC33_I2C_COUNT];
     uint8_t i2c_generation[DSPIC33_I2C_COUNT];
+    uint8_t i2c_pmd_generation[DSPIC33_I2C_COUNT];
+    uint8_t i2c_pmd_disabled;
     uint8_t i2c_master_active;
     uint8_t i2c_slave_active;
     uint8_t i2c_slave_read;
