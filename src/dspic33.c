@@ -13,6 +13,10 @@ enum {
 };
 
 static const uint64_t ACCUMULATOR_MASK = 0xffffffffffu;
+static const uint8_t configuration_factory_defaults[] = {0xcfu, 0xffu, 0xffu, 0xffu,
+                                                         0xffu, 0xdfu, 0xcfu, 0xffu};
+static const uint8_t configuration_program_masks[] = {0x33u, 0x87u, 0xe7u, 0xffu,
+                                                      0x3fu, 0xf7u, 0x33u, 0xffu};
 
 static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory);
 static void perform_warm_reset(Dspic33* cpu, uint16_t cause, bool illegal);
@@ -215,9 +219,32 @@ static void write_accumulator_byte(Dspic33* cpu, uint8_t accumulator, uint8_t by
     cpu->accumulator[accumulator] = accumulator_value(bits);
 }
 
+static bool configuration_register_index(uint32_t address, uint8_t* index) {
+    if (address < DSPIC33_CONFIGURATION_BASE + 4u ||
+        address > DSPIC33_CONFIGURATION_BASE + 0x12u || (address & 1u) != 0u) {
+        return false;
+    }
+    *index = (uint8_t)((address - DSPIC33_CONFIGURATION_BASE - 4u) / 2u);
+    return *index < sizeof(configuration_factory_defaults);
+}
+
 static uint32_t read_program_word(const Dspic33* cpu, uint32_t address) {
+    uint8_t configuration_index;
     if (address < DSPIC33_PROGRAM_LIMIT) {
         return cpu->program[address / 2u];
+    }
+    if (address == DSPIC33_CONFIGURATION_BASE ||
+        address == DSPIC33_CONFIGURATION_BASE + 2u) {
+        return 0u;
+    }
+    if (configuration_register_index(address, &configuration_index)) {
+        return cpu->configuration[4u + configuration_index * 2u];
+    }
+    if (address == 0xff0000u) {
+        return 0x001872u;
+    }
+    if (address == 0xff0002u) {
+        return 0x004002u;
     }
     if (address >= DSPIC33_PERSISTENT_PROGRAM_BASE &&
         address < DSPIC33_PERSISTENT_PROGRAM_LIMIT) {
@@ -3039,6 +3066,7 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
 }
 
 bool dspic33_initialize(Dspic33* cpu) {
+    size_t index;
     memset(cpu, 0, sizeof(*cpu));
     cpu->program = calloc(DSPIC33_PROGRAM_WORDS, sizeof(*cpu->program));
     cpu->persistent_program =
@@ -3051,10 +3079,15 @@ bool dspic33_initialize(Dspic33* cpu) {
     memset(cpu->program, 0xff, DSPIC33_PROGRAM_WORDS * sizeof(*cpu->program));
     memset(cpu->persistent_program, 0xff,
            DSPIC33_PERSISTENT_PROGRAM_WORDS * sizeof(*cpu->persistent_program));
-    for (size_t index = 0u; index < DSPIC33_WRITE_LATCH_WORDS; index++) {
+    for (index = 0u; index < DSPIC33_WRITE_LATCH_WORDS; index++) {
         cpu->write_latches[index] = 0x00ffffffu;
     }
     memset(cpu->configuration, 0xff, sizeof(cpu->configuration));
+    for (index = 0u; index < sizeof(configuration_factory_defaults) /
+                                 sizeof(configuration_factory_defaults[0]);
+         index++) {
+        cpu->configuration[4u + index * 2u] = configuration_factory_defaults[index];
+    }
     return true;
 }
 
@@ -3289,13 +3322,26 @@ void dspic33_complete_nvm(Dspic33* cpu) {
     uint32_t count;
     uint32_t index;
     if (operation == 0u) {
+        uint8_t configuration_index;
         uint32_t offset;
-        if (target < DSPIC33_CONFIGURATION_BASE ||
-            target >= DSPIC33_CONFIGURATION_BASE + DSPIC33_CONFIGURATION_SIZE) {
+        uint8_t current;
+        uint8_t latch;
+        uint8_t mask;
+        if (!configuration_register_index(target, &configuration_index)) {
             return;
         }
         offset = target - DSPIC33_CONFIGURATION_BASE;
-        cpu->configuration[offset] &= (uint8_t)cpu->nvm.latches[0];
+        mask = configuration_program_masks[configuration_index];
+        current = cpu->configuration[offset];
+        latch = (uint8_t)cpu->nvm.latches[0];
+        if (configuration_index == 0u || configuration_index == 6u) {
+            cpu->configuration[offset] =
+                (uint8_t)((current & (uint8_t)~mask) | (latch & 0x30u) |
+                          (current & latch & 0x03u));
+        } else {
+            cpu->configuration[offset] =
+                (uint8_t)((current & (uint8_t)~mask) | (latch & mask));
+        }
         return;
     }
     if (operation == 1u) {

@@ -25,7 +25,11 @@ enum {
     MOVE_KEY_55 = 0x200550u,
     MOVE_KEY_AA = 0x200aa0u,
     WRITE_NVM_KEY = 0x883970u,
-    SET_NVM_WRITE = 0xa8e729u
+    SET_NVM_WRITE = 0xa8e729u,
+    TBLRDL_W2_W3 = 0xba0192u,
+    TBLRDL_BYTE_W2_W3 = 0xba4192u,
+    TBLRDH_W2_W3 = 0xba8192u,
+    TBLRDH_BYTE_W2_W3 = 0xbac192u
 };
 
 static void expect(NvmConformance* state, bool condition, const char* name) {
@@ -65,6 +69,152 @@ static bool step_instructions(Dspic33* cpu, uint8_t count) {
         }
     }
     return true;
+}
+
+static bool read_table(Dspic33* cpu, uint32_t address, uint32_t opcode,
+                       uint16_t* value) {
+    dspic33_reset(cpu, 0u);
+    if (!dspic33_load_program_word(cpu, 0u, opcode)) {
+        return false;
+    }
+    cpu->tblpag = (uint16_t)(address >> 16u);
+    dspic33_set_working_register(cpu, 2u, (uint16_t)address);
+    dspic33_set_working_register(cpu, 3u, 0xa5a5u);
+    if (dspic33_step(cpu) != DSPIC33_RUNNING) {
+        return false;
+    }
+    *value = cpu->w[3];
+    return true;
+}
+
+static void configuration_table_view_cases(NvmConformance* state, Dspic33* cpu) {
+    static const uint32_t addresses[] = {0xf80004u, 0xf80006u, 0xf80008u, 0xf8000au,
+                                         0xf8000cu, 0xf8000eu, 0xf80010u, 0xf80012u};
+    static const uint8_t defaults[] = {0xcfu, 0xffu, 0xffu, 0xffu,
+                                       0xffu, 0xdfu, 0xcfu, 0xffu};
+    static const uint16_t loaded[] = {0xa511u, 0xb622u, 0xc733u, 0xd844u,
+                                      0xe955u, 0xfa66u, 0x8b77u, 0x9c88u};
+    static const uint32_t ids[] = {0xff0000u, 0xff0002u};
+    static const uint16_t id_values[] = {0x1872u, 0x4002u};
+    static const uint32_t reserved[] = {0xf80000u, 0xf80002u};
+    uint16_t value;
+    size_t index;
+    Dspic33 copy;
+    bool copy_initialized;
+
+    for (index = 0u; index < sizeof(addresses) / sizeof(addresses[0]); index++) {
+        uint32_t address = addresses[index];
+        expect(state,
+               dspic33_read_configuration_byte(cpu, address) == defaults[index] &&
+                   dspic33_read_configuration_byte(cpu, address + 1u) == 0xffu,
+               "configuration factory raw bytes");
+        expect(state,
+               dspic33_read_program_byte(cpu, address) == defaults[index] &&
+                   dspic33_read_program_byte(cpu, address + 1u) == 0u,
+               "configuration factory CPU bytes");
+        expect(state,
+               read_table(cpu, address, TBLRDL_W2_W3, &value) &&
+                   value == defaults[index],
+               "configuration factory TBLRDL");
+        expect(state, read_table(cpu, address, TBLRDH_W2_W3, &value) && value == 0u,
+               "configuration factory TBLRDH");
+    }
+
+    for (index = 0u; index < sizeof(addresses) / sizeof(addresses[0]); index++) {
+        uint32_t address = addresses[index];
+        expect(state, dspic33_load_configuration_word(cpu, address, loaded[index]),
+               "load raw configuration pair");
+        expect(state,
+               dspic33_read_configuration_byte(cpu, address) ==
+                       (uint8_t)loaded[index] &&
+                   dspic33_read_configuration_byte(cpu, address + 1u) ==
+                       (uint8_t)(loaded[index] >> 8u),
+               "raw configuration API preserves pair");
+        expect(state,
+               dspic33_read_program_byte(cpu, address) == (uint8_t)loaded[index] &&
+                   dspic33_read_program_byte(cpu, address + 1u) == 0u,
+               "CPU configuration view zero extends low byte");
+        expect(state,
+               read_table(cpu, address, TBLRDL_W2_W3, &value) &&
+                   value == (uint8_t)loaded[index],
+               "loaded configuration TBLRDL");
+        expect(state, read_table(cpu, address, TBLRDH_W2_W3, &value) && value == 0u,
+               "loaded configuration TBLRDH");
+    }
+
+    expect(state,
+           read_table(cpu, addresses[0], TBLRDL_BYTE_W2_W3, &value) && value == 0xa511u,
+           "configuration TBLRDL low byte");
+    expect(state,
+           read_table(cpu, addresses[0] + 1u, TBLRDL_BYTE_W2_W3, &value) &&
+               value == 0xa500u,
+           "configuration TBLRDL upper byte zero");
+    expect(state,
+           read_table(cpu, addresses[0], TBLRDH_BYTE_W2_W3, &value) && value == 0xa500u,
+           "configuration TBLRDH low byte zero");
+    expect(state,
+           read_table(cpu, addresses[0] + 1u, TBLRDH_BYTE_W2_W3, &value) &&
+               value == 0xa500u,
+           "configuration TBLRDH upper byte zero");
+
+    for (index = 0u; index < sizeof(ids) / sizeof(ids[0]); index++) {
+        uint32_t address = ids[index];
+        uint16_t expected = id_values[index];
+        expect(state,
+               read_table(cpu, address, TBLRDL_W2_W3, &value) && value == expected,
+               "device ID TBLRDL");
+        expect(state, read_table(cpu, address, TBLRDH_W2_W3, &value) && value == 0u,
+               "device ID TBLRDH");
+        expect(state,
+               read_table(cpu, address, TBLRDL_BYTE_W2_W3, &value) &&
+                   value == (uint16_t)(0xa500u | (uint8_t)expected),
+               "device ID TBLRDL low byte");
+        expect(state,
+               read_table(cpu, address + 1u, TBLRDL_BYTE_W2_W3, &value) &&
+                   value == (uint16_t)(0xa500u | (uint8_t)(expected >> 8u)),
+               "device ID TBLRDL upper byte");
+        expect(state,
+               read_table(cpu, address, TBLRDH_BYTE_W2_W3, &value) && value == 0xa500u,
+               "device ID TBLRDH low byte zero");
+        expect(state,
+               read_table(cpu, address + 1u, TBLRDH_BYTE_W2_W3, &value) &&
+                   value == 0xa500u,
+               "device ID TBLRDH upper byte zero");
+        expect(state,
+               dspic33_read_program_byte(cpu, address) == (uint8_t)expected &&
+                   dspic33_read_program_byte(cpu, address + 1u) ==
+                       (uint8_t)(expected >> 8u),
+               "device ID host program bytes");
+    }
+
+    for (index = 0u; index < sizeof(reserved) / sizeof(reserved[0]); index++) {
+        uint32_t address = reserved[index];
+        expect(state, read_table(cpu, address, TBLRDL_W2_W3, &value) && value == 0u,
+               "reserved configuration TBLRDL zero");
+        expect(state, read_table(cpu, address, TBLRDH_W2_W3, &value) && value == 0u,
+               "reserved configuration TBLRDH zero");
+        expect(state,
+               dspic33_read_program_byte(cpu, address) == 0u &&
+                   dspic33_read_program_byte(cpu, address + 1u) == 0u,
+               "reserved configuration host bytes zero");
+    }
+
+    copy_initialized = dspic33_initialize(&copy);
+    expect(state, copy_initialized, "initialize configuration copy");
+    if (copy_initialized) {
+        expect(state, dspic33_copy(&copy, cpu), "copy configuration state");
+        expect(state,
+               dspic33_read_configuration_byte(&copy, addresses[0]) ==
+                       (uint8_t)loaded[0] &&
+                   dspic33_read_configuration_byte(&copy, addresses[0] + 1u) ==
+                       (uint8_t)(loaded[0] >> 8u),
+               "copy preserves raw configuration pair");
+        expect(state,
+               read_table(&copy, addresses[0], TBLRDL_W2_W3, &value) &&
+                   value == (uint8_t)loaded[0],
+               "copy preserves CPU configuration view");
+        dspic33_destroy(&copy);
+    }
 }
 
 static void load_start_sequence(Dspic33* cpu, bool delayed_write) {
@@ -321,19 +471,67 @@ static void program_range_cases(NvmConformance* state, Dspic33* cpu) {
 static void configuration_operation_cases(NvmConformance* state, Dspic33* cpu) {
     uint32_t target = DSPIC33_CONFIGURATION_BASE + 4u;
     dspic33_reset(cpu, 0u);
-    expect(state, dspic33_load_configuration_word(cpu, target, 0xffffu),
-           "load configuration register pair");
-    cpu->write_latches[0] = 0x00a55au;
+    expect(state, dspic33_load_configuration_word(cpu, target, 0xffcfu),
+           "load FGS configuration pair");
+    cpu->write_latches[0] = 0x000000fdu;
     expect(state, start_operation(cpu, 0u, target), "configuration byte starts");
     expect(state, finish_operation(cpu), "configuration byte completes");
-    expect(state, dspic33_read_configuration_byte(cpu, target) == 0x5au,
-           "configuration target byte programmed");
+    expect(state, dspic33_read_configuration_byte(cpu, target) == 0xfdu,
+           "FGS key and protection bits replaced");
     expect(state, dspic33_read_configuration_byte(cpu, target + 1u) == 0xffu,
            "configuration adjacent byte unchanged");
+    expect(state, dspic33_read_program_byte(cpu, target) == 0xfdu,
+           "FGS CPU view follows programmed raw byte");
     expect(state, !cpu->nvm.active, "configuration completion inactive");
     expect(state, (dspic33_read_word(cpu, NVM_CONTROL) & NVM_WRITE) == 0u,
            "configuration completion clears WR");
     expect(state, interrupt_flag(cpu), "configuration completion raises NVMIF");
+    cpu->write_latches[0] = 0xffu;
+    expect(state, start_operation(cpu, 0u, target), "FGS protection rewrite starts");
+    expect(state, finish_operation(cpu), "FGS protection rewrite completes");
+    expect(state, dspic33_read_configuration_byte(cpu, target) == 0xfdu,
+           "FGS protection bit cannot change zero to one");
+
+    target = DSPIC33_CONFIGURATION_BASE + 6u;
+    dspic33_reset(cpu, 0u);
+    expect(state, dspic33_load_configuration_word(cpu, target, 0xa578u),
+           "load FOSCSEL configuration pair");
+    cpu->write_latches[0] = 0u;
+    expect(state, start_operation(cpu, 0u, target), "FOSCSEL clear starts");
+    expect(state, finish_operation(cpu), "FOSCSEL clear completes");
+    expect(state,
+           dspic33_read_configuration_byte(cpu, target) == 0x78u &&
+               dspic33_read_configuration_byte(cpu, target + 1u) == 0xa5u,
+           "FOSCSEL clear preserves unimplemented raw bits");
+    expect(state, dspic33_read_program_byte(cpu, target) == 0x78u,
+           "FOSCSEL clear updates CPU view");
+
+    cpu->write_latches[0] = 0x87u;
+    expect(state, start_operation(cpu, 0u, target), "FOSCSEL set starts");
+    expect(state, finish_operation(cpu), "FOSCSEL set completes");
+    expect(state,
+           dspic33_read_configuration_byte(cpu, target) == 0xffu &&
+               dspic33_read_configuration_byte(cpu, target + 1u) == 0xa5u,
+           "FOSCSEL supports zero-to-one reprogramming");
+    expect(state, dspic33_read_program_byte(cpu, target) == 0xffu,
+           "FOSCSEL set updates CPU view");
+
+    target = DSPIC33_CONFIGURATION_BASE + 0x10u;
+    dspic33_reset(cpu, 0u);
+    expect(state, dspic33_load_configuration_word(cpu, target, 0xffcfu),
+           "load FAS configuration pair");
+    cpu->write_latches[0] = 0xfdu;
+    expect(state, start_operation(cpu, 0u, target), "FAS programming starts");
+    expect(state, finish_operation(cpu), "FAS programming completes");
+    expect(state,
+           dspic33_read_configuration_byte(cpu, target) == 0xfdu &&
+               dspic33_read_configuration_byte(cpu, target + 1u) == 0xffu,
+           "FAS key and protection bits replaced");
+    cpu->write_latches[0] = 0xffu;
+    expect(state, start_operation(cpu, 0u, target), "FAS protection rewrite starts");
+    expect(state, finish_operation(cpu), "FAS protection rewrite completes");
+    expect(state, dspic33_read_configuration_byte(cpu, target) == 0xfdu,
+           "FAS protection bit cannot change zero to one");
 }
 
 static void pair_and_capture_cases(NvmConformance* state, Dspic33* cpu) {
@@ -560,6 +758,7 @@ int main(void) {
     bool initialized = dspic33_initialize(&cpu);
     expect(&state, initialized, "initialize NVM processor");
     if (initialized) {
+        configuration_table_view_cases(&state, &cpu);
         reset_and_access_cases(&state, &cpu);
         key_sequence_cases(&state, &cpu);
         key_byte_access_cases(&state, &cpu);
