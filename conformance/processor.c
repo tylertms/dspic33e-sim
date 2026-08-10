@@ -2253,9 +2253,8 @@ static void repeat_exception_cases(ProcessorConformance* state, Dspic33* cpu) {
 
     dspic33_write_word(cpu, 0x08c0u, 0x0010u);
     expect(state,
-           dspic33_read_word(cpu, 0x08c0u) == 0x0010u &&
-               pending_trap(cpu, 4u) != NULL && pending_trap(cpu, 4u)->delay == 2u,
-           "software MATHERR schedules delayed level source");
+           dspic33_read_word(cpu, 0x08c0u) == 0x0010u && pending_trap(cpu, 4u) == NULL,
+           "software MATHERR stores status without creating a trap source");
     dspic33_write_word(cpu, 0x08c0u, 0u);
     expect(state,
            dspic33_read_word(cpu, 0x08c0u) == 0u && pending_trap(cpu, 4u) == NULL,

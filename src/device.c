@@ -7918,6 +7918,57 @@ static bool dma_register_write_mask(uint16_t address, uint16_t* writable) {
     return false;
 }
 
+static bool interrupt_control_write(Dspic33* cpu, uint16_t base, uint16_t previous,
+                                    uint16_t requested) {
+    uint16_t current;
+    if (base == 0x08c0u) {
+        current = (uint16_t)(requested & 0xfffeu);
+        raw_write_word(cpu, base, current);
+        if ((previous & 0x0020u) != 0u && (current & 0x0020u) == 0u) {
+            raw_write_word(cpu, DMA_PWC, 0u);
+            raw_write_word(cpu, DMA_RQC, 0u);
+        }
+        if ((current & 0x0010u) == 0u) {
+            dspic33_set_math_error_source(cpu, false);
+        }
+        return true;
+    }
+    if (base == 0x08c2u) {
+        current = (uint16_t)((previous & 0x4000u) | (requested & 0xa01fu));
+        raw_write_word(cpu, base, current);
+        if ((current & 0x2000u) != 0u) {
+            raw_write_word(cpu, 0x08c6u, (uint16_t)(raw_word(cpu, 0x08c6u) | 0x0001u));
+        }
+        dspic33_set_generic_hard_trap_source(
+            cpu, (current & 0x2000u) != 0u || (raw_word(cpu, 0x08c6u) & 0x0001u) != 0u);
+        if ((current & 0x8000u) != 0u) {
+            cpu->gie_disable_deferred = 0u;
+            cpu->gie_disable_deferred_next = 0u;
+        } else if ((previous & 0x8000u) != 0u) {
+            cpu->gie_disable_deferred_next = 1u;
+        }
+        return true;
+    }
+    if (base == 0x08c4u) {
+        current = (uint16_t)(requested & 0x0070u);
+        raw_write_word(cpu, base, current);
+        dspic33_set_generic_soft_trap_source(cpu, current != 0u);
+        return true;
+    }
+    if (base == 0x08c6u) {
+        current = (uint16_t)(requested & 0x0001u);
+        raw_write_word(cpu, base, current);
+        dspic33_set_generic_hard_trap_source(
+            cpu, current != 0u || (raw_word(cpu, 0x08c2u) & 0x2000u) != 0u);
+        return true;
+    }
+    if (base == 0x08c8u) {
+        raw_write_word(cpu, base, previous);
+        return true;
+    }
+    return false;
+}
+
 static uint32_t dma_register_address(const Dspic33* cpu, uint16_t base,
                                      uint16_t low_offset) {
     return ((uint32_t)(raw_word(cpu, (uint16_t)(base + low_offset + 2u)) & 0x00ffu)
@@ -8502,33 +8553,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
             (uint16_t)((cpu->interrupt_deferred_next[group] & ~cleared) |
                        (current & ~previous));
     }
-    if (base == 0x08c8u) {
-        raw_write_word(cpu, base, previous);
-    }
-    if (base == 0x08c2u) {
-        uint16_t current = raw_word(cpu, base);
-        if ((current & 0x8000u) != 0u) {
-            cpu->gie_disable_deferred = 0u;
-            cpu->gie_disable_deferred_next = 0u;
-        } else if ((previous & 0x8000u) != 0u) {
-            cpu->gie_disable_deferred_next = 1u;
-        }
-    }
-    if (base == 0x08c0u && (previous & 0x0020u) != 0u &&
-        (raw_word(cpu, base) & 0x0020u) == 0u) {
-        raw_write_word(cpu, DMA_PWC, 0u);
-        raw_write_word(cpu, DMA_RQC, 0u);
-    }
-    if (base == 0x08c0u) {
-        uint16_t current =
-            (uint16_t)((raw_word(cpu, base) & ~0x00c0u) | (requested & 0x00c0u));
-        raw_write_word(cpu, base, current);
-        if ((current & 0x0010u) == 0u) {
-            dspic33_set_math_error_source(cpu, false);
-        } else if ((previous & 0x0010u) == 0u) {
-            dspic33_set_math_error_source(cpu, true);
-        }
-    }
+    interrupt_control_write(cpu, base, previous, requested);
     if (base == AUXILIARY_CLOCK_CONTROL) {
         uint16_t control = (uint16_t)((previous & ~AUXILIARY_CLOCK_WRITABLE) |
                                       (requested & AUXILIARY_CLOCK_WRITABLE));

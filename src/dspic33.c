@@ -2404,6 +2404,29 @@ void dspic33_set_math_error_source(Dspic33* cpu, bool active) {
     }
 }
 
+static void set_trap_source(Dspic33* cpu, uint16_t trap, uint32_t vector,
+                            uint8_t priority, uint8_t delay, bool active) {
+    size_t index;
+    if (active) {
+        schedule_soft_trap(cpu, trap, vector, priority, delay);
+        return;
+    }
+    for (index = 0u; index < 4u; index++) {
+        if (cpu->pending_soft_traps[index].active &&
+            cpu->pending_soft_traps[index].trap == trap) {
+            cpu->pending_soft_traps[index].active = false;
+        }
+    }
+}
+
+void dspic33_set_generic_hard_trap_source(Dspic33* cpu, bool active) {
+    set_trap_source(cpu, 2u, 0x000008u, 13u, 0u, active);
+}
+
+void dspic33_set_generic_soft_trap_source(Dspic33* cpu, bool active) {
+    set_trap_source(cpu, 6u, 0x000010u, 9u, 1u, active);
+}
+
 void dspic33_raise_oscillator_fail_trap(Dspic33* cpu) {
     dspic33_write_word(cpu, 0x08c0u,
                        (uint16_t)(dspic33_read_word(cpu, 0x08c0u) | 0x0002u));
@@ -2449,7 +2472,12 @@ static bool service_pending_soft_trap(Dspic33* cpu) {
         uint16_t trap = selected->trap;
         uint32_t vector = selected->vector;
         uint8_t priority = selected->priority;
-        if (trap != 4u || (dspic33_read_word(cpu, 0x08c0u) & 0x0010u) == 0u) {
+        bool source_active =
+            (trap == 2u && ((dspic33_read_word(cpu, 0x08c2u) & 0x2000u) != 0u ||
+                            (dspic33_read_word(cpu, 0x08c6u) & 0x0001u) != 0u)) ||
+            (trap == 4u && (dspic33_read_word(cpu, 0x08c0u) & 0x0010u) != 0u) ||
+            (trap == 6u && (dspic33_read_word(cpu, 0x08c4u) & 0x0070u) != 0u);
+        if (!source_active) {
             selected->active = false;
         }
         enter_trap(cpu, trap, vector, priority, 0u, cpu->pc);
