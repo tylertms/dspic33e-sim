@@ -4,7 +4,7 @@
 .global _sfr_conformance_cases
 _sfr_conformance_cases = 241
 .global _sfr_conformance_group_complete
-_sfr_conformance_group_complete = 0
+_sfr_conformance_group_complete = 1
 
 .macro sfr_case identifier, address
     mov \address, w1
