@@ -223,6 +223,91 @@ static void register_cases(CanConformance* state, Dspic33* cpu) {
     }
 }
 
+static void register_access_cases(CanConformance* state, Dspic33* cpu) {
+    static const uint16_t received_words[] = {0x0c84u, 0x0000u, 0x0004u, 0x5140u,
+                                              0x7362u, 0x0000u, 0x0000u, 0x0000u};
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint16_t base = bases[channel];
+        uint16_t receive_data = (uint16_t)(base + 0x40u);
+        uint32_t memory = (uint32_t)(0xf600u + channel * 0x100u);
+        Dspic33CanFrame input = frame(0x321u, false, false, 4u, 0x40u);
+        uint8_t index;
+        bool preserved;
+        bool active;
+        bool exact;
+
+        dspic33_reset(cpu, 0u);
+        write_memory_word(cpu, (uint16_t)(base + 0x0eu), 0x5aa5u);
+        dspic33_write_word(cpu, (uint16_t)(base + 0x0eu), 0u);
+        preserved = dspic33_read_word(cpu, (uint16_t)(base + 0x0eu)) == 0x5aa5u;
+        dspic33_write_word(cpu, (uint16_t)(base + 0x0eu), 0xffffu);
+        expect(state,
+               preserved && dspic33_read_word(cpu, (uint16_t)(base + 0x0eu)) == 0x5aa5u,
+               "error counters reject CPU writes");
+
+        dspic33_write_word(
+            cpu, base, (uint16_t)((dspic33_read_word(cpu, base) & ~0x07e0u) | 0x02e0u));
+        expect(state, (dspic33_read_word(cpu, base) & 0x07e0u) == 0x0240u,
+               "requested mode controls operating mode");
+        dspic33_write_word(cpu, base,
+                           (uint16_t)(dspic33_read_word(cpu, base) | 0x00a0u));
+        expect(state, (dspic33_read_word(cpu, base) & 0x07e0u) == 0x0240u,
+               "operating mode rejects direct writes");
+
+        dspic33_reset(cpu, 0u);
+        select_window(cpu, channel, false);
+        dspic33_write_word(cpu, (uint16_t)(base + 0x0cu), 1u);
+        dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x8989u);
+        dspic33_write_word(cpu, base,
+                           (uint16_t)(dspic33_read_word(cpu, base) | 0x1000u));
+        expect(state,
+               (dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) & 0x4848u) == 0x4040u,
+               "abort all marks pending transmissions aborted");
+        expect(state,
+               (dspic33_read_word(cpu, base) & 0x1000u) == 0u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 1u) != 0u &&
+                   interrupt_flag(cpu, event_irqs[channel]),
+               "abort all self clears and raises transmit event");
+
+        dspic33_reset(cpu, 0u);
+        configure_receive(cpu, channel, memory, 4u, 0u);
+        configure_filter(cpu, channel, 0u, 0x321u, false, 0x7ffu, true, 0u, 0u);
+        enable_filter(cpu, channel, 1u);
+        select_window(cpu, channel, false);
+        set_mode(cpu, channel, 0u);
+        dspic33_write_word(cpu, receive_data, 0xa55au);
+        expect(state, dspic33_read_word(cpu, receive_data) == 0xa55au,
+               "receive data CPU word access");
+        dspic33_write_byte(cpu, receive_data, 0x3cu);
+        dspic33_write_byte(cpu, (uint16_t)(receive_data + 1u), 0xc3u);
+        expect(state, dspic33_read_word(cpu, receive_data) == 0xc33cu,
+               "receive data CPU byte access");
+        active = dspic33_can_receive(cpu, channel, &input, 0u) &&
+                 dspic33_device_advance(cpu, 0u);
+        expect(state,
+               active && (cpu->io.can_rx_busy & (uint8_t)(1u << channel)) != 0u &&
+                   dspic33_read_word(cpu, receive_data) == received_words[0] &&
+                   memory_word(cpu, memory) == received_words[0],
+               "receive stream overrides CPU backing for DMA");
+        dspic33_write_word(cpu, receive_data, 0xc55cu);
+        expect(state, dspic33_read_word(cpu, receive_data) == received_words[0],
+               "receive stream survives concurrent CPU write");
+        expect(state, dspic33_device_advance(cpu, 32u),
+               "receive stream completion advance");
+        exact = true;
+        for (index = 0u; index < 8u; index++) {
+            exact =
+                exact && memory_word(cpu, memory + index * 2u) == received_words[index];
+        }
+        expect(state, exact, "receive stream DMA words");
+        expect(state,
+               (cpu->io.can_rx_busy & (uint8_t)(1u << channel)) == 0u &&
+                   dspic33_read_word(cpu, receive_data) == 0xc55cu,
+               "receive data backing returns after stream");
+    }
+}
+
 static void interrupt_flag_write_zero_cases(CanConformance* state, Dspic33* cpu) {
     static const uint16_t previous_words[] = {0x00efu, 0x0000u, 0x00a5u};
     uint8_t channel;
@@ -1253,6 +1338,7 @@ int main(void) {
         return 2;
     }
     register_cases(&state, &cpu);
+    register_access_cases(&state, &cpu);
     interrupt_flag_write_zero_cases(&state, &cpu);
     standard_filter_domain(&state, &cpu);
     extended_filter_cases(&state, &cpu);

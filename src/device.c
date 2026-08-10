@@ -890,6 +890,8 @@ static bool can_register_write_mask(const Dspic33* cpu, uint16_t address,
             *writable = 0xffffu;
         } else if (!window && offset >= 0x30u && offset <= 0x36u) {
             *writable = 0x8f8fu;
+        } else if (!window && offset == 0x40u) {
+            *writable = 0xffffu;
         } else if (!window && offset == 0x42u) {
             *writable = 0xffffu;
         } else {
@@ -7934,6 +7936,7 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
             return (uint8_t)(word >> ((address & 1u) * 8u));
         }
         if (offset == 0x40u && (raw_word(cpu, base) & CAN_WINDOW) == 0u &&
+            (cpu->io.can_rx_busy & (uint8_t)(1u << channel)) != 0u &&
             cpu->io.can_rx_word[channel] != 0u) {
             uint16_t word =
                 cpu->io.can_rx_words[channel][cpu->io.can_rx_word[channel] - 1u];
