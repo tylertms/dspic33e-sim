@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 25
+_system_conformance_terminal_count = 31
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -60,6 +60,18 @@ _run_system_probe:
     bra z, _system_page_zero_byte_read_probe
     cp w0, #25
     bra z, _system_page_zero_byte_write_probe
+    cp w0, #26
+    bra z, _system_eds_page_word_read_probe
+    cp w0, #27
+    bra z, _system_eds_page_word_write_probe
+    cp w0, #28
+    bra z, _system_eds_page_byte_read_probe
+    cp w0, #29
+    bra z, _system_eds_page_byte_write_probe
+    cp w0, #30
+    bra z, _system_eds_page_move_double_read_probe
+    cp w0, #31
+    bra z, _system_eds_page_move_double_write_probe
     return
 
 .global _system_sleep_probe
@@ -437,6 +449,105 @@ _system_page_zero_byte_write_probe:
 _system_page_zero_control_complete:
     bra _system_page_zero_control_complete
 
+_system_prepare_eds_page_probe:
+    mov #0x3303, w3
+    mov #0x4404, w4
+    clr w5
+    return
+
+.global _system_eds_page_word_read_probe
+_system_eds_page_word_read_probe:
+    mov #0x5000, w15
+    rcall _system_prepare_eds_page_probe
+    mov #2, w0
+    mov w0, DSRPAG
+    mov #1, w0
+    mov w0, DSWPAG
+    mov #0x9000, w1
+    mov #0xa5a5, w2
+    set_status 0x010f
+    mov [w1++], w2
+    mov #0x1111, w5
+    return
+
+.global _system_eds_page_word_write_probe
+_system_eds_page_word_write_probe:
+    mov #0x5000, w15
+    rcall _system_prepare_eds_page_probe
+    mov #1, w0
+    mov w0, DSRPAG
+    mov #2, w0
+    mov w0, DSWPAG
+    mov #0x9000, w1
+    mov #0xa5a5, w2
+    set_status 0x010f
+    mov w2, [w1++]
+    mov #0x1111, w5
+    return
+
+.global _system_eds_page_byte_read_probe
+_system_eds_page_byte_read_probe:
+    mov #0x5000, w15
+    rcall _system_prepare_eds_page_probe
+    mov #2, w0
+    mov w0, DSRPAG
+    mov #1, w0
+    mov w0, DSWPAG
+    mov #0x9001, w1
+    mov #0xa5a5, w2
+    set_status 0x010f
+    mov.b [w1++], w2
+    mov #0x1111, w5
+    return
+
+.global _system_eds_page_byte_write_probe
+_system_eds_page_byte_write_probe:
+    mov #0x5000, w15
+    rcall _system_prepare_eds_page_probe
+    mov #1, w0
+    mov w0, DSRPAG
+    mov #2, w0
+    mov w0, DSWPAG
+    mov #0x9001, w1
+    mov #0xa5a5, w2
+    set_status 0x010f
+    mov.b w2, [w1++]
+    mov #0x1111, w5
+    return
+
+.global _system_eds_page_move_double_read_probe
+_system_eds_page_move_double_read_probe:
+    mov #0x5000, w15
+    rcall _system_prepare_eds_page_probe
+    mov #2, w0
+    mov w0, DSRPAG
+    mov #1, w0
+    mov w0, DSWPAG
+    mov #0x1101, w1
+    mov #0x9000, w4
+    mov #0xa5a5, w2
+    mov #0x5a5a, w3
+    set_status 0x010f
+    mov.d [w4], w2
+    mov #0x1111, w5
+    return
+
+.global _system_eds_page_move_double_write_probe
+_system_eds_page_move_double_write_probe:
+    mov #0x5000, w15
+    rcall _system_prepare_eds_page_probe
+    mov #1, w0
+    mov w0, DSRPAG
+    mov #2, w0
+    mov w0, DSWPAG
+    mov #0x9000, w1
+    mov #0x5555, w2
+    mov #0x6666, w3
+    set_status 0x010f
+    mov.d w2, [w1++]
+    mov #0x1111, w5
+    return
+
 .global __AddressError
 __AddressError:
     mov w1, _system_address_trap_state
@@ -511,6 +622,26 @@ __AddressError:
     mov w0, _system_page_zero_trap_state+20
     mov DSWPAG, w0
     mov w0, _system_page_zero_trap_state+22
+    mov w1, _system_eds_page_trap_state
+    mov w2, _system_eds_page_trap_state+2
+    mov w3, _system_eds_page_trap_state+4
+    mov w4, _system_eds_page_trap_state+6
+    mov w5, _system_eds_page_trap_state+8
+    mov INTCON1, w0
+    mov w0, _system_eds_page_trap_state+10
+    mov [w15-4], w0
+    mov w0, _system_eds_page_trap_state+12
+    mov [w15-2], w0
+    mov w0, _system_eds_page_trap_state+14
+    mov INTTREG, w0
+    mov w0, _system_eds_page_trap_state+16
+    mov SR, w0
+    mov w0, _system_eds_page_trap_state+18
+    mov w15, _system_eds_page_trap_state+20
+    mov DSRPAG, w0
+    mov w0, _system_eds_page_trap_state+22
+    mov DSWPAG, w0
+    mov w0, _system_eds_page_trap_state+24
 .global _system_address_trap_complete
 _system_address_trap_complete:
     bra _system_address_trap_complete

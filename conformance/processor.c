@@ -44,6 +44,8 @@ enum {
     OPCODE_MOV_BYTE_W2_W1_POST_INCREMENT = 0x785882u,
     OPCODE_MOV_W1_W4_LITERAL_2 = 0x980211u,
     OPCODE_MOV_W4_LITERAL_2_W2 = 0x900114u,
+    OPCODE_MOV_0X9000_W2 = 0x848002u,
+    OPCODE_MOV_W2_0X9000 = 0x8c8002u,
     OPCODE_MOV_DOUBLE_W2_W1_POST_INCREMENT = 0xbe9882u,
     OPCODE_MOV_DOUBLE_W1_POST_INCREMENT_W2 = 0xbe0131u,
     OPCODE_ADD_W2_W4_POST_INCREMENT_W5_POST_DECREMENT = 0x4112b4u,
@@ -468,6 +470,192 @@ static void page_zero_address_error_cases(ProcessorConformance* state, Dspic33* 
     dspic33_write_word(cpu, 0x9000u, 0x1234u);
     expect(state, dspic33_read_word(cpu, 0x9000u) == 0x1234u && !cpu->address_error,
            "DMA raw access bypasses page-zero CPU trap");
+    cpu->instruction_active = false;
+    cpu->io.dma_transfer_active = false;
+}
+
+static void unimplemented_data_page_address_error_cases(ProcessorConformance* state,
+                                                        Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    dspic33_write_word(cpu, 0x9000u, 0x5a5au);
+    cpu->dsrpag = 1u;
+    cpu->w[1] = 0x9000u;
+    cpu->w[2] = 0xa5a5u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "implemented EDS page word read completes");
+    expect(state, cpu->w[1] == 0x9002u && cpu->w[2] == 0x5a5au,
+           "implemented EDS page word read updates result and pointer");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W2_W1_POST_INCREMENT);
+    dspic33_write_word(cpu, 0x9000u, 0x5a5au);
+    cpu->dswpag = 1u;
+    cpu->w[1] = 0x9000u;
+    cpu->w[2] = 0xa5a5u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "implemented EDS page word write completes");
+    expect(state, cpu->w[1] == 0x9002u && dspic33_read_word(cpu, 0x9000u) == 0xa5a5u,
+           "implemented EDS page word write updates memory and pointer");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_0X9000_W2);
+    dspic33_write_word(cpu, 0x9000u, 0x5a5au);
+    cpu->dsrpag = 1u;
+    cpu->w[2] = 0xa5a5u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "direct high-file page-one read completes");
+    expect(state, cpu->w[2] == 0x5a5au && !cpu->address_error,
+           "direct high-file page-one read uses implemented memory");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W2_0X9000);
+    dspic33_write_word(cpu, 0x9000u, 0x5a5au);
+    cpu->dswpag = 1u;
+    cpu->w[2] = 0xa5a5u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "direct high-file page-one write completes");
+    expect(state, dspic33_read_word(cpu, 0x9000u) == 0xa5a5u && !cpu->address_error,
+           "direct high-file page-one write uses implemented memory");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_0X9000_W2);
+    dspic33_write_word(cpu, 0x11000u, 0x5a5au);
+    cpu->dsrpag = 2u;
+    cpu->w[2] = 0xa5a5u;
+    expect_address_trap(state, cpu, "direct unimplemented EDS page read traps");
+    expect(state, cpu->w[2] == 0u && dspic33_read_word(cpu, 0x11000u) == 0x5a5au,
+           "direct unimplemented EDS read returns zero");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W2_0X9000);
+    dspic33_write_word(cpu, 0x11000u, 0x5a5au);
+    cpu->dswpag = 2u;
+    cpu->w[2] = 0xa5a5u;
+    expect_address_trap(state, cpu, "direct unimplemented EDS page write traps");
+    expect(state, cpu->w[2] == 0xa5a5u && dspic33_read_word(cpu, 0x11000u) == 0x5a5au,
+           "direct unimplemented EDS write preserves source and backing");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    dspic33_write_word(cpu, 0x11000u, 0x5a5au);
+    cpu->dsrpag = 2u;
+    cpu->dswpag = 1u;
+    cpu->w[1] = 0x9000u;
+    cpu->w[2] = 0xa5a5u;
+    expect_address_trap(state, cpu, "unimplemented EDS page word read traps");
+    expect(state,
+           cpu->w[1] == 0x9002u && cpu->w[2] == 0u && cpu->dsrpag == 2u &&
+               cpu->dswpag == 1u && dspic33_read_word(cpu, 0x11000u) == 0x5a5au,
+           "unimplemented EDS word read returns zero and completes pointer update");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W2_W1_POST_INCREMENT);
+    dspic33_write_word(cpu, 0x11000u, 0x5a5au);
+    cpu->dsrpag = 1u;
+    cpu->dswpag = 2u;
+    cpu->w[1] = 0x9000u;
+    cpu->w[2] = 0xa5a5u;
+    expect_address_trap(state, cpu, "unimplemented EDS page word write traps");
+    expect(state,
+           cpu->w[1] == 0x9002u && cpu->w[2] == 0xa5a5u && cpu->dsrpag == 1u &&
+               cpu->dswpag == 2u && dspic33_read_word(cpu, 0x11000u) == 0x5a5au,
+           "unimplemented EDS word write preserves source and raw backing");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_BYTE_W1_POST_INCREMENT_W2);
+    dspic33_write_word(cpu, 0x11000u, 0x5a5au);
+    cpu->dsrpag = 2u;
+    cpu->w[1] = 0x9001u;
+    cpu->w[2] = 0xa5a5u;
+    expect_address_trap(state, cpu, "unimplemented EDS page byte read traps");
+    expect(state,
+           cpu->w[1] == 0x9002u && cpu->w[2] == 0xa500u &&
+               dspic33_read_word(cpu, 0x11000u) == 0x5a5au,
+           "unimplemented EDS byte read returns zero and updates pointer");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_BYTE_W2_W1_POST_INCREMENT);
+    dspic33_write_word(cpu, 0x11000u, 0x5a5au);
+    cpu->dswpag = 2u;
+    cpu->w[1] = 0x9001u;
+    cpu->w[2] = 0xa5a5u;
+    expect_address_trap(state, cpu, "unimplemented EDS page byte write traps");
+    expect(state,
+           cpu->w[1] == 0x9002u && cpu->w[2] == 0xa5a5u &&
+               dspic33_read_word(cpu, 0x11000u) == 0x5a5au,
+           "unimplemented EDS byte write preserves source and raw backing");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W4_LITERAL_2_W2);
+    dspic33_write_word(cpu, 0x11000u, 0x5a5au);
+    cpu->dsrpag = 2u;
+    cpu->w[2] = 0xa5a5u;
+    cpu->w[4] = 0x8ffeu;
+    expect_address_trap(state, cpu, "unimplemented EDS literal-offset read traps");
+    expect(state, cpu->w[2] == 0u && cpu->w[4] == 0x8ffeu,
+           "unimplemented EDS literal read returns zero without pointer update");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_W4_LITERAL_2);
+    dspic33_write_word(cpu, 0x11000u, 0x5a5au);
+    cpu->dswpag = 2u;
+    cpu->w[1] = 0xa5a5u;
+    cpu->w[4] = 0x8ffeu;
+    expect_address_trap(state, cpu, "unimplemented EDS literal-offset write traps");
+    expect(state, dspic33_read_word(cpu, 0x11000u) == 0x5a5au && cpu->w[4] == 0x8ffeu,
+           "unimplemented EDS literal write preserves backing and pointer");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_DOUBLE_W1_POST_INCREMENT_W2);
+    dspic33_write_word(cpu, 0x11000u, 0x1122u);
+    dspic33_write_word(cpu, 0x11002u, 0x3344u);
+    cpu->dsrpag = 2u;
+    cpu->w[1] = 0x9000u;
+    cpu->w[2] = 0xa5a5u;
+    cpu->w[3] = 0x5a5au;
+    expect_address_trap(state, cpu, "unimplemented EDS MOV.D read traps");
+    expect(state,
+           cpu->w[1] == 0x9004u && cpu->w[2] == 0u && cpu->w[3] == 0u &&
+               dspic33_read_word(cpu, 0x11000u) == 0x1122u &&
+               dspic33_read_word(cpu, 0x11002u) == 0x3344u,
+           "unimplemented EDS MOV.D read returns two zero words");
+
+    dspic33_reset(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_DOUBLE_W2_W1_POST_INCREMENT);
+    dspic33_write_word(cpu, 0x11000u, 0x1122u);
+    dspic33_write_word(cpu, 0x11002u, 0x3344u);
+    cpu->dswpag = 2u;
+    cpu->w[1] = 0x9000u;
+    cpu->w[2] = 0x5555u;
+    cpu->w[3] = 0x6666u;
+    expect_address_trap(state, cpu, "unimplemented EDS MOV.D write traps");
+    expect(state,
+           cpu->w[1] == 0x9004u && cpu->w[2] == 0x5555u && cpu->w[3] == 0x6666u &&
+               dspic33_read_word(cpu, 0x11000u) == 0x1122u &&
+               dspic33_read_word(cpu, 0x11002u) == 0x3344u,
+           "unimplemented EDS MOV.D write inhibits both words");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x11000u, 0x1234u);
+    expect(state, dspic33_read_word(cpu, 0x11000u) == 0x1234u && !cpu->address_error,
+           "debugger raw access bypasses unimplemented EDS trap");
+
+    cpu->instruction_active = true;
+    cpu->io.dma_transfer_active = true;
+    dspic33_write_word(cpu, 0x11000u, 0x5678u);
+    expect(state, dspic33_read_word(cpu, 0x11000u) == 0x5678u && !cpu->address_error,
+           "DMA raw access bypasses unimplemented EDS trap");
     cpu->instruction_active = false;
     cpu->io.dma_transfer_active = false;
 }
@@ -904,6 +1092,7 @@ int main(void) {
         address_error_cases(&state, &cpu);
         data_map_address_error_cases(&state, &cpu);
         page_zero_address_error_cases(&state, &cpu);
+        unimplemented_data_page_address_error_cases(&state, &cpu);
         w15_write_cases(&state, &cpu);
         valid_stack_frame_cases(&state, &cpu);
         invalid_lnk_case(&state, &cpu);

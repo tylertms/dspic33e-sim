@@ -33,8 +33,7 @@ static bool check_data_alignment(Dspic33* cpu, uint32_t address) {
 }
 
 static bool check_data_implementation(Dspic33* cpu, uint32_t address, uint8_t width) {
-    bool first_page = address < 0x10000u && (address & PSV_ADDRESS) == 0u;
-    bool implemented = !first_page || address + width <= 0xe000u;
+    bool implemented = (address & PSV_ADDRESS) != 0u || address + width <= 0xe000u;
     if (!cpu->instruction_active || cpu->io.dma_transfer_active || implemented) {
         return true;
     }
