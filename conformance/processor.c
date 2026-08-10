@@ -3331,6 +3331,131 @@ static void dsp_prefetch_address_error_cases(ProcessorConformance* state,
            "DSP alignment fault rolls back accumulator and working state");
 }
 
+static void dsp_program_hole_prefetch_cases(ProcessorConformance* state, Dspic33* cpu) {
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_X_NO_UPDATE_Y_W10_DECREMENT);
+    expect(state, dspic33_load_program_word(cpu, 0x557feu, 0x001357u),
+           "load last implemented DSP PSV word");
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 5u, 4u);
+    dspic33_set_working_register(cpu, 8u, 0xd7feu);
+    dspic33_set_working_register(cpu, 10u, 0x9002u);
+    dspic33_write_word(cpu, 0x9002u, 0x6789u);
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 0x020au;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->accumulator[0] == 12 &&
+               cpu->w[4] == 0x1357u && cpu->w[5] == 0x6789u && cpu->w[8] == 0xd7feu &&
+               cpu->w[10] == 0x9000u && cpu->dsrpag == 0x020au && cpu->cycles == 5u &&
+               cpu->trap_count == 0u,
+           "last implemented DSP PSV word remains readable");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_X_NO_UPDATE_Y_W10_DECREMENT);
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 5u, 4u);
+    dspic33_set_working_register(cpu, 8u, 0xd800u);
+    dspic33_set_working_register(cpu, 10u, 0x9002u);
+    dspic33_write_word(cpu, 0x9002u, 0x6789u);
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 0x020au;
+    expect_address_trap(state, cpu, "DSP X program-hole access traps");
+    expect(state,
+           cpu->accumulator[0] == 12 && cpu->w[4] == 0u && cpu->w[5] == 0x6789u &&
+               cpu->w[8] == 0xd800u && cpu->w[10] == 0x9000u &&
+               cpu->dsrpag == 0x020au && cpu->cycles == 5u && cpu->w[15] == 0x5004u,
+           "DSP X program-hole access preserves completed state and PSV timing");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_X_W8_INCREMENT_Y_W10_DECREMENT);
+    expect(state, dspic33_load_program_word(cpu, 0x557feu, 0x002468u),
+           "load DSP PSV post-update boundary word");
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 5u, 4u);
+    dspic33_set_working_register(cpu, 8u, 0xd7feu);
+    dspic33_set_working_register(cpu, 10u, 0x9002u);
+    dspic33_write_word(cpu, 0x9002u, 0x789au);
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 0x020au;
+    expect_address_trap(state, cpu, "DSP X post-update into program hole traps");
+    expect(state,
+           cpu->accumulator[0] == 12 && cpu->w[4] == 0x2468u && cpu->w[5] == 0x789au &&
+               cpu->w[8] == 0xd800u && cpu->w[10] == 0x9000u &&
+               cpu->dsrpag == 0x020au && cpu->cycles == 5u,
+           "DSP X post-update trap completes fetches and pointer state");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_X_NO_UPDATE_Y_W10_DECREMENT);
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 5u, 4u);
+    dspic33_set_working_register(cpu, 8u, 0xd800u);
+    dspic33_set_working_register(cpu, 10u, 0xe000u);
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 0x020au;
+    expect_address_trap(state, cpu, "DSP program-hole and invalid Y faults coalesce");
+    expect(state,
+           cpu->accumulator[0] == 12 && cpu->w[4] == 0u && cpu->w[5] == 0u &&
+               cpu->w[8] == 0xd800u && cpu->w[10] == 0xdffeu && cpu->cycles == 5u &&
+               cpu->trap_count == 1u,
+           "DSP dual fault completes once with PSV timing");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_CLEAR_DIRECT);
+    dspic33_set_working_register(cpu, 8u, 0xd800u);
+    cpu->accumulator[0] = 0x123456u;
+    cpu->accumulator[1] = 0x654321u;
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 0x020au;
+    expect_address_trap(state, cpu, "CLR with DSP X program-hole prefetch traps");
+    expect(state,
+           cpu->accumulator[0] == 0 && cpu->accumulator[1] == 0x654321 &&
+               cpu->w[4] == 0u && cpu->w[8] == 0xd806u && cpu->w[13] == 0x0065u &&
+               cpu->cycles == 5u,
+           "CLR program-hole trap completes accumulator prefetch and write-back");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_MOVSAC_WRITE_BACK);
+    dspic33_set_working_register(cpu, 4u, 1u);
+    dspic33_set_working_register(cpu, 5u, 1u);
+    dspic33_set_working_register(cpu, 9u, 0xd800u);
+    dspic33_set_working_register(cpu, 11u, 0x9000u);
+    dspic33_set_working_register(cpu, 12u, 0u);
+    dspic33_set_working_register(cpu, 13u, 0x5100u);
+    dspic33_write_word(cpu, 0x5100u, 0xa55au);
+    dspic33_write_word(cpu, 0x9000u, 0x2468u);
+    cpu->accumulator[0] = 0x123456u;
+    cpu->accumulator[1] = 0x654321u;
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 0x020au;
+    expect_address_trap(state, cpu, "MOVSAC with DSP X program-hole prefetch traps");
+    expect(state,
+           cpu->accumulator[0] == 0x123456 && cpu->accumulator[1] == 0x654321 &&
+               cpu->w[4] == 0u && cpu->w[5] == 0x2468u && cpu->w[9] == 0xd7feu &&
+               cpu->w[13] == 0x5102u && dspic33_read_word(cpu, 0x5100u) == 0xa55au &&
+               cpu->cycles == 5u,
+           "MOVSAC program-hole trap completes lanes and inhibits memory write-back");
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_ED);
+    dspic33_set_working_register(cpu, 4u, 3u);
+    dspic33_set_working_register(cpu, 8u, 0xd800u);
+    dspic33_set_working_register(cpu, 10u, 0x9002u);
+    dspic33_write_word(cpu, 0x9002u, 2u);
+    cpu->corcon = 0x0021u;
+    cpu->dsrpag = 0x020au;
+    expect_address_trap(state, cpu, "ED with DSP X program-hole prefetch traps");
+    expect(state,
+           cpu->accumulator[0] == 9 && cpu->w[4] == 0xfffeu && cpu->w[8] == 0xd802u &&
+               cpu->w[10] == 0x9000u && cpu->cycles == 5u,
+           "ED program-hole trap completes distance and pointer state");
+}
+
 static void move_double_stack_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
     reset_processor_conformance(cpu, 0u);
     cpu->stop_on_trap = true;
@@ -3934,6 +4059,7 @@ int main(void) {
         psv_timing_cases(&state, &cpu);
         dsp_x_prefetch_page_cases(&state, &cpu);
         dsp_prefetch_address_error_cases(&state, &cpu);
+        dsp_program_hole_prefetch_cases(&state, &cpu);
         call_stack_timing_case(&state, &cpu);
         move_double_stack_timing_cases(&state, &cpu);
         return_instruction_cycle_cases(&state, &cpu);

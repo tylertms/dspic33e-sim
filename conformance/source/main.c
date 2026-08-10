@@ -45,6 +45,7 @@ volatile uint16_t system_sfr_wait_state[6] __attribute__((near));
 volatile uint16_t system_pseudo_linear_state[12] __attribute__((near));
 volatile uint16_t system_dsp_x_prefetch_state[10] __attribute__((near));
 volatile uint16_t system_dsp_x_fault_state[15] __attribute__((near));
+volatile uint16_t system_dsp_x_program_fault_state[15] __attribute__((near));
 
 extern uint16_t run_arithmetic_conformance(volatile uint16_t* results);
 extern uint16_t run_adc_conformance(volatile uint16_t* results);

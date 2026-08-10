@@ -1973,7 +1973,15 @@ static bool validate_dsp_prefetch_alignment(Dspic33* cpu, uint8_t operation,
 }
 
 static bool dsp_x_address_valid(uint16_t address, uint16_t page) {
-    return address < 0x8000u || page >= 0x0200u || (page == 1u && address <= 0x8ffeu);
+    if (address < 0x8000u) {
+        return true;
+    }
+    if (page >= 0x0200u) {
+        uint32_t program_address =
+            mapped_data_address(address, page, false) & PSV_ADDRESS_MASK;
+        return !program_target_requires_address_error(program_address);
+    }
+    return page == 1u && address <= 0x8ffeu;
 }
 
 static bool dsp_y_address_valid(uint16_t address) {
@@ -2082,6 +2090,9 @@ static bool execute_dsp_prefetches(Dspic33* cpu, uint8_t x_operation,
     if (!resolve_dsp_prefetch(cpu, x_operation, false, &x) ||
         !resolve_dsp_prefetch(cpu, y_operation, true, &y)) {
         return false;
+    }
+    if (x.present && (x.address & PSV_ADDRESS) != 0u) {
+        cpu->psv_read = true;
     }
     *x_value = x.present && x.access_valid ? read_data_word(cpu, x.address) : 0u;
     *y_value = y.present && y.access_valid ? read_data_word(cpu, y.address) : 0u;
