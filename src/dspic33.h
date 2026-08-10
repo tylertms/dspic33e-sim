@@ -19,7 +19,7 @@
     ((DSPIC33_WRITE_LATCH_LIMIT - DSPIC33_WRITE_LATCH_BASE) / 2u)
 #define DSPIC33_CONFIGURATION_BASE 0xf80000u
 #define DSPIC33_CONFIGURATION_SIZE 0x20u
-#define DSPIC33_IRQ_COUNT 133u
+#define DSPIC33_IRQ_COUNT 142u
 #define DSPIC33_IRQ_GROUP_COUNT ((DSPIC33_IRQ_COUNT + 15u) / 16u)
 #define DSPIC33_UART_COUNT 4u
 #define DSPIC33_UART_FIFO_SIZE 4u
@@ -41,6 +41,8 @@
 #define DSPIC33_USB_PACKET_QUEUE_SIZE 64u
 #define DSPIC33_USB_PENDING_COUNT 64u
 #define DSPIC33_PMP_QUEUE_SIZE 8192u
+#define DSPIC33_INPUT_CAPTURE_COUNT 16u
+#define DSPIC33_INPUT_CAPTURE_FIFO_SIZE 4u
 
 typedef enum {
     DSPIC33_EVENT_INTERRUPT,
@@ -61,6 +63,7 @@ typedef enum {
     DSPIC33_EVENT_NVM,
     DSPIC33_EVENT_CRC,
     DSPIC33_EVENT_PMP,
+    DSPIC33_EVENT_INPUT_CAPTURE,
     DSPIC33_EVENT_AUX_PLL
 } Dspic33EventType;
 
@@ -165,6 +168,20 @@ typedef struct {
     bool active;
     bool completing_active;
 } Dspic33Pmp;
+
+typedef struct {
+    uint16_t words[DSPIC33_INPUT_CAPTURE_FIFO_SIZE];
+    uint8_t head;
+    uint8_t count;
+} Dspic33InputCaptureFifo;
+
+typedef struct {
+    Dspic33InputCaptureFifo fifo[DSPIC33_INPUT_CAPTURE_COUNT];
+    uint16_t timer[DSPIC33_INPUT_CAPTURE_COUNT];
+    uint16_t generation[DSPIC33_INPUT_CAPTURE_COUNT];
+    uint16_t input_high;
+    uint8_t interrupt_count[DSPIC33_INPUT_CAPTURE_COUNT];
+} Dspic33InputCapture;
 
 typedef enum {
     DSPIC33_I2C_START,
@@ -371,6 +388,7 @@ typedef struct {
     bool dma_transfer_active;
     Dspic33Crc crc;
     Dspic33Pmp pmp;
+    Dspic33InputCapture input_capture;
     Dspic33UsbPending usb_pending[DSPIC33_USB_PENDING_COUNT];
     Dspic33UsbQueue usb_tx;
     uint8_t usb_next_bank[DSPIC33_USB_ENDPOINT_COUNT][2];
@@ -536,6 +554,9 @@ bool dspic33_i2c_transmit(Dspic33* cpu, uint8_t channel, Dspic33I2cTransfer* tra
 bool dspic33_dma_request(Dspic33* cpu, uint8_t request, uint16_t indirect_address,
                          uint64_t delay);
 bool dspic33_pmp_transmit(Dspic33* cpu, Dspic33PmpTransfer* transfer);
+bool dspic33_input_capture_input(Dspic33* cpu, uint8_t channel, bool high,
+                                 uint64_t delay);
+bool dspic33_input_capture_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t delay);
 bool dspic33_timer_pulse(Dspic33* cpu, uint8_t timer, uint32_t pulses, uint64_t delay);
 bool dspic33_timer_gate(Dspic33* cpu, uint8_t timer, bool high, uint64_t delay);
 bool dspic33_adc_trigger(Dspic33* cpu, uint8_t module, uint8_t source, uint64_t delay);
