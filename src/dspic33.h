@@ -455,6 +455,7 @@ typedef struct {
     uint8_t adc_dma_sample[DSPIC33_ADC_COUNT][DSPIC33_ADC_CHANNEL_COUNT];
     uint8_t adc_mux_b;
     uint16_t gpio[DSPIC33_GPIO_PORT_COUNT];
+    uint16_t gpio_driven[DSPIC33_GPIO_PORT_COUNT];
     uint16_t pwm[DSPIC33_PWM_OUTPUT_COUNT];
     uint16_t pwm_master_counter[2];
     uint16_t pwm_counter[DSPIC33_PWM_COUNT][2];
@@ -772,6 +773,9 @@ bool dspic33_usb_bus(Dspic33* cpu, Dspic33UsbBusEvent event, uint16_t value,
                      uint64_t delay);
 bool dspic33_usb_transmit(Dspic33* cpu, Dspic33UsbPacket* packet);
 void dspic33_adc_input(Dspic33* cpu, uint8_t channel, uint16_t value);
+bool dspic33_gpio_drive(Dspic33* cpu, uint8_t port, uint16_t value, uint16_t mask);
+bool dspic33_gpio_release(Dspic33* cpu, uint8_t port, uint16_t mask);
+bool dspic33_gpio_pin(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* high);
 void dspic33_gpio_input(Dspic33* cpu, uint8_t port, uint16_t value);
 void dspic33_set_async_events(Dspic33* cpu, bool enabled);
 void dspic33_check_stack_address(Dspic33* cpu, int32_t address, bool wrapped,

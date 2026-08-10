@@ -796,27 +796,49 @@ static bool apply_register(Runner* runner, Dspic33* cpu, const FirmwareImage* im
     return true;
 }
 
+typedef enum {
+    PIN_LEVEL_INVALID,
+    PIN_LEVEL_LOW,
+    PIN_LEVEL_HIGH,
+    PIN_LEVEL_FLOATING
+} PinLevel;
+
+static PinLevel pin_level(const char* value) {
+    if (value == NULL) {
+        return PIN_LEVEL_INVALID;
+    }
+    if (strcmp(value, "3.3V") == 0 || strcmp(value, "1") == 0 ||
+        strcmp(value, "high") == 0 || strcmp(value, "HIGH") == 0) {
+        return PIN_LEVEL_HIGH;
+    }
+    if (strcmp(value, "0V") == 0 || strcmp(value, "0") == 0 ||
+        strcmp(value, "low") == 0 || strcmp(value, "LOW") == 0) {
+        return PIN_LEVEL_LOW;
+    }
+    if (strcmp(value, "Z") == 0 || strcmp(value, "z") == 0 ||
+        strcmp(value, "floating") == 0 || strcmp(value, "released") == 0) {
+        return PIN_LEVEL_FLOATING;
+    }
+    return PIN_LEVEL_INVALID;
+}
+
 static bool apply_pin(Dspic33* cpu, const JsonValue* specification, char* error,
                       size_t error_size) {
     const char* name = json_string(json_get(specification, "name"));
     const char* value = json_string(json_get(specification, "value"));
     uint8_t port;
     uint8_t bit;
-    uint16_t pins;
-    bool high;
-    if (!pin_index(name, &port, &bit) || value == NULL) {
+    uint16_t mask;
+    PinLevel level = pin_level(value);
+    if (!pin_index(name, &port, &bit) || level == PIN_LEVEL_INVALID) {
         snprintf(error, error_size, "invalid pin stimulus");
         return false;
     }
-    high = strcmp(value, "3.3V") == 0 || strcmp(value, "1") == 0;
-    pins = cpu->io.gpio[port];
-    if (high) {
-        pins |= (uint16_t)(1u << bit);
-    } else {
-        pins &= (uint16_t)~(1u << bit);
+    mask = (uint16_t)(1u << bit);
+    if (level == PIN_LEVEL_FLOATING) {
+        return dspic33_gpio_release(cpu, port, mask);
     }
-    dspic33_gpio_input(cpu, port, pins);
-    return true;
+    return dspic33_gpio_drive(cpu, port, level == PIN_LEVEL_HIGH ? mask : 0u, mask);
 }
 
 static bool event_number(const JsonValue* specification, const char* name,
@@ -1248,8 +1270,8 @@ static bool parts_enable_async_events(const StepParts* parts) {
 static void reset_pair(Runner* runner) {
     dspic33_reset(&runner->reference, 0u);
     dspic33_reset(&runner->candidate, 0u);
-    dspic33_gpio_input(&runner->reference, 1u, 1u);
-    dspic33_gpio_input(&runner->candidate, 1u, 1u);
+    dspic33_gpio_drive(&runner->reference, 1u, 1u, 1u);
+    dspic33_gpio_drive(&runner->candidate, 1u, 1u, 1u);
 }
 
 static bool save_pristine_pair(Runner* runner, char* error, size_t error_size) {
@@ -2043,17 +2065,32 @@ static bool compare_pins(Runner* runner, const StepParts* parts, size_t* failure
         uint8_t bit;
         bool reference_high;
         bool candidate_high;
+        bool reference_driven;
+        bool candidate_driven;
         bool matched;
         if (!pin_index(name, &port, &bit)) {
             snprintf(error, error_size, "invalid pin observation");
             return false;
         }
-        reference_high = (runner->reference.io.gpio[port] & (1u << bit)) != 0u;
-        candidate_high = (runner->candidate.io.gpio[port] & (1u << bit)) != 0u;
+        if (!dspic33_gpio_pin(&runner->reference, port, bit, &reference_high) ||
+            !dspic33_gpio_pin(&runner->candidate, port, bit, &candidate_high)) {
+            snprintf(error, error_size, "invalid pin observation");
+            return false;
+        }
+        reference_driven = (runner->reference.io.gpio_driven[port] & (1u << bit)) != 0u;
+        candidate_driven = (runner->candidate.io.gpio_driven[port] & (1u << bit)) != 0u;
         matched = reference_high == candidate_high;
         if (expected != NULL) {
-            bool expected_high = strcmp(expected, "3.3V") == 0;
-            matched = matched && reference_high == expected_high;
+            PinLevel level = pin_level(expected);
+            if (level == PIN_LEVEL_INVALID) {
+                snprintf(error, error_size, "invalid expected pin level");
+                return false;
+            }
+            if (level == PIN_LEVEL_FLOATING) {
+                matched = matched && !reference_driven && !candidate_driven;
+            } else {
+                matched = matched && reference_high == (level == PIN_LEVEL_HIGH);
+            }
         }
         runner->comparisons++;
         if (!matched) {
