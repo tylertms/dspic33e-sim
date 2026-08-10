@@ -2866,14 +2866,14 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
 
 static void perform_warm_reset(Dspic33* cpu, uint16_t cause, bool illegal) {
     static const uint16_t preserved_addresses[] = {
-        0x0620u, 0x0622u, 0x0624u, 0x0626u, 0x0728u, 0x0742u,
-        0x0744u, 0x0746u, 0x0748u, 0x074eu, 0x0758u, 0x075au,
+        0x0626u, 0x0728u, 0x0742u, 0x0744u, 0x0746u, 0x0748u, 0x074eu, 0x0758u, 0x075au,
     };
     uint16_t
         preserved_values[sizeof(preserved_addresses) / sizeof(preserved_addresses[0])];
     uint16_t adc[DSPIC33_ADC_CHANNEL_COUNT];
     uint16_t gpio[DSPIC33_GPIO_PORT_COUNT];
     uint16_t comparator_input[DSPIC33_COMPARATOR_COUNT][DSPIC33_COMPARATOR_INPUT_COUNT];
+    Dspic33Rtcc rtcc = cpu->io.rtcc;
     uint64_t instructions = cpu->instructions;
     uint64_t cycles = cpu->cycles;
     uint64_t device_cycles = cpu->device_cycles;
@@ -2915,6 +2915,8 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, bool illegal) {
     memcpy(cpu->io.adc, adc, sizeof(adc));
     memcpy(cpu->io.gpio, gpio, sizeof(gpio));
     memcpy(cpu->io.comparator.input, comparator_input, sizeof(comparator_input));
+    memcpy(cpu->io.rtcc.calendar, rtcc.calendar, sizeof(rtcc.calendar));
+    cpu->io.rtcc.prescaler = rtcc.prescaler;
     cpu->io.uart_cts = uart_cts;
     cpu->io.spi_selected = spi_selected;
     cpu->io.timer_gate = timer_gate;
@@ -3184,7 +3186,7 @@ void dspic33_write_word(Dspic33* cpu, uint32_t address, uint16_t value) {
     }
 }
 
-uint8_t dspic33_read_byte(Dspic33* cpu, uint32_t address) {
+static uint8_t read_byte_value(Dspic33* cpu, uint32_t address) {
     uint16_t value;
     uint8_t accumulator;
     uint8_t accumulator_byte;
@@ -3263,14 +3265,30 @@ uint8_t dspic33_read_byte(Dspic33* cpu, uint32_t address) {
     return (uint8_t)(value >> ((address & 1u) * 8u));
 }
 
+uint8_t dspic33_read_byte(Dspic33* cpu, uint32_t address) {
+    uint8_t value;
+    cpu->io.cpu_read_address = address;
+    cpu->io.cpu_read_width = 1u;
+    cpu->io.cpu_read_valid = true;
+    value = read_byte_value(cpu, address);
+    cpu->io.cpu_read_valid = false;
+    return value;
+}
+
 uint16_t dspic33_read_word(Dspic33* cpu, uint32_t address) {
+    uint16_t low;
+    uint16_t high;
     if (!check_data_alignment(cpu, address) ||
         !check_data_implementation(cpu, address, 2u) ||
         (cpu->address_error && !cpu->address_error_access_allowed)) {
         return 0u;
     }
-    uint16_t low = dspic33_read_byte(cpu, address);
-    uint16_t high = dspic33_read_byte(cpu, address + 1u);
+    cpu->io.cpu_read_address = address;
+    cpu->io.cpu_read_width = 2u;
+    cpu->io.cpu_read_valid = true;
+    low = read_byte_value(cpu, address);
+    high = read_byte_value(cpu, address + 1u);
+    cpu->io.cpu_read_valid = false;
     return (uint16_t)(low | (high << 8u));
 }
 
@@ -3358,6 +3376,8 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     control = cpu->corcon;
     cpu->pc += 2u;
     cpu->instructions++;
+    cpu->current_instruction_cycles =
+        (uint8_t)instruction_cycles(cpu, opcode, instruction_pc);
     cpu->instruction_active = true;
     cpu->address_error = false;
     cpu->address_error_access_allowed = false;
@@ -3365,6 +3385,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     cpu->address_error_control_state_completed = false;
     if (!execute(cpu, opcode) && !cpu->address_error && !cpu->illegal_reset) {
         cpu->instruction_active = false;
+        cpu->current_instruction_cycles = 0u;
         cpu->pc -= 2u;
         if (cpu->stop_reason == DSPIC33_RUNNING) {
             cpu->unsupported_opcode = opcode;
@@ -3373,6 +3394,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         return cpu->stop_reason;
     }
     cpu->instruction_active = false;
+    cpu->current_instruction_cycles = 0u;
     if (cpu->illegal_reset) {
         return cpu->stop_reason;
     }

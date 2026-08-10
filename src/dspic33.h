@@ -69,6 +69,7 @@ typedef enum {
     DSPIC33_EVENT_INPUT_CAPTURE,
     DSPIC33_EVENT_OUTPUT_COMPARE,
     DSPIC33_EVENT_COMPARATOR,
+    DSPIC33_EVENT_RTCC,
     DSPIC33_EVENT_AUX_PLL
 } Dspic33EventType;
 
@@ -210,6 +211,15 @@ typedef struct {
     uint8_t last_read_cout;
     bool pmd_disabled;
 } Dspic33Comparator;
+
+typedef struct {
+    uint16_t calendar[4];
+    uint16_t alarm[3];
+    uint16_t prescaler;
+    uint16_t pmd_generation;
+    bool alarm_output;
+    bool pmd_disabled;
+} Dspic33Rtcc;
 
 typedef enum {
     DSPIC33_I2C_START,
@@ -412,6 +422,9 @@ typedef struct {
     uint16_t cpu_write_previous;
     uint8_t cpu_write_width;
     bool cpu_write_valid;
+    uint32_t cpu_read_address;
+    uint8_t cpu_read_width;
+    bool cpu_read_valid;
     uint8_t dma_transfer_width;
     bool dma_transfer_active;
     Dspic33Crc crc;
@@ -419,6 +432,7 @@ typedef struct {
     Dspic33InputCapture input_capture;
     Dspic33OutputCompare output_compare;
     Dspic33Comparator comparator;
+    Dspic33Rtcc rtcc;
     Dspic33UsbPending usb_pending[DSPIC33_USB_PENDING_COUNT];
     Dspic33UsbQueue usb_tx;
     uint8_t usb_next_bank[DSPIC33_USB_ENDPOINT_COUNT][2];
@@ -523,6 +537,7 @@ typedef struct {
     Dspic33PendingSoftTrap pending_soft_traps[4];
     uint32_t address_error_return;
     bool instruction_active;
+    uint8_t current_instruction_cycles;
     bool address_error;
     bool address_error_access_allowed;
     bool address_error_working_state_completed;
@@ -594,6 +609,8 @@ bool dspic33_comparator_input(Dspic33* cpu, uint8_t comparator,
                               uint64_t delay);
 bool dspic33_comparator_output(const Dspic33* cpu, uint8_t comparator, bool* high);
 bool dspic33_comparator_pin(const Dspic33* cpu, uint8_t pin, bool* high);
+bool dspic33_rtcc_clock(Dspic33* cpu, uint32_t edges, uint64_t delay);
+bool dspic33_rtcc_output(const Dspic33* cpu, bool* high);
 bool dspic33_timer_pulse(Dspic33* cpu, uint8_t timer, uint32_t pulses, uint64_t delay);
 bool dspic33_timer_gate(Dspic33* cpu, uint8_t timer, bool high, uint64_t delay);
 bool dspic33_adc_trigger(Dspic33* cpu, uint8_t module, uint8_t source, uint64_t delay);

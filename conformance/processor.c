@@ -1931,8 +1931,7 @@ static void interrupt_stack_timing_case(ProcessorConformance* state, Dspic33* cp
 
 static void illegal_condition_reset_cases(ProcessorConformance* state, Dspic33* cpu) {
     static const uint16_t preserved_addresses[] = {
-        0x0620u, 0x0622u, 0x0624u, 0x0626u, 0x0742u, 0x0744u,
-        0x0746u, 0x0748u, 0x074eu, 0x0758u, 0x075au,
+        0x0742u, 0x0744u, 0x0746u, 0x0748u, 0x074eu, 0x0758u, 0x075au,
     };
     uint16_t
         preserved_values[sizeof(preserved_addresses) / sizeof(preserved_addresses[0])];
