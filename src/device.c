@@ -5,6 +5,8 @@
 
 #include "i2c.h"
 
+static void complete_oscillator_switch(Dspic33* cpu, uint32_t generation);
+
 static const uint16_t timer_registers[DSPIC33_TIMER_COUNT] = {
     0x0100u, 0x0106u, 0x010au, 0x0114u, 0x0118u, 0x0122u, 0x0126u, 0x0130u, 0x0134u};
 static const uint16_t timer_periods[DSPIC33_TIMER_COUNT] = {
@@ -125,6 +127,16 @@ enum {
     NVM_WRITE = 0x8000u,
     NVM_WRITE_ENABLE = 0x4000u,
     NVM_WRITE_ERROR = 0x2000u,
+    OSCILLATOR_CONTROL = 0x0742u,
+    OSCILLATOR_CURRENT_MASK = 0x7000u,
+    OSCILLATOR_REQUEST_MASK = 0x0700u,
+    OSCILLATOR_CLOCK_LOCK = 0x0080u,
+    OSCILLATOR_IO_LOCK = 0x0040u,
+    OSCILLATOR_PLL_LOCK = 0x0020u,
+    OSCILLATOR_CLOCK_FAIL = 0x0008u,
+    OSCILLATOR_LP_ENABLE = 0x0002u,
+    OSCILLATOR_SWITCH_ENABLE = 0x0001u,
+    OSCILLATOR_SWITCH_DELAY = 32u,
     CRC_CONTROL = 0x0640u,
     CRC_CONFIG = 0x0642u,
     CRC_POLYNOMIAL_LOW = 0x0644u,
@@ -7245,6 +7257,9 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
     case DSPIC33_EVENT_AUX_PLL:
         complete_auxiliary_pll(cpu, event->value);
         break;
+    case DSPIC33_EVENT_OSCILLATOR:
+        complete_oscillator_switch(cpu, event->value);
+        break;
     }
 }
 
@@ -7744,56 +7759,147 @@ static void update_spi_register(Dspic33* cpu, uint16_t address, uint16_t previou
     }
 }
 
-static void update_oscillator(Dspic33* cpu, uint16_t address) {
-    uint16_t control;
-    if (address != 0x0742u) {
+static void abort_oscillator_switch(Dspic33* cpu) {
+    uint16_t control = raw_word(cpu, OSCILLATOR_CONTROL);
+    if (cpu->oscillator.active) {
+        cpu->oscillator.generation++;
+        cpu->oscillator.active = false;
+    }
+    raw_write_word(cpu, OSCILLATOR_CONTROL,
+                   (uint16_t)(control & ~OSCILLATOR_SWITCH_ENABLE));
+}
+
+void dspic33_device_abort_oscillator_switch(Dspic33* cpu) {
+    abort_oscillator_switch(cpu);
+}
+
+static bool oscillator_pll_mode(uint16_t control) {
+    uint16_t source = (uint16_t)((control & OSCILLATOR_REQUEST_MASK) >> 8u);
+    return source == 1u || source == 3u;
+}
+
+static void start_oscillator_switch(Dspic33* cpu, uint16_t control) {
+    cpu->oscillator.generation++;
+    cpu->oscillator.active = true;
+    raw_write_word(cpu, OSCILLATOR_CONTROL,
+                   (uint16_t)((control | OSCILLATOR_SWITCH_ENABLE) &
+                              ~OSCILLATOR_PLL_LOCK & ~OSCILLATOR_CLOCK_FAIL));
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_OSCILLATOR, 0u, cpu->oscillator.generation,
+                          OSCILLATOR_SWITCH_DELAY)) {
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    }
+}
+
+static void complete_oscillator_switch(Dspic33* cpu, uint32_t generation) {
+    uint16_t control = raw_word(cpu, OSCILLATOR_CONTROL);
+    if (!cpu->oscillator.active || generation != cpu->oscillator.generation ||
+        (control & OSCILLATOR_SWITCH_ENABLE) == 0u) {
         return;
     }
-    control = raw_word(cpu, 0x0742u);
-    if ((control & 0x0001u) != 0u) {
-        control =
-            (uint16_t)((control & 0x8fffu) | ((control & 0x0700u) << 4u) | 0x0020u);
-        control &= (uint16_t)~0x0001u;
-        raw_write_word(cpu, 0x0742u, control);
+    control =
+        (uint16_t)((control & ~OSCILLATOR_CURRENT_MASK & ~OSCILLATOR_SWITCH_ENABLE) |
+                   ((control & OSCILLATOR_REQUEST_MASK) << 4u));
+    if (oscillator_pll_mode(control)) {
+        control |= OSCILLATOR_PLL_LOCK;
     }
+    cpu->oscillator.active = false;
+    raw_write_word(cpu, OSCILLATOR_CONTROL, control);
+}
+
+static bool oscillator_key_authorized(const Dspic33* cpu, uint8_t lane, uint8_t stage) {
+    return cpu->oscillator.key_stage == stage && cpu->oscillator.key_lane == lane &&
+           cpu->instructions == cpu->oscillator.key_instruction + 1u &&
+           cpu->interrupt_count == cpu->oscillator.key_interrupt_count &&
+           cpu->trap_count == cpu->oscillator.key_trap_count;
+}
+
+static void oscillator_key_start(Dspic33* cpu, uint8_t lane) {
+    cpu->oscillator.key_stage = 1u;
+    cpu->oscillator.key_lane = lane;
+    cpu->oscillator.key_instruction = cpu->instructions;
+    cpu->oscillator.key_interrupt_count = cpu->interrupt_count;
+    cpu->oscillator.key_trap_count = cpu->trap_count;
+}
+
+static void apply_oscillator_high(Dspic33* cpu, uint16_t previous, uint16_t requested) {
+    uint16_t control = (uint16_t)((previous & ~OSCILLATOR_REQUEST_MASK) |
+                                  (requested & OSCILLATOR_REQUEST_MASK));
+    if (cpu->oscillator.active) {
+        abort_oscillator_switch(cpu);
+        control &= (uint16_t)~OSCILLATOR_SWITCH_ENABLE;
+    }
+    raw_write_word(cpu, OSCILLATOR_CONTROL, control);
+}
+
+static void apply_oscillator_low(Dspic33* cpu, uint16_t previous, uint16_t requested) {
+    uint16_t control = previous;
+    control = (uint16_t)((control & ~(OSCILLATOR_IO_LOCK | OSCILLATOR_LP_ENABLE)) |
+                         (requested & (OSCILLATOR_IO_LOCK | OSCILLATOR_LP_ENABLE)));
+    control |= (uint16_t)(requested & OSCILLATOR_CLOCK_LOCK);
+    if ((requested & OSCILLATOR_CLOCK_FAIL) != 0u) {
+        control |= OSCILLATOR_CLOCK_FAIL;
+        dspic33_raise_oscillator_fail_trap(cpu);
+    } else {
+        control &= (uint16_t)~OSCILLATOR_CLOCK_FAIL;
+    }
+    if ((requested & OSCILLATOR_SWITCH_ENABLE) == 0u) {
+        raw_write_word(cpu, OSCILLATOR_CONTROL, control);
+        abort_oscillator_switch(cpu);
+        return;
+    }
+    if ((control & OSCILLATOR_CLOCK_LOCK) != 0u ||
+        ((control & OSCILLATOR_CURRENT_MASK) >> 4u) ==
+            (control & OSCILLATOR_REQUEST_MASK)) {
+        raw_write_word(cpu, OSCILLATOR_CONTROL,
+                       (uint16_t)(control & ~OSCILLATOR_SWITCH_ENABLE));
+        abort_oscillator_switch(cpu);
+        return;
+    }
+    if (cpu->oscillator.active) {
+        abort_oscillator_switch(cpu);
+    }
+    start_oscillator_switch(cpu, control);
 }
 
 static bool protect_oscillator_write(Dspic33* cpu, uint16_t address,
                                      uint16_t previous) {
+    uint16_t requested;
+    uint8_t lane;
     uint8_t value;
     uint8_t first;
     uint8_t second;
-    uint8_t ready;
-
-    if (address != 0x0742u && address != 0x0743u) {
+    if (address != OSCILLATOR_CONTROL && address != OSCILLATOR_CONTROL + 1u) {
         return false;
     }
+    requested = raw_word(cpu, OSCILLATOR_CONTROL);
+    lane = (uint8_t)(address - OSCILLATOR_CONTROL);
     value = cpu->data[address];
-    if (address == 0x0742u) {
-        first = 0x46u;
-        second = 0x57u;
-        ready = 2u;
-    } else {
-        first = 0x78u;
-        second = 0x9au;
-        ready = 4u;
+    first = lane == 0u ? 0x46u : 0x78u;
+    second = lane == 0u ? 0x57u : 0x9au;
+    raw_write_word(cpu, OSCILLATOR_CONTROL, previous);
+    if (!cpu->instruction_active || cpu->io.cpu_write_width != 1u) {
+        cpu->oscillator.key_stage = 0u;
+        return true;
+    }
+    if (oscillator_key_authorized(cpu, lane, 2u)) {
+        cpu->oscillator.key_stage = 0u;
+        if (lane == 0u) {
+            apply_oscillator_low(cpu, previous, requested);
+        } else {
+            apply_oscillator_high(cpu, previous, requested);
+        }
+        return true;
+    }
+    if (oscillator_key_authorized(cpu, lane, 1u) && value == second) {
+        cpu->oscillator.key_stage = 2u;
+        cpu->oscillator.key_instruction = cpu->instructions;
+        return true;
     }
     if (value == first) {
-        cpu->io.oscillator_unlock = (uint8_t)(ready - 1u);
-        raw_write_word(cpu, 0x0742u, previous);
+        oscillator_key_start(cpu, lane);
         return true;
     }
-    if (cpu->io.oscillator_unlock == ready - 1u && value == second) {
-        cpu->io.oscillator_unlock = ready;
-        raw_write_word(cpu, 0x0742u, previous);
-        return true;
-    }
-    if (cpu->io.oscillator_unlock == ready) {
-        cpu->io.oscillator_unlock = 0u;
-        return false;
-    }
-    cpu->io.oscillator_unlock = 0u;
-    raw_write_word(cpu, 0x0742u, previous);
+    cpu->oscillator.key_stage = 0u;
     return true;
 }
 
@@ -8453,7 +8559,6 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     update_rtcc_register(cpu, address, previous);
     update_qei_register(cpu, base, previous, requested);
     update_dci_register(cpu, base, previous);
-    update_oscillator(cpu, base);
     update_uart_register(cpu, base, previous, requested);
     if (base == NVM_KEY && (cpu->io.cpu_write_width == 2u || address == NVM_KEY)) {
         update_nvm_key(cpu, requested);
@@ -9038,7 +9143,8 @@ void dspic33_device_reset(Dspic33* cpu) {
     dspic33_i2c_reset(cpu);
     usb_reset_registers(cpu);
     raw_write_word(cpu, USB_PWRC, 0u);
-    raw_write_word(cpu, 0x0742u, 0x3020u);
+    raw_write_word(cpu, OSCILLATOR_CONTROL,
+                   (uint16_t)((cpu->configuration[6u] & 0x07u) << 8u));
     raw_write_word(cpu, 0x08c2u, 0x8000u);
     raw_write_word(cpu, 0x08c8u, 0u);
     raw_write_word(cpu, DMA_LCA, 0x000fu);

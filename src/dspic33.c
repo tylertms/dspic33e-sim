@@ -2404,6 +2404,12 @@ void dspic33_set_math_error_source(Dspic33* cpu, bool active) {
     }
 }
 
+void dspic33_raise_oscillator_fail_trap(Dspic33* cpu) {
+    dspic33_write_word(cpu, 0x08c0u,
+                       (uint16_t)(dspic33_read_word(cpu, 0x08c0u) | 0x0002u));
+    schedule_soft_trap(cpu, 0u, 0x000004u, 15u, 0u);
+}
+
 static void schedule_stack_error(Dspic33* cpu, uint8_t delay) {
     dspic33_write_word(cpu, 0x08c0u,
                        (uint16_t)(dspic33_read_word(cpu, 0x08c0u) | 0x0004u));
@@ -3081,6 +3087,7 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         uint16_t rcon = (uint16_t)(dspic33_read_word(cpu, 0x0740u) & ~0x001cu);
         if ((opcode & 1u) == 0u) {
             rcon |= 0x0008u;
+            dspic33_device_abort_oscillator_switch(cpu);
             cpu->power_state = DSPIC33_POWER_SLEEP;
             cpu->stop_reason = DSPIC33_SLEEPING;
         } else {
@@ -3235,6 +3242,7 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
     cpu->events.count = 0u;
     cpu->events.sequence = 0u;
     memset(&cpu->nvm, 0, sizeof(cpu->nvm));
+    memset(&cpu->oscillator, 0, sizeof(cpu->oscillator));
     for (size_t index = 0u; index < DSPIC33_WRITE_LATCH_WORDS; index++) {
         cpu->write_latches[index] = 0x00ffffffu;
     }
@@ -3263,6 +3271,7 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, bool illegal) {
     uint64_t illegal_reset_count = cpu->illegal_reset_count + (illegal ? 1u : 0u);
     uint64_t trap_count = cpu->trap_count;
     uint64_t auxiliary_pll_remaining = 0u;
+    uint64_t oscillator_remaining = 0u;
     uint16_t reset_interrupt = cpu->last_interrupt;
     uint16_t rcon = dspic33_read_word(cpu, 0x0740u);
     uint8_t uart_cts = cpu->io.uart_cts;
@@ -3276,7 +3285,9 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, bool illegal) {
     bool async_events_enabled = cpu->async_events_enabled;
     bool stop_on_trap = cpu->stop_on_trap;
     bool auxiliary_pll_pending = false;
+    bool oscillator_pending = false;
     uint32_t auxiliary_pll_generation = cpu->io.auxiliary_pll_generation;
+    Dspic33Oscillator oscillator = cpu->oscillator;
     size_t index;
     for (index = 0u; index < cpu->events.count; index++) {
         const Dspic33Event* event = &cpu->events.items[index];
@@ -3285,6 +3296,16 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, bool illegal) {
             auxiliary_pll_remaining =
                 event->cycle > device_cycles ? event->cycle - device_cycles : 0u;
             auxiliary_pll_pending = true;
+            break;
+        }
+    }
+    for (index = 0u; index < cpu->events.count; index++) {
+        const Dspic33Event* event = &cpu->events.items[index];
+        if (event->type == DSPIC33_EVENT_OSCILLATOR &&
+            event->value == oscillator.generation) {
+            oscillator_remaining =
+                event->cycle > device_cycles ? event->cycle - device_cycles : 0u;
+            oscillator_pending = true;
             break;
         }
     }
@@ -3337,6 +3358,13 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, bool illegal) {
     if (auxiliary_pll_pending &&
         !dspic33_schedule(cpu, DSPIC33_EVENT_AUX_PLL, 0u, auxiliary_pll_generation,
                           auxiliary_pll_remaining)) {
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    }
+    oscillator.key_stage = 0u;
+    cpu->oscillator = oscillator;
+    if (oscillator_pending &&
+        !dspic33_schedule(cpu, DSPIC33_EVENT_OSCILLATOR, 0u, oscillator.generation,
+                          oscillator_remaining)) {
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
     cpu->interrupt_count = interrupt_count;

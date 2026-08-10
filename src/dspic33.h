@@ -75,7 +75,8 @@ typedef enum {
     DSPIC33_EVENT_RTCC,
     DSPIC33_EVENT_QEI,
     DSPIC33_EVENT_DCI,
-    DSPIC33_EVENT_AUX_PLL
+    DSPIC33_EVENT_AUX_PLL,
+    DSPIC33_EVENT_OSCILLATOR
 } Dspic33EventType;
 
 typedef struct {
@@ -512,7 +513,6 @@ typedef struct {
     bool usb_host_pending;
     bool usb_host_attached;
     uint32_t auxiliary_pll_generation;
-    uint8_t oscillator_unlock;
 } Dspic33Io;
 
 typedef enum {
@@ -554,6 +554,16 @@ typedef struct {
     uint8_t key_stage;
     bool active;
 } Dspic33Nvm;
+
+typedef struct {
+    uint64_t key_interrupt_count;
+    uint64_t key_trap_count;
+    uint64_t key_instruction;
+    uint32_t generation;
+    uint8_t key_lane;
+    uint8_t key_stage;
+    bool active;
+} Dspic33Oscillator;
 
 typedef struct {
     uint32_t* program;
@@ -624,6 +634,7 @@ typedef struct {
     uint8_t gie_disable_deferred;
     uint8_t gie_disable_deferred_next;
     Dspic33Nvm nvm;
+    Dspic33Oscillator oscillator;
     Dspic33EventQueue events;
     uint8_t qei_inputs[DSPIC33_QEI_COUNT];
     Dspic33Io io;
@@ -649,6 +660,7 @@ bool dspic33_schedule(Dspic33* cpu, Dspic33EventType type, uint16_t source,
                       uint32_t value, uint64_t delay);
 void dspic33_reorder_events(Dspic33* cpu);
 void dspic33_raise_interrupt(Dspic33* cpu, uint16_t irq);
+void dspic33_raise_oscillator_fail_trap(Dspic33* cpu);
 bool dspic33_uart_receive(Dspic33* cpu, uint8_t channel, uint8_t value, uint64_t delay);
 bool dspic33_uart_receive_frame(Dspic33* cpu, uint8_t channel,
                                 const Dspic33UartFrame* frame, uint64_t delay);
