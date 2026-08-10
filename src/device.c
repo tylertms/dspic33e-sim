@@ -2565,7 +2565,6 @@ static void comparator_set_output(Dspic33* cpu, uint8_t comparator, bool high) {
     }
     raw_write_word(cpu, base, control);
     comparator_refresh_status(cpu);
-    input_capture_pps_source(cpu, (uint8_t)(comparator + 1u), high);
     if (rising) {
         input_capture_pulse_source(
             cpu, (uint8_t)(INPUT_CAPTURE_SYNC_COMPARATOR_FIRST + comparator));
@@ -3259,6 +3258,109 @@ static void qei_timer_pulse(Dspic33* cpu, uint8_t channel, int8_t direction,
     }
 }
 
+static bool qei_ranges_intersect(uint32_t first_low, uint32_t first_high,
+                                 uint32_t second_low, uint32_t second_high) {
+    return first_low <= second_high && second_low <= first_high;
+}
+
+static bool qei_path_hits_range(uint32_t start, int8_t direction, uint64_t ticks,
+                                uint32_t low, uint32_t high) {
+    uint32_t distance;
+    uint32_t end;
+    if (ticks == 0u) {
+        return false;
+    }
+    if (ticks > UINT32_MAX) {
+        return true;
+    }
+    distance = (uint32_t)ticks;
+    end = direction > 0 ? start + distance : start - distance;
+    if (direction > 0) {
+        if (end > start) {
+            return qei_ranges_intersect(start + 1u, end, low, high);
+        }
+        return (start != UINT32_MAX &&
+                qei_ranges_intersect(start + 1u, UINT32_MAX, low, high)) ||
+               qei_ranges_intersect(0u, end, low, high);
+    }
+    if (end < start) {
+        return qei_ranges_intersect(end, start - 1u, low, high);
+    }
+    return (start != 0u && qei_ranges_intersect(0u, start - 1u, low, high)) ||
+           qei_ranges_intersect(end, UINT32_MAX, low, high);
+}
+
+static bool qei_path_crosses_value(uint32_t start, int8_t direction, uint64_t ticks,
+                                   uint32_t value) {
+    return qei_path_hits_range(start, direction, ticks, value, value);
+}
+
+static bool qei_path_crosses_word(uint16_t start, int8_t direction, uint64_t ticks,
+                                  uint16_t value) {
+    uint16_t end;
+    if (ticks == 0u) {
+        return false;
+    }
+    if (ticks > UINT16_MAX) {
+        return true;
+    }
+    end = direction > 0 ? (uint16_t)(start + (uint16_t)ticks)
+                        : (uint16_t)(start - (uint16_t)ticks);
+    if (direction > 0) {
+        return end > start ? value > start && value <= end
+                           : value > start || value <= end;
+    }
+    return end < start ? value >= end && value < start : value < start || value >= end;
+}
+
+static void qei_advance_timer_ticks(Dspic33* cpu, uint8_t channel, int8_t direction,
+                                    bool position_gate, uint8_t logical,
+                                    uint64_t ticks) {
+    uint16_t base = qei_bases[channel];
+    uint32_t delta = (uint32_t)ticks;
+    if (ticks == 0u) {
+        return;
+    }
+    if (position_gate) {
+        uint32_t position = qei_read_counter(cpu, channel, QEI_POSITION_LOW);
+        uint32_t position_key = position ^ 0x80000000u;
+        uint32_t greater_equal =
+            qei_read_counter(cpu, channel, QEI_GREATER_EQUAL_LOW) ^ 0x80000000u;
+        uint32_t less_equal =
+            qei_read_counter(cpu, channel, QEI_LESS_EQUAL_LOW) ^ 0x80000000u;
+        uint16_t velocity = raw_word(cpu, (uint16_t)(base + QEI_VELOCITY));
+        if (qei_path_crosses_value(position, direction, ticks,
+                                   direction > 0 ? 0x80000000u : 0x7fffffffu)) {
+            qei_raise_status(cpu, channel, QEI_STATUS_POSITION_OVERFLOW);
+        }
+        if (qei_path_hits_range(position_key, direction, ticks, greater_equal,
+                                UINT32_MAX)) {
+            qei_raise_status(cpu, channel, QEI_STATUS_HIGH_COMPARE);
+        }
+        if (qei_path_hits_range(position_key, direction, ticks, 0u, less_equal)) {
+            qei_raise_status(cpu, channel, QEI_STATUS_LOW_COMPARE);
+        }
+        if (qei_path_crosses_word(velocity, direction, ticks,
+                                  direction > 0 ? 0x8000u : 0x7fffu)) {
+            qei_raise_status(cpu, channel, QEI_STATUS_VELOCITY_OVERFLOW);
+        }
+        qei_write_counter(cpu, channel, QEI_POSITION_LOW,
+                          direction > 0 ? position + delta : position - delta);
+        raw_write_word(cpu, (uint16_t)(base + QEI_VELOCITY),
+                       direction > 0 ? (uint16_t)(velocity + delta)
+                                     : (uint16_t)(velocity - delta));
+        cpu->io.qei.direction[channel] = direction;
+    }
+    if ((logical & 4u) != 0u) {
+        uint32_t index = qei_read_counter(cpu, channel, QEI_INDEX_LOW);
+        qei_write_counter(cpu, channel, QEI_INDEX_LOW,
+                          direction > 0 ? index + delta : index - delta);
+    }
+    if ((logical & 8u) != 0u) {
+        qei_update_interval(cpu, channel, ticks);
+    }
+}
+
 static uint8_t qei_logical_inputs(const Dspic33* cpu, uint8_t channel) {
     uint16_t io_control = raw_word(cpu, (uint16_t)(qei_bases[channel] + 2u));
     uint8_t inputs = cpu->io.qei.filtered_inputs[channel] & QEI_IO_INPUT_MASK;
@@ -3315,10 +3417,6 @@ static void qei_apply_filtered_inputs(Dspic33* cpu, uint8_t channel) {
     uint8_t logical = qei_logical_inputs(cpu, channel);
     uint8_t mode = (uint8_t)(control & QEI_CONTROL_COUNT_MODE_MASK);
     cpu->io.qei.logical_inputs[channel] = logical;
-    input_capture_pps_source(cpu, (uint8_t)(8u + channel * 2u),
-                             (cpu->io.qei.filtered_inputs[channel] & 4u) != 0u);
-    input_capture_pps_source(cpu, (uint8_t)(9u + channel * 2u),
-                             (cpu->io.qei.filtered_inputs[channel] & 8u) != 0u);
     if ((logical & 4u) == 0u) {
         cpu->io.qei.index_latched[channel] = false;
     }
@@ -3434,9 +3532,7 @@ static void qei_advance_counters(Dspic33* cpu, uint8_t channel, uint16_t control
         bool gate_allows =
             (control & QEI_CONTROL_GATE_ENABLE) == 0u || (logical & 2u) != 0u;
         int8_t direction = (control & QEI_CONTROL_DIRECTION_INVERT) != 0u ? -1 : 1;
-        while (ticks-- != 0u) {
-            qei_timer_pulse(cpu, channel, direction, gate_allows, logical);
-        }
+        qei_advance_timer_ticks(cpu, channel, direction, gate_allows, logical, ticks);
     } else if ((control & QEI_CONTROL_COUNT_MODE_MASK) < 2u) {
         qei_update_interval(cpu, channel, ticks);
     }
@@ -3580,10 +3676,15 @@ static void update_qei_register(Dspic33* cpu, uint16_t address, uint16_t previou
             cpu->io.qei.filtered_inputs[channel] = cpu->qei_inputs[channel];
         }
         cpu->io.qei.logical_inputs[channel] = qei_logical_inputs(cpu, channel);
+        if (offset == 0u) {
+            qei_refresh_comparisons(cpu, channel);
+        }
     } else if (offset == QEI_POSITION_LOW) {
         raw_write_word(
             cpu, (uint16_t)(qei_bases[channel] + QEI_POSITION_HIGH),
             raw_word(cpu, (uint16_t)(qei_bases[channel] + QEI_POSITION_HOLD)));
+        qei_refresh_comparisons(cpu, channel);
+    } else if (offset == QEI_POSITION_HIGH) {
         qei_refresh_comparisons(cpu, channel);
     } else if (offset == QEI_INDEX_LOW) {
         raw_write_word(cpu, (uint16_t)(qei_bases[channel] + QEI_INDEX_HIGH),

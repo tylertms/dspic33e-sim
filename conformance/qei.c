@@ -141,9 +141,11 @@ static void register_cases(QeiConformance* state, Dspic33* cpu) {
         dspic33_write_word(cpu, base, UINT16_MAX);
         expect(state, dspic33_read_word(cpu, base) == 0xbf7fu,
                "QEI control access mask");
+        dspic33_write_word(cpu, base, 0u);
         dspic33_write_word(cpu, (uint16_t)(base + 2u), UINT16_MAX);
         expect(state, dspic33_read_word(cpu, (uint16_t)(base + 2u)) == 0xffffu,
                "QEI IO control keeps live inputs read only");
+        dspic33_write_word(cpu, (uint16_t)(base + 4u), 0u);
         dspic33_write_word(cpu, (uint16_t)(base + 4u), UINT16_MAX);
         expect(state, dspic33_read_word(cpu, (uint16_t)(base + 4u)) == 0x1555u,
                "QEI status flags cannot be software set");
@@ -193,6 +195,12 @@ static void quadrature_cases(QeiConformance* state, Dspic33* cpu) {
         expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x0cu)) == 4u,
                "QEI velocity follows quadrature count");
         expect(state,
+               input(cpu, channel, DSPIC33_QEI_INDEX, true) &&
+                   (read_counter(cpu, (uint16_t)(base + 0x16u)) == 1u ||
+                    read_counter(cpu, (uint16_t)(base + 0x16u)) == UINT32_MAX),
+               "B1 quadrature Index counter stays within its direction ambiguity");
+        input(cpu, channel, DSPIC33_QEI_INDEX, false);
+        expect(state,
                input(cpu, channel, DSPIC33_QEI_PHASE_B, true) &&
                    input(cpu, channel, DSPIC33_QEI_PHASE_A, true) &&
                    input(cpu, channel, DSPIC33_QEI_PHASE_B, false) &&
@@ -212,6 +220,123 @@ static void quadrature_cases(QeiConformance* state, Dspic33* cpu) {
         dspic33_write_word(cpu, (uint16_t)(base + 2u), QEI_PHASE_A_POLARITY);
         expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 2u)) & 1u) == 0u,
                "QEI polarity controls live phase status");
+    }
+}
+
+static void quadrature_transition_cases(QeiConformance* state, Dspic33* cpu) {
+    static const int8_t actions[16] = {0, 1, -1, 0,  -1, 0,  0, 1,
+                                       1, 0, 0,  -1, 0,  -1, 1, 0};
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_QEI_COUNT; channel++) {
+        uint16_t base = bases[channel];
+        uint8_t previous;
+        for (previous = 0u; previous < 4u; previous++) {
+            uint8_t current;
+            for (current = 0u; current < 4u; current++) {
+                int8_t action = actions[(previous << 2u) | current];
+                uint32_t expected = (uint32_t)(0x100 + action);
+                reset_qei(cpu);
+                set_open_comparison_window(cpu, base);
+                dspic33_write_word(cpu, (uint16_t)(base + 2u), QEI_FILTER_ENABLE);
+                input(cpu, channel, DSPIC33_QEI_PHASE_A, (previous & 1u) != 0u);
+                input(cpu, channel, DSPIC33_QEI_PHASE_B, (previous & 2u) != 0u);
+                dspic33_device_advance(cpu, 3u);
+                write_counter(cpu, (uint16_t)(base + 6u), (uint16_t)(base + 0x0au),
+                              0x100u);
+                dspic33_write_word(cpu, base, QEI_ENABLE);
+                input(cpu, channel, DSPIC33_QEI_PHASE_A, (current & 1u) != 0u);
+                input(cpu, channel, DSPIC33_QEI_PHASE_B, (current & 2u) != 0u);
+                expect(state,
+                       dspic33_device_advance(cpu, 3u) &&
+                           read_counter(cpu, (uint16_t)(base + 6u)) == expected &&
+                           dspic33_read_word(cpu, (uint16_t)(base + 0x0cu)) ==
+                               (uint16_t)action,
+                       "QEI quadrature truth table transition");
+            }
+        }
+    }
+}
+
+static void divider_polarity_output_cases(QeiConformance* state, Dspic33* cpu) {
+    static const uint16_t counter_divisors[8] = {1u, 2u, 4u, 8u, 16u, 32u, 64u, 128u};
+    static const uint16_t filter_divisors[8] = {1u, 2u, 4u, 8u, 16u, 32u, 64u, 256u};
+    static const int32_t positions[3] = {1, 3, 6};
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_QEI_COUNT; channel++) {
+        uint16_t base = bases[channel];
+        uint8_t selection;
+        for (selection = 0u; selection < 8u; selection++) {
+            uint16_t divisor = counter_divisors[selection];
+            reset_qei(cpu);
+            set_open_comparison_window(cpu, base);
+            dspic33_write_word(cpu, base,
+                               (uint16_t)(QEI_ENABLE |
+                                          ((uint16_t)selection << QEI_DIVIDER_SHIFT) |
+                                          QEI_MODE_TIMER));
+            expect(state,
+                   dspic33_device_advance(cpu, (uint16_t)(divisor - 1u)) &&
+                       read_counter(cpu, (uint16_t)(base + 6u)) == 0u,
+                   "QEI counter divider waits for its complete period");
+            expect(state,
+                   dspic33_device_advance(cpu, 1u) &&
+                       read_counter(cpu, (uint16_t)(base + 6u)) == 1u,
+                   "QEI counter divider clocks at the selected period");
+
+            divisor = filter_divisors[selection];
+            reset_qei(cpu);
+            set_open_comparison_window(cpu, base);
+            dspic33_write_word(
+                cpu, (uint16_t)(base + 2u),
+                (uint16_t)(QEI_FILTER_ENABLE | ((uint16_t)selection << 11u)));
+            dspic33_write_word(cpu, base, QEI_ENABLE);
+            input(cpu, channel, DSPIC33_QEI_PHASE_A, true);
+            expect(state,
+                   dspic33_device_advance(cpu, (uint16_t)(3u * divisor - 1u)) &&
+                       read_counter(cpu, (uint16_t)(base + 6u)) == 0u,
+                   "QEI filter divider waits for three complete samples");
+            expect(state,
+                   dspic33_device_advance(cpu, 1u) &&
+                       read_counter(cpu, (uint16_t)(base + 6u)) == 1u,
+                   "QEI filter divider accepts the third stable sample");
+        }
+
+        for (selection = 0u; selection < 4u; selection++) {
+            uint16_t polarity = (uint16_t)(1u << (4u + selection));
+            reset_qei(cpu);
+            dspic33_write_word(cpu, (uint16_t)(base + 2u), polarity);
+            expect(state,
+                   (dspic33_read_word(cpu, (uint16_t)(base + 2u)) & 0x000fu) ==
+                       (uint16_t)(1u << selection),
+                   "QEI input polarity inverts a low physical input");
+            expect(state,
+                   input(cpu, channel, (Dspic33QeiInput)selection, true) &&
+                       (dspic33_read_word(cpu, (uint16_t)(base + 2u)) & 0x000fu) == 0u,
+                   "QEI input polarity inverts a high physical input");
+        }
+
+        for (selection = 0u; selection < 4u; selection++) {
+            uint8_t position_index;
+            for (position_index = 0u; position_index < 3u; position_index++) {
+                bool high;
+                bool expected = (selection == 1u && positions[position_index] >= 5) ||
+                                (selection == 2u && positions[position_index] <= 2) ||
+                                (selection == 3u && (positions[position_index] >= 5 ||
+                                                     positions[position_index] <= 2));
+                reset_qei(cpu);
+                write_counter(cpu, (uint16_t)(base + 0x1cu), (uint16_t)(base + 0x1eu),
+                              5u);
+                write_counter(cpu, (uint16_t)(base + 0x20u), (uint16_t)(base + 0x22u),
+                              2u);
+                write_counter(cpu, (uint16_t)(base + 6u), (uint16_t)(base + 0x0au),
+                              (uint32_t)positions[position_index]);
+                dspic33_write_word(cpu, (uint16_t)(base + 2u),
+                                   (uint16_t)(selection << 9u));
+                expect(state,
+                       dspic33_qei_compare_output(cpu, channel, &high) &&
+                           high == expected,
+                       "QEI compare output mode follows both signed boundaries");
+            }
+        }
     }
 }
 
@@ -828,6 +953,174 @@ static void interrupt_compare_index_cases(QeiConformance* state, Dspic33* cpu) {
     }
 }
 
+static void compare_refresh_cases(QeiConformance* state, Dspic33* cpu) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_QEI_COUNT; channel++) {
+        uint16_t base = bases[channel];
+        uint16_t status_address = (uint16_t)(base + 4u);
+        reset_qei(cpu);
+        configure_interrupt(cpu, channel);
+        write_counter(cpu, (uint16_t)(base + 6u), (uint16_t)(base + 0x0au), 5u);
+        write_counter(cpu, (uint16_t)(base + 0x1cu), (uint16_t)(base + 0x1eu), 5u);
+        write_counter(cpu, (uint16_t)(base + 0x20u), (uint16_t)(base + 0x22u), 2u);
+        dspic33_write_word(cpu, status_address, QEI_STATUS_HIGH_COMPARE_ENABLE);
+        dspic33_write_word(cpu, base, QEI_ENABLE);
+        expect(state,
+               (dspic33_read_word(cpu, status_address) & QEI_STATUS_HIGH_COMPARE) !=
+                       0u &&
+                   interrupt_set(cpu, channel),
+               "QEI enable refreshes the active high comparison");
+
+        reset_qei(cpu);
+        configure_interrupt(cpu, channel);
+        write_counter(cpu, (uint16_t)(base + 6u), (uint16_t)(base + 0x0au), 0u);
+        set_open_comparison_window(cpu, base);
+        write_counter(cpu, (uint16_t)(base + 0x1cu), (uint16_t)(base + 0x1eu),
+                      0x00010000u);
+        dspic33_write_word(cpu, status_address, QEI_STATUS_HIGH_COMPARE_ENABLE);
+        dspic33_write_word(cpu, base, QEI_ENABLE);
+        clear_interrupt(cpu, channel);
+        dspic33_write_word(cpu, status_address,
+                           (uint16_t)(dspic33_read_word(cpu, status_address) &
+                                      ~QEI_STATUS_HIGH_COMPARE));
+        dspic33_write_word(cpu, (uint16_t)(base + 8u), 1u);
+        expect(state,
+               (dspic33_read_word(cpu, status_address) & QEI_STATUS_HIGH_COMPARE) !=
+                       0u &&
+                   interrupt_set(cpu, channel),
+               "QEI position high write refreshes the active comparison");
+
+        reset_qei(cpu);
+        configure_interrupt(cpu, channel);
+        write_counter(cpu, (uint16_t)(base + 6u), (uint16_t)(base + 0x0au), 2u);
+        write_counter(cpu, (uint16_t)(base + 0x1cu), (uint16_t)(base + 0x1eu), 5u);
+        write_counter(cpu, (uint16_t)(base + 0x20u), (uint16_t)(base + 0x22u), 2u);
+        dspic33_write_word(cpu, status_address, QEI_STATUS_LOW_COMPARE_ENABLE);
+        dspic33_write_word(cpu, base, QEI_ENABLE);
+        expect(state,
+               (dspic33_read_word(cpu, status_address) & QEI_STATUS_LOW_COMPARE) !=
+                       0u &&
+                   interrupt_set(cpu, channel),
+               "QEI low comparison raises its enabled interrupt");
+
+        reset_qei(cpu);
+        configure_interrupt(cpu, channel);
+        set_open_comparison_window(cpu, base);
+        write_counter(cpu, (uint16_t)(base + 0x1cu), (uint16_t)(base + 0x1eu),
+                      0x12345678u);
+        dspic33_write_word(cpu, status_address, QEI_STATUS_INITIALIZED_ENABLE);
+        dspic33_write_word(cpu, base, QEI_ENABLE | (3u << QEI_POSITION_MODE_SHIFT));
+        expect(state,
+               input(cpu, channel, DSPIC33_QEI_HOME, true) &&
+                   input(cpu, channel, DSPIC33_QEI_INDEX, true) &&
+                   (dspic33_read_word(cpu, status_address) & QEI_STATUS_INITIALIZED) !=
+                       0u &&
+                   interrupt_set(cpu, channel),
+               "QEI completed homing initialization raises its enabled interrupt");
+    }
+}
+
+static void power_lifecycle_cases(QeiConformance* state, Dspic33* cpu) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_QEI_COUNT; channel++) {
+        uint16_t base = bases[channel];
+        reset_qei(cpu);
+        set_open_comparison_window(cpu, base);
+        dspic33_write_word(cpu, base, QEI_ENABLE | QEI_MODE_TIMER);
+        cpu->power_state = DSPIC33_POWER_IDLE;
+        expect(state,
+               dspic33_device_advance(cpu, 3u) &&
+                   read_counter(cpu, (uint16_t)(base + 6u)) == 3u,
+               "QEI continues its internal timer in Idle when enabled");
+        cpu->power_state = DSPIC33_POWER_ACTIVE;
+
+        reset_qei(cpu);
+        set_open_comparison_window(cpu, base);
+        dspic33_write_word(cpu, base, QEI_ENABLE);
+        cpu->power_state = DSPIC33_POWER_SLEEP;
+        expect(state,
+               input(cpu, channel, DSPIC33_QEI_PHASE_A, true) &&
+                   read_counter(cpu, (uint16_t)(base + 6u)) == 0u,
+               "QEI ignores external count edges in Sleep");
+        cpu->power_state = DSPIC33_POWER_ACTIVE;
+        expect(state,
+               input(cpu, channel, DSPIC33_QEI_PHASE_B, true) &&
+                   read_counter(cpu, (uint16_t)(base + 6u)) == 1u,
+               "QEI resumes from the physical input level after Sleep");
+
+        reset_qei(cpu);
+        set_open_comparison_window(cpu, base);
+        dspic33_write_word(cpu, (uint16_t)(base + 2u), QEI_FILTER_ENABLE);
+        dspic33_write_word(cpu, base, QEI_ENABLE);
+        cpu->power_state = DSPIC33_POWER_SLEEP;
+        expect(state,
+               input(cpu, channel, DSPIC33_QEI_PHASE_A, true) &&
+                   dspic33_device_advance(cpu, 10u) &&
+                   cpu->io.qei.filter_stability[channel][0] == 0u,
+               "QEI filter clock stops in Sleep");
+        cpu->power_state = DSPIC33_POWER_ACTIVE;
+        expect(state,
+               dspic33_device_advance(cpu, 3u) &&
+                   read_counter(cpu, (uint16_t)(base + 6u)) == 1u,
+               "QEI filter restarts after Sleep");
+
+        reset_qei(cpu);
+        input(cpu, channel, DSPIC33_QEI_HOME, true);
+        dspic33_reset(cpu, 0u);
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 2u)) & 0x0008u) != 0u,
+               "QEI cold reset preserves the physical input level");
+        input(cpu, channel, DSPIC33_QEI_HOME, false);
+    }
+
+    {
+        bool high;
+        expect(
+            state,
+            !dspic33_qei_input(cpu, DSPIC33_QEI_COUNT, DSPIC33_QEI_PHASE_A, true, 0u) &&
+                !dspic33_qei_input(cpu, 0u, (Dspic33QeiInput)4u, true, 0u) &&
+                !dspic33_qei_compare_output(cpu, DSPIC33_QEI_COUNT, &high) &&
+                !dspic33_qei_compare_output(cpu, 0u, NULL),
+            "QEI public APIs reject invalid arguments");
+    }
+}
+
+static void large_timer_advance_cases(QeiConformance* state, Dspic33* cpu) {
+    static const uint16_t status_mask =
+        QEI_STATUS_VELOCITY_OVERFLOW | QEI_STATUS_POSITION_OVERFLOW |
+        QEI_STATUS_LOW_COMPARE | QEI_STATUS_HIGH_COMPARE;
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_QEI_COUNT; channel++) {
+        uint16_t base = bases[channel];
+        uint8_t inverted;
+        for (inverted = 0u; inverted < 2u; inverted++) {
+            uint32_t expected = inverted != 0u ? 0xfffffffcu : 4u;
+            uint16_t expected_velocity = inverted != 0u ? 0xfffcu : 4u;
+            reset_qei(cpu);
+            write_counter(cpu, (uint16_t)(base + 0x1cu), (uint16_t)(base + 0x1eu),
+                          100u);
+            write_counter(cpu, (uint16_t)(base + 0x20u), (uint16_t)(base + 0x22u),
+                          0xffffff9cu);
+            input(cpu, channel, DSPIC33_QEI_INDEX, true);
+            input(cpu, channel, DSPIC33_QEI_HOME, true);
+            dspic33_write_word(cpu, base,
+                               (uint16_t)(QEI_ENABLE | QEI_MODE_TIMER |
+                                          (inverted != 0u ? 0x0008u : 0u)));
+            expect(state,
+                   dspic33_device_advance(cpu, (uint64_t)UINT32_MAX + 5u) &&
+                       read_counter(cpu, (uint16_t)(base + 6u)) == expected &&
+                       dspic33_read_word(cpu, (uint16_t)(base + 0x0cu)) ==
+                           expected_velocity &&
+                       read_counter(cpu, (uint16_t)(base + 0x0eu)) == 4u &&
+                       read_counter(cpu, (uint16_t)(base + 0x16u)) == expected,
+                   "QEI large timer advance preserves modular counter results");
+            expect(state,
+                   (dspic33_read_word(cpu, (uint16_t)(base + 4u)) & status_mask) ==
+                       status_mask,
+                   "QEI large timer advance preserves crossed status events");
+        }
+    }
+}
+
 static void pmd_cases(QeiConformance* state, Dspic33* cpu) {
     uint8_t channel;
     for (channel = 0u; channel < DSPIC33_QEI_COUNT; channel++) {
@@ -1017,6 +1310,39 @@ static void copy_cases(QeiConformance* state, Dspic33* cpu) {
                (copy.qei_inputs[1] & 8u) != 0u && cpu->qei_inputs[0] == 0u &&
                cpu->qei_inputs[1] == 0u && cpu->events.count == 2u,
            "QEI copied events execute independently");
+
+    reset_qei(cpu);
+    set_open_comparison_window(cpu, bases[0]);
+    dspic33_write_word(cpu, (uint16_t)(bases[0] + 2u),
+                       (uint16_t)(QEI_FILTER_ENABLE | (1u << 11u)));
+    dspic33_write_word(cpu, bases[0],
+                       QEI_ENABLE | (2u << QEI_DIVIDER_SHIFT) | QEI_MODE_TIMER);
+    input(cpu, 0u, DSPIC33_QEI_PHASE_A, true);
+    expect(state,
+           dspic33_device_advance(cpu, 2u) && cpu->io.qei.counter_fraction[0] == 2u &&
+               cpu->io.qei.filter_stability[0][0] == 1u && dspic33_copy(&copy, cpu),
+           "copy partial QEI counter and filter phases");
+    expect(state,
+           dspic33_device_advance(cpu, 2u) && dspic33_device_advance(&copy, 2u) &&
+               read_counter(cpu, (uint16_t)(bases[0] + 6u)) == 1u &&
+               read_counter(&copy, (uint16_t)(bases[0] + 6u)) == 1u &&
+               cpu->io.qei.filter_stability[0][0] == 2u &&
+               copy.io.qei.filter_stability[0][0] == 2u,
+           "copied QEI phases resume identically");
+    expect(state,
+           input(cpu, 0u, DSPIC33_QEI_PHASE_A, false) &&
+               dspic33_device_advance(cpu, 2u) && dspic33_device_advance(&copy, 2u) &&
+               (cpu->io.qei.filtered_inputs[0] & 1u) == 0u &&
+               (copy.io.qei.filtered_inputs[0] & 1u) != 0u,
+           "copied QEI physical and filter state diverge independently");
+
+    reset_qei(cpu);
+    dspic33_write_word(cpu, pmd_addresses[0], pmd_masks[0]);
+    expect(state, dspic33_copy(&copy, cpu), "copy pending QEI PMD transition");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && dspic33_device_advance(&copy, 1u) &&
+               cpu->io.qei.pmd_disabled[0] && copy.io.qei.pmd_disabled[0],
+           "copied QEI PMD transition completes independently");
     dspic33_destroy(&copy);
 }
 
@@ -1028,12 +1354,17 @@ int main(void) {
     if (initialized) {
         register_cases(&state, &cpu);
         quadrature_cases(&state, &cpu);
+        quadrature_transition_cases(&state, &cpu);
+        divider_polarity_output_cases(&state, &cpu);
         external_mode_cases(&state, &cpu);
         timer_filter_power_cases(&state, &cpu);
         interrupt_compare_index_cases(&state, &cpu);
+        compare_refresh_cases(&state, &cpu);
+        power_lifecycle_cases(&state, &cpu);
+        large_timer_advance_cases(&state, &cpu);
         pmd_cases(&state, &cpu);
         copy_cases(&state, &cpu);
-        expect(&state, state.cases == 300u, "QEI assertion accounting");
+        expect(&state, state.cases == 472u, "QEI assertion accounting");
         dspic33_destroy(&cpu);
     }
     printf("[qei-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",

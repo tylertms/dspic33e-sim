@@ -223,9 +223,9 @@ static void source_cases(PpsConformance* state, Dspic33* cpu) {
                     dspic33_device_advance(cpu, 0u) &&
                     dspic33_qei_input(cpu, channel, (Dspic33QeiInput)input, true, 0u) &&
                     dspic33_device_advance(cpu, 1u),
-                "filtered QEI INDEX or HOME PPS edge advances");
-            expect(state, cpu->io.input_capture.fifo[0].count == 1u,
-                   "filtered QEI INDEX or HOME reaches mapped capture");
+                "B1 filtered QEI virtual source stimulus advances");
+            expect(state, cpu->io.input_capture.fifo[0].count == 0u,
+                   "B1 filtered QEI virtual source remains inaccessible");
         }
     }
 
@@ -260,9 +260,9 @@ static void source_cases(PpsConformance* state, Dspic33* cpu) {
            dspic33_comparator_input(cpu, 0u, DSPIC33_COMPARATOR_INPUT_POSITIVE, 200u,
                                     0u) &&
                dspic33_device_advance(cpu, 2u),
-           "comparator virtual PPS transition advances");
-    expect(state, cpu->io.input_capture.fifo[0].count == 1u,
-           "comparator virtual source reaches mapped capture");
+           "B1 comparator virtual PPS transition advances");
+    expect(state, cpu->io.input_capture.fifo[0].count == 0u,
+           "B1 comparator virtual source requires physical pin remapping");
 }
 
 static void output_cases(PpsConformance* state, Dspic33* cpu) {
