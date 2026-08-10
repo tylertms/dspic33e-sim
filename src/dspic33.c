@@ -159,6 +159,40 @@ static void update_accumulator_combined_status(Dspic33* cpu) {
     }
 }
 
+static void write_status_byte(Dspic33* cpu, bool high_byte, uint8_t value) {
+    uint16_t previous = cpu->sr;
+    if (!high_byte) {
+        uint16_t requested = (uint16_t)(value & 0xefu);
+        if ((cpu->data[0x08c1u] & 0x80u) != 0u) {
+            requested = (uint16_t)((requested & ~0x00e0u) | (previous & 0x00e0u));
+        }
+        cpu->sr = (uint16_t)((previous & 0xff10u) | requested);
+        return;
+    }
+    uint16_t requested = (uint16_t)value << 8u;
+    uint16_t accumulator_status = (uint16_t)(requested & 0xf000u);
+    if ((requested & 0x0800u) == 0u) {
+        accumulator_status &= (uint16_t)~0xc000u;
+    }
+    if ((requested & 0x0400u) == 0u) {
+        accumulator_status &= (uint16_t)~0x3000u;
+    }
+    cpu->sr =
+        (uint16_t)((previous & 0x02ffu) | (requested & 0x0100u) | accumulator_status);
+    update_accumulator_combined_status(cpu);
+}
+
+static void write_disicnt_byte(Dspic33* cpu, bool high_byte, uint8_t value) {
+    uint16_t requested;
+    if (cpu->disicnt == 0u) {
+        return;
+    }
+    requested = high_byte
+                    ? (uint16_t)((cpu->disicnt & 0x00ffu) | ((uint16_t)value << 8u))
+                    : (uint16_t)((cpu->disicnt & 0xff00u) | value);
+    cpu->disicnt = (uint16_t)(requested & 0x3fffu);
+}
+
 static void apply_accumulator_result(Dspic33* cpu, uint8_t accumulator,
                                      int64_t result) {
     uint16_t overflow_flag = accumulator == 0u ? 0x8000u : 0x4000u;
@@ -3540,6 +3574,13 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
     if (address >= 0x0020u && address <= 0x0055u) {
         uint16_t* reg = NULL;
         uint16_t word_address = (uint16_t)(address & 0xfffeu);
+        if (word_address == 0x002eu || word_address == 0x0030u) {
+            return;
+        }
+        if (word_address == 0x0042u) {
+            write_status_byte(cpu, (address & 1u) != 0u, value);
+            return;
+        }
         if (word_address == 0x0044u) {
             if ((address & 1u) == 0u) {
                 uint8_t low = (uint8_t)cpu->corcon;
@@ -3563,6 +3604,10 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
             }
             return;
         }
+        if (word_address == 0x0052u) {
+            write_disicnt_byte(cpu, (address & 1u) != 0u, value);
+            return;
+        }
         switch (word_address) {
         case 0x0020u:
             reg = &cpu->splim;
@@ -3579,24 +3624,14 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
         case 0x0038u:
             reg = &cpu->dcount;
             break;
-        case 0x0042u:
-            reg = &cpu->sr;
-            break;
-        case 0x0052u:
-            reg = &cpu->disicnt;
-            break;
         default:
             break;
         }
         if (reg != NULL) {
-            uint16_t preserved_priority = (uint16_t)(*reg & 0x00e0u);
             if ((address & 1u) == 0u) {
                 *reg = (uint16_t)((*reg & 0xff00u) | value);
             } else {
                 *reg = (uint16_t)((*reg & 0x00ffu) | ((uint16_t)value << 8u));
-            }
-            if (word_address == 0x0042u && (cpu->data[0x08c1u] & 0x80u) != 0u) {
-                *reg = (uint16_t)((*reg & ~0x00e0u) | preserved_priority);
             }
             if (word_address == 0x0020u) {
                 *reg &= 0xfffeu;
@@ -3666,6 +3701,12 @@ void dspic33_write_word(Dspic33* cpu, uint32_t address, uint16_t value) {
         return;
     }
     if (address >= 0x0020u && address <= 0x0054u) {
+        if (address == 0x0052u) {
+            if (cpu->disicnt != 0u) {
+                cpu->disicnt = (uint16_t)(value & 0x3fffu);
+            }
+            return;
+        }
         dspic33_write_byte(cpu, address, (uint8_t)value);
         dspic33_write_byte(cpu, address + 1u, (uint8_t)(value >> 8u));
         if (address == 0x0020u) {
@@ -3742,6 +3783,12 @@ static uint8_t read_byte_value(Dspic33* cpu, uint32_t address) {
         break;
     case 0x0040u:
         value = (uint16_t)(cpu->doend >> 16u);
+        break;
+    case 0x002eu:
+        value = (uint16_t)cpu->pc;
+        break;
+    case 0x0030u:
+        value = (uint16_t)((cpu->pc >> 16u) & 0x007fu);
         break;
     case 0x0042u:
         value = cpu->sr;
