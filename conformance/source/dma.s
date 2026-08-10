@@ -24,6 +24,10 @@ _dma_conformance_group_complete = 1
     mov w4, [w7++]
 .endm
 
+.macro dma_read_only_reset_case identifier, address
+    dma_register_case \identifier, \address, 0x0000, 0x0000
+.endm
+
 .global _run_dma_conformance
 _run_dma_conformance:
     begin_results
@@ -47,9 +51,9 @@ _run_dma_conformance:
     dma_register_case 0x1010, 0x0b06, 0xffff, 0x5aa5
     dma_register_case 0x1011, 0x0b0a, 0xffff, 0x5aa5
     dma_register_case 0x1012, 0x0b0e, 0xffff, 0x5aa5
-    dma_register_case 0x1013, 0x0bf0, 0xffff, 0x5aa5
-    dma_register_case 0x1014, 0x0bf2, 0xffff, 0x5aa5
-    dma_register_case 0x1015, 0x0bf4, 0xffff, 0x5aa5
+    dma_read_only_reset_case 0x1013, 0x0bf0
+    dma_read_only_reset_case 0x1014, 0x0bf2
+    dma_read_only_reset_case 0x1015, 0x0bf4
     dma_register_case 0x1016, 0x0bf6, 0xffff, 0x5aa5
     dma_register_case 0x1017, 0x0bf8, 0xffff, 0x5aa5
     dma_register_case 0x1018, 0x0bfa, 0xffff, 0x5aa5
