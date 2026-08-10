@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 47
+_system_conformance_terminal_count = 49
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -104,6 +104,10 @@ _run_system_probe:
     bra z, _system_program_read_collision_probe
     cp w0, #47
     bra z, _system_program_read_stack_probe
+    cp w0, #48
+    bra z, _system_program_boundary_dispatch
+    cp w0, #49
+    bra z, _system_program_boundary_dispatch
     return
 
 .global _system_sleep_probe
@@ -774,6 +778,43 @@ _system_sequential_hole_dispatch:
     mov #0x4242, w1
     mov w1, _system_sequential_hole_state
     goto _system_sequential_hole_probe
+
+.global _system_program_boundary_dispatch
+_system_program_boundary_dispatch:
+    mov #0x5000, w15
+    lnk #0
+    mov #0x5000, w15
+    clr w1
+    mov #0xa5a5, w0
+    mov w0, 0x5000
+    mov #0x5a5a, w0
+    mov w0, 0x5002
+    mov #0x010f, w0
+    mov w0, SR
+    goto _system_sequential_hole_probe
+    mov #0x1111, w1
+    return
+
+.section .system_program_boundary_capture,code,address(0x300)
+.global _system_program_boundary_capture
+_system_program_boundary_capture:
+    mov w1, _system_program_boundary_state
+    mov w15, _system_program_boundary_state+2
+    mov 0x5000, w0
+    mov w0, _system_program_boundary_state+4
+    mov 0x5002, w0
+    mov w0, _system_program_boundary_state+6
+    mov SR, w0
+    mov w0, _system_program_boundary_state+8
+    mov CORCON, w0
+    mov w0, _system_program_boundary_state+10
+    mov INTCON1, w0
+    mov w0, _system_program_boundary_state+12
+.global _system_program_boundary_complete
+_system_program_boundary_complete:
+    bra _system_program_boundary_complete
+
+.section .text,code
 
 .section .system_program_target_near_limit,code,address(0x557d0)
 .global _system_program_target_bra_probe

@@ -312,6 +312,21 @@ static void program_target_address_error_cases(ProcessorConformance* state,
                cpu->cycles == 4u,
            "implemented literal GOTO target remains valid");
 
+    reset_processor_conformance(cpu, 0x557feu);
+    load_instruction(state, cpu, 0x557feu, OPCODE_GOTO_0X100);
+    load_instruction(state, cpu, 0x100u, OPCODE_NOP);
+    cpu->w[15] = 0x5000u;
+    dspic33_write_word(cpu, 0x5000u, 0xa5a5u);
+    dspic33_write_word(cpu, 0x5002u, 0x5a5au);
+    cpu->corcon |= 0x0004u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x100u &&
+               cpu->cycles == 4u && cpu->w[15] == 0x5000u &&
+               dspic33_read_word(cpu, 0x5000u) == 0xa5a5u &&
+               dspic33_read_word(cpu, 0x5002u) == 0x5a5au &&
+               (cpu->corcon & 0x0004u) != 0u && cpu->sequential_program_hole_pc == 0u,
+           "boundary GOTO reads zero extension without sequential provenance");
+
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_CALL_0X100);
     load_instruction(state, cpu, 2u, 0u);
@@ -321,6 +336,36 @@ static void program_target_address_error_cases(ProcessorConformance* state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x100u &&
                cpu->cycles == 4u && dspic33_read_word(cpu, 0x5000u) == 4u,
            "implemented literal CALL target remains valid");
+
+    reset_processor_conformance(cpu, 0x557feu);
+    load_instruction(state, cpu, 0x557feu, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 0x100u, OPCODE_NOP);
+    cpu->w[15] = 0x5000u;
+    cpu->corcon |= 0x0004u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x100u &&
+               cpu->cycles == 4u && cpu->w[15] == 0x5004u && cpu->call_depth == 1u &&
+               dspic33_read_word(cpu, 0x5000u) == 0x5803u &&
+               dspic33_read_word(cpu, 0x5002u) == 0x0005u &&
+               (cpu->corcon & 0x0004u) == 0u && cpu->sequential_program_hole_pc == 0u,
+           "boundary CALL stacks hole return and clears sequential provenance");
+
+    reset_processor_conformance(cpu, 0x557feu);
+    prepare_address_trap(state, cpu);
+    cpu->pc = 0x557feu;
+    load_instruction(state, cpu, 0x557feu, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 0x100u, OPCODE_RETURN);
+    cpu->corcon |= 0x0004u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x100u &&
+               cpu->cycles == 4u && cpu->sequential_program_hole_pc == 0u,
+           "boundary CALL prepares explicit return to program hole");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 9u &&
+               cpu->last_trap == 1u && cpu->last_trap_return == 0x102u &&
+               cpu->call_depth == 0u && cpu->w[15] == 0x5004u &&
+               cpu->sequential_program_hole_pc == 0u,
+           "boundary CALL return validates hole target without provenance reuse");
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_GOTO_W0);

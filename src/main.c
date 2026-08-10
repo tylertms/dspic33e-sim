@@ -18,6 +18,9 @@ typedef struct {
     uint8_t write_width;
     uint16_t write_offset;
     uint32_t dump_memory_size;
+    bool program_word_set;
+    uint32_t program_word_address;
+    uint32_t program_word_value;
     bool register_set[16];
     uint16_t register_value[16];
     uint64_t instruction_limit;
@@ -65,6 +68,9 @@ static bool parse_arguments(int argc, char** argv, Arguments* arguments) {
     arguments->write_width = 0u;
     arguments->write_offset = 0u;
     arguments->dump_memory_size = 0u;
+    arguments->program_word_set = false;
+    arguments->program_word_address = 0u;
+    arguments->program_word_value = 0u;
     memset(arguments->register_set, 0, sizeof(arguments->register_set));
     memset(arguments->register_value, 0, sizeof(arguments->register_value));
     arguments->instruction_limit = 1000000u;
@@ -91,6 +97,16 @@ static bool parse_arguments(int argc, char** argv, Arguments* arguments) {
                 return false;
             }
             arguments->write_offset = (uint16_t)value;
+        } else if (strcmp(argv[index], "--program-word") == 0 && index + 2 < argc) {
+            if (!parse_u64(argv[++index], UINT32_MAX, &value)) {
+                return false;
+            }
+            arguments->program_word_address = (uint32_t)value;
+            if (!parse_u64(argv[++index], 0x00ffffffu, &value)) {
+                return false;
+            }
+            arguments->program_word_value = (uint32_t)value;
+            arguments->program_word_set = true;
         } else if (strcmp(argv[index], "--register") == 0 && index + 2 < argc) {
             if (!parse_register(argv[++index], &reg) ||
                 !parse_u64(argv[++index], UINT16_MAX, &value)) {
@@ -129,7 +145,8 @@ static bool parse_arguments(int argc, char** argv, Arguments* arguments) {
 static void print_usage(const char* program) {
     fprintf(stderr,
             "Usage: %s IMAGE ENTRY [--write8 SYMBOL VALUE] [--write16 SYMBOL VALUE] "
-            "[--write-offset BYTES] [--register Wn VALUE] "
+            "[--write-offset BYTES] [--program-word ADDRESS VALUE] "
+            "[--register Wn VALUE] "
             "[--stop ADDRESS] [--max-instructions COUNT] [--dump-registers] "
             "[--dump-memory SYMBOL SIZE] "
             "[--trace-address ADDRESS]\n",
@@ -214,6 +231,15 @@ int main(int argc, char** argv) {
         !resolve_location(&image, arguments.entry_symbol, &entry, error,
                           sizeof(error))) {
         fprintf(stderr, "[error] %s\n", error);
+        dspic33_destroy(&cpu);
+        firmware_image_close(&image);
+        return 1;
+    }
+    if (arguments.program_word_set &&
+        !dspic33_load_program_word(&cpu, arguments.program_word_address,
+                                   arguments.program_word_value)) {
+        fprintf(stderr, "[error] invalid program word address 0x%08" PRIx32 "\n",
+                arguments.program_word_address);
         dspic33_destroy(&cpu);
         firmware_image_close(&image);
         return 1;

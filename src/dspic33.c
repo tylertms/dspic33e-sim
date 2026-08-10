@@ -2259,10 +2259,10 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         bool call = (opcode & 0xff0000u) == 0x020000u;
         uint32_t second;
         uint32_t target;
-        if (cpu->pc >= DSPIC33_PROGRAM_LIMIT) {
+        if (cpu->pc > DSPIC33_PROGRAM_LIMIT) {
             return false;
         }
-        second = cpu->program[cpu->pc / 2u];
+        second = cpu->pc == DSPIC33_PROGRAM_LIMIT ? 0u : cpu->program[cpu->pc / 2u];
         target = ((second & 0x007fu) << 16u) | (opcode & 0x00ffffu);
         target &= 0x007ffffeu;
         if (call) {
