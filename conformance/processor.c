@@ -31,6 +31,9 @@ enum {
     OPCODE_RCALL_0X55800 = 0x07000au,
     OPCODE_BRA_0X55800 = 0x370012u,
     OPCODE_BRA_Z_0X55800 = 0x320012u,
+    OPCODE_BTSS_W2_BIT_0 = 0xa60002u,
+    OPCODE_BTSC_W2_BIT_0 = 0xa70002u,
+    OPCODE_BTSC_W4_POST_INCREMENT_BIT_0 = 0xa70034u,
     OPCODE_SFTAC_A_W5 = 0xc80005u,
     OPCODE_LNK_0 = 0xfa0000u,
     OPCODE_ULNK = 0xfa8000u,
@@ -628,6 +631,135 @@ static void program_read_address_error_cases(ProcessorConformance* state,
            "sequential hole provenance ends at auxiliary program boundary");
     expect(state, dspic33_step(cpu) == DSPIC33_PROGRAM_BOUNDS,
            "auxiliary program boundary retains existing bounds behavior");
+}
+
+static void skip_boundary_cases(ProcessorConformance* state, Dspic33* cpu) {
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_BTSC_W2_BIT_0);
+    load_instruction(state, cpu, 2u, OPCODE_NOP);
+    cpu->w[2] = 1u;
+    cpu->sr = 0x0103u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u && cpu->cycles == 1u &&
+               cpu->sr == 0x0103u,
+           "untaken BTSC consumes one cycle and preserves status");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_BTSC_W2_BIT_0);
+    load_instruction(state, cpu, 2u, OPCODE_NOP);
+    cpu->w[2] = 0u;
+    cpu->sr = 0x0103u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 4u && cpu->cycles == 2u &&
+               cpu->sr == 0x0103u,
+           "taken BTSC over one-word instruction consumes two cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_BTSS_W2_BIT_0);
+    load_instruction(state, cpu, 2u, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 4u, 0u);
+    cpu->w[2] = 1u;
+    cpu->w[15] = 0x5000u;
+    cpu->sr = 0x0103u;
+    dspic33_write_word(cpu, 0x5000u, 0xa5a5u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 6u && cpu->cycles == 3u &&
+               cpu->w[15] == 0x5000u && cpu->call_depth == 0u &&
+               dspic33_read_word(cpu, 0x5000u) == 0xa5a5u && cpu->sr == 0x0103u,
+           "taken BTSS discards complete two-word CALL in three cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_BTSC_W4_POST_INCREMENT_BIT_0);
+    load_instruction(state, cpu, 2u, OPCODE_NOP);
+    dspic33_set_working_register(cpu, 4u, 0x1000u);
+    dspic33_write_word(cpu, 0x1000u, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 4u && cpu->cycles == 2u &&
+               cpu->w[4] == 0x1002u,
+           "taken indirect BTSC completes source pointer update");
+
+    reset_processor_conformance(cpu, 0x557fcu);
+    prepare_address_trap(state, cpu);
+    cpu->pc = 0x557fcu;
+    load_instruction(state, cpu, 0x557fcu, OPCODE_BTSC_W2_BIT_0);
+    load_instruction(state, cpu, 0x557feu, OPCODE_NOP);
+    cpu->w[2] = 0u;
+    cpu->sr = 0x0103u;
+    cpu->corcon = 0x0020u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->pc == 0x140u &&
+               cpu->cycles == 2u && cpu->last_trap == 1u &&
+               cpu->last_trap_return == DSPIC33_PROGRAM_LIMIT && cpu->w[15] == 0x5004u,
+           "one-word boundary skip raises Address Error in two cycles");
+    expect(state,
+           dspic33_read_word(cpu, 0x5000u) == 0x5800u &&
+               dspic33_read_word(cpu, 0x5002u) == 0x0305u &&
+               (dspic33_read_word(cpu, 0x08c0u) & 0x0008u) != 0u &&
+               dspic33_read_word(cpu, 0x08c8u) == 0x0e01u &&
+               cpu->sequential_program_hole_pc == 0u,
+           "boundary skip stacks exact hole PC and hard-trap state");
+
+    reset_processor_conformance(cpu, 0x557fcu);
+    prepare_address_trap(state, cpu);
+    cpu->pc = 0x557fcu;
+    load_instruction(state, cpu, 0x557fcu, OPCODE_BTSC_W4_POST_INCREMENT_BIT_0);
+    load_instruction(state, cpu, 0x557feu, OPCODE_NOP);
+    dspic33_set_working_register(cpu, 4u, 0x1000u);
+    dspic33_write_word(cpu, 0x1000u, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->w[4] == 0x1002u &&
+               cpu->cycles == 2u,
+           "boundary skip trap preserves completed indirect source update");
+
+    reset_processor_conformance(cpu, 0x557fau);
+    load_instruction(state, cpu, 0x557fau, OPCODE_BTSC_W2_BIT_0);
+    load_instruction(state, cpu, 0x557fcu, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 0x557feu, 0u);
+    cpu->w[2] = 0u;
+    cpu->w[15] = 0x5000u;
+    dspic33_write_word(cpu, 0x5000u, 0xa5a5u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == DSPIC33_PROGRAM_LIMIT &&
+               cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT &&
+               cpu->cycles == 3u && cpu->w[15] == 0x5000u && cpu->call_depth == 0u &&
+               dspic33_read_word(cpu, 0x5000u) == 0xa5a5u,
+           "two-word boundary skip enters the program hole in three cycles");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x55802u &&
+               cpu->sequential_program_hole_pc == 0x55802u && cpu->cycles == 4u,
+           "two-word skip provenance authorizes the next hole instruction");
+
+    reset_processor_conformance(cpu, 0x557fau);
+    load_instruction(state, cpu, 0x557fau, OPCODE_BTSC_W2_BIT_0);
+    load_instruction(state, cpu, 0x557fcu, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 0x557feu, 0u);
+    load_instruction(state, cpu, 0x000014u, 0x000100u);
+    load_instruction(state, cpu, 0x000100u, OPCODE_NOP);
+    cpu->w[2] = 0u;
+    cpu->w[15] = 0x5000u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "two-word skip prepares interrupt lifecycle case");
+    dspic33_write_word(cpu, 0x0820u, 0x0001u);
+    dspic33_write_word(cpu, 0x0840u, 0x0004u);
+    dspic33_raise_interrupt(cpu, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x102u &&
+               cpu->interrupt_log_entry[0] == DSPIC33_PROGRAM_LIMIT &&
+               cpu->w[15] == 0x5004u && dspic33_read_word(cpu, 0x5000u) == 0x5800u &&
+               dspic33_read_word(cpu, 0x5002u) == 0x0005u &&
+               cpu->sequential_program_hole_pc == 0u && cpu->cycles == 4u,
+           "interrupt clears two-word skip provenance and stacks hole PC");
+
+    reset_processor_conformance(cpu, 0x557fcu);
+    load_instruction(state, cpu, 0x557fcu, OPCODE_BTSC_W2_BIT_0);
+    load_instruction(state, cpu, 0x557feu, OPCODE_CALL_0X100);
+    cpu->w[2] = 0u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x55802u &&
+               cpu->sequential_program_hole_pc == 0u && cpu->cycles == 3u,
+           "skipped extension collision remains outside sequential provenance");
+    expect(state, dspic33_step(cpu) == DSPIC33_PROGRAM_BOUNDS,
+           "excluded skipped extension collision retains bounds behavior");
 }
 
 static void prepare_timer_source(Dspic33* cpu) {
@@ -1990,6 +2122,7 @@ int main(void) {
     if (initialized) {
         program_target_address_error_cases(&state, &cpu);
         program_read_address_error_cases(&state, &cpu);
+        skip_boundary_cases(&state, &cpu);
         address_error_cases(&state, &cpu);
         data_map_address_error_cases(&state, &cpu);
         page_zero_address_error_cases(&state, &cpu);

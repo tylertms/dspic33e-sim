@@ -1165,12 +1165,21 @@ static bool execute_file_binary(Dspic33* cpu, uint32_t opcode) {
 }
 
 static void skip_instruction(Dspic33* cpu) {
+    uint32_t length;
     uint32_t next;
+    uint32_t target;
     if (cpu->pc >= DSPIC33_PROGRAM_LIMIT) {
         return;
     }
     next = cpu->program[cpu->pc / 2u];
-    cpu->pc += instruction_length(next);
+    length = instruction_length(next);
+    target = cpu->pc + length;
+    cpu->pc = target;
+    if (length == 2u && target == DSPIC33_PROGRAM_LIMIT) {
+        raise_program_target_error(cpu, target);
+    } else if (length == 4u && target == DSPIC33_PROGRAM_LIMIT) {
+        cpu->sequential_program_hole_pc = target;
+    }
 }
 
 static bool execute_bit(Dspic33* cpu, uint32_t opcode) {
@@ -2087,7 +2096,13 @@ static void advance_instruction(Dspic33* cpu, uint64_t cycles) {
     service_pending_soft_trap(cpu);
 }
 
-static uint64_t instruction_cycles(const Dspic33* cpu, uint32_t opcode) {
+static uint64_t instruction_cycles(const Dspic33* cpu, uint32_t opcode,
+                                   uint32_t instruction_pc) {
+    uint8_t bit_kind = (uint8_t)((opcode >> 16u) & 0x07u);
+    if ((opcode & 0xf00000u) == 0xa00000u && bit_kind >= 6u &&
+        cpu->pc > instruction_pc + 2u) {
+        return 1u + (cpu->pc - instruction_pc - 2u) / 2u;
+    }
     if ((opcode & 0xf00000u) == 0x300000u) {
         bool take;
         if (branch_condition(cpu, (uint8_t)((opcode >> 16u) & 0x0fu), &take)) {
@@ -3186,6 +3201,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     int64_t accumulators[2];
     uint16_t status;
     uint16_t control;
+    uint64_t cycles;
     uint32_t opcode;
     uint32_t instruction_pc;
     bool exception_dispatched;
@@ -3281,10 +3297,10 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     if (cpu->illegal_reset) {
         return cpu->stop_reason;
     }
+    cycles = instruction_cycles(cpu, opcode, instruction_pc);
     if (cpu->address_error) {
         uint32_t return_pc = cpu->address_error_return;
         bool control_state_completed = cpu->address_error_control_state_completed;
-        uint64_t cycles = instruction_cycles(cpu, opcode);
         if (!cpu->address_error_working_state_completed) {
             memcpy(cpu->w, working_registers, sizeof(working_registers));
             cpu->initialized_working_registers = initialized_working_registers;
@@ -3340,11 +3356,12 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         }
     }
     cpu->sequential_program_hole_pc =
-        cpu->pc == instruction_pc + instruction_length(opcode) &&
+        (cpu->sequential_program_hole_pc == cpu->pc ||
+         cpu->pc == instruction_pc + instruction_length(opcode)) &&
                 program_target_requires_address_error(cpu->pc)
             ? cpu->pc
             : 0u;
-    advance_instruction(cpu, instruction_cycles(cpu, opcode));
+    advance_instruction(cpu, cycles);
     if (cpu->power_state != DSPIC33_POWER_ACTIVE && dspic33_device_wake(cpu)) {
         cpu->power_state = DSPIC33_POWER_ACTIVE;
         cpu->stop_reason = DSPIC33_RUNNING;

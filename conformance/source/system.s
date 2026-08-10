@@ -4,7 +4,7 @@
 .global _system_conformance_cases
 _system_conformance_cases = 12
 .global _system_conformance_terminal_count
-_system_conformance_terminal_count = 49
+_system_conformance_terminal_count = 51
 .global _system_conformance_group_complete
 _system_conformance_group_complete = 1
 
@@ -108,6 +108,10 @@ _run_system_probe:
     bra z, _system_program_boundary_dispatch
     cp w0, #49
     bra z, _system_program_boundary_dispatch
+    cp w0, #50
+    bra z, _system_skip_one_word_dispatch
+    cp w0, #51
+    bra z, _system_skip_two_word_dispatch
     return
 
 .global _system_sleep_probe
@@ -795,6 +799,45 @@ _system_program_boundary_dispatch:
     mov #0x1111, w1
     return
 
+.macro prepare_skip_probe
+    mov #0x5000, w15
+    clr w1
+    mov #0xa5a5, w0
+    mov w0, 0x5000
+    mov #0x5a5a, w0
+    mov w0, 0x5002
+    mov #0x0103, w0
+    mov w0, SR
+    clr w0
+    clr w2
+    mov w1, _system_skip_state
+    mov w15, _system_skip_state+2
+    mov 0x5000, w3
+    mov w3, _system_skip_state+4
+    mov 0x5002, w3
+    mov w3, _system_skip_state+6
+    mov SR, w3
+    mov w3, _system_skip_state+8
+    mov CORCON, w3
+    mov w3, _system_skip_state+10
+    mov INTCON1, w3
+    mov w3, _system_skip_state+12
+.endm
+
+.global _system_skip_one_word_dispatch
+_system_skip_one_word_dispatch:
+    prepare_skip_probe
+    goto _system_skip_one_word_probe
+    mov #0x1111, w1
+    return
+
+.global _system_skip_two_word_dispatch
+_system_skip_two_word_dispatch:
+    prepare_skip_probe
+    goto _system_skip_two_word_probe
+    mov #0x1111, w1
+    return
+
 .section .system_program_boundary_capture,code,address(0x300)
 .global _system_program_boundary_capture
 _system_program_boundary_capture:
@@ -813,6 +856,17 @@ _system_program_boundary_capture:
 .global _system_program_boundary_complete
 _system_program_boundary_complete:
     bra _system_program_boundary_complete
+
+.section .text,code
+
+.section .system_skip_unexpected,code,address(0x340)
+.global _system_skip_unexpected_call
+_system_skip_unexpected_call:
+    mov #0x1111, w1
+    mov w1, _system_skip_state
+.global _system_skip_unexpected_complete
+_system_skip_unexpected_complete:
+    bra _system_skip_unexpected_complete
 
 .section .text,code
 
@@ -846,6 +900,17 @@ _system_sequential_hole_probe = 0x557fe
 
 .global _system_sequential_hole_complete
 _system_sequential_hole_complete = 0x55804
+
+.global _system_skip_two_word_probe
+_system_skip_two_word_probe = 0x557fa
+
+.section .system_skip_boundary,code,address(0x557fc)
+.global _system_skip_one_word_probe
+_system_skip_one_word_probe:
+    .pword 0x020340
+
+.global _system_skip_two_word_complete
+_system_skip_two_word_complete = 0x55802
 
 .section .text,code
 
