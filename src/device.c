@@ -7139,7 +7139,7 @@ static void update_spi_register(Dspic33* cpu, uint16_t address, uint16_t previou
             spi_raise_mode(cpu, channel, 7u);
         }
         spi_start_next(cpu, channel);
-        spi_restore_buffer(cpu, channel, value);
+        spi_restore_buffer(cpu, channel, previous);
         spi_refresh_status(cpu, channel);
         return;
     }

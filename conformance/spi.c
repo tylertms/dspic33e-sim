@@ -102,6 +102,44 @@ static void register_cases(SpiConformance* state, Dspic33* cpu) {
     }
 }
 
+static void split_buffer_cases(SpiConformance* state, Dspic33* cpu) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
+        uint16_t base = bases[channel];
+        uint16_t control = 0x043bu;
+        uint16_t first_transmit = (uint16_t)(0xa100u + channel);
+        uint16_t second_transmit = (uint16_t)(0xc200u + channel);
+        uint16_t received = (uint16_t)(0x5b00u + channel);
+        uint64_t cycles = transfer_cycles(control);
+        bool scheduled;
+        bool advanced;
+
+        dspic33_reset(cpu, 0u);
+        configure_spi(cpu, channel, control, 0u, 0u);
+        scheduled = dspic33_spi_receive(cpu, channel, received, cycles);
+        dspic33_write_word(cpu, (uint16_t)(base + 8u), first_transmit);
+        expect(state, scheduled && dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0u,
+               "accepted transmit is not receive data");
+        expect(state,
+               cpu->io.spi_shift[channel] == first_transmit &&
+                   cpu->io.spi_tx[channel].count == 2u &&
+                   cpu->io.spi_tx[channel].bytes[0] == (uint8_t)first_transmit &&
+                   cpu->io.spi_tx[channel].bytes[1] == (uint8_t)(first_transmit >> 8u),
+               "accepted transmit enters transmit path");
+        advanced = dspic33_device_advance(cpu, cycles);
+        dspic33_write_word(cpu, (uint16_t)(base + 8u), second_transmit);
+        expect(state,
+               advanced && dspic33_read_word(cpu, (uint16_t)(base + 8u)) == received,
+               "queued receive survives transmit write");
+        expect(state,
+               cpu->io.spi_rx_fifo[channel].count == 0u &&
+                   (dspic33_read_word(cpu, base) & 0x0001u) == 0u &&
+                   cpu->io.spi_shift[channel] == second_transmit &&
+                   cpu->io.spi_tx[channel].count == 4u,
+               "receive drain preserves next transmit");
+    }
+}
+
 static void timing_matrix_cases(SpiConformance* state, Dspic33* cpu) {
     uint8_t channel;
     uint8_t mode16;
@@ -662,6 +700,7 @@ int main(void) {
     expect(&state, copy_initialized, "initialize SPI copy");
     if (initialized && copy_initialized) {
         register_cases(&state, &cpu);
+        split_buffer_cases(&state, &cpu);
         timing_matrix_cases(&state, &cpu);
         standard_buffer_cases(&state, &cpu);
         enhanced_fifo_cases(&state, &cpu);
