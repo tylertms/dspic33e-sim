@@ -112,6 +112,26 @@ enum {
     CRC_LITTLE_ENDIAN = 0x0008u,
     CRC_BITS_PER_CYCLE = 2u,
     CRC_IRQ = 67u,
+    PMP_CONTROL = 0x0600u,
+    PMP_MODE = 0x0602u,
+    PMP_ADDRESS = 0x0604u,
+    PMP_DATA = 0x0608u,
+    PMP_STATUS = 0x060eu,
+    PMP_ENABLE = 0x8000u,
+    PMP_BUSY = 0x8000u,
+    PMP_INTERRUPT_MODE_MASK = 0x6000u,
+    PMP_INTERRUPT_EACH = 0x2000u,
+    PMP_DATA_16_BIT = 0x0400u,
+    PMP_MASTER_MODE_MASK = 0x0300u,
+    PMP_MASTER_MODE_2 = 0x0200u,
+    PMP_ADDRESS_MUX_MASK = 0x1800u,
+    PMP_WAIT_BEGIN_MASK = 0x00c0u,
+    PMP_WAIT_MIDDLE_MASK = 0x003cu,
+    PMP_WAIT_END_MASK = 0x0003u,
+    PMP_DMA_REQUEST = 0x2du,
+    PMP_IRQ = 45u,
+    PMP_EVENT_COMPLETE = 0u,
+    PMP_EVENT_CLEAR_BUSY = 1u,
     UART_MODE_ENABLE = 0x8000u,
     UART_MODE_IREN = 0x1000u,
     UART_MODE_UEN_MASK = 0x0300u,
@@ -343,51 +363,52 @@ static const Dspic33RegisterMask register_masks[] = {
     {0x0046u, 0xcfffu}, {0x0048u, 0xfffeu}, {0x004au, 0xfffeu}, {0x004cu, 0xfffeu},
     {0x004eu, 0xfffeu}, {0x0050u, 0xffffu}, {0x0104u, 0xa076u}, {0x0110u, 0xa07au},
     {0x0112u, 0xa072u}, {0x011eu, 0xa07au}, {0x0120u, 0xa072u}, {0x012cu, 0xa07au},
-    {0x012eu, 0xa072u}, {0x013au, 0xa07au}, {0x013cu, 0xa072u}, {0x0640u, 0xa038u},
-    {0x0642u, 0x1f1fu}, {0x0644u, 0xfffeu}, {0x0646u, 0xffffu}, {0x0648u, 0xffffu},
-    {0x064au, 0xffffu}, {0x064cu, 0xffffu}, {0x064eu, 0xffffu}, {0x0680u, 0x3f3fu},
-    {0x0682u, 0x3f3fu}, {0x0684u, 0x3f3fu}, {0x0686u, 0x3f3fu}, {0x0688u, 0x3f3fu},
-    {0x068au, 0x3f3fu}, {0x068cu, 0x3f3fu}, {0x068eu, 0x3f3fu}, {0x0690u, 0x3f3fu},
-    {0x0692u, 0x3f3fu}, {0x0696u, 0x3f3fu}, {0x0698u, 0x3f3fu}, {0x069au, 0x3f3fu},
-    {0x069cu, 0x3f3fu}, {0x069eu, 0x3f3fu}, {0x06a0u, 0x7f00u}, {0x06a2u, 0x7f7fu},
-    {0x06a4u, 0x7f7fu}, {0x06a6u, 0x7f7fu}, {0x06a8u, 0x7f7fu}, {0x06aau, 0x7f7fu},
-    {0x06acu, 0x7f7fu}, {0x06aeu, 0x7f7fu}, {0x06b0u, 0x7f7fu}, {0x06b2u, 0x7f7fu},
-    {0x06b4u, 0x7f7fu}, {0x06b6u, 0x7f7fu}, {0x06b8u, 0x7f7fu}, {0x06bau, 0x7f7fu},
-    {0x06bcu, 0x7f7fu}, {0x06beu, 0x7f7fu}, {0x06c0u, 0x7f7fu}, {0x06c2u, 0x7f7fu},
-    {0x06c4u, 0x7f7fu}, {0x06c6u, 0x7f7fu}, {0x06c8u, 0x7f7fu}, {0x06cau, 0x007fu},
-    {0x06ceu, 0x007fu}, {0x06d0u, 0x7f7fu}, {0x06d2u, 0x007fu}, {0x06d4u, 0x7f7fu},
-    {0x06d6u, 0x7f7fu}, {0x06d8u, 0x7f7fu}, {0x06dau, 0x7f7fu}, {0x06dcu, 0x007fu},
-    {0x06deu, 0x7f7fu}, {0x06e0u, 0x007fu}, {0x06e2u, 0x7f7fu}, {0x06e4u, 0x7f7fu},
-    {0x06e6u, 0x7f7fu}, {0x06e8u, 0x7f7fu}, {0x06eau, 0x7f7fu}, {0x06ecu, 0x7f7fu},
-    {0x06eeu, 0x7f7fu}, {0x06f0u, 0x7f7fu}, {0x06f2u, 0x007fu}, {0x06f4u, 0x7f7fu},
-    {0x06f6u, 0x007fu}, {0x0728u, 0x700fu}, {0x072cu, 0x00ffu}, {0x072eu, 0x00ffu},
-    {0x0740u, 0xcbffu}, {0x0744u, 0xffdfu}, {0x0746u, 0x01ffu}, {0x0748u, 0x003fu},
-    {0x074eu, 0xbf00u}, {0x075au, 0x183fu}, {0x0760u, 0xffffu}, {0x0762u, 0xffffu},
-    {0x0764u, 0xf7abu}, {0x0766u, 0x0021u}, {0x0768u, 0xffffu}, {0x076au, 0x3f03u},
-    {0x076cu, 0x00f0u}, {0x0800u, 0xffffu}, {0x0802u, 0xffffu}, {0x0804u, 0xffffu},
-    {0x0806u, 0x7fffu}, {0x0808u, 0x0afeu}, {0x080au, 0xdfeeu}, {0x080cu, 0xc3efu},
-    {0x080eu, 0xffc0u}, {0x0810u, 0x7fdfu}, {0x0820u, 0xffffu}, {0x0822u, 0xffffu},
-    {0x0824u, 0xffffu}, {0x0826u, 0x7fffu}, {0x0828u, 0x0afeu}, {0x082au, 0xdfeeu},
-    {0x082cu, 0xffefu}, {0x082eu, 0xffc0u}, {0x0830u, 0x001fu}, {0x0840u, 0x7777u},
-    {0x0842u, 0x7777u}, {0x0844u, 0x7777u}, {0x0846u, 0x7777u}, {0x0848u, 0x7777u},
-    {0x084au, 0x7777u}, {0x084cu, 0x7777u}, {0x084eu, 0x7777u}, {0x0850u, 0x7777u},
-    {0x0852u, 0x7777u}, {0x0854u, 0x7777u}, {0x0856u, 0x7777u}, {0x0858u, 0x7777u},
-    {0x085au, 0x7777u}, {0x085cu, 0x7777u}, {0x085eu, 0x0777u}, {0x0860u, 0x7770u},
-    {0x0862u, 0x7777u}, {0x0864u, 0x7070u}, {0x0868u, 0x7770u}, {0x086au, 0x7700u},
-    {0x086cu, 0x7777u}, {0x086eu, 0x7777u}, {0x0870u, 0x7777u}, {0x087au, 0x7700u},
-    {0x087cu, 0x7777u}, {0x087eu, 0x7777u}, {0x0880u, 0x7777u}, {0x0882u, 0x7707u},
-    {0x0884u, 0x7777u}, {0x0886u, 0x0777u}, {0x0e00u, 0xc6ffu}, {0x0e04u, 0xc6ffu},
-    {0x0e06u, 0xc03fu}, {0x0e08u, 0xc6ffu}, {0x0e0au, 0xc6ffu}, {0x0e0cu, 0xc6ffu},
-    {0x0e0eu, 0x06c0u}, {0x0e10u, 0xffffu}, {0x0e14u, 0xffffu}, {0x0e18u, 0xffffu},
-    {0x0e1au, 0xffffu}, {0x0e1cu, 0xffffu}, {0x0e1eu, 0xffffu}, {0x0e20u, 0xf01eu},
-    {0x0e24u, 0xf01eu}, {0x0e28u, 0xf01eu}, {0x0e2au, 0xf01eu}, {0x0e2cu, 0xf01eu},
-    {0x0e2eu, 0x601eu}, {0x0e30u, 0xffffu}, {0x0e34u, 0xffffu}, {0x0e36u, 0xff3fu},
-    {0x0e38u, 0xffffu}, {0x0e3au, 0xffffu}, {0x0e3cu, 0xffffu}, {0x0e3eu, 0x00c0u},
-    {0x0e40u, 0x03ffu}, {0x0e44u, 0x03ffu}, {0x0e48u, 0x03ffu}, {0x0e4au, 0x03ffu},
-    {0x0e4cu, 0x03ffu}, {0x0e4eu, 0x03ffu}, {0x0e50u, 0x313fu}, {0x0e54u, 0x313fu},
-    {0x0e56u, 0x313fu}, {0x0e58u, 0x313fu}, {0x0e5au, 0x313fu}, {0x0e5cu, 0x313fu},
-    {0x0e60u, 0xf3c3u}, {0x0e64u, 0xf3c3u}, {0x0e66u, 0xf003u}, {0x0e68u, 0xf3cfu},
-    {0x0e6au, 0xf3c3u}, {0x0e6cu, 0xf3c3u}, {0x0e6eu, 0x03c0u}};
+    {0x012eu, 0xa072u}, {0x013au, 0xa07au}, {0x013cu, 0xa072u}, {0x0600u, 0xbfffu},
+    {0x0602u, 0x7fffu}, {0x060eu, 0x4040u}, {0x0640u, 0xa038u}, {0x0642u, 0x1f1fu},
+    {0x0644u, 0xfffeu}, {0x0646u, 0xffffu}, {0x0648u, 0xffffu}, {0x064au, 0xffffu},
+    {0x064cu, 0xffffu}, {0x064eu, 0xffffu}, {0x0680u, 0x3f3fu}, {0x0682u, 0x3f3fu},
+    {0x0684u, 0x3f3fu}, {0x0686u, 0x3f3fu}, {0x0688u, 0x3f3fu}, {0x068au, 0x3f3fu},
+    {0x068cu, 0x3f3fu}, {0x068eu, 0x3f3fu}, {0x0690u, 0x3f3fu}, {0x0692u, 0x3f3fu},
+    {0x0696u, 0x3f3fu}, {0x0698u, 0x3f3fu}, {0x069au, 0x3f3fu}, {0x069cu, 0x3f3fu},
+    {0x069eu, 0x3f3fu}, {0x06a0u, 0x7f00u}, {0x06a2u, 0x7f7fu}, {0x06a4u, 0x7f7fu},
+    {0x06a6u, 0x7f7fu}, {0x06a8u, 0x7f7fu}, {0x06aau, 0x7f7fu}, {0x06acu, 0x7f7fu},
+    {0x06aeu, 0x7f7fu}, {0x06b0u, 0x7f7fu}, {0x06b2u, 0x7f7fu}, {0x06b4u, 0x7f7fu},
+    {0x06b6u, 0x7f7fu}, {0x06b8u, 0x7f7fu}, {0x06bau, 0x7f7fu}, {0x06bcu, 0x7f7fu},
+    {0x06beu, 0x7f7fu}, {0x06c0u, 0x7f7fu}, {0x06c2u, 0x7f7fu}, {0x06c4u, 0x7f7fu},
+    {0x06c6u, 0x7f7fu}, {0x06c8u, 0x7f7fu}, {0x06cau, 0x007fu}, {0x06ceu, 0x007fu},
+    {0x06d0u, 0x7f7fu}, {0x06d2u, 0x007fu}, {0x06d4u, 0x7f7fu}, {0x06d6u, 0x7f7fu},
+    {0x06d8u, 0x7f7fu}, {0x06dau, 0x7f7fu}, {0x06dcu, 0x007fu}, {0x06deu, 0x7f7fu},
+    {0x06e0u, 0x007fu}, {0x06e2u, 0x7f7fu}, {0x06e4u, 0x7f7fu}, {0x06e6u, 0x7f7fu},
+    {0x06e8u, 0x7f7fu}, {0x06eau, 0x7f7fu}, {0x06ecu, 0x7f7fu}, {0x06eeu, 0x7f7fu},
+    {0x06f0u, 0x7f7fu}, {0x06f2u, 0x007fu}, {0x06f4u, 0x7f7fu}, {0x06f6u, 0x007fu},
+    {0x0728u, 0x700fu}, {0x072cu, 0x00ffu}, {0x072eu, 0x00ffu}, {0x0740u, 0xcbffu},
+    {0x0744u, 0xffdfu}, {0x0746u, 0x01ffu}, {0x0748u, 0x003fu}, {0x074eu, 0xbf00u},
+    {0x075au, 0x183fu}, {0x0760u, 0xffffu}, {0x0762u, 0xffffu}, {0x0764u, 0xf7abu},
+    {0x0766u, 0x0021u}, {0x0768u, 0xffffu}, {0x076au, 0x3f03u}, {0x076cu, 0x00f0u},
+    {0x0800u, 0xffffu}, {0x0802u, 0xffffu}, {0x0804u, 0xffffu}, {0x0806u, 0x7fffu},
+    {0x0808u, 0x0afeu}, {0x080au, 0xdfeeu}, {0x080cu, 0xc3efu}, {0x080eu, 0xffc0u},
+    {0x0810u, 0x7fdfu}, {0x0820u, 0xffffu}, {0x0822u, 0xffffu}, {0x0824u, 0xffffu},
+    {0x0826u, 0x7fffu}, {0x0828u, 0x0afeu}, {0x082au, 0xdfeeu}, {0x082cu, 0xffefu},
+    {0x082eu, 0xffc0u}, {0x0830u, 0x001fu}, {0x0840u, 0x7777u}, {0x0842u, 0x7777u},
+    {0x0844u, 0x7777u}, {0x0846u, 0x7777u}, {0x0848u, 0x7777u}, {0x084au, 0x7777u},
+    {0x084cu, 0x7777u}, {0x084eu, 0x7777u}, {0x0850u, 0x7777u}, {0x0852u, 0x7777u},
+    {0x0854u, 0x7777u}, {0x0856u, 0x7777u}, {0x0858u, 0x7777u}, {0x085au, 0x7777u},
+    {0x085cu, 0x7777u}, {0x085eu, 0x0777u}, {0x0860u, 0x7770u}, {0x0862u, 0x7777u},
+    {0x0864u, 0x7070u}, {0x0868u, 0x7770u}, {0x086au, 0x7700u}, {0x086cu, 0x7777u},
+    {0x086eu, 0x7777u}, {0x0870u, 0x7777u}, {0x087au, 0x7700u}, {0x087cu, 0x7777u},
+    {0x087eu, 0x7777u}, {0x0880u, 0x7777u}, {0x0882u, 0x7707u}, {0x0884u, 0x7777u},
+    {0x0886u, 0x0777u}, {0x0e00u, 0xc6ffu}, {0x0e04u, 0xc6ffu}, {0x0e06u, 0xc03fu},
+    {0x0e08u, 0xc6ffu}, {0x0e0au, 0xc6ffu}, {0x0e0cu, 0xc6ffu}, {0x0e0eu, 0x06c0u},
+    {0x0e10u, 0xffffu}, {0x0e14u, 0xffffu}, {0x0e18u, 0xffffu}, {0x0e1au, 0xffffu},
+    {0x0e1cu, 0xffffu}, {0x0e1eu, 0xffffu}, {0x0e20u, 0xf01eu}, {0x0e24u, 0xf01eu},
+    {0x0e28u, 0xf01eu}, {0x0e2au, 0xf01eu}, {0x0e2cu, 0xf01eu}, {0x0e2eu, 0x601eu},
+    {0x0e30u, 0xffffu}, {0x0e34u, 0xffffu}, {0x0e36u, 0xff3fu}, {0x0e38u, 0xffffu},
+    {0x0e3au, 0xffffu}, {0x0e3cu, 0xffffu}, {0x0e3eu, 0x00c0u}, {0x0e40u, 0x03ffu},
+    {0x0e44u, 0x03ffu}, {0x0e48u, 0x03ffu}, {0x0e4au, 0x03ffu}, {0x0e4cu, 0x03ffu},
+    {0x0e4eu, 0x03ffu}, {0x0e50u, 0x313fu}, {0x0e54u, 0x313fu}, {0x0e56u, 0x313fu},
+    {0x0e58u, 0x313fu}, {0x0e5au, 0x313fu}, {0x0e5cu, 0x313fu}, {0x0e60u, 0xf3c3u},
+    {0x0e64u, 0xf3c3u}, {0x0e66u, 0xf003u}, {0x0e68u, 0xf3cfu}, {0x0e6au, 0xf3c3u},
+    {0x0e6cu, 0xf3c3u}, {0x0e6eu, 0x03c0u}};
 
 static const Dspic33ResetValue reset_values[] = {
     {0x004au, 0x0001u}, {0x004eu, 0x0001u}, {0x0102u, 0xffffu}, {0x010cu, 0xffffu},
@@ -947,6 +968,148 @@ static void run_crc(Dspic33* cpu, uint16_t generation) {
         return;
     }
     crc_schedule(cpu);
+}
+
+static uint64_t pmp_transfer_cycles(uint16_t mode) {
+    uint8_t middle = (uint8_t)((mode & PMP_WAIT_MIDDLE_MASK) >> 2u);
+    if (middle == 0u) {
+        return 1u;
+    }
+    return (uint64_t)(((mode & PMP_WAIT_BEGIN_MASK) >> 6u) + 1u) + middle +
+           ((mode & PMP_WAIT_END_MASK) + 1u);
+}
+
+static bool pmp_master_write_enabled(const Dspic33* cpu) {
+    uint16_t control = raw_word(cpu, PMP_CONTROL);
+    uint16_t mode = raw_word(cpu, PMP_MODE);
+    uint16_t master = mode & PMP_MASTER_MODE_MASK;
+    return (control & PMP_ENABLE) != 0u &&
+           (master == PMP_MASTER_MODE_2 || master == PMP_MASTER_MODE_MASK) &&
+           (control & PMP_ADDRESS_MUX_MASK) == 0u && (mode & PMP_DATA_16_BIT) == 0u;
+}
+
+static void pmp_abort(Dspic33* cpu) {
+    cpu->io.pmp.generation++;
+    cpu->io.pmp.active = false;
+    cpu->io.pmp.completing_active = false;
+    raw_write_word(cpu, PMP_MODE, (uint16_t)(raw_word(cpu, PMP_MODE) & ~PMP_BUSY));
+}
+
+static bool pmp_output_push(Dspic33PmpQueue* queue,
+                            const Dspic33PmpTransfer* transfer) {
+    uint16_t index;
+    if (queue->count == DSPIC33_PMP_QUEUE_SIZE) {
+        return false;
+    }
+    index = (uint16_t)((queue->head + queue->count) % DSPIC33_PMP_QUEUE_SIZE);
+    queue->transfers[index] = *transfer;
+    queue->count++;
+    return true;
+}
+
+static bool pmp_output_pop(Dspic33PmpQueue* queue, Dspic33PmpTransfer* transfer) {
+    if (queue->count == 0u) {
+        return false;
+    }
+    *transfer = queue->transfers[queue->head];
+    queue->head = (uint16_t)((queue->head + 1u) % DSPIC33_PMP_QUEUE_SIZE);
+    queue->count--;
+    return true;
+}
+
+static void pmp_start_write(Dspic33* cpu) {
+    uint64_t delay;
+    cpu->io.pmp.generation++;
+    cpu->io.pmp.address = raw_word(cpu, PMP_ADDRESS);
+    cpu->io.pmp.control = raw_word(cpu, PMP_CONTROL);
+    cpu->io.pmp.mode = (uint16_t)(raw_word(cpu, PMP_MODE) & ~PMP_BUSY);
+    cpu->io.pmp.value = (uint8_t)raw_word(cpu, PMP_DATA);
+    cpu->io.pmp.active = true;
+    delay = pmp_transfer_cycles(cpu->io.pmp.mode);
+    if (delay > 1u) {
+        raw_write_word(cpu, PMP_MODE, (uint16_t)(raw_word(cpu, PMP_MODE) | PMP_BUSY));
+    }
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_PMP, PMP_EVENT_COMPLETE,
+                          cpu->io.pmp.generation, delay) ||
+        (delay > 1u && !dspic33_schedule(cpu, DSPIC33_EVENT_PMP, PMP_EVENT_CLEAR_BUSY,
+                                         cpu->io.pmp.generation, delay - 1u))) {
+        pmp_abort(cpu);
+    }
+}
+
+static void pmp_clear_busy(Dspic33* cpu, uint16_t generation) {
+    if (!cpu->io.pmp.active || generation != cpu->io.pmp.generation) {
+        return;
+    }
+    cpu->io.pmp.completing.cycle = 0u;
+    cpu->io.pmp.completing.address = cpu->io.pmp.address;
+    cpu->io.pmp.completing.control = cpu->io.pmp.control;
+    cpu->io.pmp.completing.mode = cpu->io.pmp.mode;
+    cpu->io.pmp.completing.value = cpu->io.pmp.value;
+    cpu->io.pmp.completing_generation = generation;
+    cpu->io.pmp.completing_active = true;
+    cpu->io.pmp.active = false;
+    raw_write_word(cpu, PMP_MODE, (uint16_t)(raw_word(cpu, PMP_MODE) & ~PMP_BUSY));
+}
+
+static void run_pmp(Dspic33* cpu, uint16_t generation) {
+    Dspic33PmpTransfer transfer;
+    if (cpu->io.pmp.completing_active &&
+        generation == cpu->io.pmp.completing_generation) {
+        transfer = cpu->io.pmp.completing;
+        cpu->io.pmp.completing_active = false;
+    } else if (cpu->io.pmp.active && generation == cpu->io.pmp.generation) {
+        transfer.address = cpu->io.pmp.address;
+        transfer.control = cpu->io.pmp.control;
+        transfer.mode = cpu->io.pmp.mode;
+        transfer.value = cpu->io.pmp.value;
+        cpu->io.pmp.active = false;
+        raw_write_word(cpu, PMP_MODE, (uint16_t)(raw_word(cpu, PMP_MODE) & ~PMP_BUSY));
+    } else {
+        return;
+    }
+    transfer.cycle = cpu->device_cycles;
+    if (!pmp_output_push(&cpu->io.pmp.output, &transfer)) {
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+        return;
+    }
+    if ((transfer.mode & PMP_INTERRUPT_MODE_MASK) == PMP_INTERRUPT_EACH) {
+        dspic33_raise_interrupt(cpu, PMP_IRQ);
+        if (!dspic33_dma_request(cpu, PMP_DMA_REQUEST, 0u, 0u)) {
+            cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+        }
+    }
+}
+
+static bool pmp_initiating_write(const Dspic33* cpu, uint16_t address) {
+    return address == PMP_DATA ||
+           (address == PMP_DATA + 1u && cpu->io.cpu_write_valid &&
+            cpu->io.cpu_write_width == 2u && cpu->io.cpu_write_address == PMP_DATA);
+}
+
+static void update_pmp_register(Dspic33* cpu, uint16_t address, uint16_t previous) {
+    uint16_t base = (uint16_t)(address & 0xfffeu);
+    if (base == PMP_CONTROL) {
+        uint16_t current = raw_word(cpu, PMP_CONTROL);
+        bool was_enabled = (previous & PMP_ENABLE) != 0u;
+        bool enabled = (current & PMP_ENABLE) != 0u;
+        if (was_enabled && !enabled) {
+            pmp_abort(cpu);
+        } else if (!was_enabled && enabled) {
+            raw_write_word(cpu, PMP_STATUS, 0x008fu);
+        }
+        return;
+    }
+    if (base != PMP_DATA || !pmp_initiating_write(cpu, address)) {
+        return;
+    }
+    if (cpu->io.pmp.active) {
+        raw_write_word(cpu, PMP_DATA, previous);
+        return;
+    }
+    if (pmp_master_write_enabled(cpu)) {
+        pmp_start_write(cpu);
+    }
 }
 
 static bool can_queue_push(Dspic33CanQueue* queue, const Dspic33CanFrame* frame) {
@@ -4558,6 +4721,13 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
     case DSPIC33_EVENT_CRC:
         run_crc(cpu, (uint16_t)event->value);
         break;
+    case DSPIC33_EVENT_PMP:
+        if (event->source == PMP_EVENT_CLEAR_BUSY) {
+            pmp_clear_busy(cpu, (uint16_t)event->value);
+        } else {
+            run_pmp(cpu, (uint16_t)event->value);
+        }
+        break;
     case DSPIC33_EVENT_NVM:
         complete_nvm_event(cpu);
         break;
@@ -5742,6 +5912,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     update_can_register(cpu, base, previous, requested);
     update_usb_register(cpu, base, previous, requested);
     update_crc_register(cpu, address, previous, requested);
+    update_pmp_register(cpu, address, previous);
     update_oscillator(cpu, base);
     update_uart_register(cpu, base, previous, requested);
     if (base == NVM_KEY && (cpu->io.cpu_write_width == 2u || address == NVM_KEY)) {
@@ -5922,6 +6093,10 @@ bool dspic33_dma_request(Dspic33* cpu, uint8_t request, uint16_t indirect_addres
         }
     }
     return succeeded;
+}
+
+bool dspic33_pmp_transmit(Dspic33* cpu, Dspic33PmpTransfer* transfer) {
+    return transfer != NULL && pmp_output_pop(&cpu->io.pmp.output, transfer);
 }
 
 bool dspic33_timer_pulse(Dspic33* cpu, uint8_t timer, uint32_t pulses, uint64_t delay) {

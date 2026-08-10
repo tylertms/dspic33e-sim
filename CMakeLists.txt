@@ -38,6 +38,7 @@ add_executable(opentec_simulator_uart_conformance conformance/uart.c)
 add_executable(opentec_simulator_i2c_conformance conformance/i2c.c)
 add_executable(opentec_simulator_nvm_conformance conformance/nvm.c)
 add_executable(opentec_simulator_crc_conformance conformance/crc.c)
+add_executable(opentec_simulator_pmp_conformance conformance/pmp.c)
 add_executable(opentec_simulator_sfr_reset_conformance conformance/sfr_reset.c)
 add_executable(
     opentec_simulator_sfr_access_conformance conformance/sfr_access.c
@@ -85,6 +86,9 @@ target_link_libraries(
     opentec_simulator_crc_conformance PRIVATE opentec_simulator_core
 )
 target_link_libraries(
+    opentec_simulator_pmp_conformance PRIVATE opentec_simulator_core
+)
+target_link_libraries(
     opentec_simulator_sfr_reset_conformance PRIVATE opentec_simulator_core
 )
 target_include_directories(
@@ -110,6 +114,7 @@ set(opentec_simulator_targets
     opentec_simulator_i2c_conformance
     opentec_simulator_nvm_conformance
     opentec_simulator_crc_conformance
+    opentec_simulator_pmp_conformance
     opentec_simulator_sfr_reset_conformance
     opentec_simulator_sfr_access_conformance
 )
