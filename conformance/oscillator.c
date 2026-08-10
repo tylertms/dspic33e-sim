@@ -345,6 +345,7 @@ int main(void) {
         fprintf(stderr, "failed to initialize simulator\n");
         return 2;
     }
+    dspic33_load_configuration_word(&source, 0xf80008u, 0x005eu);
     reset_cases(&state, &source);
     protection_cases(&state, &source);
     switch_cases(&state, &source);

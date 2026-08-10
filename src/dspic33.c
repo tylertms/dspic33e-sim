@@ -19,7 +19,12 @@ static const uint8_t configuration_program_masks[] = {0x33u, 0x87u, 0xe7u, 0xffu
                                                       0x3fu, 0xf7u, 0x33u, 0xffu};
 
 static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory);
-static void perform_warm_reset(Dspic33* cpu, uint16_t cause, bool illegal);
+typedef enum {
+    DSPIC33_RESET_SOFTWARE,
+    DSPIC33_RESET_ILLEGAL,
+    DSPIC33_RESET_HARDWARE
+} Dspic33ResetKind;
+static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind kind);
 static void enter_trap(Dspic33* cpu, uint16_t trap, uint32_t vector, uint8_t priority,
                        uint16_t status, uint32_t return_pc);
 static void schedule_soft_trap(Dspic33* cpu, uint16_t trap, uint32_t vector,
@@ -137,7 +142,7 @@ static bool address_register_initialized(Dspic33* cpu, uint8_t reg) {
     if ((cpu->initialized_working_registers & (uint16_t)(1u << reg)) != 0u) {
         return true;
     }
-    perform_warm_reset(cpu, 0x4000u, true);
+    perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
     return false;
 }
 
@@ -836,7 +841,7 @@ static bool execute_move_double(Dspic33* cpu, uint32_t opcode) {
     OperandResolution resolution;
     uint16_t registers[16];
     if (!source_to_direct && !direct_to_indirect) {
-        perform_warm_reset(cpu, 0x4000u, true);
+        perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
         return true;
     }
     memcpy(registers, cpu->w, sizeof(registers));
@@ -2740,7 +2745,7 @@ static bool execute_fractional_divide(Dspic33* cpu, uint32_t opcode) {
 
 static bool execute(Dspic33* cpu, uint32_t opcode) {
     if ((opcode & 0xff0000u) == 0x3f0000u) {
-        perform_warm_reset(cpu, 0x4000u, true);
+        perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
         return true;
     }
     if ((opcode & 0xfffff0u) == 0xfd4000u) {
@@ -2945,7 +2950,7 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
             cpu->tblpag = value & 0x00ffu;
             break;
         case 3u:
-            perform_warm_reset(cpu, 0x4000u, true);
+            perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
             break;
         }
         return true;
@@ -2963,7 +2968,7 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
             cpu->tblpag = value & 0x00ffu;
             break;
         case 3u:
-            perform_warm_reset(cpu, 0x4000u, true);
+            perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
             break;
         }
         return true;
@@ -3081,7 +3086,7 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     }
     if (((opcode & 0xf80000u) == 0xc00000u || (opcode & 0xfc0000u) == 0xf00000u) &&
         !dsp_encoding_valid(opcode)) {
-        perform_warm_reset(cpu, 0x4000u, true);
+        perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
         return true;
     }
     if ((opcode & 0xff4000u) == 0xc30000u || (opcode & 0xff4000u) == 0xc70000u) {
@@ -3196,7 +3201,7 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         return true;
     }
     if (opcode == 0xfe0000u) {
-        perform_warm_reset(cpu, 0x0040u, false);
+        perform_warm_reset(cpu, 0x0040u, DSPIC33_RESET_SOFTWARE);
         return true;
     }
     if ((opcode & 0xfffffeu) == 0xfe4000u) {
@@ -3373,7 +3378,7 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
     dspic33_device_reset(cpu);
 }
 
-static void perform_warm_reset(Dspic33* cpu, uint16_t cause, bool illegal) {
+static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind kind) {
     static const uint16_t preserved_addresses[] = {
         0x0626u, 0x0728u, 0x0742u, 0x0744u, 0x0746u, 0x0748u, 0x074eu, 0x0758u, 0x075au,
     };
@@ -3389,8 +3394,10 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, bool illegal) {
     uint64_t cycles = cpu->cycles;
     uint64_t device_cycles = cpu->device_cycles;
     uint64_t interrupt_count = cpu->interrupt_count;
-    uint64_t software_reset_count = cpu->software_reset_count + (!illegal ? 1u : 0u);
-    uint64_t illegal_reset_count = cpu->illegal_reset_count + (illegal ? 1u : 0u);
+    uint64_t software_reset_count =
+        cpu->software_reset_count + (kind == DSPIC33_RESET_SOFTWARE ? 1u : 0u);
+    uint64_t illegal_reset_count =
+        cpu->illegal_reset_count + (kind == DSPIC33_RESET_ILLEGAL ? 1u : 0u);
     uint64_t trap_count = cpu->trap_count;
     uint64_t auxiliary_pll_remaining = 0u;
     uint64_t oscillator_remaining = 0u;
@@ -3496,10 +3503,14 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, bool illegal) {
     cpu->reset_interrupt = reset_interrupt;
     cpu->async_events_enabled = async_events_enabled;
     cpu->stop_on_trap = stop_on_trap;
-    cpu->illegal_reset = illegal;
-    rcon = (uint16_t)((rcon | cause) & 0xc8ffu);
+    cpu->illegal_reset = kind == DSPIC33_RESET_ILLEGAL;
+    rcon = (uint16_t)((rcon | cause) & 0xcaffu);
     cpu->data[0x0740u] = (uint8_t)rcon;
     cpu->data[0x0741u] = (uint8_t)(rcon >> 8u);
+}
+
+void dspic33_configuration_mismatch_reset(Dspic33* cpu) {
+    perform_warm_reset(cpu, 0x0200u, DSPIC33_RESET_HARDWARE);
 }
 
 void dspic33_reset(Dspic33* cpu, uint32_t entry) { reset_processor(cpu, entry, true); }

@@ -77,6 +77,12 @@ typedef struct {
     uint8_t shift;
 } Dspic33PpsOutput;
 
+typedef struct {
+    uint8_t pin;
+    uint8_t port;
+    uint8_t bit;
+} Dspic33PpsPin;
+
 static const Dspic33PpsOutput pps_outputs[] = {
     {0x0680u, 64u, 0u},  {0x0680u, 65u, 8u},  {0x0682u, 66u, 0u},  {0x0682u, 67u, 8u},
     {0x0684u, 68u, 0u},  {0x0684u, 69u, 8u},  {0x0686u, 70u, 0u},  {0x0686u, 71u, 8u},
@@ -86,6 +92,24 @@ static const Dspic33PpsOutput pps_outputs[] = {
     {0x0696u, 104u, 0u}, {0x0696u, 108u, 8u}, {0x0698u, 109u, 0u}, {0x0698u, 112u, 8u},
     {0x069au, 113u, 0u}, {0x069au, 118u, 8u}, {0x069cu, 120u, 0u}, {0x069cu, 125u, 8u},
     {0x069eu, 126u, 0u}, {0x069eu, 127u, 8u}};
+
+static const Dspic33PpsPin pps_pins[] = {
+    {16u, 0u, 0u},   {17u, 0u, 1u},   {18u, 0u, 2u},   {19u, 0u, 3u},  {20u, 0u, 4u},
+    {21u, 0u, 5u},   {22u, 0u, 6u},   {23u, 0u, 7u},   {30u, 0u, 14u}, {31u, 0u, 15u},
+    {32u, 1u, 0u},   {33u, 1u, 1u},   {34u, 1u, 2u},   {35u, 1u, 3u},  {36u, 1u, 4u},
+    {37u, 1u, 5u},   {38u, 1u, 6u},   {39u, 1u, 7u},   {40u, 1u, 8u},  {41u, 1u, 9u},
+    {42u, 1u, 10u},  {43u, 1u, 11u},  {44u, 1u, 12u},  {45u, 1u, 13u}, {46u, 1u, 14u},
+    {47u, 1u, 15u},  {49u, 2u, 1u},   {50u, 2u, 2u},   {51u, 2u, 3u},  {52u, 2u, 4u},
+    {60u, 2u, 12u},  {61u, 2u, 13u},  {62u, 2u, 14u},  {64u, 3u, 0u},  {65u, 3u, 1u},
+    {66u, 3u, 2u},   {67u, 3u, 3u},   {68u, 3u, 4u},   {69u, 3u, 5u},  {70u, 3u, 6u},
+    {71u, 3u, 7u},   {72u, 3u, 8u},   {73u, 3u, 9u},   {74u, 3u, 10u}, {75u, 3u, 11u},
+    {76u, 3u, 12u},  {77u, 3u, 13u},  {78u, 3u, 14u},  {79u, 3u, 15u}, {80u, 4u, 0u},
+    {81u, 4u, 1u},   {82u, 4u, 2u},   {83u, 4u, 3u},   {84u, 4u, 4u},  {85u, 4u, 5u},
+    {86u, 4u, 6u},   {87u, 4u, 7u},   {88u, 4u, 8u},   {89u, 4u, 9u},  {96u, 5u, 0u},
+    {97u, 5u, 1u},   {98u, 5u, 2u},   {99u, 5u, 3u},   {100u, 5u, 4u}, {101u, 5u, 5u},
+    {104u, 5u, 8u},  {108u, 5u, 12u}, {109u, 5u, 13u}, {112u, 6u, 0u}, {113u, 6u, 1u},
+    {118u, 6u, 6u},  {119u, 6u, 7u},  {120u, 6u, 8u},  {121u, 6u, 9u}, {124u, 6u, 12u},
+    {125u, 6u, 13u}, {126u, 6u, 14u}, {127u, 6u, 15u}};
 
 enum {
     TIMER_ON = 0x8000u,
@@ -691,6 +715,43 @@ static bool register_write_mask(uint16_t address, uint16_t* writable) {
         return false;
     }
     *writable = register_masks[first].writable;
+    return true;
+}
+
+static bool pps_register_write_mask(uint16_t address, uint16_t* writable) {
+    return address >= 0x0680u && address <= 0x06f6u &&
+           register_write_mask(address, writable);
+}
+
+static void pps_capture_shadow(Dspic33* cpu) {
+    uint8_t index;
+    for (index = 0u; index < DSPIC33_PPS_REGISTER_COUNT; index++) {
+        uint16_t address = (uint16_t)(0x0680u + index * 2u);
+        uint16_t writable;
+        cpu->io.pps.shadow[index] = pps_register_write_mask(address, &writable)
+                                        ? (uint16_t)(raw_word(cpu, address) & writable)
+                                        : 0u;
+    }
+}
+
+static void pps_update_shadow(Dspic33* cpu, uint16_t address) {
+    uint16_t writable;
+    if (pps_register_write_mask(address, &writable)) {
+        cpu->io.pps.shadow[(address - 0x0680u) / 2u] =
+            (uint16_t)(raw_word(cpu, address) & writable);
+    }
+}
+
+static bool pps_shadow_matches(const Dspic33* cpu) {
+    uint8_t index;
+    for (index = 0u; index < DSPIC33_PPS_REGISTER_COUNT; index++) {
+        uint16_t address = (uint16_t)(0x0680u + index * 2u);
+        uint16_t writable;
+        if (pps_register_write_mask(address, &writable) &&
+            (raw_word(cpu, address) & writable) != cpu->io.pps.shadow[index]) {
+            return false;
+        }
+    }
     return true;
 }
 
@@ -1615,15 +1676,52 @@ static uint8_t input_capture_pps_pin(const Dspic33* cpu, uint8_t channel) {
                                 : (uint8_t)((mapping >> 8u) & 0x007fu);
 }
 
+static const Dspic33PpsPin* pps_pin(uint8_t pin) {
+    size_t first = 0u;
+    size_t count = sizeof(pps_pins) / sizeof(pps_pins[0]);
+    while (count != 0u) {
+        size_t step = count / 2u;
+        size_t index = first + step;
+        if (pps_pins[index].pin < pin) {
+            first = index + 1u;
+            count -= step + 1u;
+        } else {
+            count = step;
+        }
+    }
+    if (first == sizeof(pps_pins) / sizeof(pps_pins[0]) || pps_pins[first].pin != pin) {
+        return NULL;
+    }
+    return &pps_pins[first];
+}
+
+static bool pps_physical_input_enabled(const Dspic33* cpu, uint8_t pin) {
+    const Dspic33PpsPin* mapping = pps_pin(pin);
+    uint16_t bit;
+    if (mapping == NULL) {
+        return false;
+    }
+    bit = (uint16_t)(1u << mapping->bit);
+    return (raw_word(cpu, gpio_tris_addresses[mapping->port]) & bit) != 0u &&
+           (gpio_analog_addresses[mapping->port] == 0u ||
+            (raw_word(cpu, gpio_analog_addresses[mapping->port]) & bit) == 0u);
+}
+
+static void input_capture_pps_source(Dspic33* cpu, uint8_t source, bool high) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_INPUT_CAPTURE_COUNT; channel++) {
+        if (input_capture_pps_pin(cpu, channel) == source) {
+            input_capture_level(cpu, channel, high);
+        }
+    }
+}
+
 static void run_input_capture(Dspic33* cpu, uint16_t source, uint32_t value) {
     uint32_t kind = value & INPUT_CAPTURE_EVENT_KIND_MASK;
     if (kind == INPUT_CAPTURE_EVENT_PIN) {
-        uint8_t channel;
-        for (channel = 0u; channel < DSPIC33_INPUT_CAPTURE_COUNT; channel++) {
-            if (input_capture_pps_pin(cpu, channel) == source) {
-                input_capture_level(cpu, channel,
-                                    (value & INPUT_CAPTURE_EVENT_HIGH) != 0u);
-            }
+        if (pps_physical_input_enabled(cpu, (uint8_t)source)) {
+            input_capture_pps_source(cpu, (uint8_t)source,
+                                     (value & INPUT_CAPTURE_EVENT_HIGH) != 0u);
         }
         return;
     }
@@ -1959,6 +2057,7 @@ static void comparator_set_output(Dspic33* cpu, uint8_t comparator, bool high) {
     }
     raw_write_word(cpu, base, control);
     comparator_refresh_status(cpu);
+    input_capture_pps_source(cpu, (uint8_t)(comparator + 1u), high);
 }
 
 static void comparator_raise_event(Dspic33* cpu, uint8_t comparator) {
@@ -2704,6 +2803,10 @@ static void qei_apply_filtered_inputs(Dspic33* cpu, uint8_t channel) {
     uint8_t logical = qei_logical_inputs(cpu, channel);
     uint8_t mode = (uint8_t)(control & QEI_CONTROL_COUNT_MODE_MASK);
     cpu->io.qei.logical_inputs[channel] = logical;
+    input_capture_pps_source(cpu, (uint8_t)(8u + channel * 2u),
+                             (cpu->io.qei.filtered_inputs[channel] & 4u) != 0u);
+    input_capture_pps_source(cpu, (uint8_t)(9u + channel * 2u),
+                             (cpu->io.qei.filtered_inputs[channel] & 8u) != 0u);
     if ((logical & 4u) == 0u) {
         cpu->io.qei.index_latched[channel] = false;
     }
@@ -7307,6 +7410,9 @@ static void advance_device_cycles(Dspic33* cpu, uint64_t cycles) {
 bool dspic33_device_advance(Dspic33* cpu, uint64_t cycles) {
     uint64_t target;
     size_t group;
+    if (!pps_shadow_matches(cpu)) {
+        dspic33_configuration_mismatch_reset(cpu);
+    }
     if (cycles > UINT64_MAX - cpu->cycles ||
         (cpu->async_events_enabled && cycles > UINT64_MAX - cpu->device_cycles)) {
         return false;
@@ -7834,8 +7940,17 @@ static void apply_oscillator_high(Dspic33* cpu, uint16_t previous, uint16_t requ
 
 static void apply_oscillator_low(Dspic33* cpu, uint16_t previous, uint16_t requested) {
     uint16_t control = previous;
+    bool was_io_locked = (previous & OSCILLATOR_IO_LOCK) != 0u;
+    bool requests_io_lock = (requested & OSCILLATOR_IO_LOCK) != 0u;
+    if (was_io_locked && !requests_io_lock && (cpu->configuration[8u] & 0x20u) != 0u &&
+        cpu->io.pps.one_way_committed) {
+        requested |= OSCILLATOR_IO_LOCK;
+    }
     control = (uint16_t)((control & ~(OSCILLATOR_IO_LOCK | OSCILLATOR_LP_ENABLE)) |
                          (requested & (OSCILLATOR_IO_LOCK | OSCILLATOR_LP_ENABLE)));
+    if (!was_io_locked && (control & OSCILLATOR_IO_LOCK) != 0u) {
+        cpu->io.pps.one_way_committed = true;
+    }
     control |= (uint16_t)(requested & OSCILLATOR_CLOCK_LOCK);
     if ((requested & OSCILLATOR_CLOCK_FAIL) != 0u) {
         control |= OSCILLATOR_CLOCK_FAIL;
@@ -8523,6 +8638,11 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
         return;
     }
     if (base >= 0x0680u && base <= 0x06f6u &&
+        !pps_register_write_mask(base, &writable)) {
+        raw_write_word(cpu, base, previous);
+        return;
+    }
+    if (base >= 0x0680u && base <= 0x06f6u &&
         (raw_word(cpu, 0x0742u) & 0x0040u) != 0u) {
         raw_write_word(cpu, base, previous);
         return;
@@ -8544,6 +8664,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
         raw_write_word(cpu, base,
                        (uint16_t)((previous & ~writable) | (requested & writable)));
     }
+    pps_update_shadow(cpu, base);
     update_gpio_latch(cpu, address, requested);
     if (base >= 0x0800u && base < 0x0800u + DSPIC33_IRQ_GROUP_COUNT * 2u) {
         uint16_t group = (uint16_t)((base - 0x0800u) / 2u);
@@ -8822,7 +8943,7 @@ bool dspic33_input_capture_input(Dspic33* cpu, uint8_t channel, bool high,
 }
 
 bool dspic33_input_capture_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t delay) {
-    return pin != 0u && pin < 128u &&
+    return pps_pin(pin) != NULL &&
            dspic33_schedule(
                cpu, DSPIC33_EVENT_INPUT_CAPTURE, pin,
                INPUT_CAPTURE_EVENT_PIN | (high ? INPUT_CAPTURE_EVENT_HIGH : 0u), delay);
@@ -9174,4 +9295,5 @@ void dspic33_device_reset(Dspic33* cpu) {
     raw_write_word(cpu, 0x08c2u, 0x8000u);
     raw_write_word(cpu, 0x08c8u, 0u);
     raw_write_word(cpu, DMA_LCA, 0x000fu);
+    pps_capture_shadow(cpu);
 }

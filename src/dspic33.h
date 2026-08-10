@@ -249,6 +249,13 @@ typedef struct {
     bool pmd_disabled[DSPIC33_QEI_COUNT];
 } Dspic33Qei;
 
+enum { DSPIC33_PPS_REGISTER_COUNT = 60u };
+
+typedef struct {
+    uint16_t shadow[DSPIC33_PPS_REGISTER_COUNT];
+    bool one_way_committed;
+} Dspic33Pps;
+
 typedef struct {
     uint64_t cycle;
     uint16_t value;
@@ -499,6 +506,7 @@ typedef struct {
     Dspic33Comparator comparator;
     Dspic33Rtcc rtcc;
     Dspic33Qei qei;
+    Dspic33Pps pps;
     Dspic33Dci dci;
     Dspic33UsbPending usb_pending[DSPIC33_USB_PENDING_COUNT];
     Dspic33UsbQueue usb_tx;
@@ -693,6 +701,7 @@ bool dspic33_pmp_transmit(Dspic33* cpu, Dspic33PmpTransfer* transfer);
 bool dspic33_input_capture_input(Dspic33* cpu, uint8_t channel, bool high,
                                  uint64_t delay);
 bool dspic33_input_capture_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t delay);
+void dspic33_configuration_mismatch_reset(Dspic33* cpu);
 bool dspic33_output_compare_output(const Dspic33* cpu, uint8_t channel, bool* high);
 bool dspic33_output_compare_pin(const Dspic33* cpu, uint8_t pin, bool* high);
 bool dspic33_comparator_input(Dspic33* cpu, uint8_t comparator,
