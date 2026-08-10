@@ -150,6 +150,97 @@ static void timing_cases(I2cConformance* state, Dspic33* cpu) {
     }
 }
 
+static void bus_status_timing_cases(I2cConformance* state, Dspic33* cpu) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_I2C_COUNT; channel++) {
+        uint16_t base = bases[channel];
+        uint16_t baud = (uint16_t)(4u + channel * 2u);
+        uint64_t start_status = operation_cycles(baud, 1u);
+        uint64_t start_complete = operation_cycles(baud, 2u);
+        uint64_t condition_status = operation_cycles(baud, 2u);
+        uint64_t condition_complete = operation_cycles(baud, 3u);
+
+        dspic33_reset(cpu, 0u);
+        enable(cpu, channel, 1u, baud);
+        expect(state, dspic33_device_advance(cpu, start_status - 1u),
+               "start status boundary advance");
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0018u) == 0u,
+               "start status unchanged early");
+        expect(state,
+               (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x0001u) != 0u &&
+                   !interrupt_flag(cpu, master_irqs[channel]),
+               "start request active before status edge");
+        expect(state, dspic33_device_advance(cpu, 1u), "start status edge advance");
+        expect(state,
+               (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0018u) == 0x0008u,
+               "start status edge");
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x0001u) != 0u,
+               "start request remains active at status edge");
+        expect(state, !interrupt_flag(cpu, master_irqs[channel]),
+               "start interrupt remains clear at status edge");
+        expect(state, dspic33_device_advance(cpu, start_complete - start_status),
+               "start final period advance");
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x0001u) == 0u,
+               "start request clears after final period");
+        expect(state, interrupt_flag(cpu, master_irqs[channel]),
+               "start interrupt after final period");
+
+        clear_interrupt(cpu, master_irqs[channel]);
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9004u);
+        expect(state, dspic33_device_advance(cpu, condition_status - 1u),
+               "stop status boundary advance");
+        expect(state,
+               (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0018u) == 0x0008u,
+               "stop status unchanged early");
+        expect(state,
+               (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x0004u) != 0u &&
+                   !interrupt_flag(cpu, master_irqs[channel]),
+               "stop request active before status edge");
+        expect(state, dspic33_device_advance(cpu, 1u), "stop status edge advance");
+        expect(state,
+               (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0018u) == 0x0010u,
+               "stop status edge");
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x0004u) != 0u,
+               "stop request remains active at status edge");
+        expect(state, !interrupt_flag(cpu, master_irqs[channel]),
+               "stop interrupt remains clear at status edge");
+        expect(state,
+               dspic33_device_advance(cpu, condition_complete - condition_status),
+               "stop final period advance");
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x0004u) == 0u,
+               "stop request clears after final period");
+        expect(state, interrupt_flag(cpu, master_irqs[channel]),
+               "stop interrupt after final period");
+
+        clear_interrupt(cpu, master_irqs[channel]);
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9002u);
+        expect(state, dspic33_device_advance(cpu, condition_status - 1u),
+               "restart status boundary advance");
+        expect(state,
+               (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0018u) == 0x0010u,
+               "restart status unchanged early");
+        expect(state,
+               (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x0002u) != 0u &&
+                   !interrupt_flag(cpu, master_irqs[channel]),
+               "restart request active before status edge");
+        expect(state, dspic33_device_advance(cpu, 1u), "restart status edge advance");
+        expect(state,
+               (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0018u) == 0x0008u,
+               "restart status edge");
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x0002u) != 0u,
+               "restart request remains active at status edge");
+        expect(state, !interrupt_flag(cpu, master_irqs[channel]),
+               "restart interrupt remains clear at status edge");
+        expect(state,
+               dspic33_device_advance(cpu, condition_complete - condition_status),
+               "restart final period advance");
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x0002u) == 0u,
+               "restart request clears after final period");
+        expect(state, interrupt_flag(cpu, master_irqs[channel]),
+               "restart interrupt after final period");
+    }
+}
+
 static void master_sequence_cases(I2cConformance* state, Dspic33* cpu) {
     uint8_t channel;
     for (channel = 0u; channel < DSPIC33_I2C_COUNT; channel++) {
@@ -1288,6 +1379,7 @@ int main(void) {
     }
     register_cases(&state, &cpu);
     timing_cases(&state, &cpu);
+    bus_status_timing_cases(&state, &cpu);
     master_sequence_cases(&state, &cpu);
     master_error_cases(&state, &cpu);
     slave_receive_cases(&state, &cpu);

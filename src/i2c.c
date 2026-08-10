@@ -46,15 +46,16 @@ enum {
     I2C_EVENT_GENERATION_SHIFT = 16u,
     I2C_EVENT_PAYLOAD_MASK = 0xffffu,
     I2C_EVENT_CONTROL = 1u,
-    I2C_EVENT_TRANSMIT = 2u,
-    I2C_EVENT_TRANSMIT_SHIFT = 3u,
-    I2C_EVENT_SLAVE_START = 4u,
-    I2C_EVENT_SLAVE_WRITE = 5u,
-    I2C_EVENT_SLAVE_READ = 6u,
-    I2C_EVENT_SLAVE_STOP = 7u,
-    I2C_EVENT_COLLISION = 8u,
-    I2C_EVENT_SLAVE_TEN_SECOND = 9u,
-    I2C_EVENT_SLAVE_TEN_RESTART = 10u,
+    I2C_EVENT_BUS_STATUS = 2u,
+    I2C_EVENT_TRANSMIT = 3u,
+    I2C_EVENT_TRANSMIT_SHIFT = 4u,
+    I2C_EVENT_SLAVE_START = 5u,
+    I2C_EVENT_SLAVE_WRITE = 6u,
+    I2C_EVENT_SLAVE_READ = 7u,
+    I2C_EVENT_SLAVE_STOP = 8u,
+    I2C_EVENT_COLLISION = 9u,
+    I2C_EVENT_SLAVE_TEN_SECOND = 10u,
+    I2C_EVENT_SLAVE_TEN_RESTART = 11u,
     I2C_EXTERNAL_READ = 0x00000800u,
     I2C_EXTERNAL_TEN_BIT = 0x00000400u
 };
@@ -331,9 +332,29 @@ static void begin_control(Dspic33* cpu, uint8_t channel, uint16_t operation) {
         } else if (selected == I2C_RSEN || selected == I2C_PEN) {
             periods = 3u;
         }
-        schedule_internal(cpu, channel, I2C_EVENT_CONTROL, selected,
-                          operation_cycles(cpu, channel, periods));
+        if (schedule_internal(cpu, channel, I2C_EVENT_CONTROL, selected,
+                              operation_cycles(cpu, channel, periods)) &&
+            (selected == I2C_SEN || selected == I2C_RSEN || selected == I2C_PEN)) {
+            uint8_t status_periods = selected == I2C_SEN ? 1u : 2u;
+            schedule_internal(cpu, channel, I2C_EVENT_BUS_STATUS, selected,
+                              operation_cycles(cpu, channel, status_periods));
+        }
     }
+}
+
+static void complete_bus_status(Dspic33* cpu, uint8_t channel, uint16_t operation) {
+    uint16_t base = bases[channel];
+    uint16_t control = raw_word(cpu, (uint16_t)(base + I2C_CON));
+    uint16_t status = raw_word(cpu, (uint16_t)(base + I2C_STAT));
+    if (!module_enabled(cpu, channel) || (control & operation) == 0u) {
+        return;
+    }
+    if (operation == I2C_SEN || operation == I2C_RSEN) {
+        status = (uint16_t)((status | I2C_START_STATUS) & ~I2C_STOP_STATUS);
+    } else if (operation == I2C_PEN) {
+        status = (uint16_t)((status | I2C_STOP_STATUS) & ~I2C_START_STATUS);
+    }
+    raw_write_word(cpu, (uint16_t)(base + I2C_STAT), status);
 }
 
 static void write_transmit(Dspic33* cpu, uint8_t channel, uint16_t previous,
@@ -801,6 +822,8 @@ void dspic33_i2c_process_event(Dspic33* cpu, uint8_t channel, uint32_t value) {
     }
     if (kind == I2C_EVENT_CONTROL) {
         complete_control(cpu, channel, payload);
+    } else if (kind == I2C_EVENT_BUS_STATUS) {
+        complete_bus_status(cpu, channel, payload);
     } else if (kind == I2C_EVENT_TRANSMIT) {
         complete_transmit(cpu, channel);
     } else if (kind == I2C_EVENT_TRANSMIT_SHIFT) {
