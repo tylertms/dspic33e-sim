@@ -257,10 +257,23 @@ typedef enum {
     DSPIC33_COMPARATOR_INPUT_NEGATIVE_3
 } Dspic33ComparatorInput;
 
+typedef enum {
+    DSPIC33_COMPARATOR_REFERENCE_AVDD,
+    DSPIC33_COMPARATOR_REFERENCE_VREF_POSITIVE,
+    DSPIC33_COMPARATOR_REFERENCE_VREF_NEGATIVE,
+    DSPIC33_COMPARATOR_REFERENCE_COUNT
+} Dspic33ComparatorReference;
+
 typedef struct {
     uint16_t input[DSPIC33_COMPARATOR_COUNT][DSPIC33_COMPARATOR_INPUT_COUNT];
+    uint16_t reference[DSPIC33_COMPARATOR_REFERENCE_COUNT];
     uint64_t rearm_cycle[DSPIC33_COMPARATOR_COUNT];
+    uint32_t filter_generation[DSPIC33_COMPARATOR_COUNT];
+    uint16_t filter_fraction[DSPIC33_COMPARATOR_COUNT];
     uint16_t pmd_generation;
+    uint8_t filter_count[DSPIC33_COMPARATOR_COUNT];
+    uint8_t raw_high;
+    uint8_t filter_candidate_high;
     uint8_t output_high;
     uint8_t last_read_cout;
     bool pmd_disabled;
@@ -553,6 +566,7 @@ typedef struct {
     uint8_t pwm_dead_time_inputs;
     uint8_t pwm_dead_time_sampled;
     uint8_t pwm_sync_inputs;
+    bool pwm_batch_updating;
     uint32_t pwm_fault_inputs;
     uint32_t pwm_current_limit_inputs;
     uint32_t pwm_fraction[2];
@@ -830,6 +844,8 @@ bool dspic33_output_compare_fault_pin(Dspic33* cpu, uint8_t pin, bool high,
 bool dspic33_comparator_input(Dspic33* cpu, uint8_t comparator,
                               Dspic33ComparatorInput input, uint16_t level,
                               uint64_t delay);
+bool dspic33_comparator_reference(Dspic33* cpu, Dspic33ComparatorReference reference,
+                                  uint16_t level, uint64_t delay);
 bool dspic33_comparator_output(const Dspic33* cpu, uint8_t comparator, bool* high);
 bool dspic33_comparator_pin(const Dspic33* cpu, uint8_t pin, bool* high);
 bool dspic33_rtcc_clock(Dspic33* cpu, uint32_t edges, uint64_t delay);
