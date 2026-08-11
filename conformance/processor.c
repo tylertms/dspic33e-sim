@@ -794,6 +794,9 @@ static void program_read_address_error_cases(ProcessorConformance* state,
     reset_processor_conformance(cpu, 0x557feu);
     load_instruction(state, cpu, 0x557feu, OPCODE_NOP);
     load_instruction(state, cpu, 0x000014u, DSPIC33_PROGRAM_LIMIT);
+    load_instruction(state, cpu, 0x000006u, 0x000140u);
+    load_instruction(state, cpu, 0x000140u, OPCODE_NOP);
+    cpu->stop_on_trap = false;
     cpu->w[15] = 0x5000u;
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
            "same-PC interrupt prepares sequential provenance");
@@ -801,14 +804,16 @@ static void program_read_address_error_cases(ProcessorConformance* state,
     dspic33_write_word(cpu, 0x0840u, 0x0004u);
     dspic33_raise_interrupt(cpu, 0u);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_PROGRAM_BOUNDS && cpu->interrupt_count == 1u &&
-               cpu->pc == DSPIC33_PROGRAM_LIMIT && cpu->w[15] == 0x5004u &&
-               cpu->sequential_program_hole_pc == 0u && cpu->cycles == 1u,
-           "confirmed same-PC interrupt dispatch clears sequential provenance");
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->interrupt_count == 0u &&
+               cpu->last_trap == 1u && cpu->pc == 0x000142u && cpu->w[15] == 0x5004u &&
+               cpu->sequential_program_hole_pc == 0u && cpu->cycles == 2u,
+           "unimplemented interrupt vector dispatches Address Error");
 
     reset_processor_conformance(cpu, 0x557feu);
     load_instruction(state, cpu, 0x557feu, OPCODE_NOP);
     load_instruction(state, cpu, 0x00000cu, DSPIC33_PROGRAM_LIMIT);
+    load_instruction(state, cpu, 0x000006u, 0x000140u);
+    load_instruction(state, cpu, 0x000140u, OPCODE_NOP);
     cpu->stop_on_trap = false;
     cpu->w[15] = 0x5000u;
     cpu->pending_soft_traps[0].trap = 4u;
@@ -817,12 +822,14 @@ static void program_read_address_error_cases(ProcessorConformance* state,
     cpu->pending_soft_traps[0].delay = 1u;
     cpu->pending_soft_traps[0].active = true;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == 4u &&
-               cpu->pc == DSPIC33_PROGRAM_LIMIT && cpu->w[15] == 0x5004u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == 1u &&
+               cpu->pc == 0x000140u && cpu->w[15] == 0x5004u &&
                cpu->sequential_program_hole_pc == 0u && cpu->cycles == 1u,
-           "delayed same-PC soft trap clears sequential provenance");
-    expect(state, dspic33_step(cpu) == DSPIC33_PROGRAM_BOUNDS,
-           "soft-trap target cannot inherit sequential hole authorization");
+           "unimplemented soft-trap vector dispatches Address Error");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000142u &&
+               cpu->cycles == 2u,
+           "Address Error handler continues after invalid soft-trap vector");
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, DSPIC33_AUXILIARY_PROGRAM_BASE, OPCODE_NOP);

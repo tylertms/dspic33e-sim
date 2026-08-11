@@ -43,7 +43,10 @@ enum {
     OPCODE_RESET = 0xfe0000u,
     OPCODE_SLEEP = 0xfe4000u,
     OPCODE_IDLE = 0xfe4001u,
+    OPCODE_RETURN = 0x060000u,
     OPCODE_RETFIE = 0x064000u,
+    OPCODE_COMPUTED_CALL_W0 = 0x018000u,
+    OPCODE_COMPUTED_GOTO_W0 = 0x018400u,
     OPCODE_MOV_LITERAL_0X1234_W2 = 0x212342u,
     OPCODE_MOV_W1_W2 = 0x780111u,
     OPCODE_BTSC_W2_BIT_0 = 0xa70002u,
@@ -315,6 +318,26 @@ static uint16_t execute_codeguard_psv_read(Dspic33* cpu, uint32_t origin,
         return 0xffffu;
     }
     return cpu->w[2];
+}
+
+static void load_long_program_flow(Dspic33* cpu, uint32_t origin, uint32_t target,
+                                   bool call) {
+    dspic33_load_program_word(cpu, origin,
+                              (call ? 0x020000u : 0x040000u) | (target & 0xffffu));
+    dspic33_load_program_word(cpu, origin + 2u, (target >> 16u) & 0x007fu);
+}
+
+static void load_program_return(Dspic33* cpu, uint32_t origin, uint32_t target,
+                                uint32_t opcode) {
+    dspic33_load_program_word(cpu, origin, opcode);
+    dspic33_set_working_register(cpu, 15u, 0x1004u);
+    dspic33_write_word(cpu, 0x1000u, (uint16_t)target);
+    dspic33_write_word(cpu, 0x1002u, (uint16_t)(target >> 16u));
+}
+
+static bool codeguard_security_reset(const Dspic33* cpu, uint64_t reset_count) {
+    return cpu->illegal_reset && cpu->illegal_reset_count == reset_count + 1u &&
+           cpu->pc == 0u && (cpu->data[0x0741u] & 0x40u) != 0u;
 }
 
 static void reset_and_access_cases(NvmConformance* state, Dspic33* cpu) {
@@ -1570,6 +1593,254 @@ static void codeguard_read_cases(NvmConformance* state, Dspic33* cpu) {
     }
 }
 
+static void codeguard_program_flow_configuration_cases(NvmConformance* state,
+                                                       Dspic33* cpu) {
+    static const uint32_t targets[] = {DSPIC33_AUXILIARY_PROGRAM_LIMIT - 66u,
+                                       DSPIC33_AUXILIARY_PROGRAM_LIMIT - 64u};
+    const uint32_t origin = 0x4000u;
+    uint8_t configuration_index;
+    size_t target_index;
+    for (configuration_index = 0u; configuration_index < 16u; configuration_index++) {
+        uint8_t configuration = codeguard_configuration_value(configuration_index);
+        bool high = codeguard_configuration_high(configuration);
+        for (target_index = 0u; target_index < sizeof(targets) / sizeof(targets[0]);
+             target_index++) {
+            uint32_t target = targets[target_index];
+            uint64_t reset_count;
+            bool allowed = !high || target_index != 0u;
+            dspic33_reset(cpu, origin);
+            load_codeguard_configuration(cpu, 0x03u, configuration);
+            load_long_program_flow(cpu, origin, target, false);
+            reset_count = cpu->illegal_reset_count;
+            expect(state,
+                   dspic33_step(cpu) == DSPIC33_RUNNING &&
+                       (allowed ? !cpu->illegal_reset &&
+                                      cpu->illegal_reset_count == reset_count &&
+                                      cpu->pc == target
+                                : codeguard_security_reset(cpu, reset_count)),
+                   "CodeGuard PFC configuration matrix");
+        }
+    }
+}
+
+static void codeguard_program_flow_instruction_cases(NvmConformance* state,
+                                                     Dspic33* cpu) {
+    static const uint32_t targets[] = {DSPIC33_AUXILIARY_PROGRAM_BASE + 0x100u,
+                                       DSPIC33_AUXILIARY_PROGRAM_LIMIT - 64u};
+    const uint32_t origin = 0x4200u;
+    uint64_t cycles;
+    uint64_t device_cycles;
+    uint64_t reset_count;
+    uint64_t trap_count;
+    size_t target_index;
+    for (target_index = 0u; target_index < sizeof(targets) / sizeof(targets[0]);
+         target_index++) {
+        uint32_t target = targets[target_index];
+        bool allowed = target_index != 0u;
+
+        dspic33_reset(cpu, origin);
+        load_codeguard_configuration(cpu, 0x03u, 0x31u);
+        load_long_program_flow(cpu, origin, target, true);
+        reset_count = cpu->illegal_reset_count;
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+                   (allowed ? cpu->pc == target && cpu->call_depth == 1u
+                            : codeguard_security_reset(cpu, reset_count)),
+               "CodeGuard long CALL PFC");
+
+        dspic33_reset(cpu, origin);
+        load_codeguard_configuration(cpu, 0x03u, 0x31u);
+        dspic33_load_program_word(cpu, origin, OPCODE_COMPUTED_GOTO_W0);
+        dspic33_set_working_register(cpu, 0u, (uint16_t)target);
+        dspic33_set_working_register(cpu, 1u, (uint16_t)(target >> 16u));
+        reset_count = cpu->illegal_reset_count;
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+                   (allowed ? cpu->pc == target
+                            : codeguard_security_reset(cpu, reset_count)),
+               "CodeGuard computed GOTO PFC");
+
+        dspic33_reset(cpu, origin);
+        load_codeguard_configuration(cpu, 0x03u, 0x31u);
+        dspic33_load_program_word(cpu, origin, OPCODE_COMPUTED_CALL_W0);
+        dspic33_set_working_register(cpu, 0u, (uint16_t)target);
+        dspic33_set_working_register(cpu, 1u, (uint16_t)(target >> 16u));
+        reset_count = cpu->illegal_reset_count;
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+                   (allowed ? cpu->pc == target && cpu->call_depth == 1u
+                            : codeguard_security_reset(cpu, reset_count)),
+               "CodeGuard computed CALL PFC");
+
+        dspic33_reset(cpu, origin);
+        load_codeguard_configuration(cpu, 0x03u, 0x31u);
+        load_program_return(cpu, origin, target, OPCODE_RETURN);
+        cpu->call_depth = 1u;
+        reset_count = cpu->illegal_reset_count;
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+                   (allowed ? cpu->pc == target && cpu->call_depth == 0u
+                            : codeguard_security_reset(cpu, reset_count)),
+               "CodeGuard RETURN PFC");
+
+        dspic33_reset(cpu, origin);
+        load_codeguard_configuration(cpu, 0x03u, 0x31u);
+        load_program_return(cpu, origin, target, OPCODE_RETFIE);
+        cpu->interrupt_depth = 1u;
+        reset_count = cpu->illegal_reset_count;
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+                   (allowed ? cpu->pc == target && cpu->interrupt_depth == 0u
+                            : codeguard_security_reset(cpu, reset_count)),
+               "CodeGuard RETFIE PFC");
+    }
+
+    dspic33_reset(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x200u);
+    load_codeguard_configuration(cpu, 0x03u, 0x31u);
+    load_long_program_flow(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x200u,
+                           DSPIC33_AUXILIARY_PROGRAM_BASE + 0x100u, false);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               cpu->pc == DSPIC33_AUXILIARY_PROGRAM_BASE + 0x100u &&
+               !cpu->illegal_reset,
+           "CodeGuard same Auxiliary Segment PFC");
+
+    dspic33_reset(cpu, origin);
+    load_codeguard_configuration(cpu, 0x03u, 0x03u);
+    load_long_program_flow(cpu, origin, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x100u, false);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               cpu->pc == DSPIC33_AUXILIARY_PROGRAM_BASE + 0x100u &&
+               !cpu->illegal_reset,
+           "CodeGuard unprotected Auxiliary Segment PFC");
+
+    dspic33_reset(cpu, origin);
+    load_codeguard_configuration(cpu, 0x31u, 0x31u);
+    load_long_program_flow(cpu, origin, 0x4400u, false);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x4400u &&
+               !cpu->illegal_reset,
+           "CodeGuard General Segment PFC");
+
+    dspic33_reset(cpu, origin);
+    cpu->stop_on_trap = false;
+    load_codeguard_configuration(cpu, 0x03u, 0x31u);
+    load_long_program_flow(cpu, origin, 0x060000u, false);
+    dspic33_load_program_word(cpu, 0x0006u, 0x004400u);
+    dspic33_load_program_word(cpu, 0x4400u, OPCODE_NOP);
+    reset_count = cpu->illegal_reset_count;
+    trap_count = cpu->trap_count;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == 1u &&
+               cpu->trap_count == trap_count + 1u &&
+               cpu->illegal_reset_count == reset_count && cpu->pc == 0x4400u,
+           "unimplemented PFC takes Address Error before CodeGuard");
+
+    dspic33_reset(cpu, origin);
+    cpu->stop_on_trap = false;
+    load_codeguard_configuration(cpu, 0x03u, 0x31u);
+    load_long_program_flow(cpu, origin, 0x060000u, false);
+    dspic33_load_program_word(cpu, 0x0006u, DSPIC33_AUXILIARY_PROGRAM_LIMIT - 66u);
+    cpu->corcon |= 0x0004u;
+    cycles = cpu->cycles;
+    device_cycles = cpu->device_cycles;
+    reset_count = cpu->illegal_reset_count;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               codeguard_security_reset(cpu, reset_count) && cpu->corcon == 0x0020u &&
+               cpu->cycles == cycles && cpu->device_cycles == device_cycles,
+           "restricted Address Error VFC retains reset CORCON");
+}
+
+static void codeguard_vector_flow_cases(NvmConformance* state, Dspic33* cpu) {
+    static const uint32_t targets[] = {DSPIC33_AUXILIARY_PROGRAM_BASE + 0x100u,
+                                       DSPIC33_AUXILIARY_PROGRAM_LIMIT - 64u};
+    const uint32_t origin = 0x4600u;
+    size_t target_index;
+    for (target_index = 0u; target_index < sizeof(targets) / sizeof(targets[0]);
+         target_index++) {
+        uint32_t target = targets[target_index];
+        bool allowed = target_index != 0u;
+        uint64_t reset_count;
+
+        dspic33_reset(cpu, origin);
+        cpu->stop_on_trap = false;
+        load_codeguard_configuration(cpu, 0x03u, 0x31u);
+        dspic33_load_program_word(cpu, 0x0014u, target);
+        dspic33_load_program_word(cpu, target, OPCODE_NOP);
+        dspic33_write_word(cpu, 0x0820u, 0x0001u);
+        dspic33_write_word(cpu, 0x0840u, 0x0001u);
+        dspic33_raise_interrupt(cpu, 0u);
+        reset_count = cpu->illegal_reset_count;
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+                   (allowed ? cpu->pc == target + 2u && cpu->last_interrupt == 0u
+                            : codeguard_security_reset(cpu, reset_count)),
+               "CodeGuard interrupt VFC");
+
+        dspic33_reset(cpu, origin);
+        load_codeguard_configuration(cpu, 0x03u, 0x31u);
+        dspic33_load_program_word(cpu, 0x0004u, target);
+        dspic33_load_program_word(cpu, target, OPCODE_NOP);
+        dspic33_raise_oscillator_fail_trap(cpu);
+        reset_count = cpu->illegal_reset_count;
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+                   (allowed ? cpu->pc == target + 2u && cpu->last_trap == 0u
+                            : codeguard_security_reset(cpu, reset_count)),
+               "CodeGuard trap VFC");
+    }
+
+    dspic33_reset(cpu, origin);
+    cpu->stop_on_trap = false;
+    load_codeguard_configuration(cpu, 0x03u, 0x31u);
+    dspic33_load_program_word(cpu, 0x0014u, 0x060000u);
+    dspic33_load_program_word(cpu, 0x0006u, 0x004400u);
+    dspic33_load_program_word(cpu, 0x4400u, OPCODE_NOP);
+    dspic33_set_working_register(cpu, 15u, 0x1000u);
+    dspic33_write_word(cpu, 0x0820u, 0x0001u);
+    dspic33_write_word(cpu, 0x0840u, 0x0001u);
+    dspic33_raise_interrupt(cpu, 0u);
+    uint64_t trap_count = cpu->trap_count;
+    uint64_t reset_count = cpu->illegal_reset_count;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == 1u &&
+               cpu->trap_count == trap_count + 1u && cpu->pc == 0x4402u &&
+               cpu->illegal_reset_count == reset_count,
+           "unimplemented interrupt VFC dispatches Address Error");
+
+    dspic33_reset(cpu, origin);
+    load_codeguard_configuration(cpu, 0x03u, 0x31u);
+    dspic33_load_program_word(cpu, 0x000eu, 0x060000u);
+    dspic33_load_program_word(cpu, 0x0006u, 0x004400u);
+    dspic33_set_working_register(cpu, 15u, 0x1000u);
+    trap_count = cpu->trap_count;
+    reset_count = cpu->illegal_reset_count;
+    dspic33_raise_dma_collision_trap(cpu);
+    expect(state,
+           cpu->last_trap == 1u && cpu->trap_count == trap_count + 1u &&
+               cpu->pc == 0x4400u && cpu->illegal_reset_count == reset_count &&
+               (dspic33_read_word(cpu, 0x08c0u) & 0x0028u) == 0x0028u,
+           "unimplemented synchronous trap VFC dispatches Address Error");
+
+    dspic33_reset(cpu, origin);
+    load_codeguard_configuration(cpu, 0x03u, 0x31u);
+    dspic33_load_program_word(cpu, 0u, OPCODE_MOV_LITERAL_0X1234_W2);
+    dspic33_load_program_word(cpu, 0x0014u, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x100u);
+    dspic33_write_word(cpu, 0x0820u, 0x0001u);
+    dspic33_write_word(cpu, 0x0840u, 0x0001u);
+    dspic33_raise_interrupt(cpu, 0u);
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    dspic33_device_power_state_changed(cpu);
+    uint64_t instructions = cpu->instructions;
+    reset_count = cpu->illegal_reset_count;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               codeguard_security_reset(cpu, reset_count) &&
+               cpu->instructions == instructions && cpu->w[2] == 0u,
+           "sleeping restricted interrupt VFC stops at security reset");
+}
+
 static void codeguard_cases(NvmConformance* state, Dspic33* cpu) {
     codeguard_configuration_cases(state, cpu);
     codeguard_programming_cases(state, cpu);
@@ -1577,6 +1848,9 @@ static void codeguard_cases(NvmConformance* state, Dspic33* cpu) {
     codeguard_origin_capture_cases(state, cpu);
     codeguard_read_cases(state, cpu);
     codeguard_persistent_read_cases(state, cpu);
+    codeguard_program_flow_configuration_cases(state, cpu);
+    codeguard_program_flow_instruction_cases(state, cpu);
+    codeguard_vector_flow_cases(state, cpu);
     dspic33_load_program_word(cpu, PERSISTENT_PROGRAM_BASE, 0x00ffffffu);
     load_codeguard_configuration(cpu, 0x03u, 0x03u);
 }

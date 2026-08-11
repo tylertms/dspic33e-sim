@@ -35,6 +35,7 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
 static void clear_watchdog(Dspic33* cpu);
 static void enter_trap(Dspic33* cpu, uint16_t trap, uint32_t vector, uint8_t priority,
                        uint16_t status, uint32_t return_pc, bool auxiliary_vector);
+static void enter_address_trap(Dspic33* cpu, uint32_t return_pc, bool auxiliary_vector);
 static void schedule_soft_trap(Dspic33* cpu, uint16_t trap, uint32_t vector,
                                uint8_t priority, uint8_t delay);
 static void check_stack_address(Dspic33* cpu, int32_t address, bool wrapped);
@@ -111,6 +112,18 @@ static bool codeguard_program_read_allowed(const Dspic33* cpu, uint32_t target) 
     auxiliary_target = auxiliary_program_address(target);
     return auxiliary_origin == auxiliary_target ||
            !codeguard_high_security(codeguard_configuration(cpu, auxiliary_target));
+}
+
+bool dspic33_codeguard_admit_program_flow(Dspic33* cpu, uint32_t origin,
+                                          uint32_t target) {
+    bool restricted = !auxiliary_program_address(origin) &&
+                      auxiliary_program_address(target) &&
+                      target < DSPIC33_AUXILIARY_PROGRAM_LIMIT - 64u &&
+                      codeguard_high_security(codeguard_configuration(cpu, true));
+    if (restricted) {
+        perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+    }
+    return !restricted;
 }
 
 static uint32_t read_cpu_program_word(const Dspic33* cpu, uint32_t address) {
@@ -2560,6 +2573,19 @@ static void update_divide_flags(Dspic33* cpu, int64_t remainder, bool overflow) 
 static void enter_trap(Dspic33* cpu, uint16_t trap, uint32_t vector, uint8_t priority,
                        uint16_t status, uint32_t return_pc, bool auxiliary_vector) {
     uint16_t stacked_high;
+    uint32_t target =
+        dspic33_read_program_word(cpu, auxiliary_vector ? 0x007ffffau : vector) &
+        0x007ffffeu;
+    uint32_t origin = auxiliary_vector ? DSPIC33_AUXILIARY_PROGRAM_BASE : 0u;
+    dspic33_write_word(cpu, 0x08c0u,
+                       (uint16_t)(dspic33_read_word(cpu, 0x08c0u) | status));
+    if (trap != 1u && program_target_requires_address_error(target)) {
+        enter_address_trap(cpu, return_pc, auxiliary_vector);
+        return;
+    }
+    if (!dspic33_codeguard_admit_program_flow(cpu, origin, target)) {
+        return;
+    }
     cpu->previous_working_register_writes = 0u;
     cpu->sequential_program_hole_pc = 0u;
     check_stack_address(cpu, cpu->w[15], cpu->w[15] > 0xfffdu);
@@ -2576,10 +2602,7 @@ static void enter_trap(Dspic33* cpu, uint16_t trap, uint32_t vector, uint8_t pri
     cpu->corcon = priority > 7u ? (uint16_t)(cpu->corcon | 0x0008u)
                                 : (uint16_t)(cpu->corcon & ~0x0008u);
     cpu->sr = (uint16_t)((cpu->sr & ~0x00e0u) | ((priority & 7u) << 5u));
-    dspic33_write_word(cpu, 0x08c0u,
-                       (uint16_t)(dspic33_read_word(cpu, 0x08c0u) | status));
-    cpu->pc = dspic33_read_program_word(cpu, auxiliary_vector ? 0x007ffffau : vector) &
-              0x007ffffeu;
+    cpu->pc = target;
     cpu->last_trap = trap;
     cpu->last_trap_return = return_pc;
     cpu->trap_count++;
@@ -2598,7 +2621,14 @@ static void enter_address_trap(Dspic33* cpu, uint32_t return_pc,
     uint16_t sfa = (uint16_t)(cpu->corcon & 0x0004u);
     cpu->corcon &= (uint16_t)~0x0004u;
     enter_trap(cpu, 1u, 0x000006u, 14u, 0x0008u, return_pc, auxiliary_vector);
-    cpu->corcon |= sfa;
+    if (!cpu->illegal_reset) {
+        cpu->corcon |= sfa;
+    }
+}
+
+void dspic33_raise_program_vector_error(Dspic33* cpu, uint32_t return_pc,
+                                        bool auxiliary_vector) {
+    enter_address_trap(cpu, return_pc, auxiliary_vector);
 }
 
 static void schedule_soft_trap(Dspic33* cpu, uint16_t trap, uint32_t vector,
@@ -4276,6 +4306,9 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
                                    : DSPIC33_IDLING;
             return cpu->stop_reason;
         }
+        if (cpu->illegal_reset) {
+            return cpu->stop_reason;
+        }
         cpu->previous_working_register_writes = 0u;
         cpu->power_state = DSPIC33_POWER_ACTIVE;
         dspic33_device_power_state_changed(cpu);
@@ -4289,6 +4322,9 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         exception_dispatched = service_pending_soft_trap(cpu);
         if (!exception_dispatched && !power_save_next) {
             exception_dispatched = dspic33_device_service_interrupt(cpu);
+        }
+        if (cpu->illegal_reset) {
+            return cpu->stop_reason;
         }
         if (exception_dispatched) {
             cpu->sequential_program_hole_pc = 0u;
@@ -4309,41 +4345,49 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     cpu->sequential_program_hole_pc = 0u;
     if (opcode == 0x064000u) {
         uint64_t cycles;
+        uint32_t target;
         bool dependency_stall =
             (cpu->previous_working_register_writes & UINT16_C(0x8000)) != 0u;
         dspic33_device_return_interrupt(cpu);
-        if (program_target_requires_address_error(cpu->pc)) {
+        target = cpu->pc;
+        cpu->instructions++;
+        if (program_target_requires_address_error(target)) {
             enter_address_trap(cpu, program_address_add(instruction_pc, 2),
                                auxiliary_program_address(instruction_pc));
             cycles = 5u;
+        } else if (!dspic33_codeguard_admit_program_flow(cpu, instruction_pc, target)) {
+            return cpu->stop_reason;
         } else {
             cycles = exception_pending(cpu) ? 5u : 6u;
         }
         cycles += dependency_stall ? 1u : 0u;
         cpu->previous_working_register_writes = 0u;
-        cpu->instructions++;
         advance_instruction(cpu, cycles, false, device_ratio);
         return cpu->stop_reason;
     }
     if (opcode == 0x060000u) {
         uint64_t cycles;
+        uint32_t target;
         bool dependency_stall =
             (cpu->previous_working_register_writes & UINT16_C(0x8000)) != 0u;
         if (cpu->call_depth == 0u) {
             cpu->stop_reason = DSPIC33_RETURNED;
             return cpu->stop_reason;
         }
-        cpu->pc = pop_program_counter(cpu);
-        if (program_target_requires_address_error(cpu->pc)) {
+        target = pop_program_counter(cpu);
+        cpu->pc = target;
+        cpu->instructions++;
+        if (program_target_requires_address_error(target)) {
             enter_address_trap(cpu, program_address_add(instruction_pc, 2),
                                auxiliary_program_address(instruction_pc));
             cycles = 5u;
+        } else if (!dspic33_codeguard_admit_program_flow(cpu, instruction_pc, target)) {
+            return cpu->stop_reason;
         } else {
             cycles = exception_pending(cpu) ? 5u : 6u;
         }
         cycles += dependency_stall ? 1u : 0u;
         cpu->previous_working_register_writes = 0u;
-        cpu->instructions++;
         advance_instruction(cpu, cycles, false, device_ratio);
         return cpu->stop_reason;
     }
@@ -4382,6 +4426,14 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
             cpu->stop_reason = DSPIC33_UNSUPPORTED_INSTRUCTION;
         }
         return cpu->stop_reason;
+    }
+    if (!cpu->address_error && !cpu->illegal_reset &&
+        cpu->pc !=
+            program_address_add(instruction_pc, (int32_t)instruction_length(opcode))) {
+        if (!dspic33_codeguard_admit_program_flow(cpu, instruction_pc, cpu->pc)) {
+            cpu->instruction_active = false;
+            return cpu->stop_reason;
+        }
     }
     cpu->instruction_active = false;
     if (cpu->illegal_reset) {
@@ -4439,6 +4491,9 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         } else {
             enter_trap(cpu, 1u, 0x000006u, 14u, 0x0008u, return_pc,
                        auxiliary_program_address(instruction_pc));
+        }
+        if (cpu->illegal_reset) {
+            return cpu->stop_reason;
         }
         advance_instruction(cpu, cycles, non_cpu_sfr_wait, device_ratio);
         return cpu->stop_reason;

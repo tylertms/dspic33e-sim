@@ -5032,8 +5032,23 @@ static bool service_interrupt(Dspic33* cpu) {
     uint16_t next_priority;
     size_t log_index;
     uint16_t stacked_high;
+    uint32_t origin;
+    uint32_t target;
     if (!select_interrupt(cpu, &best_irq, &best_priority)) {
         return false;
+    }
+    origin = cpu->pc;
+    target = dspic33_read_program_word(cpu, origin >= DSPIC33_AUXILIARY_PROGRAM_BASE
+                                                ? 0x007ffffau
+                                                : 0x0014u + best_irq * 2u) &
+             0x007ffffeu;
+    if (!dspic33_program_range_implemented(target, 2u)) {
+        dspic33_raise_program_vector_error(cpu, origin,
+                                           origin >= DSPIC33_AUXILIARY_PROGRAM_BASE);
+        return true;
+    }
+    if (!dspic33_codeguard_admit_program_flow(cpu, origin, target)) {
+        return true;
     }
     recover_from_doze(cpu);
     dspic33_check_stack_address(cpu, cpu->w[15], cpu->w[15] > 0xfffdu, 2u);
@@ -5055,10 +5070,7 @@ static bool service_interrupt(Dspic33* cpu) {
     cpu->interrupt_log_irq[log_index] = best_irq;
     cpu->interrupt_log_entry[log_index] = cpu->pc;
     cpu->interrupt_log_return[log_index] = 0u;
-    cpu->pc = dspic33_read_program_word(cpu, cpu->pc >= DSPIC33_AUXILIARY_PROGRAM_BASE
-                                                 ? 0x007ffffau
-                                                 : 0x0014u + best_irq * 2u) &
-              0x007ffffeu;
+    cpu->pc = target;
     cpu->last_interrupt = best_irq;
     cpu->interrupt_count++;
     cpu->interrupt_depth++;
@@ -5086,6 +5098,9 @@ bool dspic33_device_wake(Dspic33* cpu) {
         if (interrupt_enabled(cpu, irq) && !interrupt_deferred(cpu, irq) &&
             interrupt_priority(cpu, irq) != 0u) {
             service_interrupt(cpu);
+            if (cpu->illegal_reset) {
+                return true;
+            }
             recover_from_doze(cpu);
             return true;
         }
