@@ -1150,6 +1150,7 @@ static void update_binary_flags(Dspic33* cpu, uint32_t operation, uint16_t left,
 static bool execute_binary(Dspic33* cpu, uint32_t opcode, uint32_t operation) {
     uint8_t left_register = (uint8_t)((opcode >> 15u) & 0x0fu);
     uint8_t destination = (uint8_t)((opcode >> 7u) & 0x0fu);
+    uint8_t destination_mode = (uint8_t)((opcode >> 11u) & 0x07u);
     uint16_t left = cpu->w[left_register];
     uint16_t right;
     uint32_t result;
@@ -1160,6 +1161,11 @@ static bool execute_binary(Dspic33* cpu, uint32_t opcode, uint32_t operation) {
     uint16_t carry = (cpu->sr & 1u) != 0u ? 1u : 0u;
     uint16_t borrow = 0u;
     uint32_t subtraction_right;
+
+    if (destination_mode >= 6u) {
+        perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+        return true;
+    }
 
     left = byte_mode ? (uint8_t)left : left;
     if ((opcode & 0x0060u) == 0x0060u) {
@@ -1199,9 +1205,8 @@ static bool execute_binary(Dspic33* cpu, uint32_t opcode, uint32_t operation) {
         result = left | right;
     }
     value = (uint16_t)result;
-    if (!validate_destination_after_source_execution(
-            cpu, (uint8_t)((opcode >> 11u) & 0x07u), destination,
-            byte_mode ? 1u : 2u)) {
+    if (!validate_destination_after_source_execution(cpu, destination_mode, destination,
+                                                     byte_mode ? 1u : 2u)) {
         if (!cpu->illegal_reset) {
             update_binary_flags(cpu, operation, left, right, borrow, carry, result,
                                 value, byte_mode, with_carry);
@@ -1209,12 +1214,11 @@ static bool execute_binary(Dspic33* cpu, uint32_t opcode, uint32_t operation) {
         return true;
     }
     if (byte_mode) {
-        if (!write_operand_byte(cpu, (uint8_t)((opcode >> 11u) & 0x07u), destination,
-                                0u, (uint8_t)value)) {
+        if (!write_operand_byte(cpu, destination_mode, destination, 0u,
+                                (uint8_t)value)) {
             return false;
         }
-    } else if (!write_operand_word(cpu, (uint8_t)((opcode >> 11u) & 0x07u), destination,
-                                   0u, value)) {
+    } else if (!write_operand_word(cpu, destination_mode, destination, 0u, value)) {
         return false;
     }
     update_binary_flags(cpu, operation, left, right, borrow, carry, result, value,
