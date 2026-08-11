@@ -615,6 +615,7 @@ static void channel_matrix_cases(DmaConformance* state, Dspic33* cpu) {
 }
 
 static void peripheral_collision_cases(DmaConformance* state, Dspic33* cpu) {
+    uint8_t can_channel;
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, 0x3200u, 0x1111u);
     dspic33_write_word(cpu, 0x3202u, 0x2222u);
@@ -644,6 +645,30 @@ static void peripheral_collision_cases(DmaConformance* state, Dspic33* cpu) {
     expect(state, request(cpu, 0xc0u, 0u), "request resumes after collision clear");
     expect(state, stored_word(cpu, DMA_TEST_WRITE_PAD) == 0x2222u,
            "transfer resumes after collision clear");
+
+    for (can_channel = 0u; can_channel < 2u; can_channel++) {
+        uint16_t pad = (uint16_t)(0x0442u + can_channel * 0x0100u);
+        uint8_t request_source = (uint8_t)(0xc3u + can_channel);
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, 0x3200u, 0x1111u);
+        dspic33_write_word(cpu, 0x3202u, 0x2222u);
+        configure_channel(cpu, 0u, 0x2000u, request_source, 0x3200u, 0u, pad, 1u);
+        expect(state, dspic33_dma_request(cpu, request_source, 0u, 1u),
+               "queue B1 ECAN write collision");
+        dspic33_write_word(cpu, pad, 0x7777u);
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "advance B1 ECAN write collision");
+        expect(state,
+               stored_word(cpu, pad) == 0x7777u &&
+                   dspic33_read_word(cpu, 0x0bf0u) == 0u && cpu->trap_count == 0u &&
+                   (dspic33_read_word(cpu, 0x08c0u) & 0x0020u) == 0u,
+               "B1 ECAN write collision leaves collision state clear");
+        expect(state,
+               dspic33_device_advance(cpu, 1u) && request(cpu, request_source, 0u),
+               "B1 ECAN DMA channel accepts a later request");
+        expect(state, stored_word(cpu, pad) == 0x2222u,
+               "B1 ECAN DMA transfers after a collision");
+    }
 }
 
 static void memory_collision_cases(DmaConformance* state, Dspic33* cpu) {

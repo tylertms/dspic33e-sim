@@ -496,7 +496,6 @@ enum {
     CAN_RECEIVE_PASSIVE = 0x0800u,
     CAN_TRANSMIT_PASSIVE = 0x1000u,
     CAN_BUS_OFF = 0x2000u,
-    CAN_ERROR_STATE_MASK = 0x3e00u,
     CAN_BUFFER_TRANSMIT = 0x0080u,
     CAN_BUFFER_ABORTED = 0x0040u,
     CAN_BUFFER_LOST = 0x0020u,
@@ -7550,6 +7549,8 @@ static bool dma_write_collision(const Dspic33* cpu, uint16_t pad, uint8_t width)
     return cpu->io.cpu_write_address < dma_end && pad < previous_end;
 }
 
+static bool dma_can_write_pad(uint16_t pad) { return pad == 0x0442u || pad == 0x0542u; }
+
 static void dma_peripheral_write_collision(Dspic33* cpu, uint8_t channel) {
     uint16_t status = raw_word(cpu, DMA_PWC);
     uint16_t bit = dma_channel_bit(channel);
@@ -7744,7 +7745,9 @@ static void run_dma(Dspic33* cpu, uint16_t source, uint32_t event_value) {
         value = dma_read_memory(cpu, address, width);
         if (dma_pad_writable(pad)) {
             if (dma_write_collision(cpu, pad, width)) {
-                dma_peripheral_write_collision(cpu, channel);
+                if (!dma_can_write_pad(pad)) {
+                    dma_peripheral_write_collision(cpu, channel);
+                }
             } else if (width == 1u) {
                 dspic33_write_byte(cpu, pad, (uint8_t)value);
             } else {
@@ -7762,7 +7765,9 @@ static void run_dma(Dspic33* cpu, uint16_t source, uint32_t event_value) {
         dma_write_memory(cpu, address, width, value);
         if ((control & DMA_CON_NULL_WRITE) != 0u && dma_pad_writable(pad)) {
             if (dma_write_collision(cpu, pad, width)) {
-                dma_peripheral_write_collision(cpu, channel);
+                if (!dma_can_write_pad(pad)) {
+                    dma_peripheral_write_collision(cpu, channel);
+                }
             } else if (width == 1u) {
                 dspic33_write_byte(cpu, pad, 0u);
             } else {
@@ -9725,14 +9730,6 @@ static void can_refresh_error_status(Dspic33* cpu, uint8_t channel) {
     raw_write_word(cpu, (uint16_t)(base + 0x0au), status);
 }
 
-static void can_raise_error_state_entry(Dspic33* cpu, uint8_t channel,
-                                        uint16_t prior_status) {
-    uint16_t status = raw_word(cpu, (uint16_t)(can_bases[channel] + 0x0au));
-    if ((status & (uint16_t)~prior_status & CAN_ERROR_STATE_MASK) != 0u) {
-        can_raise_event(cpu, channel, CAN_INTERRUPT_ERROR, 0u, 0u);
-    }
-}
-
 static void can_receive_start(Dspic33* cpu, uint8_t channel) {
     Dspic33CanFrame frame;
     uint8_t buffer;
@@ -9896,11 +9893,9 @@ static void can_transmit_finish(Dspic33* cpu, uint8_t channel) {
     can_set_buffer_control(cpu, channel, buffer,
                            (uint16_t)(control & ~CAN_BUFFER_REQUEST));
     if ((counts >> 8u) != 0u) {
-        uint16_t prior_status = raw_word(cpu, (uint16_t)(can_bases[channel] + 0x0au));
         counts = (uint16_t)(counts - 0x0100u);
         raw_write_word(cpu, (uint16_t)(can_bases[channel] + 0x0eu), counts);
         can_refresh_error_status(cpu, channel);
-        can_raise_error_state_entry(cpu, channel, prior_status);
     }
     can_raise_event(cpu, channel, CAN_INTERRUPT_TRANSMIT, buffer, 0u);
     if (can_mode(cpu, channel) == CAN_MODE_LOOPBACK) {
@@ -9916,14 +9911,15 @@ static void can_transmit_finish(Dspic33* cpu, uint8_t channel) {
 static void can_error_event(Dspic33* cpu, uint8_t channel, uint32_t value) {
     uint16_t address = (uint16_t)(can_bases[channel] + 0x0eu);
     uint16_t counts = raw_word(cpu, address);
-    uint16_t prior_status = raw_word(cpu, (uint16_t)(can_bases[channel] + 0x0au));
     uint16_t increment = (uint16_t)(value >> CAN_EVENT_ERROR_COUNT_SHIFT);
     if ((value & CAN_EVENT_TRANSMIT_ERROR) != 0u) {
         uint16_t transmit = (uint16_t)(counts >> 8u);
         uint32_t total = (uint32_t)transmit + increment;
         if (total > 0xffu) {
-            raw_write_word(cpu, (uint16_t)(can_bases[channel] + 0x0au),
-                           (uint16_t)(prior_status | CAN_BUS_OFF));
+            raw_write_word(
+                cpu, (uint16_t)(can_bases[channel] + 0x0au),
+                (uint16_t)(raw_word(cpu, (uint16_t)(can_bases[channel] + 0x0au)) |
+                           CAN_BUS_OFF));
             transmit = 0xffu;
         } else {
             transmit = (uint16_t)total;
@@ -9936,7 +9932,6 @@ static void can_error_event(Dspic33* cpu, uint8_t channel, uint32_t value) {
     }
     raw_write_word(cpu, address, counts);
     can_refresh_error_status(cpu, channel);
-    can_raise_error_state_entry(cpu, channel, prior_status);
 }
 
 static void run_can(Dspic33* cpu, uint8_t channel, uint32_t value) {
