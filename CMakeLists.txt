@@ -86,6 +86,9 @@ target_link_libraries(
 target_link_libraries(
     opentec_simulator_processor_conformance PRIVATE opentec_simulator_core
 )
+target_include_directories(
+    opentec_simulator_processor_conformance PRIVATE generated
+)
 target_link_libraries(
     opentec_simulator_dma_conformance PRIVATE opentec_simulator_core
 )

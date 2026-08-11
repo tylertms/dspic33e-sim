@@ -3,8 +3,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
+#include "device.h"
 #include "dspic33.h"
+#include "dspic33ep512mu810_sfr_access.h"
 #include "sfr_side_effect_coverage.h"
 
 static const SfrSideEffectCoverage processor_sfr_side_effect_coverage[] = {
@@ -5441,6 +5444,406 @@ static void arithmetic_encoding_matrix_cases(ProcessorConformance* state,
     arithmetic_flag_boundary_cases(state, cpu);
 }
 
+static bool direct_file_address_implemented(uint16_t address) {
+    uint16_t target = (uint16_t)(address & 0x0ffeu);
+    size_t low = 0u;
+    size_t high = DSPIC33_SFR_ACCESS_ADDRESS_COUNT;
+
+    if (address >= 0x1000u) {
+        return true;
+    }
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+        uint16_t candidate = dspic33_sfr_access_expectations[middle].address;
+        if (candidate < target) {
+            low = middle + 1u;
+        } else {
+            high = middle;
+        }
+    }
+    return low < DSPIC33_SFR_ACCESS_ADDRESS_COUNT &&
+           dspic33_sfr_access_expectations[low].address == target;
+}
+
+static void prepare_direct_file_arithmetic_case(Dspic33* cpu, uint16_t address,
+                                                uint8_t operation, bool byte_mode,
+                                                bool file_destination) {
+    uint8_t reg;
+    uint16_t initial_status =
+        (uint16_t)(((address >> 1u) & 1u) | (((address >> 2u) & 1u) << 1u));
+    uint16_t operand =
+        (uint16_t)(0x3101u + address * 17u + operation * 0x1111u +
+                   (byte_mode ? 0x0080u : 0u) + (file_destination ? 0x0100u : 0u));
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    cpu->stop_on_trap = true;
+    cpu->instructions = 0u;
+    cpu->cycles = 0u;
+    cpu->device_cycles = 0u;
+    cpu->interrupt_count = 0u;
+    cpu->software_reset_count = 0u;
+    cpu->illegal_reset_count = 0u;
+    cpu->trap_count = 0u;
+    for (reg = 0u; reg < 15u; reg++) {
+        dspic33_set_working_register(
+            cpu, reg, (uint16_t)(0x4200u + (uint16_t)reg * 0x0101u + address));
+    }
+    dspic33_set_working_register(cpu, 0u, operand);
+    dspic33_set_working_register(cpu, 15u, 0x5000u);
+    cpu->sr = initial_status;
+    cpu->corcon = 0x0020u;
+    if (address >= 0x1000u) {
+        dspic33_write_word(cpu, address & 0xfffeu,
+                           (uint16_t)(0x5a00u ^ address ^ ((uint16_t)operation << 9u) ^
+                                      (byte_mode ? 0x00c3u : 0u)));
+    }
+}
+
+static void write_direct_file_reference_result(Dspic33* cpu, uint16_t value,
+                                               bool byte_mode) {
+    if (byte_mode) {
+        cpu->w[0] = (uint16_t)((cpu->w[0] & 0xff00u) | (value & 0x00ffu));
+    } else {
+        cpu->w[0] = value;
+        cpu->initialized_working_registers |= 0x0001u;
+    }
+    cpu->instruction_working_register_writes |= 0x0001u;
+}
+
+static bool direct_file_event_queues_match(const Dspic33* actual,
+                                           const Dspic33* expected) {
+    return actual->events.count == expected->events.count &&
+           (actual->events.count == 0u ||
+            memcmp(actual->events.items, expected->events.items,
+                   actual->events.count * sizeof(*actual->events.items)) == 0);
+}
+
+static bool direct_file_io_states_match(const Dspic33* actual,
+                                        const Dspic33* expected) {
+    static Dspic33Io actual_io;
+    static Dspic33Io expected_io;
+
+    memcpy(&actual_io, &actual->io, sizeof(actual_io));
+    memcpy(&expected_io, &expected->io, sizeof(expected_io));
+    actual_io.cpu_write_cycle = expected_io.cpu_write_cycle;
+    actual_io.cpu_write_address = expected_io.cpu_write_address;
+    actual_io.cpu_write_previous = expected_io.cpu_write_previous;
+    actual_io.cpu_write_width = expected_io.cpu_write_width;
+    actual_io.cpu_write_valid = expected_io.cpu_write_valid;
+    actual_io.cpu_read_address = expected_io.cpu_read_address;
+    actual_io.cpu_read_width = expected_io.cpu_read_width;
+    actual_io.cpu_read_valid = expected_io.cpu_read_valid;
+    return memcmp(&actual_io, &expected_io, sizeof(actual_io)) == 0;
+}
+
+static bool direct_file_states_match(const Dspic33* actual, const Dspic33* expected) {
+    static Dspic33 actual_state;
+    static Dspic33 expected_state;
+
+    memcpy(&actual_state, actual, sizeof(actual_state));
+    memcpy(&expected_state, expected, sizeof(expected_state));
+
+    actual_state.program = NULL;
+    actual_state.auxiliary_program = NULL;
+    actual_state.persistent_program = NULL;
+    actual_state.data = NULL;
+    actual_state.events.items = NULL;
+    actual_state.events.capacity = 0u;
+    expected_state.program = NULL;
+    expected_state.auxiliary_program = NULL;
+    expected_state.persistent_program = NULL;
+    expected_state.data = NULL;
+    expected_state.events.items = NULL;
+    expected_state.events.capacity = 0u;
+    return memcmp(&actual_state, &expected_state, sizeof(actual_state)) == 0 &&
+           memcmp(actual->data, expected->data, 0x2000u) == 0 &&
+           direct_file_event_queues_match(actual, expected);
+}
+
+static uint16_t run_direct_file_reference(Dspic33* cpu,
+                                          ArithmeticMatrixOperation operation,
+                                          uint16_t address, bool byte_mode,
+                                          bool file_destination) {
+    uint64_t device_ratio = dspic33_device_instruction_cycles(cpu, 1u);
+    bool non_cpu_sfr = (address & (byte_mode ? 0xffffu : 0xfffeu)) >= 0x005au &&
+                       address < 0x1000u && direct_file_address_implemented(address);
+    uint16_t initial_status = cpu->sr;
+    uint16_t right = byte_mode ? (uint8_t)cpu->w[0] : cpu->w[0];
+    uint16_t left;
+    uint16_t value;
+    uint16_t status;
+    uint8_t instruction_cycles = non_cpu_sfr ? 2u : 1u;
+    size_t index;
+
+    cpu->pc = 2u;
+    cpu->instructions++;
+    cpu->non_cpu_sfr_read = non_cpu_sfr;
+    cpu->psv_read = false;
+    cpu->psv_repeat_optimized = false;
+    cpu->instruction_working_register_writes = 0u;
+    cpu->instruction_source_address_registers = 0u;
+    cpu->current_instruction_cycles = 1u;
+    cpu->current_instruction_pc = 0u;
+    cpu->instruction_active = true;
+    left =
+        byte_mode ? dspic33_read_byte(cpu, address) : dspic33_read_word(cpu, address);
+    value = arithmetic_matrix_result(operation, left, right, initial_status, byte_mode);
+    status =
+        arithmetic_matrix_status(operation, left, right, initial_status, byte_mode);
+    cpu->sr = status;
+    if (file_destination) {
+        if (byte_mode) {
+            dspic33_write_byte(cpu, address, (uint8_t)value);
+        } else {
+            dspic33_write_word(cpu, address, value);
+        }
+    } else {
+        write_direct_file_reference_result(cpu, value, byte_mode);
+    }
+    cpu->instruction_active = false;
+    cpu->previous_working_register_writes = cpu->instruction_working_register_writes;
+    cpu->current_instruction_cycles = 0u;
+    cpu->non_cpu_sfr_read = false;
+    cpu->psv_read = false;
+    cpu->psv_repeat_optimized = false;
+    cpu->instruction_advancing = true;
+    if (non_cpu_sfr) {
+        dspic33_device_advance_instruction(cpu, 1u, device_ratio);
+        dspic33_device_advance_instruction(cpu, 1u, device_ratio);
+    } else {
+        dspic33_device_advance_instruction(cpu, 1u, device_ratio);
+    }
+    for (index = 0u; index < 4u; index++) {
+        Dspic33PendingSoftTrap* pending = &cpu->pending_soft_traps[index];
+        if (pending->active && pending->delay != 0u) {
+            pending->delay = pending->delay > instruction_cycles
+                                 ? (uint8_t)(pending->delay - instruction_cycles)
+                                 : 0u;
+        }
+    }
+    cpu->instruction_advancing = false;
+    return value;
+}
+
+static const Dspic33PendingSoftTrap* direct_file_pending_trap(const Dspic33* cpu) {
+    const Dspic33PendingSoftTrap* selected = NULL;
+    uint8_t current_priority = (uint8_t)(((cpu->corcon & 0x0008u) != 0u ? 8u : 0u) |
+                                         ((cpu->sr >> 5u) & 0x07u));
+    size_t index;
+
+    for (index = 0u; index < 4u; index++) {
+        const Dspic33PendingSoftTrap* pending = &cpu->pending_soft_traps[index];
+        if (pending->active && pending->delay == 0u &&
+            pending->priority > current_priority &&
+            (selected == NULL || pending->priority > selected->priority)) {
+            selected = pending;
+        }
+    }
+    return selected;
+}
+
+static bool direct_file_trap_register_state_matches(const Dspic33* actual,
+                                                    const Dspic33* expected) {
+    const Dspic33PendingSoftTrap* pending = direct_file_pending_trap(expected);
+    uint16_t stacked_high;
+    uint16_t final_status;
+    uint16_t final_control;
+
+    if (pending == NULL) {
+        return direct_file_states_match(actual, expected);
+    }
+    stacked_high = (uint16_t)(((expected->sr & 0x00ffu) << 8u) |
+                              ((expected->corcon & 0x0008u) != 0u ? 0x0080u : 0u));
+    final_status =
+        (uint16_t)((expected->sr & ~0x00e0u) | ((pending->priority & 7u) << 5u));
+    final_status &= (uint16_t)~0x0010u;
+    final_control = pending->priority > 7u
+                        ? (uint16_t)((expected->corcon & ~0x0004u) | 0x0008u)
+                        : (uint16_t)(expected->corcon & ~(uint16_t)0x000cu);
+    return actual->stop_reason == DSPIC33_TRAPPED &&
+           actual->last_trap == pending->trap && actual->last_trap_return == 2u &&
+           actual->pc == 0x000340u && actual->w[15] == 0x5004u &&
+           actual->sr == final_status && actual->corcon == final_control &&
+           actual->trap_count == 1u && actual->interrupt_depth == 1u &&
+           memcmp(actual->w, expected->w, 15u * sizeof(*actual->w)) == 0 &&
+           memcmp(actual->data, expected->data, 0x08c8u) == 0 &&
+           memcmp(actual->data + 0x08cau, expected->data + 0x08cau,
+                  0x2000u - 0x08cau) == 0 &&
+           (uint16_t)(actual->data[0x08c8u] |
+                      ((uint16_t)actual->data[0x08c9u] << 8u)) ==
+               (uint16_t)(((uint16_t)pending->priority << 8u) | pending->trap) &&
+           (uint16_t)(actual->data[0x5000u] |
+                      ((uint16_t)actual->data[0x5001u] << 8u)) == 2u &&
+           (uint16_t)(actual->data[0x5002u] |
+                      ((uint16_t)actual->data[0x5003u] << 8u)) == stacked_high &&
+           direct_file_io_states_match(actual, expected) &&
+           direct_file_event_queues_match(actual, expected);
+}
+
+static bool run_direct_file_odd_word_case(Dspic33* cpu, Dspic33* reference,
+                                          uint32_t opcode,
+                                          ArithmeticMatrixOperation operation,
+                                          uint16_t address, bool file_destination) {
+    uint16_t initial_status = reference->sr;
+    uint16_t right = reference->w[0];
+    uint16_t left;
+    uint16_t value;
+    uint16_t status;
+    bool matches;
+    uint64_t device_ratio = dspic33_device_instruction_cycles(reference, 1u);
+    bool non_cpu_sfr = address >= 0x005bu && address < 0x1000u &&
+                       direct_file_address_implemented(address);
+    uint64_t expected_cycles = address >= 0x005bu && address < 0x1000u &&
+                                       direct_file_address_implemented(address)
+                                   ? 2u
+                                   : 1u;
+    reference->pc = 2u;
+    reference->instructions++;
+    reference->non_cpu_sfr_read = non_cpu_sfr;
+    reference->psv_read = false;
+    reference->psv_repeat_optimized = false;
+    reference->instruction_working_register_writes = 0u;
+    reference->instruction_source_address_registers = 0u;
+    reference->current_instruction_cycles = 1u;
+    reference->current_instruction_pc = 0u;
+    reference->instruction_active = true;
+    left = dspic33_read_word(reference, address & 0xfffeu);
+    value = arithmetic_matrix_result(operation, left, right, initial_status, false);
+    status = arithmetic_matrix_status(operation, left, right, initial_status, false);
+    reference->sr = status;
+    if (!file_destination) {
+        write_direct_file_reference_result(reference, value, false);
+    }
+    reference->instruction_active = false;
+    reference->previous_working_register_writes =
+        reference->instruction_working_register_writes;
+    reference->current_instruction_cycles = 0u;
+    reference->non_cpu_sfr_read = false;
+    reference->psv_read = false;
+    reference->psv_repeat_optimized = false;
+    reference->instruction_advancing = true;
+    if (non_cpu_sfr) {
+        dspic33_device_advance_instruction(reference, 1u, device_ratio);
+        dspic33_device_advance_instruction(reference, 1u, device_ratio);
+    } else {
+        dspic33_device_advance_instruction(reference, 1u, device_ratio);
+    }
+    reference->instruction_advancing = false;
+    matches =
+        dspic33_load_program_word(cpu, 0u, opcode) &&
+        dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->last_trap == 1u &&
+        cpu->last_trap_return == 2u && cpu->pc == 0x000340u &&
+        cpu->cycles == expected_cycles && cpu->w[15] == 0x5004u &&
+        (dspic33_read_word(cpu, 0x08c0u) & 0x0008u) != 0u &&
+        (dspic33_read_word(cpu, 0x5002u) >> 8u) == (status & 0x00ffu) &&
+        (uint16_t)(cpu->data[0x08c8u] | ((uint16_t)cpu->data[0x08c9u] << 8u)) ==
+            0x0e01u &&
+        memcmp(cpu->w, reference->w, 15u * sizeof(*cpu->w)) == 0 &&
+        memcmp(cpu->data, reference->data, 0x08c0u) == 0 &&
+        memcmp(cpu->data + 0x08c2u, reference->data + 0x08c2u, 0x08c8u - 0x08c2u) ==
+            0 &&
+        memcmp(cpu->data + 0x08cau, reference->data + 0x08cau, 0x2000u - 0x08cau) ==
+            0 &&
+        memcmp(&cpu->nvm, &reference->nvm, sizeof(cpu->nvm)) == 0 &&
+        memcmp(&cpu->oscillator, &reference->oscillator, sizeof(cpu->oscillator)) ==
+            0 &&
+        memcmp(&cpu->watchdog, &reference->watchdog, sizeof(cpu->watchdog)) == 0 &&
+        direct_file_io_states_match(cpu, reference) &&
+        direct_file_event_queues_match(cpu, reference);
+
+    if (file_destination) {
+        matches = matches && cpu->w[0] == right;
+    } else {
+        matches = matches && cpu->w[0] == value;
+    }
+    return matches;
+}
+
+static void direct_file_arithmetic_encoding_matrix_cases(ProcessorConformance* state) {
+    static const uint32_t bases[6] = {0xbd0000u, 0xbd8000u, 0xb40000u,
+                                      0xb48000u, 0xb50000u, 0xb58000u};
+    static Dspic33 actual;
+    static Dspic33 reference;
+    uint32_t cases = 0u;
+    bool actual_initialized = dspic33_initialize(&actual);
+    bool reference_initialized = dspic33_initialize(&reference);
+    uint8_t operation;
+
+    expect(state, actual_initialized && reference_initialized,
+           "initialize direct-file arithmetic processors");
+    if (!actual_initialized || !reference_initialized) {
+        if (actual_initialized) {
+            dspic33_destroy(&actual);
+        }
+        if (reference_initialized) {
+            dspic33_destroy(&reference);
+        }
+        return;
+    }
+    expect(state,
+           dspic33_load_program_word(&actual, 0x000004u, 0x000340u) &&
+               dspic33_load_program_word(&actual, 0x000006u, 0x000340u) &&
+               dspic33_load_program_word(&actual, 0x000008u, 0x000340u) &&
+               dspic33_load_program_word(&actual, 0x00000au, 0x000340u) &&
+               dspic33_load_program_word(&actual, 0x00000eu, 0x000340u) &&
+               dspic33_load_program_word(&actual, 0x000010u, 0x000340u) &&
+               dspic33_load_program_word(&reference, 0x000004u, 0x000340u) &&
+               dspic33_load_program_word(&reference, 0x000006u, 0x000340u) &&
+               dspic33_load_program_word(&reference, 0x000008u, 0x000340u) &&
+               dspic33_load_program_word(&reference, 0x00000au, 0x000340u) &&
+               dspic33_load_program_word(&reference, 0x00000eu, 0x000340u) &&
+               dspic33_load_program_word(&reference, 0x000010u, 0x000340u),
+           "load direct-file arithmetic address-error vectors");
+    for (operation = 0u; operation < 6u; operation++) {
+        uint8_t byte_mode;
+        for (byte_mode = 0u; byte_mode < 2u; byte_mode++) {
+            uint8_t file_destination;
+            for (file_destination = 0u; file_destination < 2u; file_destination++) {
+                uint16_t address;
+                for (address = 0u; address < 0x2000u; address++) {
+                    uint32_t opcode = bases[operation] | ((uint32_t)byte_mode << 14u) |
+                                      ((uint32_t)file_destination << 13u) | address;
+                    bool matches;
+
+                    prepare_direct_file_arithmetic_case(&actual, address, operation,
+                                                        byte_mode != 0u,
+                                                        file_destination != 0u);
+                    prepare_direct_file_arithmetic_case(&reference, address, operation,
+                                                        byte_mode != 0u,
+                                                        file_destination != 0u);
+                    if (byte_mode == 0u && (address & 1u) != 0u) {
+                        matches = run_direct_file_odd_word_case(
+                            &actual, &reference, opcode,
+                            (ArithmeticMatrixOperation)operation, address,
+                            file_destination != 0u);
+                    } else {
+                        matches = dspic33_load_program_word(&actual, 0u, opcode) &&
+                                  dspic33_load_program_word(&reference, 0u, opcode);
+                        dspic33_step(&actual);
+                        run_direct_file_reference(
+                            &reference, (ArithmeticMatrixOperation)operation, address,
+                            byte_mode != 0u, file_destination != 0u);
+                        matches = matches &&
+                                  (file_destination != 0u && address >= 0x08c0u &&
+                                           address <= 0x08c7u
+                                       ? direct_file_trap_register_state_matches(
+                                             &actual, &reference)
+                                       : direct_file_states_match(&actual, &reference));
+                    }
+                    expect_dsp_matrix_case(state, matches, opcode,
+                                           "direct-file arithmetic encoding");
+                    cases++;
+                }
+            }
+        }
+    }
+    expect(state, cases == 196608u,
+           "direct-file arithmetic encoding matrix is exhaustive");
+    dspic33_destroy(&actual);
+    dspic33_destroy(&reference);
+}
+
 static void run_legal_dsp_matrix_case(ProcessorConformance* state, Dspic33* cpu,
                                       uint32_t opcode, uint8_t target_accumulator,
                                       int64_t target_result, uint8_t x_operation,
@@ -7138,6 +7541,7 @@ int main(void) {
         valid_dsp_register_pair_cases(&state, &cpu);
         dsp_prefetch_destination_collision_cases(&state, &cpu);
         arithmetic_encoding_matrix_cases(&state, &cpu);
+        direct_file_arithmetic_encoding_matrix_cases(&state);
         dsp_encoding_matrix_cases(&state, &cpu);
         generic_multiply_encoding_matrix_cases(&state, &cpu);
         file_multiply_encoding_matrix_cases(&state, &cpu);

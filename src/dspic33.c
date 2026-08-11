@@ -1533,7 +1533,7 @@ static bool execute_file_binary(Dspic33* cpu, uint32_t opcode) {
     bool file_destination = (opcode & 0x002000u) != 0u;
     uint16_t address = (uint16_t)(opcode & 0x1fffu);
     uint16_t left =
-        byte_mode ? read_data_byte(cpu, address) : read_data_word(cpu, address);
+        byte_mode ? read_data_byte(cpu, address) : read_file_word(cpu, address);
     uint16_t right = byte_mode ? (uint8_t)cpu->w[0] : cpu->w[0];
     uint16_t carry = (cpu->sr & 1u) != 0u ? 1u : 0u;
     uint16_t value;
