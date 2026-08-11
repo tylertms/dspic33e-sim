@@ -5369,15 +5369,22 @@ static void general_logical_encoding_matrix_cases(ProcessorConformance* state,
            "general logical illegal encoding matrix is exhaustive");
 }
 
-static void run_literal_arithmetic_matrix_case(ProcessorConformance* state,
-                                               Dspic33* cpu, uint32_t opcode,
-                                               BinaryMatrixOperation operation,
-                                               uint16_t literal, bool byte_mode) {
+static void run_literal_binary_matrix_case(ProcessorConformance* state, Dspic33* cpu,
+                                           uint32_t opcode,
+                                           BinaryMatrixOperation operation,
+                                           uint16_t literal, bool byte_mode) {
     uint8_t destination = (uint8_t)(opcode & 0x0fu);
     uint16_t initial_status =
-        (uint16_t)((destination & 1u) | (((literal >> 1u) & 1u) << 1u));
-    uint16_t left = byte_mode ? (uint16_t)(0x0070u | destination)
-                              : (uint16_t)(0x7ff0u | destination);
+        binary_matrix_logical(operation)
+            ? (uint16_t)((destination & 1u) | (((literal >> 1u) & 1u) << 1u) |
+                         (((literal >> 2u) & 1u) << 2u) |
+                         (((literal >> 3u) & 1u) << 3u) |
+                         (((literal >> 4u) & 1u) << 8u))
+            : (uint16_t)((destination & 1u) | (((literal >> 1u) & 1u) << 1u));
+    static const uint16_t byte_values[4] = {0x0000u, 0x0080u, 0x00ffu, 0x0055u};
+    static const uint16_t word_values[4] = {0x0000u, 0x8000u, 0xffffu, 0x5555u};
+    uint16_t left =
+        byte_mode ? byte_values[destination & 3u] : word_values[destination & 3u];
     uint16_t expected;
     uint16_t expected_status;
     uint64_t cycles;
@@ -5412,7 +5419,7 @@ static void run_literal_arithmetic_matrix_case(ProcessorConformance* state,
               cpu->sr == expected_status && cpu->corcon == 0x0020u &&
               cpu->unsupported_opcode == 0u && !cpu->address_error &&
               !cpu->illegal_reset && cpu->last_trap == UINT16_MAX;
-    expect_dsp_matrix_case(state, matches, opcode, "literal arithmetic encoding");
+    expect_dsp_matrix_case(state, matches, opcode, "literal binary encoding");
 }
 
 static void literal_arithmetic_encoding_matrix_cases(ProcessorConformance* state,
@@ -5436,9 +5443,9 @@ static void literal_arithmetic_encoding_matrix_cases(ProcessorConformance* state
                 for (destination = 0u; destination < 16u; destination++) {
                     uint32_t opcode = bases[operation] | ((uint32_t)byte_mode << 14u) |
                                       ((uint32_t)literal << 4u) | destination;
-                    run_literal_arithmetic_matrix_case(state, cpu, opcode,
-                                                       operations[operation], literal,
-                                                       byte_mode != 0u);
+                    run_literal_binary_matrix_case(state, cpu, opcode,
+                                                   operations[operation], literal,
+                                                   byte_mode != 0u);
                     cases++;
                 }
             }
@@ -5446,6 +5453,47 @@ static void literal_arithmetic_encoding_matrix_cases(ProcessorConformance* state
     }
     expect(state, cases == 81920u,
            "literal arithmetic encoding matrix covers every valid form");
+}
+
+static void literal_logical_encoding_matrix_cases(ProcessorConformance* state,
+                                                  Dspic33* cpu) {
+    static const uint32_t bases[3] = {0xb20000u, 0xb28000u, 0xb30000u};
+    static const BinaryMatrixOperation operations[3] = {
+        ARITHMETIC_MATRIX_AND, ARITHMETIC_MATRIX_XOR, ARITHMETIC_MATRIX_IOR};
+    uint32_t legal = 0u;
+    uint32_t invalid = 0u;
+    uint8_t operation;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    for (operation = 0u; operation < 3u; operation++) {
+        uint8_t byte_mode;
+        for (byte_mode = 0u; byte_mode < 2u; byte_mode++) {
+            uint16_t maximum = byte_mode != 0u ? UINT8_MAX : 0x03ffu;
+            uint16_t literal;
+            for (literal = 0u; literal <= maximum; literal++) {
+                uint8_t destination;
+                for (destination = 0u; destination < 16u; destination++) {
+                    uint32_t opcode = bases[operation] | ((uint32_t)byte_mode << 14u) |
+                                      ((uint32_t)literal << 4u) | destination;
+                    run_literal_binary_matrix_case(state, cpu, opcode,
+                                                   operations[operation], literal,
+                                                   byte_mode != 0u);
+                    legal++;
+                }
+            }
+        }
+    }
+    for (uint32_t opcode = 0xb38000u; opcode < 0xb40000u; opcode++) {
+        if ((opcode & 0xfff000u) != 0xb3c000u) {
+            run_invalid_binary_matrix_case(state, cpu, opcode);
+            invalid++;
+        }
+    }
+    expect(state, legal == 61440u,
+           "literal logical legal encoding matrix is exhaustive");
+    expect(state, invalid == 28672u,
+           "literal logical illegal encoding matrix is exhaustive");
 }
 
 static void arithmetic_flag_boundary_cases(ProcessorConformance* state, Dspic33* cpu) {
@@ -5523,6 +5571,7 @@ static void arithmetic_encoding_matrix_cases(ProcessorConformance* state,
     general_arithmetic_encoding_matrix_cases(state, cpu);
     general_logical_encoding_matrix_cases(state, cpu);
     literal_arithmetic_encoding_matrix_cases(state, cpu);
+    literal_logical_encoding_matrix_cases(state, cpu);
     arithmetic_flag_boundary_cases(state, cpu);
 }
 

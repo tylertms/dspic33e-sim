@@ -1524,7 +1524,8 @@ static bool execute_literal_binary(Dspic33* cpu, uint32_t opcode) {
         value = (uint16_t)(left | literal);
         update_logic_flags(cpu, value, byte_mode);
     } else {
-        return false;
+        perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+        return true;
     }
     if (byte_mode) {
         write_working_register_byte(cpu, destination, false, (uint8_t)value);
