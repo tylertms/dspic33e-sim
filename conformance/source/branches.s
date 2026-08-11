@@ -2,7 +2,7 @@
 .include "conformance.inc"
 
 .global _branch_conformance_cases
-_branch_conformance_cases = 69
+_branch_conformance_cases = 74
 .global _branch_conformance_group_complete
 _branch_conformance_group_complete = 1
 
@@ -138,4 +138,40 @@ _run_branch_conformance:
     record_accumulator_branch 0x0243, SB, 0x1400
     record_accumulator_branch 0x0244, SB, 0x0000
 
+    clr w1
+    call branch_call_target
+    record_case 0x0245, w1, w1
+
+    clr w1
+    rcall branch_rcall_target
+    record_case 0x0246, w1, w1
+
+    clr w1
+    goto 1f
+    mov #0xffff, w1
+1:
+    mov #0x2468, w1
+    record_case 0x0247, w1, w1
+
+    call branch_retlw_word_target
+    record_case 0x0248, w1, w1
+
+    mov #0xa500, w2
+    call branch_retlw_byte_target
+    record_case 0x0249, w2, w2
+
     end_results
+
+branch_call_target:
+    mov #0x1357, w1
+    return
+
+branch_rcall_target:
+    mov #0x5678, w1
+    return
+
+branch_retlw_word_target:
+    retlw #0x3ff, w1
+
+branch_retlw_byte_target:
+    retlw.b #0xff, w2

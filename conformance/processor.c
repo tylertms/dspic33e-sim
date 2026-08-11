@@ -7019,6 +7019,311 @@ static void computed_control_encoding_matrix_cases(ProcessorConformance* state,
            "computed control reserved encoding matrix is exhaustive");
 }
 
+static void prepare_literal_control_encoding_case(Dspic33* cpu) {
+    cpu->pc = 0x020000u;
+    cpu->sr = 0x010fu;
+    cpu->corcon = 0x0024u;
+    cpu->call_depth = 0u;
+    cpu->w[15] = 0x5000u;
+    cpu->initialized_working_registers = 0x8000u;
+    cpu->previous_working_register_writes = 0u;
+    cpu->unsupported_opcode = 0u;
+    cpu->last_trap = UINT16_MAX;
+    cpu->last_interrupt = UINT16_MAX;
+    cpu->address_error = false;
+    cpu->illegal_reset = false;
+    cpu->stop_reason = DSPIC33_RUNNING;
+    cpu->instruction_active = false;
+    cpu->repeat_active = 0u;
+    cpu->do_depth = 0u;
+    cpu->events.count = 0u;
+    cpu->splim_enabled = false;
+    cpu->stop_on_trap = false;
+    dspic33_write_word(cpu, 0x5000u, 0xa5a5u);
+    dspic33_write_word(cpu, 0x5002u, 0x5a5au);
+}
+
+static void run_literal_control_encoding_case(ProcessorConformance* state, Dspic33* cpu,
+                                              bool call, uint16_t low, uint8_t high) {
+    uint32_t opcode = (call ? 0x020000u : 0x040000u) | low;
+    uint32_t target = (((uint32_t)high << 16u) | low) & 0x007ffffeu;
+    uint64_t cycles;
+    uint64_t instructions;
+    bool matches;
+
+    prepare_literal_control_encoding_case(cpu);
+    cycles = cpu->cycles;
+    instructions = cpu->instructions;
+    matches = dspic33_load_program_word(cpu, 0x020000u, opcode) &&
+              dspic33_load_program_word(cpu, 0x020002u, high) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == target &&
+              cpu->cycles - cycles == 4u && cpu->instructions - instructions == 1u &&
+              cpu->sr == 0x010fu && cpu->corcon == (call ? 0x0020u : 0x0024u) &&
+              cpu->w[15] == (call ? 0x5004u : 0x5000u) &&
+              cpu->call_depth == (call ? 1u : 0u) && cpu->unsupported_opcode == 0u &&
+              !cpu->address_error && !cpu->illegal_reset &&
+              cpu->last_trap == UINT16_MAX;
+    if (call) {
+        matches = matches && dspic33_read_word(cpu, 0x5000u) == 0x0005u &&
+                  dspic33_read_word(cpu, 0x5002u) == 0x0002u;
+    } else {
+        matches = matches && dspic33_read_word(cpu, 0x5000u) == 0xa5a5u &&
+                  dspic33_read_word(cpu, 0x5002u) == 0x5a5au;
+    }
+    expect_dsp_matrix_case(state, matches, opcode, "literal control encoding");
+}
+
+static void run_literal_control_target_fault_case(ProcessorConformance* state,
+                                                  Dspic33* cpu, bool call, uint16_t low,
+                                                  uint8_t high) {
+    uint32_t opcode = (call ? 0x020000u : 0x040000u) | low;
+    uint64_t cycles;
+    bool matches;
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    cpu->corcon |= 0x0004u;
+    cycles = cpu->cycles;
+    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+              dspic33_load_program_word(cpu, 2u, high) &&
+              dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles - cycles == 4u &&
+              cpu->last_trap == 1u && cpu->last_trap_return == 2u &&
+              cpu->pc == 0x000340u && cpu->w[15] == (call ? 0x5008u : 0x5004u) &&
+              (cpu->corcon & 0x0004u) == (call ? 0u : 0x0004u);
+    if (call) {
+        matches = matches && dspic33_read_word(cpu, 0x5000u) == 0x0005u &&
+                  dspic33_read_word(cpu, 0x5002u) == 0u &&
+                  dspic33_read_word(cpu, 0x5004u) == 2u;
+    } else {
+        matches = matches && dspic33_read_word(cpu, 0x5000u) == 2u;
+    }
+    expect_dsp_matrix_case(state, matches, opcode, "literal control target fault");
+}
+
+static void run_reserved_literal_extension_case(ProcessorConformance* state,
+                                                Dspic33* cpu, bool call,
+                                                uint32_t extension) {
+    uint32_t opcode = call ? 0x020246u : 0x040246u;
+    uint64_t illegal_resets;
+    bool matches;
+
+    reset_processor_conformance(cpu, 0u);
+    cpu->corcon |= 0x0004u;
+    cpu->w[15] = 0x5000u;
+    dspic33_write_word(cpu, 0x5000u, 0xa5a5u);
+    illegal_resets = cpu->illegal_reset_count;
+    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+              dspic33_load_program_word(cpu, 2u, extension) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset &&
+              cpu->illegal_reset_count == illegal_resets + 1u && cpu->pc == 0u &&
+              cpu->w[15] == 0x1000u && cpu->initialized_working_registers == 0x8000u &&
+              cpu->last_trap == UINT16_MAX && cpu->call_depth == 0u &&
+              (dspic33_read_word(cpu, 0x0740u) & 0x4000u) != 0u &&
+              dspic33_read_word(cpu, 0x5000u) == 0xa5a5u;
+    expect_dsp_matrix_case(state, matches, extension,
+                           "literal control reserved extension");
+}
+
+static void run_literal_rcall_encoding_case(ProcessorConformance* state, Dspic33* cpu,
+                                            uint16_t displacement) {
+    uint32_t opcode = 0x070000u | displacement;
+    uint32_t target =
+        (uint32_t)((0x020002 + (int32_t)(int16_t)displacement * 2) & 0x007ffffe);
+    uint64_t cycles;
+    uint64_t instructions;
+    bool matches;
+
+    prepare_literal_control_encoding_case(cpu);
+    cycles = cpu->cycles;
+    instructions = cpu->instructions;
+    matches = dspic33_load_program_word(cpu, 0x020000u, opcode) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == target &&
+              cpu->cycles - cycles == 4u && cpu->instructions - instructions == 1u &&
+              cpu->sr == 0x010fu && cpu->corcon == 0x0020u && cpu->w[15] == 0x5004u &&
+              cpu->call_depth == 1u && dspic33_read_word(cpu, 0x5000u) == 0x0003u &&
+              dspic33_read_word(cpu, 0x5002u) == 0x0002u &&
+              cpu->unsupported_opcode == 0u && !cpu->address_error &&
+              !cpu->illegal_reset && cpu->last_trap == UINT16_MAX;
+    expect_dsp_matrix_case(state, matches, opcode, "literal RCALL encoding");
+}
+
+static void literal_control_encoding_matrix_cases(ProcessorConformance* state,
+                                                  Dspic33* cpu) {
+    uint32_t direct_first_words = 0u;
+    uint32_t extension_fields = 0u;
+    uint32_t reserved_extensions = 0u;
+    uint32_t relative_calls = 0u;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    for (uint8_t call = 0u; call < 2u; call++) {
+        for (uint32_t low = 0u; low <= UINT16_MAX; low++) {
+            run_literal_control_encoding_case(state, cpu, call != 0u, (uint16_t)low,
+                                              0u);
+            direct_first_words++;
+        }
+        for (uint16_t high = 0u; high < 128u; high++) {
+            uint16_t low = high == 127u ? 0xc000u : 0x1234u;
+            uint32_t target = ((uint32_t)high << 16u) | low;
+            if (dspic33_program_range_implemented(target, 2u)) {
+                run_literal_control_encoding_case(state, cpu, call != 0u, low,
+                                                  (uint8_t)high);
+            } else {
+                run_literal_control_target_fault_case(state, cpu, call != 0u, low,
+                                                      (uint8_t)high);
+            }
+            extension_fields++;
+        }
+        for (uint32_t upper = 1u; upper < 0x20000u; upper++) {
+            uint32_t extension = (upper << 7u) | (upper & 0x007fu);
+            run_reserved_literal_extension_case(state, cpu, call != 0u, extension);
+            reserved_extensions++;
+        }
+    }
+    for (uint32_t displacement = 0u; displacement <= UINT16_MAX; displacement++) {
+        run_literal_rcall_encoding_case(state, cpu, (uint16_t)displacement);
+        relative_calls++;
+    }
+    expect(state, direct_first_words == 131072u,
+           "literal CALL and GOTO first-word encodings are exhaustive");
+    expect(state, extension_fields == 256u,
+           "literal CALL and GOTO target extension fields are exhaustive");
+    expect(state, reserved_extensions == 262142u,
+           "literal CALL and GOTO reserved extension fields are exhaustive");
+    expect(state, relative_calls == 65536u,
+           "literal RCALL encoding matrix is exhaustive");
+}
+
+static void prepare_return_encoding_case(Dspic33* cpu) {
+    cpu->pc = 0x020000u;
+    cpu->sr = 0x010fu;
+    cpu->corcon = 0x0020u;
+    cpu->call_depth = 1u;
+    cpu->w[15] = 0x5004u;
+    cpu->initialized_working_registers = 0x8000u;
+    cpu->previous_working_register_writes = 0u;
+    cpu->unsupported_opcode = 0u;
+    cpu->last_trap = UINT16_MAX;
+    cpu->last_interrupt = UINT16_MAX;
+    cpu->address_error = false;
+    cpu->illegal_reset = false;
+    cpu->stop_reason = DSPIC33_RUNNING;
+    cpu->instruction_active = false;
+    cpu->repeat_active = 0u;
+    cpu->do_depth = 0u;
+    cpu->events.count = 0u;
+    cpu->splim_enabled = false;
+    cpu->stop_on_trap = false;
+    dspic33_write_word(cpu, 0x5000u, 0x0301u);
+    dspic33_write_word(cpu, 0x5002u, 0u);
+}
+
+static void run_retlw_encoding_case(ProcessorConformance* state, Dspic33* cpu,
+                                    uint32_t opcode) {
+    uint16_t literal = (uint16_t)((opcode >> 4u) & 0x03ffu);
+    uint8_t destination = (uint8_t)(opcode & 0x0fu);
+    bool byte_mode = (opcode & 0x004000u) != 0u;
+    uint16_t expected = byte_mode ? (uint16_t)(literal & 0x00ffu) : literal;
+    uint16_t expected_stack =
+        destination == 15u
+            ? (uint16_t)(((byte_mode ? 0x5000u : 0u) | expected) & 0xfffeu)
+            : 0x5000u;
+    uint64_t cycles;
+    uint64_t instructions;
+    bool matches;
+
+    prepare_return_encoding_case(cpu);
+    for (uint8_t reg = 0u; reg < 15u; reg++) {
+        dspic33_set_working_register(cpu, reg, (uint16_t)(0xa500u | reg));
+    }
+    if (byte_mode && destination != 15u) {
+        expected |= 0xa500u;
+    }
+    cycles = cpu->cycles;
+    instructions = cpu->instructions;
+    matches = dspic33_load_program_word(cpu, 0x020000u, opcode) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000300u &&
+              cpu->cycles - cycles == 6u && cpu->instructions - instructions == 1u &&
+              cpu->sr == 0x010fu && cpu->corcon == 0x0024u &&
+              cpu->w[15] == expected_stack && cpu->call_depth == 0u &&
+              cpu->unsupported_opcode == 0u && !cpu->address_error &&
+              !cpu->illegal_reset && cpu->last_trap == UINT16_MAX;
+    if (destination != 15u) {
+        matches = matches && cpu->w[destination] == expected;
+    }
+    for (uint8_t reg = 0u; reg < 15u; reg++) {
+        if (reg != destination) {
+            matches = matches && cpu->w[reg] == (uint16_t)(0xa500u | reg);
+        }
+    }
+    expect_dsp_matrix_case(state, matches, opcode, "RETLW encoding");
+}
+
+static void exact_return_encoding_cases(ProcessorConformance* state, Dspic33* cpu) {
+    uint64_t cycles;
+    bool matches;
+
+    prepare_return_encoding_case(cpu);
+    cycles = cpu->cycles;
+    matches = dspic33_load_program_word(cpu, 0x020000u, OPCODE_RETURN) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000300u &&
+              cpu->cycles - cycles == 6u && cpu->w[15] == 0x5000u &&
+              cpu->call_depth == 0u && cpu->sr == 0x010fu && cpu->corcon == 0x0024u;
+    expect_dsp_matrix_case(state, matches, OPCODE_RETURN, "RETURN encoding");
+
+    prepare_return_encoding_case(cpu);
+    cpu->call_depth = 0u;
+    cpu->interrupt_depth = 1u;
+    dspic33_write_word(cpu, 0x5000u, 0x0301u);
+    dspic33_write_word(cpu, 0x5002u, 0x0f80u);
+    cycles = cpu->cycles;
+    matches = dspic33_load_program_word(cpu, 0x020000u, OPCODE_RETFIE) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000300u &&
+              cpu->cycles - cycles == 6u && cpu->w[15] == 0x5000u &&
+              cpu->interrupt_depth == 0u && cpu->sr == 0x010fu &&
+              cpu->corcon == 0x002cu;
+    expect_dsp_matrix_case(state, matches, OPCODE_RETFIE, "RETFIE encoding");
+}
+
+static void return_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu) {
+    uint32_t documented_retlw = 0u;
+    uint32_t encoded_byte_aliases = 0u;
+    uint32_t reserved_retlw = 0u;
+    uint32_t reserved_return = 0u;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    for (uint32_t opcode = 0x050000u; opcode < 0x058000u; opcode++) {
+        bool byte_mode = (opcode & 0x004000u) != 0u;
+        uint16_t literal = (uint16_t)((opcode >> 4u) & 0x03ffu);
+        run_retlw_encoding_case(state, cpu, opcode);
+        if (!byte_mode || literal <= UINT8_MAX) {
+            documented_retlw++;
+        } else {
+            encoded_byte_aliases++;
+        }
+    }
+    for (uint32_t opcode = 0x058000u; opcode < 0x060000u; opcode++) {
+        run_invalid_binary_matrix_case(state, cpu, opcode);
+        reserved_retlw++;
+    }
+    for (uint32_t opcode = 0x060000u; opcode < 0x070000u; opcode++) {
+        if (opcode == OPCODE_RETURN || opcode == OPCODE_RETFIE) {
+            continue;
+        }
+        run_invalid_binary_matrix_case(state, cpu, opcode);
+        reserved_return++;
+    }
+    exact_return_encoding_cases(state, cpu);
+    expect(state, documented_retlw == 20480u,
+           "documented RETLW operand encodings are exhaustive");
+    expect(state, encoded_byte_aliases == 12288u,
+           "RETLW byte upper-literal aliases are exhaustive");
+    expect(state, reserved_retlw == 32768u, "reserved RETLW encodings are exhaustive");
+    expect(state, reserved_return == 65534u,
+           "reserved RETURN and RETFIE encodings are exhaustive");
+}
+
 static void run_legal_dsp_matrix_case(ProcessorConformance* state, Dspic33* cpu,
                                       uint32_t opcode, uint8_t target_accumulator,
                                       int64_t target_result, uint8_t x_operation,
@@ -8721,6 +9026,8 @@ int main(void) {
         compare_encoding_matrix_cases(&state, &cpu);
         conditional_branch_encoding_matrix_cases(&state, &cpu);
         computed_control_encoding_matrix_cases(&state, &cpu);
+        literal_control_encoding_matrix_cases(&state, &cpu);
+        return_encoding_matrix_cases(&state, &cpu);
         direct_file_arithmetic_encoding_matrix_cases(&state);
         direct_file_logical_encoding_matrix_cases(&state, &cpu);
         direct_file_unary_encoding_matrix_cases(&state);

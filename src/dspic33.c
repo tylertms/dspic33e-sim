@@ -1948,6 +1948,18 @@ static bool computed_control_transfer_encoding(uint32_t opcode) {
            long_control_transfer(opcode, &source, &call);
 }
 
+static bool reserved_return_encoding(uint32_t opcode) {
+    if ((opcode & 0xff0000u) == 0x050000u) {
+        return (opcode & 0x008000u) != 0u;
+    }
+    return (opcode & 0xff0000u) == 0x060000u && opcode != 0x060000u &&
+           opcode != 0x064000u;
+}
+
+static bool literal_control_extension_valid(uint32_t extension) {
+    return (extension & 0xffff80u) == 0u;
+}
+
 static void push_program_counter(Dspic33* cpu, uint32_t address) {
     uint16_t low = (uint16_t)(address & 0xfffeu);
     low |= (uint16_t)((cpu->corcon >> 2u) & 1u);
@@ -3087,6 +3099,10 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
         return true;
     }
+    if (reserved_return_encoding(opcode)) {
+        perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+        return true;
+    }
     if ((opcode & 0xfffff0u) == 0xfd4000u) {
         return execute_decimal_adjust(cpu, opcode);
     }
@@ -3177,6 +3193,10 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         second = cpu->pc == DSPIC33_PROGRAM_LIMIT
                      ? 0u
                      : dspic33_read_program_word(cpu, cpu->pc);
+        if (!literal_control_extension_valid(second)) {
+            perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+            return true;
+        }
         target = ((second & 0x007fu) << 16u) | (opcode & 0x00ffffu);
         target &= 0x007ffffeu;
         return_pc = program_address_add(cpu->pc, 2);
