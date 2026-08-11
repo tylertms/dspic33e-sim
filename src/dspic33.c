@@ -3343,6 +3343,9 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         return true;
     }
     if ((opcode & 0xfffffeu) == 0xfe4000u) {
+        if (cpu->nvm.active) {
+            return true;
+        }
         uint16_t rcon = (uint16_t)(dspic33_read_word(cpu, 0x0740u) & ~0x001cu);
         cpu->watchdog.ticks = 0u;
         if ((opcode & 1u) == 0u) {
@@ -4200,7 +4203,8 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         cpu->stop_reason = DSPIC33_RUNNING;
     } else {
         power_save_next =
-            (cpu->pc & 1u) == 0u && dspic33_program_range_implemented(cpu->pc, 2u) &&
+            !cpu->nvm.active && (cpu->pc & 1u) == 0u &&
+            dspic33_program_range_implemented(cpu->pc, 2u) &&
             (dspic33_read_program_word(cpu, cpu->pc) & 0xfffffeu) == 0xfe4000u;
         exception_dispatched = service_pending_soft_trap(cpu);
         if (!exception_dispatched && !power_save_next) {

@@ -39,6 +39,8 @@ enum {
     TBLRDH_BYTE_W2_W3 = 0xbac192u,
     OPCODE_NOP = 0x000000u,
     OPCODE_RESET = 0xfe0000u,
+    OPCODE_SLEEP = 0xfe4000u,
+    OPCODE_IDLE = 0xfe4001u,
     OPCODE_RETFIE = 0x064000u,
     OPCODE_MOV_LITERAL_0X1234_W2 = 0x212342u,
     OPCODE_MOV_W1_W2 = 0x780111u,
@@ -1063,6 +1065,137 @@ static void stall_and_interrupt_cases(NvmConformance* state, Dspic33* cpu) {
            "NVM vector instruction executes after service");
 }
 
+static void power_save_cases(NvmConformance* state, Dspic33* cpu) {
+    static const uint16_t operations[] = {1u, 2u, 3u, 0x0au, 0x0du};
+    static const uint32_t targets[] = {
+        DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3000u, 0x3a00u,
+        DSPIC33_AUXILIARY_PROGRAM_BASE + 0x2000u, 0u, 0u};
+    static const uint32_t execution_addresses[] = {
+        NVM_SEQUENCE_BASE + 10u, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3000u,
+        NVM_SEQUENCE_BASE + 10u, NVM_SEQUENCE_BASE + 10u,
+        DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3200u};
+    size_t index;
+
+    for (index = 0u; index < sizeof(operations) / sizeof(operations[0]); index++) {
+        uint32_t execution_address = execution_addresses[index];
+        uint32_t opcode = (index & 1u) == 0u ? OPCODE_SLEEP : OPCODE_IDLE;
+        Dspic33StopReason stop_reason =
+            (index & 1u) == 0u ? DSPIC33_SLEEPING : DSPIC33_IDLING;
+        Dspic33PowerState power_state =
+            (index & 1u) == 0u ? DSPIC33_POWER_SLEEP : DSPIC33_POWER_IDLE;
+        uint16_t rcon_bit = (index & 1u) == 0u ? 0x0008u : 0x0004u;
+        uint64_t instructions;
+        uint16_t rcon;
+
+        dspic33_reset(cpu, 0u);
+        cpu->write_latches[0] = 0x00112233u;
+        cpu->write_latches[1] = 0x00445566u;
+        expect(state, start_operation(cpu, operations[index], targets[index]),
+               "opposite-segment power-save operation starts");
+        dspic33_load_program_word(cpu, execution_address, opcode);
+        dspic33_load_program_word(cpu, execution_address + 2u, opcode);
+        cpu->pc = execution_address;
+        cpu->watchdog.ticks = 17u;
+        rcon = dspic33_read_word(cpu, 0x0740u);
+        instructions = cpu->instructions;
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+                   cpu->power_state == DSPIC33_POWER_ACTIVE &&
+                   cpu->stop_reason == DSPIC33_RUNNING &&
+                   dspic33_read_word(cpu, 0x0740u) == rcon &&
+                   cpu->watchdog.ticks == 17u &&
+                   cpu->instructions == instructions + 1u &&
+                   cpu->pc == execution_address + 2u && !cpu->nvm.active,
+               "active NVM ignores opposite-segment power-save instruction");
+        expect(state,
+               dspic33_step(cpu) == stop_reason && cpu->power_state == power_state &&
+                   (dspic33_read_word(cpu, 0x0740u) & rcon_bit) != 0u &&
+                   cpu->watchdog.ticks == 0u,
+               "completed NVM permits the same power-save instruction");
+    }
+
+    for (index = 0u; index < 2u; index++) {
+        uint16_t operation = 1u;
+        uint32_t target =
+            index == 0u ? 0x3c00u : DSPIC33_AUXILIARY_PROGRAM_BASE + 0x2000u;
+        uint32_t execution_address = index == 0u
+                                         ? NVM_SEQUENCE_BASE + 10u
+                                         : DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3400u;
+        uint32_t opcode = index == 0u ? OPCODE_SLEEP : OPCODE_IDLE;
+        Dspic33StopReason stop_reason = index == 0u ? DSPIC33_SLEEPING : DSPIC33_IDLING;
+        Dspic33PowerState power_state =
+            index == 0u ? DSPIC33_POWER_SLEEP : DSPIC33_POWER_IDLE;
+        uint16_t rcon_bit = index == 0u ? 0x0008u : 0x0004u;
+        uint64_t instructions;
+        uint16_t rcon;
+
+        dspic33_reset(cpu, 0u);
+        cpu->write_latches[0] = 0x00112233u;
+        cpu->write_latches[1] = 0x00445566u;
+        expect(state, start_operation(cpu, operation, target),
+               "same-segment power-save operation starts");
+        dspic33_load_program_word(cpu, execution_address, opcode);
+        cpu->pc = execution_address;
+        cpu->watchdog.ticks = 19u;
+        rcon = dspic33_read_word(cpu, 0x0740u);
+        instructions = cpu->instructions;
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING && !cpu->nvm.active &&
+                   cpu->pc == execution_address && cpu->instructions == instructions &&
+                   dspic33_read_word(cpu, 0x0740u) == rcon &&
+                   cpu->watchdog.ticks == 19u &&
+                   cpu->power_state == DSPIC33_POWER_ACTIVE,
+               "same-segment NVM stall retires no power-save instruction");
+        expect(state,
+               dspic33_step(cpu) == stop_reason && cpu->power_state == power_state &&
+                   (dspic33_read_word(cpu, 0x0740u) & rcon_bit) != 0u &&
+                   cpu->watchdog.ticks == 0u && cpu->pc == execution_address + 2u,
+               "same-segment power-save executes after NVM completion");
+    }
+
+    dspic33_reset(cpu, 0u);
+    cpu->write_latches[0] = 0x00112233u;
+    cpu->write_latches[1] = 0x00445566u;
+    dspic33_load_program_word(cpu, 0x0032u, 0x000100u);
+    dspic33_load_program_word(cpu, 0x0100u, OPCODE_NOP);
+    expect(state, start_operation(cpu, 1u, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3800u),
+           "interrupt-before-power-save operation starts");
+    dspic33_load_program_word(cpu, cpu->pc, OPCODE_SLEEP);
+    dspic33_write_word(cpu, 0x0800u, 0x8000u);
+    dspic33_write_word(cpu, 0x0820u, 0x8000u);
+    dspic33_write_word(cpu, 0x0846u, 0x3000u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_interrupt == NVM_IRQ &&
+               cpu->interrupt_count == 1u && cpu->pc == 0x0102u &&
+               cpu->power_state == DSPIC33_POWER_ACTIVE &&
+               (dspic33_read_word(cpu, 0x0740u) & 0x000cu) == 0u,
+           "eligible interrupt precedes ignored power-save instruction");
+
+    dspic33_reset(cpu, 0u);
+    cpu->write_latches[0] = 0x00112233u;
+    cpu->write_latches[1] = 0x00445566u;
+    expect(state, start_operation(cpu, 1u, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3a00u),
+           "priority-zero power-save operation starts");
+    dspic33_load_program_word(cpu, cpu->pc, OPCODE_IDLE);
+    dspic33_write_word(cpu, 0x0800u, 0x8000u);
+    dspic33_write_word(cpu, 0x0820u, 0x8000u);
+    dspic33_write_word(cpu, 0x0846u, 0u);
+    {
+        uint32_t pc = cpu->pc;
+        uint64_t instructions = cpu->instructions;
+        uint16_t rcon = dspic33_read_word(cpu, 0x0740u);
+        cpu->watchdog.ticks = 23u;
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_interrupt != NVM_IRQ &&
+                   cpu->interrupt_count == 0u && interrupt_flag(cpu) &&
+                   cpu->power_state == DSPIC33_POWER_ACTIVE && cpu->pc == pc + 2u &&
+                   cpu->instructions == instructions + 1u &&
+                   dspic33_read_word(cpu, 0x0740u) == rcon &&
+                   cpu->watchdog.ticks == 23u,
+               "priority-zero interrupt remains pending after ignored power-save");
+    }
+}
+
 static void async_suppression_cases(NvmConformance* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     dspic33_set_async_events(cpu, false);
@@ -1378,6 +1511,7 @@ int main(void) {
         auxiliary_access_and_execution_cases(&state, &cpu);
         auxiliary_nvm_cases(&state, &cpu);
         stall_and_interrupt_cases(&state, &cpu);
+        power_save_cases(&state, &cpu);
         persistent_program_alias_cases(&state, &cpu);
         doze_stall_cases(&state, &cpu);
         async_suppression_cases(&state, &cpu);
