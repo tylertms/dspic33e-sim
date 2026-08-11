@@ -258,6 +258,7 @@ typedef struct {
     uint16_t pmd_generation;
     bool alarm_output;
     bool pmd_disabled;
+    bool calibration_pending;
 } Dspic33Rtcc;
 
 typedef enum {

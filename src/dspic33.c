@@ -3729,6 +3729,7 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
     cpu->io.dci.input = dci_input;
     memcpy(cpu->io.rtcc.calendar, rtcc.calendar, sizeof(rtcc.calendar));
     cpu->io.rtcc.prescaler = rtcc.prescaler;
+    cpu->io.rtcc.calibration_pending = rtcc.calibration_pending;
     cpu->io.uart_cts = uart_cts;
     cpu->io.spi_selected = spi_selected;
     cpu->io.timer_gate = timer_gate;

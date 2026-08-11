@@ -40,7 +40,8 @@ enum {
     MOVE_KEY_AA = 0x200aa0u,
     WRITE_NVM_KEY = 0x883970u,
     SET_RTC_WRITE_ENABLE = 0xa8a627u,
-    MOVE_DOUBLE_TO_RTC_CONTROL = 0xbe8900u
+    MOVE_DOUBLE_TO_RTC_CONTROL = 0xbe8900u,
+    RESET_OPCODE = 0xfe0000u
 };
 
 static const uint16_t calendar_masks[4] = {0x7f7fu, 0x073fu, 0x1f3fu, 0x00ffu};
@@ -507,6 +508,220 @@ static void alarm_cases(RtccConformance* state, Dspic33* cpu) {
     }
 }
 
+static void calibration_cases(RtccConformance* state, Dspic33* cpu) {
+    uint16_t calibration;
+    for (calibration = 0u; calibration <= UINT8_MAX; calibration++) {
+        int16_t signed_calibration = (int16_t)calibration;
+        uint16_t adjusted_prescaler;
+        uint32_t remaining_edges;
+        if (signed_calibration >= 0x80) {
+            signed_calibration -= 0x100;
+        }
+        adjusted_prescaler = (uint16_t)(512 + signed_calibration * 4);
+        remaining_edges = 32768u - adjusted_prescaler;
+        dspic33_reset(cpu, 0u);
+        enable_clock(cpu);
+        set_calendar(cpu, 0x0059u, 0x0000u, 0x0101u, 0x0000u);
+        dspic33_write_byte(cpu, RTCC_CONTROL, (uint8_t)calibration);
+        cpu->io.rtcc.prescaler = 32767u;
+        expect(state,
+               clock_edges(cpu, 1u) && cpu->io.rtcc.calendar[0] == 0x0100u &&
+                   cpu->io.rtcc.prescaler == 0u && cpu->io.rtcc.calibration_pending,
+               "minute rollover arms RTCC calibration");
+        expect(state,
+               clock_edges(cpu, 511u) && cpu->io.rtcc.prescaler == 511u &&
+                   cpu->io.rtcc.calibration_pending,
+               "RTCC calibration waits for edge 512");
+        expect(state,
+               clock_edges(cpu, 1u) && cpu->io.rtcc.prescaler == adjusted_prescaler &&
+                   !cpu->io.rtcc.calibration_pending,
+               "signed RTCC calibration adjusts the prescaler");
+        expect(state,
+               clock_edges(cpu, remaining_edges) &&
+                   cpu->io.rtcc.calendar[0] == 0x0101u && cpu->io.rtcc.prescaler == 0u,
+               "RTCC calibration adjusts the next-second duration");
+    }
+
+    dspic33_reset(cpu, 0u);
+    enable_clock(cpu);
+    set_calendar(cpu, 0x0000u, 0x0000u, 0x0101u, 0x0000u);
+    dspic33_write_byte(cpu, RTCC_CONTROL, UINT8_MAX);
+    expect(state,
+           clock_edges(cpu, 512u) && cpu->io.rtcc.prescaler == 512u &&
+               !cpu->io.rtcc.calibration_pending,
+           "second zero without rollover does not calibrate");
+
+    dspic33_reset(cpu, 0u);
+    enable_clock(cpu);
+    set_calendar(cpu, 0x0059u, 0x0000u, 0x0101u, 0x0000u);
+    dspic33_write_byte(cpu, RTCC_CONTROL, 1u);
+    cpu->io.rtcc.prescaler = 32767u;
+    clock_edges(cpu, 1u);
+    clock_edges(cpu, 511u);
+    dspic33_write_byte(cpu, RTCC_CONTROL, 127u);
+    expect(state,
+           clock_edges(cpu, 1u) && cpu->io.rtcc.prescaler == 1020u &&
+               !cpu->io.rtcc.calibration_pending,
+           "CAL write before edge 512 affects current calibration");
+    dspic33_write_byte(cpu, RTCC_CONTROL, 128u);
+    expect(state,
+           clock_edges(cpu, 31748u) && cpu->io.rtcc.calendar[0] == 0x0101u &&
+               cpu->io.rtcc.prescaler == 0u,
+           "CAL write after edge 512 cannot alter completed calibration");
+
+    dspic33_reset(cpu, 0u);
+    enable_clock(cpu);
+    set_calendar(cpu, 0x0059u, 0x0000u, 0x0101u, 0x0000u);
+    dspic33_write_byte(cpu, RTCC_CONTROL, UINT8_MAX);
+    cpu->io.rtcc.prescaler = 32767u;
+    expect(state, clock_edges(cpu, 1u) && cpu->io.rtcc.calibration_pending,
+           "minute rollover arms calibration before MINSEC write");
+    dspic33_write_word(cpu, RTCC_CONTROL,
+                       (uint16_t)(dspic33_read_word(cpu, RTCC_CONTROL) & ~0x0300u));
+    dspic33_write_word(cpu, RTCC_VALUE, 0u);
+    expect(state, cpu->io.rtcc.prescaler == 0u && !cpu->io.rtcc.calibration_pending,
+           "MINSEC write clears pending calibration");
+    expect(state,
+           clock_edges(cpu, 512u) && cpu->io.rtcc.prescaler == 512u &&
+               !cpu->io.rtcc.calibration_pending,
+           "cleared calibration cannot adjust the rewritten minute");
+
+    dspic33_reset(cpu, 0u);
+    enable_clock(cpu);
+    set_calendar(cpu, 0x0059u, 0x0000u, 0x0101u, 0x0000u);
+    dspic33_write_byte(cpu, RTCC_CONTROL, 1u);
+    cpu->io.rtcc.prescaler = 32767u;
+    expect(state,
+           clock_edges(cpu, 1u) && clock_edges(cpu, 100u) &&
+               cpu->io.rtcc.prescaler == 100u && cpu->io.rtcc.calibration_pending,
+           "RTCC calibration advances before disable");
+    dspic33_write_word(cpu, RTCC_CONTROL,
+                       (uint16_t)(dspic33_read_word(cpu, RTCC_CONTROL) & ~RTCC_ENABLE));
+    expect(state,
+           clock_edges(cpu, 500u) && cpu->io.rtcc.prescaler == 100u &&
+               cpu->io.rtcc.calibration_pending,
+           "RTCC disable freezes pending calibration");
+    dspic33_write_word(cpu, RTCC_CONTROL,
+                       (uint16_t)(dspic33_read_word(cpu, RTCC_CONTROL) | RTCC_ENABLE));
+    expect(state,
+           clock_edges(cpu, 412u) && cpu->io.rtcc.prescaler == 516u &&
+               !cpu->io.rtcc.calibration_pending,
+           "RTCC re-enable resumes pending calibration");
+
+    for (uint8_t power = DSPIC33_POWER_SLEEP; power <= DSPIC33_POWER_IDLE; power++) {
+        dspic33_reset(cpu, 0u);
+        enable_clock(cpu);
+        set_calendar(cpu, 0x0059u, 0x0000u, 0x0101u, 0x0000u);
+        dspic33_write_byte(cpu, RTCC_CONTROL, 1u);
+        cpu->io.rtcc.prescaler = 32767u;
+        clock_edges(cpu, 1u);
+        clock_edges(cpu, 100u);
+        cpu->power_state = (Dspic33PowerState)power;
+        expect(state,
+               clock_edges(cpu, 412u) && cpu->io.rtcc.prescaler == 516u &&
+                   !cpu->io.rtcc.calibration_pending,
+               "RTCC calibration continues in power-saving mode");
+    }
+
+    dspic33_reset(cpu, 0u);
+    enable_clock(cpu);
+    set_calendar(cpu, 0x0059u, 0x0000u, 0x0101u, 0x0000u);
+    dspic33_write_byte(cpu, RTCC_CONTROL, 1u);
+    cpu->io.rtcc.prescaler = 32767u;
+    clock_edges(cpu, 1u);
+    clock_edges(cpu, 100u);
+    cpu->data[0x0742u] &= 0xfdu;
+    expect(state,
+           clock_edges(cpu, 412u) && cpu->io.rtcc.prescaler == 100u &&
+               cpu->io.rtcc.calibration_pending,
+           "missing SOSC freezes pending RTCC calibration");
+    cpu->data[0x0742u] |= 0x02u;
+    expect(state,
+           clock_edges(cpu, 412u) && cpu->io.rtcc.prescaler == 516u &&
+               !cpu->io.rtcc.calibration_pending,
+           "restored SOSC resumes pending RTCC calibration");
+
+    dspic33_reset(cpu, 0u);
+    enable_clock(cpu);
+    set_calendar(cpu, 0x0059u, 0x0000u, 0x0101u, 0x0000u);
+    dspic33_write_byte(cpu, RTCC_CONTROL, 1u);
+    cpu->io.rtcc.prescaler = 32767u;
+    clock_edges(cpu, 1u);
+    clock_edges(cpu, 100u);
+    dspic33_write_word(cpu, RTCC_PMD_ADDRESS, RTCC_PMD);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && cpu->io.rtcc.pmd_disabled &&
+               cpu->io.rtcc.calibration_pending,
+           "RTCC PMD disable preserves pending calibration");
+    expect(state,
+           clock_edges(cpu, 412u) && cpu->io.rtcc.prescaler == 100u &&
+               cpu->io.rtcc.calibration_pending,
+           "RTCC PMD freezes pending calibration");
+    dspic33_write_word(cpu, RTCC_PMD_ADDRESS, 0u);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && !cpu->io.rtcc.pmd_disabled &&
+               clock_edges(cpu, 412u) && cpu->io.rtcc.prescaler == 516u &&
+               !cpu->io.rtcc.calibration_pending,
+           "RTCC PMD re-enable resumes pending calibration");
+
+    dspic33_reset(cpu, 0u);
+    enable_clock(cpu);
+    set_calendar(cpu, 0x0059u, 0x0000u, 0x0101u, 0x0000u);
+    dspic33_write_byte(cpu, RTCC_CONTROL, 1u);
+    cpu->io.rtcc.prescaler = 32767u;
+    expect(state,
+           clock_edges(cpu, 1u) && clock_edges(cpu, 100u) &&
+               cpu->io.rtcc.calibration_pending,
+           "RTCC calibration advances before warm reset");
+    dspic33_load_program_word(cpu, 0u, RESET_OPCODE);
+    cpu->pc = 0u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->io.rtcc.prescaler == 100u &&
+               cpu->io.rtcc.calibration_pending &&
+               (dspic33_read_word(cpu, RTCC_CONTROL) & 0x00ffu) == 1u,
+           "warm reset preserves RTCC calibration phase");
+    expect(state,
+           clock_edges(cpu, 412u) && cpu->io.rtcc.prescaler == 516u &&
+               !cpu->io.rtcc.calibration_pending,
+           "warm-reset calibration completes at retained edge");
+
+    {
+        Dspic33 copy;
+        bool initialized = dspic33_initialize(&copy);
+        expect(state, initialized, "initialize RTCC calibration copy");
+        if (initialized) {
+            dspic33_reset(cpu, 0u);
+            enable_clock(cpu);
+            set_calendar(cpu, 0x0059u, 0x0000u, 0x0101u, 0x0000u);
+            dspic33_write_byte(cpu, RTCC_CONTROL, 1u);
+            cpu->io.rtcc.prescaler = 32767u;
+            expect(state,
+                   clock_edges(cpu, 1u) && clock_edges(cpu, 100u) &&
+                       cpu->io.rtcc.calibration_pending,
+                   "RTCC calibration advances before copy");
+            expect(state, dspic33_copy(&copy, cpu), "copy pending RTCC calibration");
+            expect(state, clock_edges(cpu, 412u) && clock_edges(&copy, 412u),
+                   "advance copied RTCC calibrations");
+            expect(state,
+                   cpu->io.rtcc.prescaler == 516u && copy.io.rtcc.prescaler == 516u &&
+                       !cpu->io.rtcc.calibration_pending &&
+                       !copy.io.rtcc.calibration_pending,
+                   "copied RTCC calibrations complete independently");
+            dspic33_destroy(&copy);
+        }
+    }
+
+    dspic33_reset(cpu, 0u);
+    enable_clock(cpu);
+    set_calendar(cpu, 0x0059u, 0x0000u, 0x0101u, 0x0000u);
+    cpu->io.rtcc.prescaler = 32767u;
+    expect(state, clock_edges(cpu, 1u) && cpu->io.rtcc.calibration_pending,
+           "RTCC calibration arms before POR");
+    dspic33_reset(cpu, 0u);
+    expect(state, cpu->io.rtcc.prescaler == 0u && !cpu->io.rtcc.calibration_pending,
+           "POR clears RTCC calibration phase");
+}
+
 static void interrupt_output_power_cases(RtccConformance* state, Dspic33* cpu) {
     uint8_t priority;
     bool high;
@@ -830,11 +1045,12 @@ int main(void) {
         pointer_write_cases(&state, &cpu);
         transfer_context_cases(&state, &cpu);
         calendar_cases(&state, &cpu);
+        calibration_cases(&state, &cpu);
         alarm_cases(&state, &cpu);
         interrupt_output_power_cases(&state, &cpu);
         lifecycle_cases(&state, &cpu);
         long_sequence_cases(&state, &cpu);
-        expect(&state, state.cases == 429u, "RTCC assertion arithmetic");
+        expect(&state, state.cases == 1479u, "RTCC assertion arithmetic");
         dspic33_destroy(&cpu);
     }
     printf("[rtcc-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",

@@ -347,6 +347,7 @@ enum {
     RTCC_SECONDS_OUTPUT = 0x0002u,
     RTCC_IRQ = 62u,
     RTCC_PRESCALER_EDGES = 32768u,
+    RTCC_CALIBRATION_EDGE = 512u,
     RTCC_HALF_SECOND_EDGE = 16384u,
     RTCC_SYNC_EDGES = 32u,
     RTCC_EVENT_PMD_SOURCE = UINT16_MAX,
@@ -3326,6 +3327,18 @@ static void rtcc_increment_calendar(Dspic33* cpu) {
     rtcc->calendar[3] = rtcc_bcd_encode(year);
 }
 
+static void rtcc_apply_calibration(Dspic33* cpu) {
+    uint16_t control = raw_word(cpu, RTCC_CONTROL);
+    int16_t calibration = (int16_t)(control & 0x00ffu);
+    int32_t prescaler;
+    if (calibration >= 0x80) {
+        calibration -= 0x100;
+    }
+    prescaler = (int32_t)cpu->io.rtcc.prescaler + calibration * 4;
+    cpu->io.rtcc.prescaler = (uint16_t)prescaler;
+    cpu->io.rtcc.calibration_pending = false;
+}
+
 static void rtcc_set_status(Dspic33* cpu, uint16_t status) {
     uint16_t control = raw_word(cpu, RTCC_CONTROL);
     raw_write_word(cpu, RTCC_CONTROL,
@@ -3427,9 +3440,15 @@ static void rtcc_clock_edge(Dspic33* cpu) {
     if (cpu->io.rtcc.prescaler == RTCC_HALF_SECOND_EDGE) {
         status |= RTCC_HALF_SECOND;
     } else if (cpu->io.rtcc.prescaler >= RTCC_PRESCALER_EDGES) {
+        uint8_t previous_second = (uint8_t)cpu->io.rtcc.calendar[0];
         cpu->io.rtcc.prescaler = 0u;
         full_second = true;
         rtcc_increment_calendar(cpu);
+        cpu->io.rtcc.calibration_pending =
+            previous_second == 0x59u && (uint8_t)cpu->io.rtcc.calendar[0] == 0u;
+    } else if (cpu->io.rtcc.prescaler == RTCC_CALIBRATION_EDGE &&
+               cpu->io.rtcc.calibration_pending) {
+        rtcc_apply_calibration(cpu);
     } else {
         status = raw_word(cpu, RTCC_CONTROL) & RTCC_HALF_SECOND;
     }
@@ -3526,6 +3545,7 @@ static void update_rtcc_window(Dspic33* cpu, uint16_t address, bool alarm) {
             }
             if (!alarm && pointer == 0u) {
                 cpu->io.rtcc.prescaler = 0u;
+                cpu->io.rtcc.calibration_pending = false;
                 rtcc_set_status(cpu, 0u);
             }
         }
