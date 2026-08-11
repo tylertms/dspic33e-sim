@@ -5949,7 +5949,7 @@ static void move_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu
 
 static void illegal_condition_reset_cases(ProcessorConformance* state, Dspic33* cpu) {
     static const uint16_t preserved_addresses[] = {
-        0x0742u, 0x0744u, 0x0746u, 0x0748u, 0x074eu, 0x0758u, 0x075au,
+        0x0742u, 0x0744u, 0x0746u, 0x0748u, 0x0758u, 0x075au,
     };
     uint16_t
         preserved_values[sizeof(preserved_addresses) / sizeof(preserved_addresses[0])];
@@ -5984,6 +5984,7 @@ static void illegal_condition_reset_cases(ProcessorConformance* state, Dspic33* 
         cpu->data[address] = (uint8_t)preserved_values[index];
         cpu->data[address + 1u] = (uint8_t)(preserved_values[index] >> 8u);
     }
+    dspic33_write_word(cpu, 0x074eu, 0x8500u);
     cpu->io.adc[3] = 0x0456u;
     cpu->io.gpio[2] = 0x789au;
     cpu->io.uart_cts = 0x05u;
@@ -6026,6 +6027,8 @@ static void illegal_condition_reset_cases(ProcessorConformance* state, Dspic33* 
                    preserved_values[index],
                "warm reset retains oscillator and RTCC register");
     }
+    expect(state, dspic33_read_word(cpu, 0x074eu) == 0u,
+           "warm reset clears reference oscillator control");
     expect(state,
            cpu->io.adc[3] == 0x0456u && cpu->io.gpio[2] == 0x789au &&
                cpu->io.uart_cts == 0x05u && cpu->io.spi_selected == 0x09u &&

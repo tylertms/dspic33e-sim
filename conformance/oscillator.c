@@ -15,12 +15,18 @@ enum {
     OSCILLATOR_IO_LOCK = 0x0040u,
     OSCILLATOR_CLOCK_LOCK = 0x0080u,
     OSCILLATOR_SWITCH_DELAY = 32u,
+    REFERENCE_CLOCK_CONTROL = 0x074eu,
+    REFERENCE_CLOCK_ENABLE = 0x8000u,
+    REFERENCE_CLOCK_SLEEP = 0x2000u,
+    REFERENCE_CLOCK_SOURCE = 0x1000u,
+    REFERENCE_CLOCK_DIVISOR = 0x0f00u,
     CONFIGURATION_FOSCSEL = 0xf80006u,
     CONFIGURATION_FOSC = 0xf80008u,
     CONFIGURATION_FWDT = 0xf8000au,
     OPCODE_NOP = 0x000000u,
     OPCODE_SLEEP = 0xfe4000u,
     OPCODE_RESET = 0xfe0000u,
+    OPCODE_MOV_W0_W1 = 0x780880u,
     OPCODE_MOV_BYTE_W0_W1 = 0x784880u,
     OPCODE_MOV_BYTE_W2_W1 = 0x784882u,
     OPCODE_MOV_BYTE_W3_W1 = 0x784883u
@@ -755,6 +761,78 @@ static void two_speed_startup_cases(OscillatorConformance* state, Dspic33* sourc
     dspic33_load_configuration_word(source, CONFIGURATION_FWDT, 0x00ffu);
 }
 
+static void reference_clock_cases(OscillatorConformance* state, Dspic33* source,
+                                  Dspic33* copy) {
+    dspic33_reset(source, 0u);
+    expect(state, dspic33_read_word(source, REFERENCE_CLOCK_CONTROL) == 0u,
+           "REFOCON resets disabled");
+
+    dspic33_write_word(source, REFERENCE_CLOCK_CONTROL, 0x0500u);
+    expect(state, dspic33_read_word(source, REFERENCE_CLOCK_CONTROL) == 0x0500u,
+           "disabled reference clock accepts divisor");
+    dspic33_write_word(source, REFERENCE_CLOCK_CONTROL, 0x8500u);
+    dspic33_write_word(source, REFERENCE_CLOCK_CONTROL, 0x8a00u);
+    expect(state, dspic33_read_word(source, REFERENCE_CLOCK_CONTROL) == 0x8500u,
+           "enabled reference clock preserves divisor on word write");
+
+    dspic33_write_word(source, REFERENCE_CLOCK_CONTROL,
+                       REFERENCE_CLOCK_SLEEP | REFERENCE_CLOCK_SOURCE | 0x0300u);
+    expect(state, dspic33_read_word(source, REFERENCE_CLOCK_CONTROL) == 0x3500u,
+           "disable write preserves divisor while applying controls");
+    dspic33_write_word(source, REFERENCE_CLOCK_CONTROL, 0x0300u);
+    expect(state, dspic33_read_word(source, REFERENCE_CLOCK_CONTROL) == 0x0300u,
+           "subsequent disabled write changes divisor");
+    dspic33_write_word(source, REFERENCE_CLOCK_CONTROL, 0x8700u);
+    expect(state, dspic33_read_word(source, REFERENCE_CLOCK_CONTROL) == 0x8700u,
+           "disabled reference clock enables with new divisor");
+
+    dspic33_write_byte(source, REFERENCE_CLOCK_CONTROL + 1u, 0xbau);
+    expect(state,
+           dspic33_read_word(source, REFERENCE_CLOCK_CONTROL) ==
+               (REFERENCE_CLOCK_ENABLE | REFERENCE_CLOCK_SLEEP |
+                REFERENCE_CLOCK_SOURCE | 0x0700u),
+           "enabled high-byte write preserves divisor and applies controls");
+
+    dspic33_load_program_word(source, 0u, OPCODE_MOV_W0_W1);
+    source->pc = 0u;
+    dspic33_set_working_register(source, 0u, 0x8900u);
+    dspic33_set_working_register(source, 1u, REFERENCE_CLOCK_CONTROL);
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING &&
+               dspic33_read_word(source, REFERENCE_CLOCK_CONTROL) == 0x8700u,
+           "stepped word write preserves enabled divisor");
+
+    dspic33_set_working_register(source, 0u, 0x0900u);
+    source->pc = 0u;
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING &&
+               dspic33_read_word(source, REFERENCE_CLOCK_CONTROL) == 0x0700u,
+           "stepped disable preserves enabled divisor");
+    dspic33_set_working_register(source, 0u, 0x0900u);
+    source->pc = 0u;
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING &&
+               dspic33_read_word(source, REFERENCE_CLOCK_CONTROL) == 0x0900u,
+           "stepped disabled write changes divisor");
+
+    expect(state, dspic33_copy(copy, source), "copy preserves reference clock state");
+    expect(state, dspic33_read_word(copy, REFERENCE_CLOCK_CONTROL) == 0x0900u,
+           "copy retains reference clock divisor");
+    dspic33_load_program_word(source, 0u, OPCODE_RESET);
+    source->pc = 0u;
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING &&
+               dspic33_read_word(source, REFERENCE_CLOCK_CONTROL) == 0u,
+           "warm reset clears reference clock control");
+    dspic33_reset(copy, 0u);
+    expect(state, dspic33_read_word(copy, REFERENCE_CLOCK_CONTROL) == 0u,
+           "cold reset clears copied reference clock control");
+    expect(state,
+           source->events.count == 0u && !source->oscillator.active &&
+               copy->events.count == 0u && !copy->oscillator.active,
+           "reference clock writes create no oscillator lifecycle");
+}
+
 static void lifecycle_cases(OscillatorConformance* state, Dspic33* source,
                             Dspic33* copy) {
     dspic33_reset(source, 0u);
@@ -850,8 +928,9 @@ int main(void) {
     hardware_failure_cases(&state, &source);
     pll_lock_sequence_cases(&state, &source, &copy);
     two_speed_startup_cases(&state, &source, &copy);
+    reference_clock_cases(&state, &source, &copy);
     lifecycle_cases(&state, &source, &copy);
-    expect(&state, state.cases == 209u, "oscillator assertion arithmetic");
+    expect(&state, state.cases == 224u, "oscillator assertion arithmetic");
     printf("[oscillator-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32
            "\n",
            state.cases, state.passed, state.failed);

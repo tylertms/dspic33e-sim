@@ -3504,7 +3504,7 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
 
 static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind kind) {
     static const uint16_t preserved_addresses[] = {
-        0x0626u, 0x0728u, 0x0742u, 0x0744u, 0x0746u, 0x0748u, 0x074eu, 0x0758u, 0x075au,
+        0x0626u, 0x0728u, 0x0742u, 0x0744u, 0x0746u, 0x0748u, 0x0758u, 0x075au,
     };
     uint16_t
         preserved_values[sizeof(preserved_addresses) / sizeof(preserved_addresses[0])];

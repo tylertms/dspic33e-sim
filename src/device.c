@@ -653,6 +653,9 @@ enum {
     DCI_EVENT_GENERATION_SHIFT = 1u,
     AUXILIARY_CLOCK_CONTROL = 0x0758u,
     AUXILIARY_CLOCK_DIVISOR = 0x075au,
+    REFERENCE_CLOCK_CONTROL = 0x074eu,
+    REFERENCE_CLOCK_ENABLE = 0x8000u,
+    REFERENCE_CLOCK_DIVISOR = 0x0f00u,
     AUXILIARY_PLL_ENABLE = 0x8000u,
     AUXILIARY_PLL_LOCK = 0x4000u,
     AUXILIARY_CLOCK_WRITABLE = 0xbee7u,
@@ -10224,6 +10227,12 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
         auxiliary_pll_input(raw_word(cpu, AUXILIARY_CLOCK_CONTROL)) == 1u &&
         ((previous ^ raw_word(cpu, base)) & 0x003fu) != 0u) {
         reconfigure_auxiliary_pll(cpu);
+    }
+    if (base == REFERENCE_CLOCK_CONTROL && (previous & REFERENCE_CLOCK_ENABLE) != 0u) {
+        uint16_t control = raw_word(cpu, base);
+        raw_write_word(cpu, base,
+                       (uint16_t)((control & ~REFERENCE_CLOCK_DIVISOR) |
+                                  (previous & REFERENCE_CLOCK_DIVISOR)));
     }
     update_timer_register(cpu, base);
     update_adc_register(cpu, base, previous, requested);
