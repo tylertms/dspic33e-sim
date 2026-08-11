@@ -430,6 +430,195 @@ static void update_cases(PwmConformance* state, Dspic33* cpu) {
     expect(state, !dspic33_pwm_output(cpu, 0u, true), "boundary phase output");
 }
 
+static uint16_t active_timing_value(const Dspic33* cpu, uint8_t generator,
+                                    uint16_t offset) {
+    switch (offset) {
+    case 6u:
+        return cpu->io.pwm_active_duty[generator][0];
+    case 8u:
+        return cpu->io.pwm_active_phase[generator][0];
+    case 0x0au:
+        return cpu->io.pwm_active_dead_time[generator][0];
+    case 0x0cu:
+        return cpu->io.pwm_active_dead_time[generator][1];
+    case 0x0eu:
+        return cpu->io.pwm_active_duty[generator][1];
+    case 0x10u:
+        return cpu->io.pwm_active_phase[generator][1];
+    default:
+        return UINT16_MAX;
+    }
+}
+
+static void b1_update_cases(PwmConformance* state, Dspic33* cpu) {
+    static const uint16_t timing_offsets[] = {6u, 8u, 0x0au, 0x0cu, 0x0eu, 0x10u};
+    Dspic33 copy;
+    bool initialized;
+    uint8_t generator;
+    uint8_t index;
+    for (generator = 0u; generator < DSPIC33_PWM_COUNT; generator++) {
+        uint16_t address = base(generator);
+        dspic33_reset(cpu, 0u);
+        configure_generator(cpu, generator, 0x0400u, 7u, 6u, 0x0080u);
+        enable_pwm(cpu, 0u);
+        if ((generator & 1u) == 0u) {
+            dspic33_write_word(cpu, 0x0c04u, 3u);
+            dspic33_write_word(cpu, (uint16_t)(address + 6u), 1u);
+        } else {
+            dspic33_write_word(cpu, (uint16_t)(address + 6u), 1u);
+            dspic33_write_word(cpu, 0x0c04u, 3u);
+        }
+        dspic33_device_advance(cpu, 8u);
+        expect(state, cpu->io.pwm_active_period[0] == 3u,
+               "B1 primary period updates at first boundary");
+        expect(state, cpu->io.pwm_active_duty[generator][0] == 6u,
+               "B1 primary duty waits after period update");
+        dspic33_device_advance(cpu, 4u);
+        expect(state, cpu->io.pwm_active_duty[generator][0] == 1u,
+               "B1 primary duty updates at second boundary");
+    }
+
+    for (index = 0u; index < sizeof(timing_offsets) / sizeof(timing_offsets[0]);
+         index++) {
+        uint16_t offset = timing_offsets[index];
+        uint16_t previous = offset == 6u || offset == 0x0eu ? 6u : 0u;
+        dspic33_reset(cpu, 0u);
+        configure_generator(cpu, 0u, 0x0400u, 7u, 6u, 0x0080u);
+        enable_pwm(cpu, 0u);
+        dspic33_write_word(cpu, 0x0c04u, 3u);
+        dspic33_write_word(cpu, (uint16_t)(base(0u) + offset), 2u);
+        dspic33_device_advance(cpu, 8u);
+        expect(state, active_timing_value(cpu, 0u, offset) == previous,
+               "B1 timing register waits after period update");
+        dspic33_device_advance(cpu, 4u);
+        expect(state, active_timing_value(cpu, 0u, offset) == 2u,
+               "B1 timing register updates one cycle later");
+    }
+
+    dspic33_reset(cpu, 0u);
+    configure_generator(cpu, 0u, 0x0400u, 7u, 6u, 0x0088u);
+    dspic33_write_word(cpu, 0x0c12u, 7u);
+    dspic33_write_word(cpu, 0x0c10u, 1u);
+    enable_pwm(cpu, 0u);
+    dspic33_write_word(cpu, 0x0c12u, 3u);
+    dspic33_write_word(cpu, 0x0c26u, 1u);
+    dspic33_device_advance(cpu, 8u);
+    expect(state, cpu->io.pwm_active_period[1] == 3u,
+           "B1 secondary period updates at first boundary");
+    expect(state, cpu->io.pwm_active_duty[0][0] == 6u,
+           "B1 secondary duty waits after period update");
+    dspic33_device_advance(cpu, 4u);
+    expect(state, cpu->io.pwm_active_duty[0][0] == 1u,
+           "B1 secondary duty updates at second boundary");
+
+    dspic33_reset(cpu, 0u);
+    configure_generator(cpu, 0u, 0x0400u, 7u, 1u, 0x0180u);
+    dspic33_write_word(cpu, 0x0c0au, 6u);
+    enable_pwm(cpu, 0u);
+    dspic33_write_word(cpu, 0x0c04u, 3u);
+    dspic33_write_word(cpu, 0x0c0au, 1u);
+    dspic33_device_advance(cpu, 8u);
+    expect(state, cpu->io.pwm_active_duty[0][0] == 6u,
+           "B1 master duty waits after period update");
+    dspic33_device_advance(cpu, 4u);
+    expect(state, cpu->io.pwm_active_duty[0][0] == 1u,
+           "B1 master duty updates at second boundary");
+
+    dspic33_reset(cpu, 0u);
+    configure_generator(cpu, 0u, 0x0400u, 7u, 6u, 0x0280u);
+    dspic33_write_word(cpu, 0x0c28u, 7u);
+    enable_pwm(cpu, 0u);
+    dspic33_write_word(cpu, 0x0c04u, 3u);
+    dspic33_write_word(cpu, 0x0c26u, 1u);
+    dspic33_device_advance(cpu, 8u);
+    expect(state, cpu->io.pwm_active_duty[0][0] == 1u,
+           "B1 independent timing ignores master period delay");
+
+    dspic33_reset(cpu, 0u);
+    configure_generator(cpu, 0u, 0x0400u, 7u, 6u, 0x0081u);
+    enable_pwm(cpu, 0x0400u);
+    dspic33_write_word(cpu, 0x0c04u, 3u);
+    dspic33_write_word(cpu, 0x0c26u, 1u);
+    expect(state,
+           cpu->io.pwm_active_period[0] == 3u && cpu->io.pwm_active_duty[0][0] == 1u,
+           "B1 immediate period and duty bypass delay");
+
+    dspic33_reset(cpu, 0u);
+    configure_generator(cpu, 0u, 0x0400u, 7u, 6u, 0x00c0u);
+    enable_pwm(cpu, 0u);
+    dspic33_write_word(cpu, 0x0c04u, 3u);
+    expect(state, dspic33_pwm_dead_time(cpu, 0u, true, 0u),
+           "schedule B1 delayed compensation signal");
+    dspic33_device_advance(cpu, 0u);
+    dspic33_device_advance(cpu, 8u);
+    expect(state, (cpu->io.pwm_dead_time_sampled & 1u) == 0u,
+           "B1 compensation signal waits after period update");
+    dspic33_device_advance(cpu, 4u);
+    expect(state, (cpu->io.pwm_dead_time_sampled & 1u) != 0u,
+           "B1 compensation signal updates at second boundary");
+
+    dspic33_reset(cpu, 0u);
+    configure_generator(cpu, 0u, 0x0400u, 7u, 7u, 0x0080u);
+    dspic33_write_word(cpu, 0x0c24u, (uint16_t)((2u << 3u) | 1u));
+    enable_pwm(cpu, 0u);
+    expect(state, dspic33_pwm_fault(cpu, 2u, true, 0u),
+           "schedule B1 cycle fault assertion");
+    dspic33_device_advance(cpu, 0u);
+    expect(state, dspic33_pwm_fault(cpu, 2u, false, 0u),
+           "schedule B1 cycle fault release");
+    dspic33_device_advance(cpu, 0u);
+    dspic33_write_word(cpu, 0x0c04u, 3u);
+    dspic33_device_advance(cpu, 8u);
+    expect(state, !dspic33_pwm_output(cpu, 0u, true),
+           "B1 cycle fault release waits after period update");
+    dspic33_device_advance(cpu, 4u);
+    expect(state, dspic33_pwm_output(cpu, 0u, true),
+           "B1 cycle fault releases at second boundary");
+
+    dspic33_reset(cpu, 0u);
+    configure_generator(cpu, 0u, 0x0400u, 7u, 7u, 0x0080u);
+    dspic33_write_word(cpu, 0x0c24u, (uint16_t)((3u << 10u) | 0x0100u));
+    enable_pwm(cpu, 0u);
+    expect(state, dspic33_pwm_current_limit(cpu, 3u, true, 0u),
+           "schedule B1 current-limit assertion");
+    dspic33_device_advance(cpu, 0u);
+    expect(state, dspic33_pwm_current_limit(cpu, 3u, false, 0u),
+           "schedule B1 current-limit release");
+    dspic33_device_advance(cpu, 0u);
+    dspic33_write_word(cpu, 0x0c04u, 3u);
+    dspic33_device_advance(cpu, 8u);
+    expect(state, !dspic33_pwm_output(cpu, 0u, true),
+           "B1 current-limit release waits after period update");
+    dspic33_device_advance(cpu, 4u);
+    expect(state, dspic33_pwm_output(cpu, 0u, true),
+           "B1 current-limit releases at second boundary");
+
+    dspic33_reset(cpu, 0u);
+    configure_generator(cpu, 0u, 0x0400u, 7u, 6u, 0x0080u);
+    enable_pwm(cpu, 0u);
+    dspic33_write_word(cpu, 0x0c04u, 3u);
+    dspic33_write_word(cpu, 0x0c26u, 1u);
+    initialized = dspic33_initialize(&copy);
+    expect(state, initialized, "initialize B1 PWM update copy");
+    if (initialized) {
+        expect(state, dspic33_copy(&copy, cpu), "copy B1 PWM update state");
+        dspic33_device_advance(cpu, 8u);
+        dspic33_device_advance(&copy, 8u);
+        expect(state,
+               copy.io.pwm_active_period[0] == cpu->io.pwm_active_period[0] &&
+                   copy.io.pwm_active_duty[0][0] == cpu->io.pwm_active_duty[0][0],
+               "copied B1 PWM first boundary");
+        dspic33_device_advance(cpu, 4u);
+        dspic33_device_advance(&copy, 4u);
+        expect(state, copy.io.pwm_active_duty[0][0] == cpu->io.pwm_active_duty[0][0],
+               "copied B1 PWM second boundary");
+        dspic33_destroy(&copy);
+    }
+    dspic33_reset(cpu, 0u);
+    expect(state, cpu->io.pwm_period_update == 0u && cpu->io.pwm_timing_update == 0u,
+           "reset B1 PWM update state");
+}
+
 static void trigger_cases(PwmConformance* state, Dspic33* cpu) {
     uint8_t generator;
     uint8_t divider;
@@ -823,6 +1012,7 @@ int main(void) {
     dead_time_cases(&state, &cpu);
     b1_dead_time_cases(&state, &cpu);
     update_cases(&state, &cpu);
+    b1_update_cases(&state, &cpu);
     trigger_cases(&state, &cpu);
     protection_cases(&state, &cpu);
     synchronization_cases(&state, &cpu);

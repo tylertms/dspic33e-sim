@@ -565,6 +565,8 @@ typedef struct {
     uint8_t pwm_fault_release;
     uint8_t pwm_dead_time_inputs;
     uint8_t pwm_dead_time_sampled;
+    uint8_t pwm_period_update;
+    uint8_t pwm_timing_update;
     uint8_t pwm_sync_inputs;
     bool pwm_batch_updating;
     uint32_t pwm_fault_inputs;

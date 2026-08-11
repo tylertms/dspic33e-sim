@@ -9151,14 +9151,21 @@ static bool pwm_advance_master_counter(Dspic33* cpu, uint8_t time_base,
     return false;
 }
 
-static void pwm_cycle_boundary(Dspic33* cpu, uint8_t generator) {
+static void pwm_cycle_boundary(Dspic33* cpu, uint8_t generator, bool period_updated) {
     uint8_t bit = (uint8_t)(1u << generator);
     uint16_t fault = pwm_register(cpu, generator, 4u);
     uint16_t io = pwm_register(cpu, generator, 2u);
-    cpu->io.pwm_dead_time_sampled = (uint8_t)((cpu->io.pwm_dead_time_sampled & ~bit) |
-                                              (cpu->io.pwm_dead_time_inputs & bit));
-    if ((pwm_register(cpu, generator, 0u) & PWM_IMMEDIATE_UPDATE) == 0u) {
-        pwm_latch_generator(cpu, generator);
+    bool immediate = (pwm_register(cpu, generator, 0u) & PWM_IMMEDIATE_UPDATE) != 0u;
+    bool delayed =
+        period_updated && !immediate && (cpu->io.pwm_timing_update & bit) != 0u;
+    if (!delayed) {
+        cpu->io.pwm_dead_time_sampled =
+            (uint8_t)((cpu->io.pwm_dead_time_sampled & ~bit) |
+                      (cpu->io.pwm_dead_time_inputs & bit));
+        if (!immediate) {
+            pwm_latch_generator(cpu, generator);
+        }
+        cpu->io.pwm_timing_update &= (uint8_t)~bit;
     }
     cpu->io.pwm_cycle_count[generator]++;
     if ((pwm_register(cpu, generator, 2u) & PWM_MODE_MASK) == PWM_MODE_PUSH_PULL) {
@@ -9167,22 +9174,24 @@ static void pwm_cycle_boundary(Dspic33* cpu, uint8_t generator) {
     if ((io & PWM_OVERRIDE_SYNCHRONIZED) != 0u) {
         cpu->io.pwm_active_io[generator] = io;
     }
-    if ((cpu->io.pwm_fault_release & bit) != 0u && !pwm_fault_active(cpu, generator)) {
+    if (!delayed && (cpu->io.pwm_fault_release & bit) != 0u &&
+        !pwm_fault_active(cpu, generator)) {
         cpu->io.pwm_fault_latched &= (uint8_t)~bit;
         cpu->io.pwm_fault_release &= (uint8_t)~bit;
     }
-    if (!pwm_fault_active(cpu, generator) ||
-        (fault & PWM_FAULT_MODE_MASK) != PWM_FAULT_CYCLE) {
+    if (!delayed && (!pwm_fault_active(cpu, generator) ||
+                     (fault & PWM_FAULT_MODE_MASK) != PWM_FAULT_CYCLE)) {
         cpu->io.pwm_fault_cycle &= (uint8_t)~bit;
     }
-    if (!pwm_current_limit_active(cpu, generator) ||
-        (fault & PWM_CURRENT_LIMIT_MODE) == 0u) {
+    if (!delayed && (!pwm_current_limit_active(cpu, generator) ||
+                     (fault & PWM_CURRENT_LIMIT_MODE) == 0u)) {
         cpu->io.pwm_current_cycle &= (uint8_t)~bit;
     }
 }
 
 static void pwm_tick(Dspic33* cpu, uint8_t time_base, uint64_t cycle) {
     bool master_boundary;
+    bool period_updated = false;
     uint8_t generator;
     uint16_t chop_period =
         (uint16_t)((raw_word(cpu, PWM_GLOBAL_BASE + 0x1au) & 0x03ffu) + 1u);
@@ -9197,6 +9206,8 @@ static void pwm_tick(Dspic33* cpu, uint8_t time_base, uint64_t cycle) {
         uint16_t period_address =
             (uint16_t)(PWM_GLOBAL_BASE + (time_base == 0u ? 4u : 0x12u));
         cpu->io.pwm_active_period[time_base] = raw_word(cpu, period_address);
+        period_updated = (cpu->io.pwm_period_update & (uint8_t)(1u << time_base)) != 0u;
+        cpu->io.pwm_period_update &= (uint8_t)~(1u << time_base);
     }
     if (cpu->io.pwm_master_counter[time_base] ==
         raw_word(cpu, (uint16_t)(PWM_GLOBAL_BASE + (time_base == 0u ? 6u : 0x14u)))) {
@@ -9215,11 +9226,11 @@ static void pwm_tick(Dspic33* cpu, uint8_t time_base, uint64_t cycle) {
             boundary = pwm_advance_independent_counter(cpu, generator, 0u);
             pwm_advance_independent_counter(cpu, generator, 1u);
             if (boundary) {
-                pwm_cycle_boundary(cpu, generator);
+                pwm_cycle_boundary(cpu, generator, false);
             }
         } else {
             if (master_boundary) {
-                pwm_cycle_boundary(cpu, generator);
+                pwm_cycle_boundary(cpu, generator, period_updated);
             }
             cpu->io.pwm_counter[generator][0] =
                 pwm_shifted_counter(cpu->io.pwm_master_counter[master],
@@ -9292,6 +9303,8 @@ static void pwm_start(Dspic33* cpu) {
     memset(cpu->io.pwm_fraction, 0, sizeof(cpu->io.pwm_fraction));
     cpu->io.pwm_chop_counter = 0u;
     cpu->io.pwm_dead_time_sampled = cpu->io.pwm_dead_time_inputs;
+    cpu->io.pwm_period_update = 0u;
+    cpu->io.pwm_timing_update = 0u;
     pwm_latch_periods(cpu);
     for (generator = 0u; generator < DSPIC33_PWM_COUNT; generator++) {
         uint8_t bit = (uint8_t)(1u << generator);
@@ -9364,6 +9377,7 @@ static void pwm_input_event(Dspic33* cpu, uint8_t source, bool high,
         if (selected != source || pwm_state_blanked(cpu, generator, current_limit)) {
             continue;
         }
+        cpu->io.pwm_timing_update |= generator_bit;
         if (current_limit) {
             if (active) {
                 if ((fault & PWM_CURRENT_LIMIT_MODE) != 0u) {
@@ -9432,6 +9446,8 @@ static void pwm_dead_time_event(Dspic33* cpu, uint8_t generator, bool high) {
         cpu->io.pwm_dead_time_sampled =
             (uint8_t)((cpu->io.pwm_dead_time_sampled & ~bit) |
                       (cpu->io.pwm_dead_time_inputs & bit));
+    } else {
+        cpu->io.pwm_timing_update |= bit;
     }
 }
 
@@ -11415,6 +11431,9 @@ static void update_pwm_register(Dspic33* cpu, uint16_t address, uint16_t previou
     if (address == PWM_GLOBAL_BASE + 4u) {
         if (!enabled || (primary & 0x0400u) != 0u) {
             cpu->io.pwm_active_period[0] = raw_word(cpu, address);
+            cpu->io.pwm_period_update &= (uint8_t)~1u;
+        } else {
+            cpu->io.pwm_period_update |= 1u;
         }
         return;
     }
@@ -11433,17 +11452,24 @@ static void update_pwm_register(Dspic33* cpu, uint16_t address, uint16_t previou
         uint16_t secondary = raw_word(cpu, PWM_GLOBAL_BASE + 0x0eu);
         if (!enabled || (secondary & 0x0400u) != 0u) {
             cpu->io.pwm_active_period[1] = raw_word(cpu, address);
+            cpu->io.pwm_period_update &= (uint8_t)~2u;
+        } else {
+            cpu->io.pwm_period_update |= 2u;
         }
         return;
     }
     if (address == PWM_GLOBAL_BASE + 0x0au) {
         for (generator = 0u; generator < DSPIC33_PWM_COUNT; generator++) {
+            uint8_t bit = (uint8_t)(1u << generator);
             if (!enabled ||
                 (pwm_register(cpu, generator, 0u) & PWM_IMMEDIATE_UPDATE) != 0u) {
                 pwm_latch_generator(cpu, generator);
+                cpu->io.pwm_timing_update &= (uint8_t)~bit;
                 if (enabled) {
                     pwm_update_output(cpu, generator);
                 }
+            } else if ((pwm_register(cpu, generator, 0u) & PWM_MASTER_DUTY) != 0u) {
+                cpu->io.pwm_timing_update |= bit;
             }
         }
         return;
@@ -11459,6 +11485,8 @@ static void update_pwm_register(Dspic33* cpu, uint16_t address, uint16_t previou
         uint16_t control = raw_word(cpu, base);
         uint16_t fault = raw_word(cpu, (uint16_t)(base + 4u));
         uint8_t bit = (uint8_t)(1u << generator);
+        bool timing_register = offset == 6u || offset == 8u || offset == 0x0au ||
+                               offset == 0x0cu || offset == 0x0eu || offset == 0x10u;
         if (offset == 0u) {
             if ((control & PWM_FAULT_INTERRUPT) == 0u) {
                 control &= (uint16_t)~PWM_FAULT_STATUS;
@@ -11483,6 +11511,9 @@ static void update_pwm_register(Dspic33* cpu, uint16_t address, uint16_t previou
         }
         if (!enabled || (control & PWM_IMMEDIATE_UPDATE) != 0u) {
             pwm_latch_generator(cpu, generator);
+            cpu->io.pwm_timing_update &= (uint8_t)~bit;
+        } else if (timing_register) {
+            cpu->io.pwm_timing_update |= bit;
         }
         pwm_refresh_status(cpu, generator);
         if (enabled) {
