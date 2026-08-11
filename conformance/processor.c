@@ -38,11 +38,11 @@ enum {
     OPCODE_CALL_LONG_W0 = 0x018800u,
     OPCODE_GOTO_LONG_W0 = 0x018c00u,
     OPCODE_RCALL_W0 = 0x010200u,
-    OPCODE_BRA_W0 = 0x010600u,
     OPCODE_RCALL_NEXT = 0x070000u,
     OPCODE_RCALL_0X55800 = 0x07000au,
     OPCODE_BRA_0X55800 = 0x370012u,
     OPCODE_BRA_Z_0X55800 = 0x320012u,
+    OPCODE_BRA_OA_0X55800 = 0x0c0012u,
     OPCODE_BTSS_W2_BIT_0 = 0xa60002u,
     OPCODE_BTSS_W4_POST_INCREMENT_BIT_0 = 0xa60034u,
     OPCODE_BTSC_W2_BIT_0 = 0xa70002u,
@@ -430,6 +430,23 @@ static void program_target_address_error_cases(ProcessorConformance* state,
            "untaken conditional BRA skips target validation in one cycle");
 
     reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0x557dau, OPCODE_BRA_OA_0X55800);
+    cpu->pc = 0x557dau;
+    cpu->sr = 0x8800u;
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 4u,
+           "taken accumulator BRA validates target in four cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0x557dau, OPCODE_BRA_OA_0X55800);
+    cpu->pc = 0x557dau;
+    cpu->sr = 0x0800u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x557dcu &&
+               cpu->cycles == 1u && cpu->last_trap == UINT16_MAX,
+           "untaken accumulator BRA ignores combined overflow status");
+
+    reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_GOTO_0X300);
     load_instruction(state, cpu, 2u, 0u);
     load_instruction(state, cpu, 0x300u, OPCODE_NOP);
@@ -525,15 +542,6 @@ static void program_target_address_error_cases(ProcessorConformance* state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x300u &&
                cpu->cycles == 4u && dspic33_read_word(cpu, 0x5000u) == 2u,
            "implemented CALL Wn target remains valid");
-
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0x557dau, OPCODE_BRA_W0);
-    cpu->pc = 0x557dau;
-    cpu->w[0] = 0x0012u;
-    prepare_address_trap(state, cpu);
-    cpu->pc = 0x557dau;
-    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 4u,
-           "unimplemented BRA Wn target traps in four cycles");
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0x557eau, OPCODE_RCALL_W0);
@@ -6723,6 +6731,294 @@ static void compare_encoding_matrix_cases(ProcessorConformance* state, Dspic33* 
     compare_control_encoding_matrix_cases(state, cpu);
 }
 
+static bool status_branch_reference_taken(uint8_t condition, uint16_t status) {
+    bool carry = (status & 0x0001u) != 0u;
+    bool zero = (status & 0x0002u) != 0u;
+    bool overflow = (status & 0x0004u) != 0u;
+    bool negative = (status & 0x0008u) != 0u;
+    switch (condition) {
+    case 0u:
+        return overflow;
+    case 1u:
+        return carry;
+    case 2u:
+        return zero;
+    case 3u:
+        return negative;
+    case 4u:
+        return zero || negative != overflow;
+    case 5u:
+        return negative != overflow;
+    case 6u:
+        return !carry || zero;
+    case 7u:
+        return true;
+    case 8u:
+        return !overflow;
+    case 9u:
+        return !carry;
+    case 10u:
+        return !zero;
+    case 11u:
+        return !negative;
+    case 12u:
+        return !zero && negative == overflow;
+    case 13u:
+        return negative == overflow;
+    default:
+        return carry && !zero;
+    }
+}
+
+static uint16_t accumulator_branch_status(uint8_t flags) {
+    uint16_t status = (uint16_t)(((uint16_t)(flags & 0x01u) << 15u) |
+                                 ((uint16_t)(flags & 0x02u) << 13u) |
+                                 ((uint16_t)(flags & 0x04u) << 11u) |
+                                 ((uint16_t)(flags & 0x08u) << 9u));
+    if ((status & 0xc000u) != 0u) {
+        status |= 0x0800u;
+    }
+    if ((status & 0x3000u) != 0u) {
+        status |= 0x0400u;
+    }
+    return (uint16_t)(status | 0x010fu);
+}
+
+static void prepare_relative_branch_case(Dspic33* cpu, uint16_t status) {
+    cpu->pc = 0x020000u;
+    cpu->sr = status;
+    cpu->corcon = 0x0020u;
+    cpu->w[0] = 0x1357u;
+    cpu->w[15] = 0x5000u;
+    cpu->initialized_working_registers = 0x8001u;
+    cpu->previous_working_register_writes = 0u;
+    cpu->unsupported_opcode = 0u;
+    cpu->last_trap = UINT16_MAX;
+    cpu->last_interrupt = UINT16_MAX;
+    cpu->address_error = false;
+    cpu->illegal_reset = false;
+    cpu->stop_reason = DSPIC33_RUNNING;
+    cpu->instruction_active = false;
+    cpu->repeat_active = 0u;
+    cpu->do_depth = 0u;
+    cpu->events.count = 0u;
+    cpu->splim_enabled = false;
+}
+
+static void run_relative_branch_encoding_case(ProcessorConformance* state, Dspic33* cpu,
+                                              uint32_t opcode, uint16_t status,
+                                              bool taken) {
+    int16_t displacement = (int16_t)opcode;
+    uint32_t expected_pc =
+        taken ? (uint32_t)((0x020002 + (int32_t)displacement * 2) & 0x007ffffe)
+              : 0x020002u;
+    uint64_t cycles;
+    uint64_t instructions;
+    bool matches;
+
+    prepare_relative_branch_case(cpu, status);
+    cycles = cpu->cycles;
+    instructions = cpu->instructions;
+    matches = dspic33_load_program_word(cpu, 0x020000u, opcode) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == expected_pc &&
+              cpu->cycles - cycles == (taken ? 4u : 1u) &&
+              cpu->instructions - instructions == 1u && cpu->sr == status &&
+              cpu->corcon == 0x0020u && cpu->w[0] == 0x1357u && cpu->w[15] == 0x5000u &&
+              cpu->initialized_working_registers == 0x8001u &&
+              cpu->unsupported_opcode == 0u && !cpu->address_error &&
+              !cpu->illegal_reset && cpu->last_trap == UINT16_MAX;
+    expect_dsp_matrix_case(state, matches, opcode, "conditional branch encoding");
+}
+
+static void conditional_branch_encoding_matrix_cases(ProcessorConformance* state,
+                                                     Dspic33* cpu) {
+    bool outcomes[19][2] = {{false}};
+    uint32_t valid_encodings = 0u;
+    uint32_t invalid_encodings = 0u;
+    uint32_t executions = 0u;
+    uint32_t opcode;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    for (opcode = 0x0c0000u; opcode < 0x100000u; opcode++) {
+        uint8_t family = (uint8_t)(opcode >> 16u);
+        uint8_t flags;
+        for (flags = 0u; flags < 16u; flags++) {
+            uint16_t status = accumulator_branch_status(flags);
+            bool taken = (status & (uint16_t)(0x8000u >> (family - 0x0cu))) != 0u;
+            run_relative_branch_encoding_case(state, cpu, opcode, status, taken);
+            outcomes[15u + family - 0x0cu][taken ? 1u : 0u] = true;
+            executions++;
+        }
+        valid_encodings++;
+    }
+    for (opcode = 0x300000u; opcode < 0x3f0000u; opcode++) {
+        uint8_t condition = (uint8_t)((opcode >> 16u) & 0x0fu);
+        uint8_t flags;
+        for (flags = 0u; flags < 16u; flags++) {
+            uint16_t status = (uint16_t)(0x0100u | flags);
+            bool taken = status_branch_reference_taken(condition, status);
+            run_relative_branch_encoding_case(state, cpu, opcode, status, taken);
+            outcomes[condition][taken ? 1u : 0u] = true;
+            executions++;
+        }
+        valid_encodings++;
+    }
+    for (opcode = 0x3f0000u; opcode < 0x400000u; opcode++) {
+        run_invalid_binary_matrix_case(state, cpu, opcode);
+        invalid_encodings++;
+    }
+    expect(state, valid_encodings == 1245184u,
+           "conditional branch valid encoding matrix is exhaustive");
+    expect(state, invalid_encodings == 65536u,
+           "conditional branch reserved encoding matrix is exhaustive");
+    expect(state, executions == 19922944u,
+           "conditional branch flag outcome matrix is exhaustive");
+    for (uint8_t family = 0u; family < 19u; family++) {
+        bool complete = outcomes[family][1u] && (family == 7u || outcomes[family][0u]);
+        expect(state, complete, "conditional branch outcomes cover each family");
+    }
+}
+
+typedef enum {
+    COMPUTED_CONTROL_INVALID,
+    COMPUTED_CONTROL_CALL,
+    COMPUTED_CONTROL_RCALL,
+    COMPUTED_CONTROL_GOTO,
+    COMPUTED_CONTROL_CALL_LONG,
+    COMPUTED_CONTROL_GOTO_LONG,
+} ComputedControlKind;
+
+static ComputedControlKind computed_control_reference_kind(uint32_t opcode,
+                                                           uint8_t* source) {
+    if ((opcode & 0xfffff0u) == 0x010000u) {
+        *source = (uint8_t)opcode & 0x0fu;
+        return COMPUTED_CONTROL_CALL;
+    }
+    if ((opcode & 0xfffff0u) == 0x010200u) {
+        *source = (uint8_t)opcode & 0x0fu;
+        return COMPUTED_CONTROL_RCALL;
+    }
+    if ((opcode & 0xfffff0u) == 0x010400u) {
+        *source = (uint8_t)opcode & 0x0fu;
+        return COMPUTED_CONTROL_GOTO;
+    }
+    *source = (uint8_t)opcode & 0x0fu;
+    if ((*source & 1u) == 0u && *source <= 12u) {
+        uint32_t base = 0x018000u | ((uint32_t)(*source + 1u) << 11u) | *source;
+        if (opcode == base) {
+            return COMPUTED_CONTROL_CALL_LONG;
+        }
+        if (opcode == (base | 0x000400u)) {
+            return COMPUTED_CONTROL_GOTO_LONG;
+        }
+    }
+    return COMPUTED_CONTROL_INVALID;
+}
+
+static void run_computed_control_encoding_case(ProcessorConformance* state,
+                                               Dspic33* cpu, uint32_t opcode,
+                                               ComputedControlKind kind,
+                                               uint8_t source) {
+    bool call = kind == COMPUTED_CONTROL_CALL || kind == COMPUTED_CONTROL_RCALL ||
+                kind == COMPUTED_CONTROL_CALL_LONG;
+    uint16_t initial_registers[16];
+    uint32_t target;
+    uint64_t cycles;
+    uint64_t instructions;
+    bool matches;
+
+    cpu->pc = 0x002000u;
+    cpu->sr = 0xf10fu;
+    cpu->corcon = 0x0024u;
+    cpu->call_depth = 0u;
+    cpu->unsupported_opcode = 0u;
+    cpu->last_trap = UINT16_MAX;
+    cpu->last_interrupt = UINT16_MAX;
+    cpu->address_error = false;
+    cpu->illegal_reset = false;
+    cpu->stop_reason = DSPIC33_RUNNING;
+    cpu->instruction_active = false;
+    cpu->repeat_active = 0u;
+    cpu->do_depth = 0u;
+    cpu->events.count = 0u;
+    cpu->splim_enabled = false;
+    for (uint8_t reg = 0u; reg < 15u; reg++) {
+        uint16_t value =
+            (kind == COMPUTED_CONTROL_RCALL)
+                ? (reg < 8u ? (uint16_t)(0x0010u + reg) : (uint16_t)(0xffe0u + reg))
+                : (uint16_t)(0x3001u + (uint16_t)reg * 2u);
+        dspic33_set_working_register(cpu, reg, value);
+        initial_registers[reg] = value;
+    }
+    dspic33_set_working_register(cpu, 15u, 0x5000u);
+    initial_registers[15] = 0x5000u;
+    if (kind == COMPUTED_CONTROL_CALL_LONG || kind == COMPUTED_CONTROL_GOTO_LONG) {
+        dspic33_set_working_register(cpu, source, (uint16_t)(0x3001u + source * 2u));
+        dspic33_set_working_register(cpu, (uint8_t)(source + 1u), 0u);
+        initial_registers[source] = cpu->w[source];
+        initial_registers[source + 1u] = 0u;
+    }
+    dspic33_write_word(cpu, 0x5000u, 0xa5a5u);
+    dspic33_write_word(cpu, 0x5002u, 0x5a5au);
+    if (kind == COMPUTED_CONTROL_RCALL) {
+        uint16_t displacement = source == 15u ? 0x5004u : initial_registers[source];
+        target =
+            (uint32_t)((0x002002 + (int32_t)(int16_t)displacement * 2) & 0x007ffffe);
+    } else if (kind == COMPUTED_CONTROL_CALL_LONG ||
+               kind == COMPUTED_CONTROL_GOTO_LONG) {
+        target = initial_registers[source] & 0xfffeu;
+    } else {
+        target =
+            (source == 15u && call ? 0x5004u : initial_registers[source]) & 0xfffeu;
+    }
+    cycles = cpu->cycles;
+    instructions = cpu->instructions;
+    matches = dspic33_load_program_word(cpu, 0x002000u, opcode) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == target &&
+              cpu->cycles - cycles == 4u && cpu->instructions - instructions == 1u &&
+              cpu->sr == 0xf10fu && cpu->corcon == (call ? 0x0020u : 0x0024u) &&
+              cpu->w[15] == (call ? 0x5004u : 0x5000u) &&
+              cpu->call_depth == (call ? 1u : 0u) && cpu->unsupported_opcode == 0u &&
+              !cpu->address_error && !cpu->illegal_reset &&
+              cpu->last_trap == UINT16_MAX;
+    if (call) {
+        matches = matches && dspic33_read_word(cpu, 0x5000u) == 0x2003u &&
+                  dspic33_read_word(cpu, 0x5002u) == 0u;
+    } else {
+        matches = matches && dspic33_read_word(cpu, 0x5000u) == 0xa5a5u &&
+                  dspic33_read_word(cpu, 0x5002u) == 0x5a5au;
+    }
+    for (uint8_t reg = 0u; reg < 15u; reg++) {
+        matches = matches && cpu->w[reg] == initial_registers[reg];
+    }
+    expect_dsp_matrix_case(state, matches, opcode, "computed control encoding");
+}
+
+static void computed_control_encoding_matrix_cases(ProcessorConformance* state,
+                                                   Dspic33* cpu) {
+    uint32_t valid = 0u;
+    uint32_t invalid = 0u;
+    uint32_t opcode;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    for (opcode = 0x010000u; opcode < 0x020000u; opcode++) {
+        uint8_t source;
+        ComputedControlKind kind = computed_control_reference_kind(opcode, &source);
+        if (kind == COMPUTED_CONTROL_INVALID) {
+            run_invalid_binary_matrix_case(state, cpu, opcode);
+            invalid++;
+        } else {
+            run_computed_control_encoding_case(state, cpu, opcode, kind, source);
+            valid++;
+        }
+    }
+    expect(state, valid == 62u, "computed control valid encoding matrix is exhaustive");
+    expect(state, invalid == 65474u,
+           "computed control reserved encoding matrix is exhaustive");
+}
+
 static void run_legal_dsp_matrix_case(ProcessorConformance* state, Dspic33* cpu,
                                       uint32_t opcode, uint8_t target_accumulator,
                                       int64_t target_result, uint8_t x_operation,
@@ -8347,10 +8643,10 @@ static void illegal_condition_reset_cases(ProcessorConformance* state, Dspic33* 
            "direct DSP W13 result initializes destination");
 
     dspic33_reset(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_BRA_W0);
+    load_instruction(state, cpu, 0u, OPCODE_GOTO_W0);
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset_count == 0u,
-           "branch register is not an address-pointer tag use");
+           "computed jump register is not an address-pointer tag use");
 
     dspic33_reset(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_REPEAT_W0);
@@ -8423,6 +8719,8 @@ int main(void) {
         arithmetic_encoding_matrix_cases(&state, &cpu);
         general_unary_encoding_matrix_cases(&state, &cpu);
         compare_encoding_matrix_cases(&state, &cpu);
+        conditional_branch_encoding_matrix_cases(&state, &cpu);
+        computed_control_encoding_matrix_cases(&state, &cpu);
         direct_file_arithmetic_encoding_matrix_cases(&state);
         direct_file_logical_encoding_matrix_cases(&state, &cpu);
         direct_file_unary_encoding_matrix_cases(&state);

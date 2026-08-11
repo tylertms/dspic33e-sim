@@ -2,7 +2,7 @@
 .include "conformance.inc"
 
 .global _branch_conformance_cases
-_branch_conformance_cases = 61
+_branch_conformance_cases = 69
 .global _branch_conformance_group_complete
 _branch_conformance_group_complete = 1
 
@@ -13,6 +13,17 @@ _branch_conformance_group_complete = 1
     bra 2f
 1:
     inc w1, w1
+2:
+    record_case \id, w1, w1
+.endm
+
+.macro record_accumulator_branch id, condition, status
+    set_status \status
+    mov #0, w1
+    bra \condition, 1f
+    bra 2f
+1:
+    mov #1, w1
 2:
     record_case \id, w1, w1
 .endm
@@ -117,5 +128,14 @@ _run_branch_conformance:
     record_compare_branch 0x023a, cpblt, 0x0001, 0xffff
     record_compare_branch 0x023b, cpblt.b, 0x0080, 0x007f
     record_compare_branch 0x023c, cpblt.b, 0x007f, 0x0080
+
+    record_accumulator_branch 0x023d, OA, 0x8800
+    record_accumulator_branch 0x023e, OA, 0x0000
+    record_accumulator_branch 0x023f, OB, 0x4800
+    record_accumulator_branch 0x0240, OB, 0x0000
+    record_accumulator_branch 0x0241, SA, 0x2400
+    record_accumulator_branch 0x0242, SA, 0x0000
+    record_accumulator_branch 0x0243, SB, 0x1400
+    record_accumulator_branch 0x0244, SB, 0x0000
 
     end_results

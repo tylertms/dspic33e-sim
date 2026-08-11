@@ -1910,6 +1910,44 @@ static bool branch_condition(const Dspic33* cpu, uint8_t condition, bool* take) 
     return true;
 }
 
+static bool relative_branch_condition(const Dspic33* cpu, uint32_t opcode, bool* take) {
+    uint8_t family = (uint8_t)(opcode >> 16u);
+    if (family >= 0x0cu && family <= 0x0fu) {
+        *take = (cpu->sr & (uint16_t)(0x8000u >> (family - 0x0cu))) != 0u;
+        return true;
+    }
+    if ((opcode & 0xf00000u) == 0x300000u) {
+        return branch_condition(cpu, (uint8_t)(family & 0x0fu), take);
+    }
+    return false;
+}
+
+static bool long_control_transfer(uint32_t opcode, uint8_t* source, bool* call) {
+    uint8_t encoded_source = (uint8_t)(opcode & 0x0fu);
+    uint32_t base;
+    if ((encoded_source & 1u) != 0u || encoded_source > 12u) {
+        return false;
+    }
+    base = 0x018000u | ((uint32_t)(encoded_source + 1u) << 11u) | encoded_source;
+    if (opcode == base) {
+        *call = true;
+    } else if (opcode == (base | 0x000400u)) {
+        *call = false;
+    } else {
+        return false;
+    }
+    *source = encoded_source;
+    return true;
+}
+
+static bool computed_control_transfer_encoding(uint32_t opcode) {
+    uint8_t source;
+    bool call;
+    return (opcode & 0xfffff0u) == 0x010000u || (opcode & 0xfffff0u) == 0x010200u ||
+           (opcode & 0xfffff0u) == 0x010400u ||
+           long_control_transfer(opcode, &source, &call);
+}
+
 static void push_program_counter(Dspic33* cpu, uint32_t address) {
     uint16_t low = (uint16_t)(address & 0xfffeu);
     low |= (uint16_t)((cpu->corcon >> 2u) & 1u);
@@ -2907,11 +2945,9 @@ static uint64_t instruction_cycles(const Dspic33* cpu, uint32_t opcode,
     if (compare_kind != COMPARE_CONTROL_NONE) {
         return compare_control_taken(cpu, opcode, compare_kind) ? 5u : 1u;
     }
-    if ((opcode & 0xf00000u) == 0x300000u) {
-        bool take;
-        if (branch_condition(cpu, (uint8_t)((opcode >> 16u) & 0x0fu), &take)) {
-            return take ? 4u : 1u;
-        }
+    bool branch_taken;
+    if (relative_branch_condition(cpu, opcode, &branch_taken)) {
+        return branch_taken ? 4u : 1u;
     }
     if ((opcode & 0xff0000u) == 0x050000u) {
         return cpu->address_error || exception_pending(cpu) ? 5u : 6u;
@@ -2929,10 +2965,8 @@ static uint64_t instruction_cycles(const Dspic33* cpu, uint32_t opcode,
         return 2u;
     }
     if ((opcode & 0xff0000u) == 0x020000u || (opcode & 0xff0000u) == 0x040000u ||
-        (opcode & 0xfffff0u) == 0x010000u || (opcode & 0xfffff0u) == 0x010200u ||
-        (opcode & 0xff0000u) == 0x070000u || (opcode & 0xfffff0u) == 0x010400u ||
-        (opcode & 0xfffff0u) == 0x010600u || (opcode & 0xff87f0u) == 0x018000u ||
-        (opcode & 0xff87f0u) == 0x018400u) {
+        (opcode & 0xff0000u) == 0x070000u ||
+        computed_control_transfer_encoding(opcode)) {
         return 4u;
     }
     return 1u;
@@ -3048,6 +3082,11 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
         return true;
     }
+    if ((opcode & 0xff0000u) == 0x010000u &&
+        !computed_control_transfer_encoding(opcode)) {
+        perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+        return true;
+    }
     if ((opcode & 0xfffff0u) == 0xfd4000u) {
         return execute_decimal_adjust(cpu, opcode);
     }
@@ -3152,8 +3191,14 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         return true;
     }
     if ((opcode & 0xfffff0u) == 0x010000u) {
+        uint32_t target;
         push_program_counter(cpu, cpu->pc);
-        cpu->pc = cpu->w[opcode & 0x0fu] & 0xfffeu;
+        target = cpu->w[opcode & 0x0fu] & 0xfffeu;
+        if (program_target_requires_address_error(target)) {
+            raise_program_target_error(cpu, cpu->pc);
+            return true;
+        }
+        cpu->pc = target;
         return true;
     }
     if ((opcode & 0xfffff0u) == 0x010200u) {
@@ -3167,13 +3212,8 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         cpu->pc = target;
         return true;
     }
-    if ((opcode & 0xfffff0u) == 0x014000u || (opcode & 0xfffff0u) == 0x010400u) {
-        cpu->pc = cpu->w[opcode & 0x0fu] & 0xfffeu;
-        return true;
-    }
-    if ((opcode & 0xfffff0u) == 0x010600u) {
-        uint32_t target =
-            program_address_add(cpu->pc, (int32_t)(int16_t)cpu->w[opcode & 0x0fu] * 2);
+    if ((opcode & 0xfffff0u) == 0x010400u) {
+        uint32_t target = cpu->w[opcode & 0x0fu] & 0xfffeu;
         if (program_target_requires_address_error(target)) {
             raise_program_target_error(cpu, cpu->pc);
             return true;
@@ -3181,11 +3221,12 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         cpu->pc = target;
         return true;
     }
-    if ((opcode & 0xff87f0u) == 0x018000u || (opcode & 0xff87f0u) == 0x018400u) {
-        uint8_t source = (uint8_t)(opcode & 0x0eu);
-        uint32_t target =
-            ((uint32_t)(cpu->w[source + 1u] & 0x007fu) << 16u) | cpu->w[source];
-        if ((opcode & 0x000400u) == 0u) {
+    uint8_t long_source;
+    bool long_call;
+    if (long_control_transfer(opcode, &long_source, &long_call)) {
+        uint32_t target = ((uint32_t)(cpu->w[long_source + 1u] & 0x007fu) << 16u) |
+                          cpu->w[long_source];
+        if (long_call) {
             push_program_counter(cpu, cpu->pc);
         }
         target &= 0x007ffffeu;
@@ -3478,12 +3519,9 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         cpu->pc = target;
         return true;
     }
-    if ((opcode & 0xf00000u) == 0x300000u) {
-        bool take;
-        if (!branch_condition(cpu, (uint8_t)((opcode >> 16u) & 0x0fu), &take)) {
-            return false;
-        }
-        if (take) {
+    bool branch_taken;
+    if (relative_branch_condition(cpu, opcode, &branch_taken)) {
+        if (branch_taken) {
             int32_t displacement = (int16_t)(opcode & 0xffffu);
             uint32_t target = program_address_add(cpu->pc, displacement * 2);
             if (program_target_requires_address_error(target)) {
