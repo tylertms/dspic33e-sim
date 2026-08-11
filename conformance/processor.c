@@ -1164,6 +1164,35 @@ static void compare_skip_cases(ProcessorConformance* state, Dspic33* cpu) {
            "last-word indirect BTSC operand fault remains a one-cycle Address Error");
 }
 
+static void compare_branch_target_cases(ProcessorConformance* state, Dspic33* cpu) {
+    const uint32_t opcode = 0xe781e1u;
+
+    reset_processor_conformance(cpu, 0x557c2u);
+    prepare_address_trap(state, cpu);
+    cpu->pc = 0x557c2u;
+    load_instruction(state, cpu, 0x557c2u, opcode);
+    cpu->w[0] = 0x5a5au;
+    cpu->w[1] = 0x5a5au;
+    cpu->sr = 0x010fu;
+    cpu->corcon = 0x0020u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->pc == 0x340u &&
+               cpu->cycles == 5u && cpu->last_trap == 1u &&
+               cpu->last_trap_return == 0x557c4u && cpu->w[0] == 0x5a5au &&
+               cpu->w[1] == 0x5a5au,
+           "taken compare branch validates an unimplemented target");
+
+    reset_processor_conformance(cpu, 0x557c2u);
+    load_instruction(state, cpu, 0x557c2u, opcode);
+    cpu->w[0] = 0x5a5au;
+    cpu->w[1] = 0xa5a5u;
+    cpu->sr = 0x010fu;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x557c4u &&
+               cpu->cycles == 1u && cpu->last_trap == UINT16_MAX && cpu->sr == 0x010fu,
+           "untaken compare branch does not validate its encoded target");
+}
+
 static void prepare_timer_source(Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0110u, 0x0008u);
     dspic33_write_word(cpu, 0x0108u, 0x5555u);
@@ -6566,9 +6595,132 @@ static void compare_direct_file_encoding_matrix_cases(ProcessorConformance* stat
     dspic33_destroy(&reference);
 }
 
+static bool compare_control_reference_taken(uint32_t opcode, uint16_t left,
+                                            uint16_t right) {
+    bool byte_mode = (opcode & 0x000400u) != 0u;
+    int32_t signed_left;
+    int32_t signed_right;
+
+    if (byte_mode) {
+        left &= 0x00ffu;
+        right &= 0x00ffu;
+    }
+    if ((opcode & 0xff8000u) == 0xe78000u) {
+        return left == right;
+    }
+    if ((opcode & 0xff8000u) == 0xe70000u) {
+        return left != right;
+    }
+    signed_left = byte_mode ? (int8_t)left : (int16_t)left;
+    signed_right = byte_mode ? (int8_t)right : (int16_t)right;
+    return (opcode & 0xff8000u) == 0xe60000u ? signed_left > signed_right
+                                             : signed_left < signed_right;
+}
+
+static int8_t compare_control_reference_displacement(uint32_t opcode) {
+    uint8_t encoded = (uint8_t)((opcode >> 4u) & 0x3fu);
+    return (int8_t)((encoded & 0x20u) != 0u ? encoded | 0xc0u : encoded);
+}
+
+static void compare_control_operands(uint32_t opcode, bool alternate, uint16_t* left,
+                                     uint16_t* right) {
+    bool byte_mode = (opcode & 0x000400u) != 0u;
+    uint32_t kind = opcode & 0xff8000u;
+
+    if (kind == 0xe78000u) {
+        *left = alternate ? (byte_mode ? 0x12a5u : 0xa5a5u) : 0x0000u;
+        *right = alternate ? (byte_mode ? 0x34a5u : 0xa5a5u) : 0x0001u;
+    } else if (kind == 0xe70000u) {
+        *left = alternate ? 0x0000u : (byte_mode ? 0x12a5u : 0xa5a5u);
+        *right = alternate ? 0x0001u : (byte_mode ? 0x34a5u : 0xa5a5u);
+    } else if (kind == 0xe60000u) {
+        *left = alternate ? (byte_mode ? 0x127fu : 0x7fffu)
+                          : (byte_mode ? 0x1280u : 0x8000u);
+        *right = alternate ? (byte_mode ? 0x3480u : 0x8000u)
+                           : (byte_mode ? 0x347fu : 0x7fffu);
+    } else {
+        *left = alternate ? (byte_mode ? 0x1280u : 0x8000u)
+                          : (byte_mode ? 0x127fu : 0x7fffu);
+        *right = alternate ? (byte_mode ? 0x347fu : 0x7fffu)
+                           : (byte_mode ? 0x3480u : 0x8000u);
+    }
+}
+
+static void run_compare_control_encoding_case(ProcessorConformance* state, Dspic33* cpu,
+                                              uint32_t opcode, bool alternate) {
+    uint8_t left_register = (uint8_t)((opcode >> 11u) & 0x0fu);
+    uint8_t right_register = (uint8_t)(opcode & 0x0fu);
+    uint16_t initial_status = alternate ? 0x010fu : 0u;
+    uint16_t registers[16];
+    uint16_t left;
+    uint16_t right;
+    int8_t displacement = compare_control_reference_displacement(opcode);
+    bool taken;
+    uint32_t expected_pc;
+    uint64_t expected_cycles;
+    uint64_t cycles;
+    uint64_t instructions;
+    bool matches;
+
+    prepare_arithmetic_matrix_case(cpu, registers, initial_status);
+    compare_control_operands(opcode, alternate, &left, &right);
+    binary_matrix_write_register(registers, left_register, left);
+    if (right_register != left_register) {
+        binary_matrix_write_register(registers, right_register, right);
+    }
+    for (uint8_t reg = 0u; reg < 16u; reg++) {
+        dspic33_set_working_register(cpu, reg, registers[reg]);
+    }
+    left = registers[left_register];
+    right = registers[right_register];
+    taken = compare_control_reference_taken(opcode, left, right);
+    expected_pc =
+        taken ? (displacement == 1
+                     ? 0x2004u
+                     : (uint32_t)((0x2002 + (int32_t)displacement * 2) & 0x007ffffe))
+              : 0x2002u;
+    expected_cycles = taken ? (displacement == 1 ? 2u : 5u) : 1u;
+    cpu->pc = 0x2000u;
+    cycles = cpu->cycles;
+    instructions = cpu->instructions;
+    matches = dspic33_load_program_word(cpu, 0x2000u, opcode) &&
+              dspic33_load_program_word(cpu, 0x2002u, OPCODE_NOP) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == expected_pc &&
+              cpu->cycles - cycles == expected_cycles &&
+              cpu->instructions - instructions == 1u && cpu->sr == initial_status &&
+              cpu->corcon == 0x0020u && cpu->unsupported_opcode == 0u &&
+              !cpu->address_error && !cpu->illegal_reset &&
+              cpu->last_trap == UINT16_MAX &&
+              binary_matrix_registers_match(cpu, registers);
+    expect_dsp_matrix_case(state, matches, opcode,
+                           alternate ? "compare control alternate encoding"
+                                     : "compare control primary encoding");
+}
+
+static void compare_control_encoding_matrix_cases(ProcessorConformance* state,
+                                                  Dspic33* cpu) {
+    uint32_t encodings = 0u;
+    uint32_t executions = 0u;
+    uint32_t opcode;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    for (opcode = 0xe60000u; opcode < 0xe80000u; opcode++) {
+        run_compare_control_encoding_case(state, cpu, opcode, false);
+        run_compare_control_encoding_case(state, cpu, opcode, true);
+        encodings++;
+        executions += 2u;
+    }
+    expect(state, encodings == 131072u,
+           "compare control encoding matrix is exhaustive");
+    expect(state, executions == 262144u,
+           "compare control outcome matrix is exhaustive");
+}
+
 static void compare_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu) {
     compare_register_encoding_matrix_cases(state, cpu);
     compare_direct_file_encoding_matrix_cases(state, cpu);
+    compare_control_encoding_matrix_cases(state, cpu);
 }
 
 static void run_legal_dsp_matrix_case(ProcessorConformance* state, Dspic33* cpu,
@@ -8231,6 +8383,7 @@ int main(void) {
         program_target_address_error_cases(&state, &cpu);
         program_read_address_error_cases(&state, &cpu);
         compare_skip_cases(&state, &cpu);
+        compare_branch_target_cases(&state, &cpu);
         skip_boundary_cases(&state, &cpu);
         address_error_cases(&state, &cpu);
         data_map_address_error_cases(&state, &cpu);

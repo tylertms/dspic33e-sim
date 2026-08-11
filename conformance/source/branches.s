@@ -2,7 +2,7 @@
 .include "conformance.inc"
 
 .global _branch_conformance_cases
-_branch_conformance_cases = 45
+_branch_conformance_cases = 61
 .global _branch_conformance_group_complete
 _branch_conformance_group_complete = 1
 
@@ -15,6 +15,20 @@ _branch_conformance_group_complete = 1
     inc w1, w1
 2:
     record_case \id, w1, w1
+.endm
+
+.macro record_compare_branch id, instruction, left, right
+    mov #\left, w3
+    mov #\right, w1
+    clr w2
+    set_status 0x010f
+    \instruction w3, w1, 1f
+    bra 2f
+    nop
+1:
+    mov #1, w2
+2:
+    record_case \id, w2, w3
 .endm
 
 .macro record_compare_skip id, instruction, left, right
@@ -86,5 +100,22 @@ _run_branch_conformance:
     record_compare_skip 0x022a, cpslt, 0x0001, 0xffff
     record_compare_skip 0x022b, cpslt.b, 0x0080, 0x007f
     record_compare_skip 0x022c, cpslt.b, 0x007f, 0x0080
+
+    record_compare_branch 0x022d, cpbeq, 0x1234, 0x1234
+    record_compare_branch 0x022e, cpbeq, 0x1234, 0x4321
+    record_compare_branch 0x022f, cpbeq.b, 0x80ff, 0x7fff
+    record_compare_branch 0x0230, cpbeq.b, 0x8000, 0x0001
+    record_compare_branch 0x0231, cpbne, 0x1234, 0x4321
+    record_compare_branch 0x0232, cpbne, 0x1234, 0x1234
+    record_compare_branch 0x0233, cpbne.b, 0x80ff, 0x7fff
+    record_compare_branch 0x0234, cpbne.b, 0x8000, 0x0001
+    record_compare_branch 0x0235, cpbgt, 0x0001, 0xffff
+    record_compare_branch 0x0236, cpbgt, 0xffff, 0x0001
+    record_compare_branch 0x0237, cpbgt.b, 0x007f, 0x0080
+    record_compare_branch 0x0238, cpbgt.b, 0x0080, 0x007f
+    record_compare_branch 0x0239, cpblt, 0xffff, 0x0001
+    record_compare_branch 0x023a, cpblt, 0x0001, 0xffff
+    record_compare_branch 0x023b, cpblt.b, 0x0080, 0x007f
+    record_compare_branch 0x023c, cpblt.b, 0x007f, 0x0080
 
     end_results
