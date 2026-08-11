@@ -96,8 +96,8 @@ static void configure_serial_pins(Dspic33* cpu) {
     dspic33_gpio_drive(cpu, GPIO_PORT_D, 0u, 0x0007u);
 }
 
-static bool drive_serial_pin_bit(Dspic33* cpu, bool high, bool rising,
-                                 uint16_t clock_mask) {
+static bool drive_serial_edge(Dspic33* cpu, bool high, bool rising,
+                              uint16_t clock_mask) {
     uint16_t data = high ? GPIO_DATA_MASK : 0u;
     uint16_t initial_clock = rising ? 0u : clock_mask;
     uint16_t sample_clock = rising ? clock_mask : 0u;
@@ -106,10 +106,44 @@ static bool drive_serial_pin_bit(Dspic33* cpu, bool high, bool rising,
            dspic33_gpio_drive(cpu, GPIO_PORT_D, sample_clock, clock_mask);
 }
 
+static bool activate_serial_clock(Dspic33* cpu, bool rising, uint16_t clock_mask) {
+    uint8_t edges = cpu->io.dci.serial_startup_bits;
+    while (edges-- != 0u) {
+        if (!drive_serial_edge(cpu, false, rising, clock_mask)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool prepare_serial_data(Dspic33* cpu, bool rising, uint16_t clock_mask) {
+    uint16_t control;
+    if (!activate_serial_clock(cpu, rising, clock_mask)) {
+        return false;
+    }
+    control = dspic33_read_word(cpu, DCI_CONTROL1);
+    if (cpu->io.dci.serial_delay ||
+        (cpu->io.dci.pps_frame_pending && !cpu->io.dci.started &&
+         (control & 0x0003u) < DCI_MODE_AC_LINK_16 &&
+         (control & DCI_DATA_JUSTIFY) == 0u)) {
+        return drive_serial_edge(cpu, false, rising, clock_mask);
+    }
+    return true;
+}
+
+static bool drive_serial_pin_bit(Dspic33* cpu, bool high, bool rising,
+                                 uint16_t clock_mask) {
+    return prepare_serial_data(cpu, rising, clock_mask) &&
+           drive_serial_edge(cpu, high, rising, clock_mask);
+}
+
 static bool drive_mapped_serial_word(Dspic33* cpu, uint16_t value, uint8_t width,
                                      bool rising, uint16_t data_mask,
                                      uint16_t clock_mask) {
     uint8_t bit;
+    if (!prepare_serial_data(cpu, rising, clock_mask)) {
+        return false;
+    }
     for (bit = 0u; bit < width; bit++) {
         uint16_t data =
             bit < 16u && (value & (uint16_t)(0x8000u >> bit)) != 0u ? data_mask : 0u;
@@ -159,6 +193,39 @@ static void configure_external(Dspic33* cpu, uint16_t control, uint8_t width,
     dspic33_write_word(cpu, DCI_RECEIVE_SLOTS, receive);
     dspic33_write_word(cpu, DCI_CONTROL1,
                        (uint16_t)(DCI_ENABLE | DCI_EXTERNAL_CLOCK | control));
+}
+
+static void configure_internal(Dspic33* cpu, uint16_t control, uint8_t width,
+                               uint8_t slots, uint8_t buffers, uint16_t transmit,
+                               uint16_t receive) {
+    dspic33_write_word(cpu, DCI_CONTROL1, 0u);
+    dspic33_write_word(cpu, DCI_CONTROL2, configuration(width, slots, buffers));
+    dspic33_write_word(cpu, DCI_CONTROL3, 1u);
+    dspic33_write_word(cpu, DCI_TRANSMIT_SLOTS, transmit);
+    dspic33_write_word(cpu, DCI_RECEIVE_SLOTS, receive);
+    dspic33_write_word(cpu, DCI_CONTROL1, (uint16_t)(DCI_ENABLE | control));
+}
+
+static bool drive_internal_pin_slot(Dspic33* cpu, uint16_t value, uint8_t width,
+                                    uint64_t start_delay) {
+    uint64_t bit_cycles =
+        ((uint64_t)(dspic33_read_word(cpu, DCI_CONTROL3) & 0x0fffu) + 1u) * 2u;
+    uint64_t sample_offset =
+        (dspic33_read_word(cpu, DCI_CONTROL1) & DCI_SAMPLE_RISING) != 0u
+            ? 0u
+            : bit_cycles / 2u;
+    uint8_t bit;
+    for (bit = 0u; bit < width; bit++) {
+        uint16_t high = bit < 16u && (value & (uint16_t)(0x8000u >> bit)) != 0u
+                            ? GPIO_DATA_MASK
+                            : 0u;
+        if (!dspic33_gpio_drive(cpu, GPIO_PORT_D, high, GPIO_DATA_MASK) ||
+            !dspic33_device_advance(cpu, bit == 0u ? start_delay + sample_offset
+                                                   : bit_cycles)) {
+            return false;
+        }
+    }
+    return dspic33_device_advance(cpu, bit_cycles - sample_offset);
 }
 
 static uint16_t interrupt_word(uint8_t irq, uint16_t base) {
@@ -901,9 +968,12 @@ static void pps_qualification_cases(DciConformance* state, Dspic33* cpu) {
         (uint16_t)(dspic33_read_word(cpu, GPIO_ANALOG_D) | GPIO_ANALOG_CLOCK_MASK));
     configure_external(cpu, DCI_SAMPLE_RISING | DCI_EXTERNAL_FRAME | DCI_DATA_JUSTIFY,
                        4u, 1u, 1u, 0u, 1u);
+    activate_serial_clock(cpu, true, GPIO_CLOCK_MASK);
     dspic33_gpio_drive(cpu, GPIO_PORT_D, GPIO_ANALOG_CLOCK_MASK,
                        GPIO_ANALOG_CLOCK_MASK);
-    expect(state, drive_serial_word(cpu, 0xf000u, 4u, true) && !cpu->io.dci.initialized,
+    expect(state,
+           drive_serial_word(cpu, 0xf000u, 4u, true) && cpu->io.dci.initialized &&
+               !cpu->io.dci.started && dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0u,
            "analog COFS selection cannot start a frame");
     dspic33_gpio_drive(cpu, GPIO_PORT_D, 0u, GPIO_CLOCK_MASK);
     dspic33_write_word(
@@ -921,8 +991,11 @@ static void pps_qualification_cases(DciConformance* state, Dspic33* cpu) {
         (uint16_t)(dspic33_read_word(cpu, GPIO_TRIS_D) & ~GPIO_FRAME_MASK));
     configure_external(cpu, DCI_SAMPLE_RISING | DCI_EXTERNAL_FRAME | DCI_DATA_JUSTIFY,
                        4u, 1u, 1u, 0u, 1u);
+    activate_serial_clock(cpu, true, GPIO_CLOCK_MASK);
     dspic33_gpio_drive(cpu, GPIO_PORT_D, GPIO_FRAME_MASK, GPIO_FRAME_MASK);
-    expect(state, drive_serial_word(cpu, 0xf000u, 4u, true) && !cpu->io.dci.initialized,
+    expect(state,
+           drive_serial_word(cpu, 0xf000u, 4u, true) && cpu->io.dci.initialized &&
+               !cpu->io.dci.started && dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0u,
            "output-configured COFS selection cannot start a frame");
     dspic33_gpio_drive(cpu, GPIO_PORT_D, 0u, GPIO_CLOCK_MASK);
     dspic33_write_word(
@@ -938,8 +1011,9 @@ static void pps_frame_cases(DciConformance* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     configure_serial_pins(cpu);
     configure_external(cpu, DCI_SAMPLE_RISING | DCI_EXTERNAL_FRAME, 4u, 1u, 1u, 0u, 1u);
+    activate_serial_clock(cpu, true, GPIO_CLOCK_MASK);
     dspic33_gpio_drive(cpu, GPIO_PORT_D, GPIO_FRAME_MASK, GPIO_FRAME_MASK);
-    expect(state, drive_serial_bit(cpu, true, true),
+    expect(state, drive_serial_edge(cpu, true, true, GPIO_CLOCK_MASK),
            "sample default-justified DCI frame pulse");
     dspic33_gpio_drive(cpu, GPIO_PORT_D, 0u, GPIO_FRAME_MASK);
     expect(state,
@@ -951,6 +1025,7 @@ static void pps_frame_cases(DciConformance* state, Dspic33* cpu) {
     configure_serial_pins(cpu);
     configure_external(cpu, DCI_SAMPLE_RISING | DCI_EXTERNAL_FRAME | DCI_DATA_JUSTIFY,
                        4u, 1u, 1u, 0u, 1u);
+    activate_serial_clock(cpu, true, GPIO_CLOCK_MASK);
     dspic33_gpio_drive(cpu, GPIO_PORT_D, GPIO_FRAME_MASK | GPIO_DATA_MASK,
                        GPIO_FRAME_MASK | GPIO_DATA_MASK);
     expect(state, drive_serial_bit(cpu, true, true),
@@ -971,6 +1046,7 @@ static void pps_frame_cases(DciConformance* state, Dspic33* cpu) {
     configure_external(
         cpu, DCI_MODE_I2S | DCI_SAMPLE_RISING | DCI_EXTERNAL_FRAME | DCI_DATA_JUSTIFY,
         4u, 1u, 1u, 0u, 1u);
+    activate_serial_clock(cpu, true, GPIO_CLOCK_MASK);
     dspic33_gpio_drive(cpu, GPIO_PORT_D, GPIO_FRAME_MASK | GPIO_DATA_MASK,
                        GPIO_FRAME_MASK | GPIO_DATA_MASK);
     expect(state,
@@ -1008,10 +1084,13 @@ static void pps_serial_matrix_cases(DciConformance* state, Dspic33* cpu) {
                     dspic33_reset(cpu, 0u);
                     configure_serial_pins(cpu);
                     configure_external(cpu, control, width, 1u, 1u, 0u, 1u);
+                    activate_serial_clock(cpu, rising != 0u, GPIO_CLOCK_MASK);
                     dspic33_gpio_drive(cpu, GPIO_PORT_D, GPIO_FRAME_MASK,
                                        GPIO_FRAME_MASK);
                     if (immediate == 0u) {
-                        expect(state, drive_serial_bit(cpu, false, rising != 0u),
+                        expect(state,
+                               drive_serial_edge(cpu, false, rising != 0u,
+                                                 GPIO_CLOCK_MASK),
                                "clock default-justified PPS matrix frame");
                         if (mode == 0u) {
                             dspic33_gpio_drive(cpu, GPIO_PORT_D, 0u, GPIO_FRAME_MASK);
@@ -1026,6 +1105,364 @@ static void pps_serial_matrix_cases(DciConformance* state, Dspic33* cpu) {
             }
         }
     }
+}
+
+static void pps_startup_cases(DciConformance* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    configure_serial_pins(cpu);
+    dspic33_write_word(cpu, DCI_CONTROL2, configuration(4u, 1u, 1u));
+    dspic33_write_word(cpu, DCI_CONTROL3, 0u);
+    dspic33_write_word(cpu, DCI_TRANSMIT_SLOTS, 1u);
+    dspic33_write_word(cpu, DCI_TRANSMIT_BASE, 0xa000u);
+    dspic33_write_word(cpu, DCI_CONTROL1,
+                       DCI_ENABLE | DCI_EXTERNAL_CLOCK | DCI_SAMPLE_RISING |
+                           DCI_DATA_JUSTIFY);
+    expect(state,
+           cpu->io.dci.serial_startup_bits == 3u && !cpu->io.dci.initialized &&
+               !interrupt_set(cpu, DCI_TRANSFER_IRQ),
+           "external DCI waits for three startup clocks");
+    expect(state,
+           drive_serial_edge(cpu, false, true, GPIO_CLOCK_MASK) &&
+               cpu->io.dci.serial_startup_bits == 2u && !cpu->io.dci.initialized &&
+               !interrupt_set(cpu, DCI_TRANSFER_IRQ),
+           "first startup clock leaves DCI buffers unavailable");
+    expect(state,
+           drive_serial_edge(cpu, false, true, GPIO_CLOCK_MASK) &&
+               cpu->io.dci.serial_startup_bits == 1u && !cpu->io.dci.initialized &&
+               !interrupt_set(cpu, DCI_TRANSFER_IRQ),
+           "second startup clock leaves DCI buffers unavailable");
+    expect(state,
+           drive_serial_edge(cpu, false, true, GPIO_CLOCK_MASK) &&
+               cpu->io.dci.serial_startup_bits == 0u && cpu->io.dci.initialized &&
+               cpu->io.dci.started && interrupt_set(cpu, DCI_TRANSFER_IRQ) &&
+               (dspic33_read_word(cpu, DCI_STATUS) & DCI_TRANSMIT_EMPTY) != 0u,
+           "third startup clock transfers buffers and raises DCI interrupt");
+}
+
+static void pps_internal_input_cases(DciConformance* state, Dspic33* cpu) {
+    uint8_t mode;
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, DCI_PPS_INPUTS, 0u);
+    dspic33_dci_input(cpu, UINT16_MAX);
+    configure_internal(cpu, DCI_SAMPLE_RISING, 4u, 1u, 1u, 0u, 1u);
+    expect(state,
+           drive_internal_pin_slot(cpu, UINT16_MAX, 4u, 12u) &&
+               dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0u,
+           "internal DCI VSS selection ignores logical input latch");
+
+    for (mode = DCI_MODE_I2S - 1u; mode <= DCI_MODE_I2S; mode++) {
+        uint8_t width;
+        for (width = 4u; width <= 16u; width++) {
+            uint8_t rising;
+            for (rising = 0u; rising < 2u; rising++) {
+                uint16_t value = (uint16_t)(0xa55au & serial_word_mask(width));
+                uint16_t control = mode;
+                if (rising != 0u) {
+                    control |= DCI_SAMPLE_RISING;
+                }
+                dspic33_reset(cpu, 0u);
+                configure_serial_pins(cpu);
+                configure_internal(cpu, control, width, 1u, 1u, 0u, 1u);
+                expect(state,
+                       drive_internal_pin_slot(cpu, value, width, 12u) &&
+                           dspic33_read_word(cpu, DCI_RECEIVE_BASE) == value,
+                       "internally clocked DCI samples mapped CSDI pin");
+            }
+        }
+    }
+
+    for (mode = DCI_MODE_AC_LINK_16; mode <= DCI_MODE_AC_LINK_20; mode++) {
+        uint8_t rising;
+        for (rising = 0u; rising < 2u; rising++) {
+            uint16_t control = mode;
+            if (rising != 0u) {
+                control |= DCI_SAMPLE_RISING;
+            }
+            dspic33_reset(cpu, 0u);
+            configure_serial_pins(cpu);
+            configure_internal(cpu, control, 4u, 1u, 1u, 0u, 1u);
+            expect(state,
+                   drive_internal_pin_slot(cpu, 0x5aa5u, 16u, 12u) &&
+                       dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0x5aa5u,
+                   "internally clocked AC-Link samples mapped CSDI pin");
+        }
+    }
+}
+
+static void pps_internal_frame_cases(DciConformance* state, Dspic33* cpu) {
+    bool high;
+    uint8_t mode;
+    for (mode = 0u; mode < 4u; mode++) {
+        uint8_t rising;
+        for (rising = 0u; rising < 2u; rising++) {
+            uint8_t immediate;
+            for (immediate = 0u; immediate < 2u; immediate++) {
+                uint16_t control = (uint16_t)(mode | DCI_EXTERNAL_FRAME);
+                uint16_t value = mode >= DCI_MODE_AC_LINK_16 ? 0x5aa5u : 0xa000u;
+                uint8_t width = mode == DCI_MODE_AC_LINK_16   ? 16u
+                                : mode == DCI_MODE_AC_LINK_20 ? 16u
+                                                              : 4u;
+                uint64_t delay;
+                if (rising != 0u) {
+                    control |= DCI_SAMPLE_RISING;
+                }
+                if (immediate != 0u) {
+                    control |= DCI_DATA_JUSTIFY;
+                }
+                delay = mode < DCI_MODE_AC_LINK_16 && immediate != 0u ? 0u : 4u;
+                dspic33_reset(cpu, 0u);
+                configure_serial_pins(cpu);
+                configure_internal(cpu, control, 4u, 1u, 1u, 0u, 1u);
+                expect(state,
+                       dspic33_device_advance(cpu, 12u) && cpu->io.dci.initialized &&
+                           !cpu->io.dci.started,
+                       "internal CSCK waits for mapped COFS edge");
+                dspic33_gpio_drive(cpu, GPIO_PORT_D,
+                                   GPIO_FRAME_MASK |
+                                       ((value & 0x8000u) != 0u ? GPIO_DATA_MASK : 0u),
+                                   GPIO_FRAME_MASK | GPIO_DATA_MASK);
+                expect(state,
+                       drive_internal_pin_slot(cpu, value, width, delay) &&
+                           dspic33_read_word(cpu, DCI_RECEIVE_BASE) == value,
+                       "mapped COFS starts internally clocked DCI frame");
+            }
+        }
+    }
+
+    dspic33_reset(cpu, 0u);
+    configure_serial_pins(cpu);
+    dspic33_write_word(cpu, DCI_PPS_CLOCK_FRAME_OUTPUT, 0x000cu);
+    configure_internal(cpu, DCI_SAMPLE_RISING | DCI_EXTERNAL_FRAME, 4u, 1u, 1u, 0u, 1u);
+    expect(state,
+           dspic33_device_advance(cpu, 14u) && !cpu->io.dci.started &&
+               dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high) && !high,
+           "internal CSCK remains active while waiting for external COFS");
+}
+
+static void pps_external_frame_output_cases(DciConformance* state, Dspic33* cpu) {
+    bool high;
+    uint8_t immediate;
+    for (immediate = 0u; immediate < 2u; immediate++) {
+        uint16_t justify = immediate != 0u ? DCI_DATA_JUSTIFY : 0u;
+        dspic33_reset(cpu, 0u);
+        configure_serial_pins(cpu);
+        dspic33_write_word(cpu, DCI_PPS_CLOCK_FRAME_OUTPUT, 0x0d00u);
+        configure_external(cpu, (uint16_t)(DCI_SAMPLE_RISING | justify), 4u, 1u, 1u, 0u,
+                           0u);
+        activate_serial_clock(cpu, true, GPIO_CLOCK_MASK);
+        expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && high,
+               "external CSCK multi-channel master asserts COFS");
+        expect(state,
+               drive_serial_edge(cpu, false, true, GPIO_CLOCK_MASK) &&
+                   dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && !high,
+               "external CSCK multi-channel master emits one-clock COFS");
+
+        dspic33_reset(cpu, 0u);
+        configure_serial_pins(cpu);
+        dspic33_write_word(cpu, DCI_PPS_CLOCK_FRAME_OUTPUT, 0x0d00u);
+        configure_external(cpu, (uint16_t)(DCI_MODE_I2S | DCI_SAMPLE_RISING | justify),
+                           4u, 1u, 1u, 0u, 0u);
+        activate_serial_clock(cpu, true, GPIO_CLOCK_MASK);
+        expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && high,
+               "external CSCK I2S master starts with right-channel COFS");
+        if (immediate == 0u) {
+            drive_serial_edge(cpu, false, true, GPIO_CLOCK_MASK);
+        }
+        expect(state,
+               drive_serial_word(cpu, 0u, 4u, true) &&
+                   dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && !high,
+               "external CSCK I2S master toggles COFS at half-frame boundary");
+    }
+
+    {
+        uint8_t mode;
+        for (mode = DCI_MODE_AC_LINK_16; mode <= DCI_MODE_AC_LINK_20; mode++) {
+            for (immediate = 0u; immediate < 2u; immediate++) {
+                uint16_t control =
+                    (uint16_t)(mode | DCI_SAMPLE_RISING |
+                               (immediate != 0u ? DCI_DATA_JUSTIFY : 0u));
+                dspic33_reset(cpu, 0u);
+                configure_serial_pins(cpu);
+                dspic33_write_word(cpu, DCI_PPS_CLOCK_FRAME_OUTPUT, 0x0d00u);
+                configure_external(cpu, control, 4u, 1u, 1u, 0u, 0u);
+                activate_serial_clock(cpu, true, GPIO_CLOCK_MASK);
+                expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && high,
+                       "external CSCK AC-Link master asserts tag COFS");
+                expect(state,
+                       drive_serial_word(cpu, 0u, 16u, true) &&
+                           dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && !high,
+                       "AC-Link master negates COFS after sixteen clocks");
+                expect(
+                    state,
+                    drive_serial_word(cpu, 0u, 240u, true) &&
+                        dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && high,
+                    "AC-Link master starts next 256-clock frame independent of DJST");
+            }
+        }
+    }
+}
+
+static void pps_internal_frame_output_cases(DciConformance* state, Dspic33* cpu) {
+    bool high;
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, DCI_PPS_CLOCK_FRAME_OUTPUT, 0x0d00u);
+    configure_internal(cpu, DCI_MODE_I2S, 4u, 1u, 1u, 0u, 0u);
+    expect(state,
+           dspic33_device_advance(cpu, 7u) &&
+               dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && !high,
+           "default I2S COFS remains low before final startup clock");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) &&
+               dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && high,
+           "default I2S COFS rises one clock before right-channel data");
+    expect(state,
+           dspic33_device_advance(cpu, 4u) &&
+               dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && high,
+           "default I2S COFS has no extra transition at data boundary");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, DCI_PPS_CLOCK_FRAME_OUTPUT, 0x0d00u);
+    configure_internal(cpu, DCI_MODE_AC_LINK_16, 4u, 1u, 1u, 0u, 0u);
+    expect(state,
+           dspic33_device_advance(cpu, 8u) &&
+               dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && high,
+           "internal AC-Link COFS asserts for tag interval");
+    expect(state,
+           dspic33_device_advance(cpu, 63u) &&
+               dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && high,
+           "internal AC-Link COFS remains high through fifteen data clocks");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) &&
+               dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && !high,
+           "internal AC-Link COFS negates after sixteen clocks");
+}
+
+static void pps_bcg_cases(DciConformance* state, Dspic33* cpu) {
+    Dspic33 copy;
+    bool high;
+    bool copy_high;
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, DCI_PPS_CLOCK_FRAME_OUTPUT, 0x000cu);
+    dspic33_write_word(cpu, DCI_CONTROL3, 1u);
+    expect(state,
+           dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high) && high &&
+               (dspic33_read_word(cpu, DCI_CONTROL1) & DCI_ENABLE) == 0u,
+           "nonzero BCG drives CSCK while DCI is disabled");
+    expect(state,
+           dspic33_device_advance(cpu, 2u) &&
+               dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high) && !high,
+           "standalone BCG reaches falling half-cycle");
+    expect(state,
+           dspic33_device_advance(cpu, 2u) &&
+               dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high) && high,
+           "standalone BCG completes full cycle");
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    dspic33_device_power_state_changed(cpu);
+    expect(state,
+           dspic33_device_advance(cpu, 9u) &&
+               dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high) && high,
+           "Sleep retains standalone BCG phase");
+    cpu->power_state = DSPIC33_POWER_ACTIVE;
+    dspic33_device_power_state_changed(cpu);
+    expect(state,
+           dspic33_device_advance(cpu, 2u) &&
+               dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high) && !high,
+           "wake resumes standalone BCG phase");
+    expect(state, dspic33_initialize(&copy), "initialize standalone BCG copy");
+    expect(state,
+           dspic33_copy(&copy, cpu) &&
+               dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high) &&
+               dspic33_dci_pin(&copy, PPS_CLOCK_OUTPUT_PIN, &copy_high) &&
+               high == copy_high,
+           "copy preserves standalone BCG phase");
+    dspic33_destroy(&copy);
+    dspic33_write_word(cpu, DCI_PMD, DCI_PMD_MASK);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) &&
+               !dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high),
+           "PMD releases standalone BCG output");
+    dspic33_write_word(cpu, DCI_PMD, 0u);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) &&
+               dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high),
+           "PMD clear restores standalone BCG output");
+
+    dspic33_write_word(cpu, DCI_CONTROL1, DCI_STOP_IDLE);
+    cpu->power_state = DSPIC33_POWER_IDLE;
+    dspic33_device_power_state_changed(cpu);
+    expect(state,
+           dspic33_device_advance(cpu, 7u) &&
+               dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high),
+           "DCISIDL retains standalone BCG phase in Idle");
+    cpu->power_state = DSPIC33_POWER_ACTIVE;
+    dspic33_device_power_state_changed(cpu);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) &&
+               dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high) && high,
+           "Idle wake resumes standalone BCG phase");
+
+    dspic33_load_program_word(cpu, 0u, 0xfe0000u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               !dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high) &&
+               dspic33_read_word(cpu, DCI_CONTROL3) == 0u,
+           "warm reset clears standalone BCG output");
+}
+
+static void pps_internal_sample_lifecycle_cases(DciConformance* state, Dspic33* cpu) {
+    Dspic33 copy;
+    uint8_t bit;
+    dspic33_reset(cpu, 0u);
+    configure_serial_pins(cpu);
+    configure_internal(cpu, DCI_SAMPLE_RISING, 4u, 1u, 1u, 0u, 1u);
+    dspic33_gpio_drive(cpu, GPIO_PORT_D, GPIO_DATA_MASK, GPIO_DATA_MASK);
+    expect(state,
+           dspic33_device_advance(cpu, 12u) && cpu->io.dci.serial_bits == 1u &&
+               cpu->events.count == 2u,
+           "internal CSDI sampler retains independent bit and word events");
+    dspic33_write_word(cpu, DCI_PMD, DCI_PMD_MASK);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && cpu->io.dci.pmd_disabled &&
+               cpu->events.count == 2u && cpu->events.items[0].paused &&
+               cpu->events.items[1].paused,
+           "PMD pauses internal CSDI sample and completion events");
+    expect(state,
+           dspic33_device_advance(cpu, 40u) && cpu->io.dci.serial_bits == 1u &&
+               dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0u,
+           "PMD holds physical CSDI shift state");
+    dspic33_write_word(cpu, DCI_PMD, 0u);
+    expect(state, dspic33_device_advance(cpu, 1u) && !cpu->io.dci.pmd_disabled,
+           "PMD clear resumes physical CSDI sampler");
+    for (bit = 1u; bit < 4u; bit++) {
+        uint16_t high = bit == 2u ? GPIO_DATA_MASK : 0u;
+        dspic33_gpio_drive(cpu, GPIO_PORT_D, high, GPIO_DATA_MASK);
+        dspic33_device_advance(cpu, bit == 1u ? 3u : 4u);
+    }
+    expect(state,
+           dspic33_device_advance(cpu, 4u) &&
+               dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0xa000u,
+           "resumed physical CSDI sampler completes retained word");
+
+    dspic33_reset(cpu, 0u);
+    configure_serial_pins(cpu);
+    configure_internal(cpu, DCI_SAMPLE_RISING, 4u, 1u, 1u, 0u, 1u);
+    dspic33_gpio_drive(cpu, GPIO_PORT_D, GPIO_DATA_MASK, GPIO_DATA_MASK);
+    expect(state, dspic33_device_advance(cpu, 12u),
+           "advance internal CSDI sampler before copy");
+    expect(state, dspic33_initialize(&copy), "initialize internal CSDI copy");
+    expect(state, dspic33_copy(&copy, cpu), "copy active internal CSDI sampler");
+    for (bit = 1u; bit < 4u; bit++) {
+        dspic33_gpio_drive(cpu, GPIO_PORT_D, 0u, GPIO_DATA_MASK);
+        dspic33_gpio_drive(&copy, GPIO_PORT_D, GPIO_DATA_MASK, GPIO_DATA_MASK);
+        dspic33_device_advance(cpu, 4u);
+        dspic33_device_advance(&copy, 4u);
+    }
+    expect(state,
+           dspic33_device_advance(cpu, 4u) && dspic33_device_advance(&copy, 4u) &&
+               dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0x8000u &&
+               dspic33_read_word(&copy, DCI_RECEIVE_BASE) == 0xf000u,
+           "copied CSDI samplers shift physical inputs independently");
+    dspic33_destroy(&copy);
 }
 
 static void pps_selection_cases(DciConformance* state, Dspic33* cpu) {
@@ -1057,9 +1494,12 @@ static void pps_selection_cases(DciConformance* state, Dspic33* cpu) {
         configure_external(cpu,
                            DCI_SAMPLE_RISING | DCI_EXTERNAL_FRAME | DCI_DATA_JUSTIFY,
                            4u, 1u, 1u, 0u, 1u);
+        activate_serial_clock(cpu, true, GPIO_CLOCK_MASK);
         dspic33_gpio_drive(cpu, GPIO_PORT_D, GPIO_FRAME_MASK, GPIO_FRAME_MASK);
         expect(state,
-               drive_serial_word(cpu, 0xf000u, 4u, true) && !cpu->io.dci.initialized,
+               drive_serial_word(cpu, 0xf000u, 4u, true) && cpu->io.dci.initialized &&
+                   !cpu->io.dci.started &&
+                   dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0u,
                "DCI virtual and reserved frame selections remain inaccessible");
     }
 
@@ -1091,8 +1531,9 @@ static void pps_output_cases(DciConformance* state, Dspic33* cpu) {
     dspic33_write_word(cpu, DCI_PPS_DATA_OUTPUT, 0x0b00u);
     configure_external(cpu, DCI_SAMPLE_RISING | DCI_EXTERNAL_FRAME, 4u, 1u, 1u, 1u, 0u);
     dspic33_write_word(cpu, DCI_TRANSMIT_BASE, 0xa000u);
+    activate_serial_clock(cpu, true, GPIO_CLOCK_MASK);
     dspic33_gpio_drive(cpu, GPIO_PORT_D, GPIO_FRAME_MASK, GPIO_FRAME_MASK);
-    expect(state, drive_serial_bit(cpu, false, true),
+    expect(state, drive_serial_edge(cpu, false, true, GPIO_CLOCK_MASK),
            "start PPS DCI data output frame");
     expect(state, dspic33_dci_pin(cpu, PPS_DATA_OUTPUT_PIN, &high) && high,
            "CSDO RPOR mapping drives transmit MSb");
@@ -1352,7 +1793,8 @@ static void pps_lifecycle_cases(DciConformance* state, Dspic33* cpu) {
     dspic33_write_word(cpu, DCI_PMD, 0u);
     expect(state,
            dspic33_device_advance(cpu, 1u) &&
-               drive_serial_word(cpu, 0xf000u, 4u, true) && !cpu->io.dci.initialized,
+               drive_serial_word(cpu, 0xf000u, 4u, true) && cpu->io.dci.initialized &&
+               !cpu->io.dci.started && dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0u,
            "PMD clear cannot replay missed COFS edge");
     dspic33_gpio_drive(cpu, GPIO_PORT_D, 0u, GPIO_FRAME_MASK | GPIO_CLOCK_MASK);
     dspic33_gpio_drive(cpu, GPIO_PORT_D, GPIO_FRAME_MASK, GPIO_FRAME_MASK);
@@ -1372,7 +1814,9 @@ static void pps_lifecycle_cases(DciConformance* state, Dspic33* cpu) {
                !cpu->io.dci.pps_frame_pending,
            "DCISIDL makes DCI miss Idle COFS edge");
     cpu->power_state = DSPIC33_POWER_ACTIVE;
-    expect(state, drive_serial_word(cpu, 0xf000u, 4u, true) && !cpu->io.dci.initialized,
+    expect(state,
+           drive_serial_word(cpu, 0xf000u, 4u, true) && cpu->io.dci.initialized &&
+               !cpu->io.dci.started && dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0u,
            "Idle resume cannot replay missed COFS edge");
     dspic33_gpio_drive(cpu, GPIO_PORT_D, 0u, GPIO_FRAME_MASK | GPIO_CLOCK_MASK);
     dspic33_gpio_drive(cpu, GPIO_PORT_D, GPIO_FRAME_MASK, GPIO_FRAME_MASK);
@@ -1970,6 +2414,13 @@ int main(void) {
         pps_serial_input_cases(&state, &cpu);
         pps_frame_cases(&state, &cpu);
         pps_serial_matrix_cases(&state, &cpu);
+        pps_startup_cases(&state, &cpu);
+        pps_internal_input_cases(&state, &cpu);
+        pps_internal_frame_cases(&state, &cpu);
+        pps_external_frame_output_cases(&state, &cpu);
+        pps_internal_frame_output_cases(&state, &cpu);
+        pps_bcg_cases(&state, &cpu);
+        pps_internal_sample_lifecycle_cases(&state, &cpu);
         pps_selection_cases(&state, &cpu);
         pps_qualification_cases(&state, &cpu);
         pps_output_cases(&state, &cpu);
@@ -1981,7 +2432,7 @@ int main(void) {
         disable_timing_cases(&state, &cpu);
         internal_clock_lifecycle_cases(&state, &cpu);
         lifecycle_cases(&state, &cpu);
-        expect(&state, state.cases == 14076u, "DCI assertion accounting");
+        expect(&state, state.cases == 14217u, "DCI assertion accounting");
         dspic33_destroy(&cpu);
     }
     printf("[dci-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",

@@ -327,6 +327,9 @@ typedef struct {
     uint16_t serial_input;
     uint16_t generation;
     uint16_t pmd_generation;
+    uint64_t bcg_cycle;
+    uint64_t bcg_phase;
+    uint16_t serial_frame_bits;
     uint8_t receive_unread;
     uint8_t receive_overflow;
     uint8_t receive_buffered;
@@ -336,10 +339,12 @@ typedef struct {
     uint8_t buffer;
     uint8_t slot;
     uint8_t serial_bits;
+    uint8_t serial_startup_bits;
     uint8_t disable_frames;
     bool pps_clock_high;
     bool pps_frame_high;
     bool pps_frame_pending;
+    bool pps_input_configured;
     bool serial_output_high;
     bool serial_output_driven;
     bool serial_delay;
@@ -348,6 +353,7 @@ typedef struct {
     bool initialized;
     bool disable_pending;
     bool internal_scheduled;
+    bool bcg_paused;
     bool pmd_disabled;
     bool transmit_empty;
 } Dspic33Dci;
