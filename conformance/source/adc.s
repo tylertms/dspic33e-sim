@@ -48,6 +48,7 @@ _adc_conformance_group_complete = 1
     mov w0, \control
     mov w0, \timing
     mov w0, \channels
+    mov w0, \flags
     mov #0x8002, w0
     mov w0, \control
     mov #0x8000, w0
