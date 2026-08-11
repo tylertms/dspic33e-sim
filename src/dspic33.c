@@ -3622,6 +3622,7 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
     cpu->instruction_active = false;
     cpu->instruction_advancing = false;
     cpu->interrupt_entry_active = false;
+    cpu->interrupt_entry_overlap = 0u;
     cpu->current_instruction_cycles = 0u;
     cpu->instruction_working_register_writes = 0u;
     cpu->instruction_source_address_registers = 0u;
@@ -4416,6 +4417,8 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     int64_t accumulators[2];
     uint16_t status;
     uint16_t control;
+    uint16_t disicnt_before_instruction;
+    uint8_t interrupt_entry_overlap;
     uint64_t cycles;
     uint32_t opcode;
     uint32_t instruction_pc;
@@ -4480,6 +4483,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
             cpu->previous_working_register_writes = 0u;
         }
     }
+    cpu->interrupt_entry_overlap = 0u;
     sequential_hole_fetch = cpu->sequential_program_hole_pc == cpu->pc &&
                             program_target_requires_address_error(cpu->pc);
     if (vector_segment_execution_address(cpu->pc)) {
@@ -4627,6 +4631,11 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     }
     psv_repeat_exit_latency = cpu->psv_repeat_optimized && cycles == 1u;
     non_cpu_sfr_wait = cpu->non_cpu_sfr_read;
+    disicnt_before_instruction = cpu->disicnt;
+    interrupt_entry_overlap = 1u;
+    if (cpu->psv_read && !psv_repeat_access) {
+        interrupt_entry_overlap += (opcode & 0xff0000u) == 0xbe0000u ? 1u : 3u;
+    }
     cpu->current_instruction_cycles = 0u;
     cpu->non_cpu_sfr_read = false;
     cpu->psv_read = false;
@@ -4715,6 +4724,10 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     if (psv_repeat_exit_latency && cpu->repeat_active != 0u &&
         dspic33_device_interrupt_pending(cpu)) {
         advance_instruction(cpu, 4u, false, device_ratio);
+    }
+    if (disicnt_before_instruction != 0u && cpu->disicnt == 0u &&
+        dspic33_device_interrupt_pending(cpu)) {
+        cpu->interrupt_entry_overlap = interrupt_entry_overlap;
     }
     cpu->instruction_advancing = false;
     if (cpu->power_state != DSPIC33_POWER_ACTIVE && dspic33_device_wake(cpu)) {

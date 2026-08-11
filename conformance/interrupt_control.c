@@ -25,6 +25,12 @@ enum {
     RPINR2 = 0x06a4u,
     TRISD = 0x0e30u,
     ANSELD = 0x0e3eu,
+    DMA0_CONTROL = 0x0b00u,
+    DMA0_START_LOW = 0x0b04u,
+    DMA0_START_HIGH = 0x0b06u,
+    DMA0_PAD = 0x0b0cu,
+    DMA0_COUNT = 0x0b0eu,
+    DMA_RECEIVE_PAD = 0x0290u,
     DMA_TEST_PAD = 0x0906u,
     MAIN_CLOCK_DIVISOR = 0x0744u,
     TIMER2_COUNTER = 0x0106u,
@@ -41,6 +47,10 @@ enum {
     OUTPUT_COMPARE_EDGE_PWM = 6u,
     OPCODE_MOV_W0_INTCON2 = 0x884610u,
     OPCODE_MOV_W0_INTCON3 = 0x884620u,
+    OPCODE_MOV_W4_W3 = 0x780194u,
+    OPCODE_MOV_DOUBLE_W4_W2 = 0xbe0114u,
+    OPCODE_TBLRDL_W4_W3 = 0xba0194u,
+    OPCODE_NOP = 0u,
     OPCODE_RESET = 0xfe0000u,
     OPCODE_RETFIE = 0x064000u
 };
@@ -655,6 +665,120 @@ static void interrupt_entry_latency_cases(InterruptControlConformance* state,
            "entry-cycle overflow fails before stack or vector mutation");
 }
 
+static bool schedule_interrupt_entry_dma(Dspic33* cpu, uint16_t address, uint16_t value,
+                                         uint64_t delay) {
+    uint32_t event_value;
+    cpu->data[DMA_RECEIVE_PAD] = (uint8_t)value;
+    cpu->data[DMA_RECEIVE_PAD + 1u] = (uint8_t)(value >> 8u);
+    dspic33_write_word(cpu, DMA0_CONTROL, 0u);
+    dspic33_write_word(cpu, DMA0_START_LOW, address);
+    dspic33_write_word(cpu, DMA0_START_HIGH, 0u);
+    dspic33_write_word(cpu, DMA0_PAD, DMA_RECEIVE_PAD);
+    dspic33_write_word(cpu, DMA0_COUNT, 0u);
+    dspic33_write_word(cpu, DMA0_CONTROL, 0x8001u);
+    event_value = (uint32_t)cpu->io.dma_generation[0] << 17u;
+    return dspic33_schedule(cpu, DSPIC33_EVENT_DMA, 0u, event_value, delay);
+}
+
+static bool service_interrupt_zero(Dspic33* cpu) {
+    dspic33_raise_interrupt(cpu, 0u);
+    return dspic33_device_service_interrupt(cpu);
+}
+
+static void interrupt_entry_frame_timing_cases(InterruptControlConformance* state,
+                                               Dspic33* cpu) {
+    dspic33_reset(cpu, 0x0200u);
+    enable_interrupt(cpu, 0u, 1u, 0x0300u);
+    cpu->w[15] = 0x2700u;
+    expect(state,
+           schedule_interrupt_entry_dma(cpu, 0x2700u, 0xa55au, 6u) &&
+               service_interrupt_zero(cpu) &&
+               dspic33_read_word(cpu, 0x2700u) == 0x0200u,
+           "low return PC push follows the first six entry cycles");
+
+    dspic33_reset(cpu, 0x0200u);
+    enable_interrupt(cpu, 0u, 1u, 0x0300u);
+    cpu->w[15] = 0x2700u;
+    expect(state,
+           schedule_interrupt_entry_dma(cpu, 0x2700u, 0xa55au, 7u) &&
+               service_interrupt_zero(cpu) &&
+               dspic33_read_word(cpu, 0x2700u) == 0xa55au,
+           "device event after the low return PC push observes the staged frame");
+
+    dspic33_reset(cpu, 0x0200u);
+    enable_interrupt(cpu, 0u, 1u, 0x0300u);
+    cpu->w[15] = 0x2700u;
+    expect(state,
+           schedule_interrupt_entry_dma(cpu, 0x2702u, 0xa55au, 9u) &&
+               service_interrupt_zero(cpu) && dspic33_read_word(cpu, 0x2702u) == 0u,
+           "high PC and SRL push completes after nine entry cycles");
+}
+
+static void interrupt_entry_overlap_cases(InterruptControlConformance* state,
+                                          Dspic33* source, Dspic33* copy) {
+    static const struct {
+        uint32_t opcode;
+        uint8_t instruction_cycles;
+        uint8_t entry_overlap;
+        bool psv;
+        const char* name;
+    } cases[] = {
+        {OPCODE_NOP, 1u, 1u, false, "fixed latency overlaps the final NOP cycle"},
+        {OPCODE_TBLRDL_W4_W3, 5u, 1u, false,
+         "fixed latency retains the documented TBLRD stall"},
+        {OPCODE_MOV_W4_W3, 5u, 4u, true,
+         "fixed latency overlaps the ordinary PSV stall"},
+        {OPCODE_MOV_DOUBLE_W4_W2, 5u, 2u, true,
+         "fixed latency applies the MOV.D PSV second-fetch exception"},
+    };
+    size_t index;
+
+    for (index = 0u; index < sizeof(cases) / sizeof(cases[0]); index++) {
+        uint64_t cycles;
+        dspic33_reset(source, 0x0200u);
+        dspic33_load_program_word(source, 0x0200u, cases[index].opcode);
+        enable_interrupt(source, 0u, 1u, 0x0300u);
+        source->w[15] = 0x2600u;
+        source->disicnt = 1u;
+        source->tblpag = 0u;
+        source->dsrpag = cases[index].psv ? 0x0200u : 1u;
+        dspic33_set_working_register(source, 4u, cases[index].psv ? 0x8000u : 0x0200u);
+        dspic33_raise_interrupt(source, 0u);
+        cycles = source->cycles;
+        expect(state,
+               dspic33_step(source) == DSPIC33_RUNNING &&
+                   source->cycles - cycles == cases[index].instruction_cycles &&
+                   source->interrupt_entry_overlap == cases[index].entry_overlap &&
+                   source->pc == 0x0202u,
+               cases[index].name);
+        cycles = source->cycles;
+        expect(state,
+               dspic33_step(source) == DSPIC33_RUNNING && source->pc == 0x0302u &&
+                   source->cycles - cycles == 10u - cases[index].entry_overlap &&
+                   source->interrupt_entry_overlap == 0u,
+               "recorded overlap shortens only the following interrupt entry");
+    }
+
+    dspic33_reset(source, 0x0200u);
+    dspic33_load_program_word(source, 0x0200u, OPCODE_MOV_W4_W3);
+    enable_interrupt(source, 0u, 1u, 0x0300u);
+    source->disicnt = 1u;
+    source->dsrpag = 0x0200u;
+    dspic33_set_working_register(source, 4u, 0x8000u);
+    dspic33_raise_interrupt(source, 0u);
+    dspic33_step(source);
+    expect(state,
+           source->interrupt_entry_overlap == 4u && dspic33_copy(copy, source) &&
+               copy->interrupt_entry_overlap == 4u,
+           "copy preserves a pending fixed-latency overlap");
+    source->interrupt_entry_overlap = 0u;
+    expect(state, copy->interrupt_entry_overlap == 4u,
+           "copied fixed-latency overlap is independent");
+    dspic33_reset(source, 0u);
+    expect(state, source->interrupt_entry_overlap == 0u,
+           "POR clears fixed-latency overlap state");
+}
+
 static void lifecycle_cases(InterruptControlConformance* state, Dspic33* source,
                             Dspic33* copy) {
     dspic33_reset(source, 0u);
@@ -695,8 +819,10 @@ int main(void) {
     external_interrupt_interaction_cases(&state, &source);
     external_interrupt_wake_lifecycle_cases(&state, &source, &copy);
     interrupt_entry_latency_cases(&state, &source);
+    interrupt_entry_overlap_cases(&state, &source, &copy);
+    interrupt_entry_frame_timing_cases(&state, &source);
     lifecycle_cases(&state, &source, &copy);
-    expect(&state, state.cases == 111u, "interrupt-control assertion accounting");
+    expect(&state, state.cases == 125u, "interrupt-control assertion accounting");
     report_sfr_side_effect_coverage(
         "interrupt-control", interrupt_control_sfr_side_effect_coverage,
         SFR_SIDE_EFFECT_COVERAGE_COUNT(interrupt_control_sfr_side_effect_coverage),

@@ -7427,6 +7427,9 @@ static bool service_interrupt(Dspic33* cpu) {
     size_t log_index;
     uint16_t stacked_high;
     uint64_t entry_device_cycles;
+    uint64_t first_entry_cycles;
+    uint64_t first_entry_device_cycles;
+    uint64_t entry_cycles;
     uint32_t origin;
     uint32_t target;
     if (!select_interrupt(cpu, &best_irq, &best_priority)) {
@@ -7445,9 +7448,43 @@ static bool service_interrupt(Dspic33* cpu) {
         return true;
     }
     recover_from_doze(cpu);
-    entry_device_cycles = dspic33_device_instruction_cycles(cpu, 9u);
+    entry_cycles = 9u - cpu->interrupt_entry_overlap;
+    cpu->interrupt_entry_overlap = 0u;
+    entry_device_cycles = dspic33_device_instruction_cycles(cpu, entry_cycles);
+    if (entry_cycles > UINT64_MAX - cpu->cycles ||
+        (cpu->async_events_enabled &&
+         entry_device_cycles > UINT64_MAX - cpu->device_cycles)) {
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+        return true;
+    }
+    first_entry_cycles = entry_cycles - 3u;
+    first_entry_device_cycles =
+        dspic33_device_instruction_cycles(cpu, first_entry_cycles);
+    stacked_high = (uint16_t)(((cpu->sr & 0x00ffu) << 8u) |
+                              ((cpu->corcon & 0x0008u) != 0u ? 0x0080u : 0u) |
+                              ((cpu->pc >> 16u) & 0x007fu));
+    next_priority = (raw_word(cpu, 0x08c0u) & 0x8000u) != 0u
+                        ? UINT16_C(0x00e0)
+                        : (uint16_t)((uint16_t)best_priority << 5u);
     cpu->interrupt_entry_active = true;
-    if (!dspic33_device_advance_instruction(cpu, 9u, entry_device_cycles)) {
+    if (!dspic33_device_advance_instruction(cpu, first_entry_cycles,
+                                            first_entry_device_cycles)) {
+        cpu->interrupt_entry_active = false;
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+        return true;
+    }
+    if (cpu->illegal_reset) {
+        cpu->interrupt_entry_active = false;
+        return true;
+    }
+    dspic33_check_stack_address(cpu, cpu->w[15], cpu->w[15] > 0xfffdu, 2u);
+    dspic33_write_word(cpu, cpu->w[15],
+                       (uint16_t)((cpu->pc & 0xfffeu) | ((cpu->corcon >> 2u) & 1u)));
+    dspic33_set_working_register(cpu, 15u, (uint16_t)(cpu->w[15] + 2u));
+    cpu->corcon &= (uint16_t)~0x0004u;
+    cpu->sr = (uint16_t)((cpu->sr & ~0x00e0u) | next_priority);
+    if (!dspic33_device_advance_instruction(
+            cpu, 3u, entry_device_cycles - first_entry_device_cycles)) {
         cpu->interrupt_entry_active = false;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
         return true;
@@ -7457,20 +7494,8 @@ static bool service_interrupt(Dspic33* cpu) {
         return true;
     }
     dspic33_check_stack_address(cpu, cpu->w[15], cpu->w[15] > 0xfffdu, 2u);
-    dspic33_write_word(cpu, cpu->w[15],
-                       (uint16_t)((cpu->pc & 0xfffeu) | ((cpu->corcon >> 2u) & 1u)));
-    dspic33_set_working_register(cpu, 15u, (uint16_t)(cpu->w[15] + 2u));
-    stacked_high = (uint16_t)(((cpu->sr & 0x00ffu) << 8u) |
-                              ((cpu->corcon & 0x0008u) != 0u ? 0x0080u : 0u) |
-                              ((cpu->pc >> 16u) & 0x007fu));
-    dspic33_check_stack_address(cpu, cpu->w[15], cpu->w[15] > 0xfffdu, 2u);
     dspic33_write_word(cpu, cpu->w[15], stacked_high);
     dspic33_set_working_register(cpu, 15u, (uint16_t)(cpu->w[15] + 2u));
-    cpu->corcon &= (uint16_t)~0x0004u;
-    next_priority = (raw_word(cpu, 0x08c0u) & 0x8000u) != 0u
-                        ? UINT16_C(0x00e0)
-                        : (uint16_t)((uint16_t)best_priority << 5u);
-    cpu->sr = (uint16_t)((cpu->sr & ~0x00e0u) | next_priority);
     log_index = (size_t)(cpu->interrupt_count % 16u);
     cpu->interrupt_log_irq[log_index] = best_irq;
     cpu->interrupt_log_entry[log_index] = cpu->pc;

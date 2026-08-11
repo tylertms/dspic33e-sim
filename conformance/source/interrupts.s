@@ -2,7 +2,7 @@
 .include "conformance.inc"
 
 .global _interrupt_conformance_cases
-_interrupt_conformance_cases = 39
+_interrupt_conformance_cases = 47
 .global _interrupt_conformance_group_complete
 _interrupt_conformance_group_complete = 1
 
@@ -10,14 +10,14 @@ _interrupt_conformance_group_complete = 1
 .global __\name
 __\name:
     push w0
-.if \identifier == 0
     mov _interrupt_mode, w0
     cp w0, #2
     bra nz, 8f
     mov TMR2, w0
     mov w0, _interrupt_entry_timer
+    mov [w15-6], w0
+    mov w0, _interrupt_entry_pc
 8:
-.endif
     push w1
     push w2
     bclr IFS0, #\flag
@@ -60,6 +60,40 @@ __\name:
     retfie
 .endm
 
+.macro begin_timer_latency variable
+    rcall _reset_interrupt_probe
+.if \variable
+    bset CORCON, #15
+.else
+    bclr CORCON, #15
+.endif
+    clr MSTRPR
+    clr T2CON
+    clr TMR2
+    mov #0xffff, w0
+    mov w0, PR2
+    mov #2, w0
+    mov w0, _interrupt_mode
+    mov #4, w0
+    mov w0, IPC0
+    bset IEC0, #0
+    bset INTCON2, #15
+    bset T2CON, #15
+    disi #3
+    bset IFS0, #0
+.endm
+
+.macro end_timer_latency identifier
+    bclr T2CON, #15
+    bclr INTCON2, #15
+    bclr CORCON, #15
+    mov #1, w0
+    mov w0, DSRPAG
+    mov _interrupt_entry_timer, w1
+    mov _interrupt_entry_pc, w2
+    record_case \identifier, w1, w2
+.endm
+
 interrupt_handler INT0Interrupt, 0, 0, 0
 interrupt_handler T1Interrupt, 3, 3, 1
 interrupt_handler DMA0Interrupt, 4, 4, 0
@@ -77,6 +111,7 @@ _reset_interrupt_probe:
     clr _interrupt_count
     clr _interrupt_mode
     clr _interrupt_entry_timer
+    clr _interrupt_entry_pc
     clr _interrupt_order
     clr _interrupt_order+2
     clr _interrupt_order+4
@@ -434,6 +469,56 @@ _run_interrupt_conformance:
     bclr CORCON, #15
     mov _interrupt_entry_timer, w1
     record_case 0x0d26, w1, w1
+
+    begin_timer_latency 0
+    nop
+    end_timer_latency 0x0d27
+
+    begin_timer_latency 1
+    nop
+    end_timer_latency 0x0d28
+
+    clr w0
+    mov w0, TBLPAG
+    mov #tbloffset(_run_interrupt_conformance), w4
+    begin_timer_latency 0
+    tblrdl [w4], w3
+    end_timer_latency 0x0d29
+
+    clr w0
+    mov w0, TBLPAG
+    mov #tbloffset(_run_interrupt_conformance), w4
+    begin_timer_latency 1
+    tblrdl [w4], w3
+    end_timer_latency 0x0d2a
+
+    mov #0x0200, w0
+    mov w0, DSRPAG
+    mov #0x8000, w4
+    begin_timer_latency 0
+    mov [w4], w3
+    end_timer_latency 0x0d2b
+
+    mov #0x0200, w0
+    mov w0, DSRPAG
+    mov #0x8000, w4
+    begin_timer_latency 1
+    mov [w4], w3
+    end_timer_latency 0x0d2c
+
+    mov #0x0200, w0
+    mov w0, DSRPAG
+    mov #0x8000, w4
+    begin_timer_latency 0
+    mov.d [w4], w2
+    end_timer_latency 0x0d2d
+
+    mov #0x0200, w0
+    mov w0, DSRPAG
+    mov #0x8000, w4
+    begin_timer_latency 1
+    mov.d [w4], w2
+    end_timer_latency 0x0d2e
 
     rcall _reset_interrupt_probe
     end_results

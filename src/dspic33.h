@@ -758,6 +758,7 @@ typedef struct {
     bool instruction_active;
     bool instruction_advancing;
     bool interrupt_entry_active;
+    uint8_t interrupt_entry_overlap;
     uint8_t current_instruction_cycles;
     uint16_t instruction_working_register_writes;
     uint16_t instruction_source_address_registers;

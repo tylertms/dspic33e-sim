@@ -2429,7 +2429,7 @@ static void repeat_interrupt_cases(ProcessorConformance* state, Dspic33* cpu) {
                dspic33_read_word(cpu, 0x5000u) == 0x206u &&
                (dspic33_read_word(cpu, 0x5002u) & 0x1000u) != 0u &&
                cpu->repeat_active == 0u && cpu->rcount == 2u &&
-               (cpu->sr & 0x00f0u) == 0x0080u && cpu->cycles == 13u,
+               (cpu->sr & 0x00f0u) == 0x0080u && cpu->cycles == 12u,
            "integrated interrupt suspends repeat at target");
     dspic33_write_word(cpu, 0x0802u, 0u);
     dspic33_write_word(cpu, 0x0822u, 0u);
@@ -2437,20 +2437,20 @@ static void repeat_interrupt_cases(ProcessorConformance* state, Dspic33* cpu) {
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x206u &&
                cpu->w[15] == 0x5000u && cpu->repeat_active != 0u &&
                cpu->repeat_pc == 0x206u && cpu->rcount == 2u &&
-               (cpu->sr & 0x0010u) != 0u && cpu->cycles == 19u,
+               (cpu->sr & 0x0010u) != 0u && cpu->cycles == 18u,
            "integrated RETFIE restores repeat state in six cycles");
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 1u &&
-               cpu->rcount == 1u && cpu->pc == 0x206u && cpu->cycles == 20u,
+               cpu->rcount == 1u && cpu->pc == 0x206u && cpu->cycles == 19u,
            "restored repeat executes first target");
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 2u &&
-               cpu->rcount == 0u && cpu->pc == 0x206u && cpu->cycles == 21u,
+               cpu->rcount == 0u && cpu->pc == 0x206u && cpu->cycles == 20u,
            "restored repeat executes second target");
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 3u &&
                cpu->repeat_active == 0u && cpu->pc == 0x208u &&
-               (cpu->sr & 0x0010u) == 0u && cpu->cycles == 22u,
+               (cpu->sr & 0x0010u) == 0u && cpu->cycles == 21u,
            "restored repeat completes all targets");
 
     reset_processor_conformance(cpu, 0x200u);
@@ -2476,11 +2476,11 @@ static void repeat_interrupt_cases(ProcessorConformance* state, Dspic33* cpu) {
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000302u &&
                cpu->w[15] == 0x5004u && cpu->rcount == 2u && cpu->repeat_active == 0u &&
-               (cpu->sr & 0x00f0u) == 0x0080u && cpu->cycles == 13u,
+               (cpu->sr & 0x00f0u) == 0x0080u && cpu->cycles == 12u,
            "early-termination handler observes suspended repeat");
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000304u &&
-               cpu->rcount == 0u && cpu->cycles == 14u,
+               cpu->rcount == 0u && cpu->cycles == 13u,
            "handler clears suspended RCOUNT");
     dspic33_write_word(cpu, 0x0802u, 0u);
     dspic33_write_word(cpu, 0x0822u, 0u);
@@ -2488,12 +2488,12 @@ static void repeat_interrupt_cases(ProcessorConformance* state, Dspic33* cpu) {
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x206u &&
                cpu->w[15] == 0x5000u && cpu->repeat_active != 0u &&
                cpu->repeat_pc == 0x206u && cpu->rcount == 0u &&
-               (cpu->sr & 0x0010u) != 0u && cpu->cycles == 20u,
+               (cpu->sr & 0x0010u) != 0u && cpu->cycles == 19u,
            "RETFIE restores prefetched target after RCOUNT clear");
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 1u &&
                cpu->pc == 0x208u && cpu->rcount == 0u && cpu->repeat_active == 0u &&
-               (cpu->sr & 0x0010u) == 0u && cpu->cycles == 21u,
+               (cpu->sr & 0x0010u) == 0u && cpu->cycles == 20u,
            "cleared repeat executes final prefetched target once");
 }
 
@@ -3675,7 +3675,7 @@ static void psv_repeat_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
            cpu->disicnt == 0u && cpu->rcount == 2u && cpu->repeat_active != 0u &&
                cpu->w[1] == 0xc004u,
            "pre-interrupt PSV iteration preserves suspended repeat state");
-    expect_step_cycles(state, cpu, 10u,
+    expect_step_cycles(state, cpu, 9u,
                        "interrupt dispatch executes handler instruction");
     expect(state,
            cpu->pc == 0x0302u && cpu->repeat_active == 0u && cpu->rcount == 2u &&
