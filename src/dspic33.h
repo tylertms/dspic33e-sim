@@ -233,7 +233,11 @@ typedef struct {
     uint16_t generation[DSPIC33_OUTPUT_COMPARE_COUNT];
     uint16_t timer_generation[DSPIC33_OUTPUT_COMPARE_COUNT];
     uint16_t output_high;
+    uint16_t sync_reset_pending;
+    uint16_t deferred_sync_pulses;
+    uint16_t activation_pending;
     uint8_t phase[DSPIC33_OUTPUT_COMPARE_COUNT];
+    bool clock_advancing;
     bool sync_emitted[DSPIC33_OUTPUT_COMPARE_COUNT];
     uint64_t activation_cycle[DSPIC33_OUTPUT_COMPARE_COUNT];
 } Dspic33OutputCompare;

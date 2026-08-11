@@ -12,6 +12,7 @@ static void oscillator_startup_configuration_changed(Dspic33* cpu, uint8_t previ
 static void oscillator_pll_configuration_changed(Dspic33* cpu, uint8_t previous);
 static void start_automatic_oscillator_switch(Dspic33* cpu, uint8_t source);
 static void refresh_gpio_change_notification(Dspic33* cpu);
+static void output_compare_pulse_source(Dspic33* cpu, uint8_t source);
 
 static const uint16_t timer_registers[DSPIC33_TIMER_COUNT] = {
     0x0100u, 0x0106u, 0x010au, 0x0114u, 0x0118u, 0x0122u, 0x0126u, 0x0130u, 0x0134u};
@@ -291,8 +292,13 @@ enum {
     OUTPUT_COMPARE_CON1_WRITABLE = 0x3fffu,
     OUTPUT_COMPARE_CON2_WRITABLE = 0xf1ffu,
     OUTPUT_COMPARE_TIMER_SOURCE_MASK = 0x1c00u,
+    OUTPUT_COMPARE_TIMER_SOURCE_TIMER2 = 0x0000u,
+    OUTPUT_COMPARE_TIMER_SOURCE_TIMER3 = 0x0400u,
+    OUTPUT_COMPARE_TIMER_SOURCE_TIMER4 = 0x0800u,
+    OUTPUT_COMPARE_TIMER_SOURCE_TIMER5 = 0x0c00u,
+    OUTPUT_COMPARE_TIMER_SOURCE_TIMER1 = 0x1000u,
     OUTPUT_COMPARE_TIMER_SOURCE_FP = 0x1c00u,
-    OUTPUT_COMPARE_CON1_UNSUPPORTED = 0x23f8u,
+    OUTPUT_COMPARE_CON1_UNSUPPORTED = 0x23f0u,
     OUTPUT_COMPARE_MODE_MASK = 0x0007u,
     OUTPUT_COMPARE_MODE_SINGLE_HIGH = 0x0001u,
     OUTPUT_COMPARE_MODE_SINGLE_LOW = 0x0002u,
@@ -305,10 +311,20 @@ enum {
     OUTPUT_COMPARE_INVERT = 0x1000u,
     OUTPUT_COMPARE_32_BIT = 0x0100u,
     OUTPUT_COMPARE_TRIGGER = 0x0080u,
+    OUTPUT_COMPARE_TRIGGER_STATUS = 0x0040u,
     OUTPUT_COMPARE_TRISTATE = 0x0020u,
+    OUTPUT_COMPARE_TRIGGER_ONESHOT = 0x0008u,
     OUTPUT_COMPARE_SYNC_MASK = 0x001fu,
     OUTPUT_COMPARE_SYNC_NONE = 0x0000u,
     OUTPUT_COMPARE_SYNC_SELF = 0x001fu,
+    OUTPUT_COMPARE_SYNC_OC_FIRST = 1u,
+    OUTPUT_COMPARE_SYNC_TIMER_FIRST = 11u,
+    OUTPUT_COMPARE_SYNC_IC_FIRST = 16u,
+    OUTPUT_COMPARE_SYNC_COMPARATOR_FIRST = 24u,
+    OUTPUT_COMPARE_SYNC_ADC1 = 27u,
+    OUTPUT_COMPARE_SYNC_RESERVED = 28u,
+    OUTPUT_COMPARE_SYNC_INT1 = 29u,
+    OUTPUT_COMPARE_SYNC_INT2 = 30u,
     OUTPUT_COMPARE_EVENT_KIND_MASK = 0x0000000fu,
     OUTPUT_COMPARE_EVENT_PRIMARY = 0u,
     OUTPUT_COMPARE_EVENT_SECONDARY = 1u,
@@ -319,6 +335,7 @@ enum {
     OUTPUT_COMPARE_EVENT_SYNC = 6u,
     OUTPUT_COMPARE_EVENT_SYNC_BOUNDARY = 7u,
     OUTPUT_COMPARE_EVENT_SYNC_PRIMARY = 8u,
+    OUTPUT_COMPARE_EVENT_EXTERNAL_SYNC = 9u,
     OUTPUT_COMPARE_EVENT_GENERATION_SHIFT = 4u,
     COMPARATOR_STATUS = 0x0a80u,
     COMPARATOR_REFERENCE = 0x0a82u,
@@ -2586,6 +2603,10 @@ static void run_input_capture(Dspic33* cpu, uint16_t source, uint32_t value) {
                (input_capture_operating(cpu, (uint8_t)source) ||
                 input_capture_interrupt_mode(cpu, (uint8_t)source))) {
         dspic33_raise_interrupt(cpu, input_capture_irqs[source]);
+        if (source < 8u) {
+            output_compare_pulse_source(
+                cpu, (uint8_t)(OUTPUT_COMPARE_SYNC_IC_FIRST + source));
+        }
     }
 }
 
@@ -2826,24 +2847,46 @@ static uint16_t output_compare_base(uint8_t channel) {
     return (uint16_t)(OUTPUT_COMPARE_BASE + channel * OUTPUT_COMPARE_STRIDE);
 }
 
-static bool output_compare_configuration_supported(uint16_t control1,
+static bool output_compare_clock_supported(uint16_t control1) {
+    uint16_t source = control1 & OUTPUT_COMPARE_TIMER_SOURCE_MASK;
+    return source <= OUTPUT_COMPARE_TIMER_SOURCE_TIMER1 ||
+           source == OUTPUT_COMPARE_TIMER_SOURCE_FP;
+}
+
+static bool output_compare_configuration_supported(uint8_t channel, uint16_t control1,
                                                    uint16_t control2) {
     uint16_t mode = control1 & OUTPUT_COMPARE_MODE_MASK;
     uint16_t synchronization = control2 & OUTPUT_COMPARE_SYNC_MASK;
-    return (control1 & OUTPUT_COMPARE_TIMER_SOURCE_MASK) ==
-               OUTPUT_COMPARE_TIMER_SOURCE_FP &&
+    bool trigger = (control2 & OUTPUT_COMPARE_TRIGGER) != 0u;
+    bool own_source =
+        synchronization == OUTPUT_COMPARE_SYNC_SELF ||
+        (channel < 9u && synchronization == OUTPUT_COMPARE_SYNC_OC_FIRST + channel);
+    return output_compare_clock_supported(control1) &&
            (control1 & OUTPUT_COMPARE_CON1_UNSUPPORTED) == 0u && mode != 0u &&
            (control2 & OUTPUT_COMPARE_CON2_UNSUPPORTED) == 0u &&
            (control2 & OUTPUT_COMPARE_32_BIT) == 0u &&
-           (control2 & OUTPUT_COMPARE_TRIGGER) == 0u &&
-           (synchronization == OUTPUT_COMPARE_SYNC_NONE ||
-            synchronization == OUTPUT_COMPARE_SYNC_SELF);
+           synchronization != OUTPUT_COMPARE_SYNC_RESERVED &&
+           !(trigger && own_source) &&
+           !(!trigger && synchronization >= OUTPUT_COMPARE_SYNC_IC_FIRST &&
+             synchronization < OUTPUT_COMPARE_SYNC_COMPARATOR_FIRST);
 }
 
 static bool output_compare_supported(const Dspic33* cpu, uint8_t channel) {
     uint16_t base = output_compare_base(channel);
-    return output_compare_configuration_supported(raw_word(cpu, base),
+    return output_compare_configuration_supported(channel, raw_word(cpu, base),
                                                   raw_word(cpu, (uint16_t)(base + 2u)));
+}
+
+static bool output_compare_fp_clocked(const Dspic33* cpu, uint8_t channel) {
+    return (raw_word(cpu, output_compare_base(channel)) &
+            OUTPUT_COMPARE_TIMER_SOURCE_MASK) == OUTPUT_COMPARE_TIMER_SOURCE_FP;
+}
+
+static uint8_t output_compare_timer_source(const Dspic33* cpu, uint8_t channel) {
+    static const uint8_t timers[] = {1u, 2u, 3u, 4u, 0u};
+    uint16_t selection =
+        raw_word(cpu, output_compare_base(channel)) & OUTPUT_COMPARE_TIMER_SOURCE_MASK;
+    return timers[selection >> 10u];
 }
 
 static void output_compare_set_high(Dspic33* cpu, uint8_t channel, bool high) {
@@ -2861,12 +2904,15 @@ static bool output_compare_high(const Dspic33* cpu, uint8_t channel) {
 
 static void output_compare_abort(Dspic33* cpu, uint8_t channel) {
     uint16_t base = output_compare_base(channel);
+    uint16_t bit = (uint16_t)(1u << channel);
     cpu->io.output_compare.generation[channel]++;
     cpu->io.output_compare.timer_generation[channel]++;
     raw_write_word(cpu, base,
                    (uint16_t)(raw_word(cpu, base) & ~OUTPUT_COMPARE_MODE_MASK));
     raw_write_word(cpu, (uint16_t)(base + 8u), 0u);
     output_compare_set_high(cpu, channel, false);
+    cpu->io.output_compare.sync_reset_pending &= (uint16_t)~bit;
+    cpu->io.output_compare.activation_pending &= (uint16_t)~bit;
     cpu->io.output_compare.phase[channel] = 0u;
     cpu->io.output_compare.sync_emitted[channel] = false;
     cpu->io.output_compare.activation_cycle[channel] = 0u;
@@ -2880,7 +2926,8 @@ static bool output_compare_schedule(Dspic33* cpu, uint8_t channel, uint32_t kind
                        kind == OUTPUT_COMPARE_EVENT_BOUNDARY ||
                        kind == OUTPUT_COMPARE_EVENT_SYNC ||
                        kind == OUTPUT_COMPARE_EVENT_SYNC_BOUNDARY ||
-                       kind == OUTPUT_COMPARE_EVENT_SYNC_PRIMARY;
+                       kind == OUTPUT_COMPARE_EVENT_SYNC_PRIMARY ||
+                       kind == OUTPUT_COMPARE_EVENT_EXTERNAL_SYNC;
     uint16_t generation = timer_event ? cpu->io.output_compare.timer_generation[channel]
                                       : cpu->io.output_compare.generation[channel];
     uint32_t value =
@@ -2893,23 +2940,34 @@ static bool output_compare_schedule(Dspic33* cpu, uint8_t channel, uint32_t kind
 }
 
 static bool output_compare_self_synchronized(const Dspic33* cpu, uint8_t channel) {
-    return (raw_word(cpu, (uint16_t)(output_compare_base(channel) + 2u)) &
-            OUTPUT_COMPARE_SYNC_MASK) == OUTPUT_COMPARE_SYNC_SELF;
+    uint16_t control2 = raw_word(cpu, (uint16_t)(output_compare_base(channel) + 2u));
+    uint16_t source = control2 & OUTPUT_COMPARE_SYNC_MASK;
+    return (control2 & OUTPUT_COMPARE_TRIGGER) == 0u &&
+           (source == OUTPUT_COMPARE_SYNC_SELF ||
+            (channel < 9u && source == OUTPUT_COMPARE_SYNC_OC_FIRST + channel));
 }
+
+static bool output_compare_internal_period(const Dspic33* cpu, uint8_t channel) {
+    return output_compare_self_synchronized(cpu, channel) ||
+           (raw_word(cpu, (uint16_t)(output_compare_base(channel) + 2u)) &
+            OUTPUT_COMPARE_TRIGGER) != 0u;
+}
+
+static void output_compare_pulse_source(Dspic33* cpu, uint8_t source);
 
 static uint32_t output_compare_boundary_delay(const Dspic33* cpu, uint8_t channel) {
     uint16_t base = output_compare_base(channel);
     uint16_t timer = raw_word(cpu, (uint16_t)(base + 8u));
     uint32_t delay = UINT32_C(0x10000) - timer;
-    if (output_compare_self_synchronized(cpu, channel) &&
+    if (output_compare_internal_period(cpu, channel) &&
         timer <= cpu->io.output_compare.active_rs[channel]) {
         delay = (uint32_t)cpu->io.output_compare.active_rs[channel] + 1u - timer;
     }
     return delay;
 }
 
-static bool output_compare_schedule_next(Dspic33* cpu, uint8_t channel,
-                                         uint64_t initial_delay) {
+static uint32_t output_compare_next_timer_event(const Dspic33* cpu, uint8_t channel,
+                                                uint32_t* kind) {
     uint16_t base = output_compare_base(channel);
     uint16_t mode = raw_word(cpu, base) & OUTPUT_COMPARE_MODE_MASK;
     uint16_t r = cpu->io.output_compare.active_r[channel];
@@ -2917,12 +2975,22 @@ static bool output_compare_schedule_next(Dspic33* cpu, uint8_t channel,
     uint16_t timer = raw_word(cpu, (uint16_t)(base + 8u));
     uint32_t boundary = output_compare_boundary_delay(cpu, channel);
     uint16_t target = r;
-    uint32_t kind = OUTPUT_COMPARE_EVENT_PRIMARY;
+    uint32_t next_kind = OUTPUT_COMPARE_EVENT_PRIMARY;
     uint32_t delay = boundary;
     bool eligible = false;
+    if ((cpu->io.output_compare.sync_reset_pending & (uint16_t)(1u << channel)) != 0u) {
+        *kind = OUTPUT_COMPARE_EVENT_EXTERNAL_SYNC;
+        return 1u;
+    }
+    if ((raw_word(cpu, (uint16_t)(base + 2u)) &
+         (OUTPUT_COMPARE_TRIGGER | OUTPUT_COMPARE_TRIGGER_STATUS)) ==
+        OUTPUT_COMPARE_TRIGGER) {
+        *kind = OUTPUT_COMPARE_EVENT_BOUNDARY;
+        return UINT32_MAX;
+    }
     if (mode == OUTPUT_COMPARE_MODE_EDGE_PWM) {
         eligible = r != 0u && timer < r;
-        if (output_compare_self_synchronized(cpu, channel)) {
+        if (output_compare_internal_period(cpu, channel)) {
             eligible = eligible && r < rs;
         }
     } else if (mode == OUTPUT_COMPARE_MODE_SINGLE_HIGH ||
@@ -2937,39 +3005,61 @@ static bool output_compare_schedule_next(Dspic33* cpu, uint8_t channel,
             eligible = timer < r;
         } else if (cpu->io.output_compare.phase[channel] == 1u) {
             target = rs;
-            kind = OUTPUT_COMPARE_EVENT_SECONDARY;
+            next_kind = OUTPUT_COMPARE_EVENT_SECONDARY;
             eligible = timer < rs;
         }
     }
     if (eligible && (uint32_t)(target - timer) < delay) {
         delay = (uint32_t)(target - timer);
     } else {
-        kind = OUTPUT_COMPARE_EVENT_BOUNDARY;
+        next_kind = OUTPUT_COMPARE_EVENT_BOUNDARY;
     }
-    if (!output_compare_self_synchronized(cpu, channel) &&
+    if (!output_compare_internal_period(cpu, channel) &&
         !cpu->io.output_compare.sync_emitted[channel] && timer <= rs) {
         uint32_t sync_delay = (uint32_t)rs + 1u - timer;
         if (sync_delay < delay) {
-            kind = OUTPUT_COMPARE_EVENT_SYNC;
+            next_kind = OUTPUT_COMPARE_EVENT_SYNC;
             delay = sync_delay;
-        } else if (sync_delay == delay && kind == OUTPUT_COMPARE_EVENT_PRIMARY) {
-            kind = OUTPUT_COMPARE_EVENT_SYNC_PRIMARY;
-        } else if (sync_delay == delay && kind == OUTPUT_COMPARE_EVENT_BOUNDARY) {
-            kind = OUTPUT_COMPARE_EVENT_SYNC_BOUNDARY;
+        } else if (sync_delay == delay && next_kind == OUTPUT_COMPARE_EVENT_PRIMARY) {
+            next_kind = OUTPUT_COMPARE_EVENT_SYNC_PRIMARY;
+        } else if (sync_delay == delay && next_kind == OUTPUT_COMPARE_EVENT_BOUNDARY) {
+            next_kind = OUTPUT_COMPARE_EVENT_SYNC_BOUNDARY;
         }
     }
-    return output_compare_schedule(cpu, channel, kind, initial_delay + delay);
+    *kind = next_kind;
+    return delay;
+}
+
+static bool output_compare_schedule_next(Dspic33* cpu, uint8_t channel,
+                                         uint64_t initial_delay) {
+    uint32_t kind;
+    uint32_t delay;
+    if (!output_compare_fp_clocked(cpu, channel)) {
+        return true;
+    }
+    delay = output_compare_next_timer_event(cpu, channel, &kind);
+    return delay == UINT32_MAX ||
+           output_compare_schedule(cpu, channel, kind, initial_delay + delay);
 }
 
 static void output_compare_start(Dspic33* cpu, uint8_t channel) {
     uint16_t base = output_compare_base(channel);
+    uint16_t bit = (uint16_t)(1u << channel);
     uint64_t activation_delay =
-        cpu->instruction_active ? cpu->current_instruction_cycles : 0u;
+        cpu->instruction_active
+            ? dspic33_device_instruction_cycles(cpu, cpu->current_instruction_cycles)
+            : 0u;
     cpu->io.output_compare.generation[channel]++;
     cpu->io.output_compare.timer_generation[channel]++;
     cpu->io.output_compare.active_rs[channel] = raw_word(cpu, (uint16_t)(base + 4u));
     cpu->io.output_compare.active_r[channel] = raw_word(cpu, (uint16_t)(base + 6u));
     cpu->io.output_compare.phase[channel] = 0u;
+    cpu->io.output_compare.sync_reset_pending &= (uint16_t)~bit;
+    if (cpu->instruction_active) {
+        cpu->io.output_compare.activation_pending |= bit;
+    } else {
+        cpu->io.output_compare.activation_pending &= (uint16_t)~bit;
+    }
     cpu->io.output_compare.sync_emitted[channel] = false;
     cpu->io.output_compare.activation_cycle[channel] =
         cpu->device_cycles + activation_delay;
@@ -2984,23 +3074,78 @@ static void output_compare_start(Dspic33* cpu, uint8_t channel) {
 }
 
 static void output_compare_stop(Dspic33* cpu, uint8_t channel) {
+    uint16_t bit = (uint16_t)(1u << channel);
     cpu->io.output_compare.generation[channel]++;
     cpu->io.output_compare.timer_generation[channel]++;
     raw_write_word(cpu, (uint16_t)(output_compare_base(channel) + 8u), 0u);
     output_compare_set_high(cpu, channel, false);
+    cpu->io.output_compare.sync_reset_pending &= (uint16_t)~bit;
+    cpu->io.output_compare.activation_pending &= (uint16_t)~bit;
     cpu->io.output_compare.phase[channel] = 0u;
     cpu->io.output_compare.sync_emitted[channel] = false;
     cpu->io.output_compare.activation_cycle[channel] = 0u;
+    if (channel < 9u) {
+        output_compare_pulse_source(cpu,
+                                    (uint8_t)(OUTPUT_COMPARE_SYNC_OC_FIRST + channel));
+    }
 }
 
 static void output_compare_raise(Dspic33* cpu, uint8_t channel) {
     dspic33_raise_interrupt(cpu, output_compare_irqs[channel]);
 }
 
+static void output_compare_pulse_source(Dspic33* cpu, uint8_t source) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_OUTPUT_COMPARE_COUNT; channel++) {
+        uint16_t base = output_compare_base(channel);
+        uint16_t control2 = raw_word(cpu, (uint16_t)(base + 2u));
+        uint16_t bit = (uint16_t)(1u << channel);
+        if (!output_compare_supported(cpu, channel) ||
+            (control2 & OUTPUT_COMPARE_SYNC_MASK) != source ||
+            output_compare_self_synchronized(cpu, channel)) {
+            continue;
+        }
+        if ((control2 & OUTPUT_COMPARE_TRIGGER) != 0u) {
+            if ((control2 & OUTPUT_COMPARE_TRIGGER_STATUS) != 0u) {
+                continue;
+            }
+            raw_write_word(cpu, (uint16_t)(base + 2u),
+                           (uint16_t)(control2 | OUTPUT_COMPARE_TRIGGER_STATUS));
+        } else {
+            if ((cpu->io.output_compare.sync_reset_pending & bit) != 0u) {
+                continue;
+            }
+            cpu->io.output_compare.sync_reset_pending |= bit;
+        }
+        cpu->io.output_compare.timer_generation[channel]++;
+        output_compare_schedule_next(cpu, channel, 0u);
+    }
+}
+
+static bool output_compare_source_awaited(const Dspic33* cpu, uint8_t source) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_OUTPUT_COMPARE_COUNT; channel++) {
+        uint16_t control2 =
+            raw_word(cpu, (uint16_t)(output_compare_base(channel) + 2u));
+        if (output_compare_supported(cpu, channel) &&
+            (control2 & OUTPUT_COMPARE_SYNC_MASK) == source &&
+            ((control2 & OUTPUT_COMPARE_TRIGGER) == 0u ||
+             (control2 & OUTPUT_COMPARE_TRIGGER_STATUS) == 0u)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void output_compare_pulse_sync_source(Dspic33* cpu, uint8_t channel) {
     if (channel < 9u) {
-        input_capture_pulse_source(cpu,
-                                   (uint8_t)(INPUT_CAPTURE_SYNC_OC_FIRST + channel));
+        uint8_t source = (uint8_t)(OUTPUT_COMPARE_SYNC_OC_FIRST + channel);
+        input_capture_pulse_source(cpu, source);
+        if (cpu->io.output_compare.clock_advancing) {
+            cpu->io.output_compare.deferred_sync_pulses |= (uint16_t)(1u << channel);
+        } else {
+            output_compare_pulse_source(cpu, source);
+        }
     }
 }
 
@@ -3082,8 +3227,14 @@ static bool output_compare_boundary(Dspic33* cpu, uint8_t channel, uint16_t mode
             }
         }
     }
-    if (output_compare_self_synchronized(cpu, channel)) {
+    if (output_compare_internal_period(cpu, channel)) {
         output_compare_pulse_sync_source(cpu, channel);
+    }
+    if ((raw_word(cpu, base) & OUTPUT_COMPARE_TRIGGER_ONESHOT) != 0u &&
+        (raw_word(cpu, (uint16_t)(base + 2u)) & OUTPUT_COMPARE_TRIGGER) != 0u) {
+        raw_write_word(cpu, (uint16_t)(base + 2u),
+                       (uint16_t)(raw_word(cpu, (uint16_t)(base + 2u)) &
+                                  ~OUTPUT_COMPARE_TRIGGER_STATUS));
     }
     return true;
 }
@@ -3103,7 +3254,8 @@ static void run_output_compare(Dspic33* cpu, uint16_t source, uint32_t value) {
                   kind == OUTPUT_COMPARE_EVENT_BOUNDARY ||
                   kind == OUTPUT_COMPARE_EVENT_SYNC ||
                   kind == OUTPUT_COMPARE_EVENT_SYNC_BOUNDARY ||
-                  kind == OUTPUT_COMPARE_EVENT_SYNC_PRIMARY;
+                  kind == OUTPUT_COMPARE_EVENT_SYNC_PRIMARY ||
+                  kind == OUTPUT_COMPARE_EVENT_EXTERNAL_SYNC;
     generation = (uint16_t)(value >> OUTPUT_COMPARE_EVENT_GENERATION_SHIFT);
     if (generation != (timer_event ? cpu->io.output_compare.timer_generation[channel]
                                    : cpu->io.output_compare.generation[channel]) ||
@@ -3137,6 +3289,12 @@ static void run_output_compare(Dspic33* cpu, uint16_t source, uint32_t value) {
             cpu->io.output_compare.sync_emitted[channel] = true;
             output_compare_pulse_sync_source(cpu, channel);
             if (!output_compare_primary_match(cpu, channel, mode)) {
+                return;
+            }
+        } else if (kind == OUTPUT_COMPARE_EVENT_EXTERNAL_SYNC) {
+            cpu->io.output_compare.sync_reset_pending &=
+                (uint16_t)~(uint16_t)(1u << channel);
+            if (!output_compare_boundary(cpu, channel, mode)) {
                 return;
             }
         } else if (kind == OUTPUT_COMPARE_EVENT_APPLY_PRIMARY) {
@@ -3185,8 +3343,18 @@ static void update_output_compare_register(Dspic33* cpu, uint16_t address,
     control2 = raw_word(cpu, (uint16_t)(base + 2u));
     previous1 = offset == 0u ? previous : control1;
     previous2 = offset == 2u ? previous : control2;
-    was_supported = output_compare_configuration_supported(previous1, previous2);
-    is_supported = output_compare_configuration_supported(control1, control2);
+    if (offset == 2u && (control1 & OUTPUT_COMPARE_TRIGGER_ONESHOT) != 0u &&
+        (control1 & OUTPUT_COMPARE_CON1_UNSUPPORTED) == 0u &&
+        (control1 & OUTPUT_COMPARE_MODE_MASK) != 0u &&
+        (control2 & OUTPUT_COMPARE_TRIGGER) != 0u &&
+        ((control2 ^ previous2) & OUTPUT_COMPARE_TRIGGER_STATUS) != 0u) {
+        control2 = (uint16_t)((control2 & ~OUTPUT_COMPARE_TRIGGER_STATUS) |
+                              (previous2 & OUTPUT_COMPARE_TRIGGER_STATUS));
+        raw_write_word(cpu, (uint16_t)(base + 2u), control2);
+    }
+    was_supported =
+        output_compare_configuration_supported(channel, previous1, previous2);
+    is_supported = output_compare_configuration_supported(channel, control1, control2);
     if (!was_supported && is_supported) {
         output_compare_start(cpu, channel);
     } else if (was_supported && !is_supported) {
@@ -3194,22 +3362,38 @@ static void update_output_compare_register(Dspic33* cpu, uint16_t address,
     } else if (was_supported && is_supported) {
         uint16_t mode = control1 & OUTPUT_COMPARE_MODE_MASK;
         bool mode_changed = (previous1 & OUTPUT_COMPARE_MODE_MASK) != mode;
+        bool trigger_changed = ((previous2 ^ control2) & OUTPUT_COMPARE_TRIGGER) != 0u;
+        bool trigger_status_changed =
+            ((previous2 ^ control2) & OUTPUT_COMPARE_TRIGGER_STATUS) != 0u;
+        bool clock_changed =
+            ((previous1 ^ control1) & OUTPUT_COMPARE_TIMER_SOURCE_MASK) != 0u;
         bool low_control_written =
             offset == 0u &&
             (!cpu->io.cpu_write_valid ||
              (cpu->io.cpu_write_address <= base &&
               cpu->io.cpu_write_address + cpu->io.cpu_write_width > base));
-        if (mode_changed ||
+        if (mode_changed || trigger_changed ||
             (mode == OUTPUT_COMPARE_MODE_DUAL_SINGLE && low_control_written)) {
             output_compare_start(cpu, channel);
-        } else if ((previous2 & OUTPUT_COMPARE_SYNC_MASK) !=
+        } else if (clock_changed || trigger_status_changed ||
+                   (previous2 & OUTPUT_COMPARE_SYNC_MASK) !=
                        (control2 & OUTPUT_COMPARE_SYNC_MASK) ||
                    ((offset == 4u || offset == 6u) &&
                     mode != OUTPUT_COMPARE_MODE_EDGE_PWM &&
                     mode != OUTPUT_COMPARE_MODE_CENTER_PWM)) {
             if ((previous2 & OUTPUT_COMPARE_SYNC_MASK) !=
-                (control2 & OUTPUT_COMPARE_SYNC_MASK)) {
+                    (control2 & OUTPUT_COMPARE_SYNC_MASK) ||
+                trigger_status_changed) {
                 cpu->io.output_compare.sync_emitted[channel] = false;
+            }
+            if ((previous2 & OUTPUT_COMPARE_SYNC_MASK) !=
+                    (control2 & OUTPUT_COMPARE_SYNC_MASK) ||
+                (trigger_status_changed &&
+                 (control2 & OUTPUT_COMPARE_TRIGGER_STATUS) != 0u)) {
+                cpu->io.output_compare.sync_reset_pending &=
+                    (uint16_t)~(uint16_t)(1u << channel);
+            } else if (trigger_status_changed) {
+                cpu->io.output_compare.sync_reset_pending |= (uint16_t)(1u << channel);
             }
             if (offset == 4u) {
                 cpu->io.output_compare.active_rs[channel] =
@@ -3218,6 +3402,23 @@ static void update_output_compare_register(Dspic33* cpu, uint16_t address,
             } else if (offset == 6u) {
                 cpu->io.output_compare.active_r[channel] =
                     raw_word(cpu, (uint16_t)(base + 6u));
+            }
+            if (trigger_status_changed) {
+                uint64_t activation_delay =
+                    cpu->instruction_active ? dspic33_device_instruction_cycles(
+                                                  cpu, cpu->current_instruction_cycles)
+                                            : 0u;
+                uint16_t bit = (uint16_t)(1u << channel);
+                cpu->io.output_compare.activation_cycle[channel] =
+                    cpu->device_cycles + activation_delay;
+                if (cpu->instruction_active) {
+                    cpu->io.output_compare.activation_pending |= bit;
+                } else {
+                    cpu->io.output_compare.activation_pending &= (uint16_t)~bit;
+                }
+                cpu->io.output_compare.timer_generation[channel]++;
+                output_compare_schedule_next(cpu, channel, activation_delay);
+                return;
             }
             cpu->io.output_compare.timer_generation[channel]++;
             output_compare_schedule_next(cpu, channel, 0u);
@@ -3228,18 +3429,92 @@ static void update_output_compare_register(Dspic33* cpu, uint16_t address,
 static void advance_output_compare(Dspic33* cpu, uint64_t cycles) {
     uint8_t channel;
     for (channel = 0u; channel < DSPIC33_OUTPUT_COMPARE_COUNT; channel++) {
-        if (output_compare_supported(cpu, channel)) {
+        if (output_compare_supported(cpu, channel) &&
+            output_compare_fp_clocked(cpu, channel)) {
             uint16_t address = (uint16_t)(output_compare_base(channel) + 8u);
+            uint16_t control2 =
+                raw_word(cpu, (uint16_t)(output_compare_base(channel) + 2u));
             uint64_t interval_start = cpu->device_cycles - cycles;
             uint64_t active_start = cpu->io.output_compare.activation_cycle[channel];
             uint64_t elapsed_start =
                 interval_start > active_start ? interval_start : active_start;
-            if (cpu->device_cycles > elapsed_start) {
+            if (cpu->device_cycles > elapsed_start &&
+                (control2 & (OUTPUT_COMPARE_TRIGGER | OUTPUT_COMPARE_TRIGGER_STATUS)) !=
+                    OUTPUT_COMPARE_TRIGGER) {
                 raw_write_word(
                     cpu, address,
                     (uint16_t)(raw_word(cpu, address) +
                                (uint16_t)(cpu->device_cycles - elapsed_start)));
             }
+        }
+    }
+}
+
+static bool output_compare_uses_timer(const Dspic33* cpu, uint8_t channel,
+                                      uint8_t timer) {
+    return output_compare_supported(cpu, channel) &&
+           !output_compare_fp_clocked(cpu, channel) &&
+           output_compare_timer_source(cpu, channel) == timer &&
+           (timer != 0u || (raw_word(cpu, timer_controls[0]) &
+                            (TIMER_EXTERNAL | TIMER_SYNC)) != TIMER_EXTERNAL);
+}
+
+static uint64_t output_compare_clock_boundary_ticks(const Dspic33* cpu, uint8_t timer) {
+    uint64_t boundary = UINT64_MAX;
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_OUTPUT_COMPARE_COUNT; channel++) {
+        uint32_t kind;
+        uint32_t delay;
+        if (!output_compare_uses_timer(cpu, channel, timer)) {
+            continue;
+        }
+        delay = output_compare_next_timer_event(cpu, channel, &kind);
+        if (delay < boundary) {
+            boundary = delay;
+        }
+    }
+    return boundary;
+}
+
+static void output_compare_advance_clock(Dspic33* cpu, uint8_t timer, uint64_t ticks) {
+    uint8_t channel;
+    uint16_t pulses;
+    cpu->io.output_compare.clock_advancing = true;
+    cpu->io.output_compare.deferred_sync_pulses = 0u;
+    for (channel = 0u; channel < DSPIC33_OUTPUT_COMPARE_COUNT; channel++) {
+        uint16_t base;
+        uint16_t bit = (uint16_t)(1u << channel);
+        uint16_t timer_address;
+        uint32_t kind;
+        uint32_t delay;
+        if (!output_compare_uses_timer(cpu, channel, timer) ||
+            ((cpu->io.output_compare.activation_pending & bit) != 0u &&
+             cpu->device_cycles <= cpu->io.output_compare.activation_cycle[channel])) {
+            continue;
+        }
+        cpu->io.output_compare.activation_pending &= (uint16_t)~bit;
+        base = output_compare_base(channel);
+        timer_address = (uint16_t)(base + 8u);
+        delay = output_compare_next_timer_event(cpu, channel, &kind);
+        if (delay == UINT32_MAX) {
+            continue;
+        }
+        raw_write_word(cpu, timer_address,
+                       (uint16_t)(raw_word(cpu, timer_address) + (uint16_t)ticks));
+        if (ticks == delay) {
+            run_output_compare(
+                cpu, channel,
+                kind | ((uint32_t)cpu->io.output_compare.timer_generation[channel]
+                        << OUTPUT_COMPARE_EVENT_GENERATION_SHIFT));
+        }
+    }
+    cpu->io.output_compare.clock_advancing = false;
+    pulses = cpu->io.output_compare.deferred_sync_pulses;
+    cpu->io.output_compare.deferred_sync_pulses = 0u;
+    for (channel = 0u; channel < 9u; channel++) {
+        if ((pulses & (uint16_t)(1u << channel)) != 0u) {
+            output_compare_pulse_source(
+                cpu, (uint8_t)(OUTPUT_COMPARE_SYNC_OC_FIRST + channel));
         }
     }
 }
@@ -3333,6 +3608,8 @@ static void comparator_raise_event(Dspic33* cpu, uint8_t comparator) {
     raw_write_word(cpu, base, (uint16_t)(raw_word(cpu, base) | COMPARATOR_EVENT));
     comparator_refresh_status(cpu);
     dspic33_raise_interrupt(cpu, COMPARATOR_IRQ);
+    output_compare_pulse_source(
+        cpu, (uint8_t)(OUTPUT_COMPARE_SYNC_COMPARATOR_FIRST + comparator));
 }
 
 static bool comparator_transition_matches(uint16_t control, bool previous,
@@ -6511,6 +6788,9 @@ static void adc_store_result(Dspic33* cpu, uint8_t module, uint8_t channel,
     }
     if ((dma & ADC_DMA_ENABLE) != 0u || increment_boundary) {
         dspic33_raise_interrupt(cpu, adc_irqs[module]);
+        if (module == 0u) {
+            output_compare_pulse_source(cpu, OUTPUT_COMPARE_SYNC_ADC1);
+        }
     }
 }
 
@@ -7971,11 +8251,10 @@ static TimerAdvance advance_counter(uint64_t current, uint64_t period, uint64_t 
 }
 
 static void signal_timer_period(Dspic33* cpu, uint8_t timer, uint64_t matches,
-                                bool gated) {
+                                bool gated, uint16_t* synchronization_sources) {
     if (matches != 0u) {
         if (timer < 5u) {
-            input_capture_pulse_source(
-                cpu, (uint8_t)(INPUT_CAPTURE_SYNC_TIMER_FIRST + timer));
+            *synchronization_sources |= (uint16_t)(1u << timer);
         }
         if (timer >= 1u && timer <= 4u) {
             dspic33_dma_request(cpu, timer_irqs[timer], 0u, 0u);
@@ -7986,7 +8265,8 @@ static void signal_timer_period(Dspic33* cpu, uint8_t timer, uint64_t matches,
     }
 }
 
-static void advance_timer_ticks(Dspic33* cpu, uint8_t timer, uint64_t ticks) {
+static void advance_timer_ticks(Dspic33* cpu, uint8_t timer, uint64_t ticks,
+                                uint16_t* synchronization_sources) {
     uint16_t control = raw_word(cpu, timer_controls[timer]);
     bool paired = timer_pair_enabled(cpu, timer);
     bool gated = (control & TIMER_GATE) != 0u && (control & TIMER_EXTERNAL) == 0u;
@@ -8004,7 +8284,8 @@ static void advance_timer_ticks(Dspic33* cpu, uint8_t timer, uint64_t ticks) {
         raw_write_word(cpu, timer_registers[timer + 1u],
                        (uint16_t)(result.value >> 16u));
         if (period != 0u) {
-            signal_timer_period(cpu, (uint8_t)(timer + 1u), result.matches, gated);
+            signal_timer_period(cpu, (uint8_t)(timer + 1u), result.matches, gated,
+                                synchronization_sources);
         }
     } else {
         uint16_t period = raw_word(cpu, timer_periods[timer]);
@@ -8012,8 +8293,24 @@ static void advance_timer_ticks(Dspic33* cpu, uint8_t timer, uint64_t ticks) {
                                               period, UINT16_MAX, ticks);
         raw_write_word(cpu, timer_registers[timer], (uint16_t)result.value);
         if (period != 0u) {
-            signal_timer_period(cpu, timer, result.matches, gated);
+            signal_timer_period(cpu, timer, result.matches, gated,
+                                synchronization_sources);
         }
+    }
+}
+
+static void pulse_timer_synchronization_sources(Dspic33* cpu, uint16_t* pending) {
+    uint16_t sources = *pending;
+    uint8_t timer = 0u;
+    *pending = 0u;
+    while (sources != 0u) {
+        if ((sources & 1u) != 0u) {
+            uint8_t source = (uint8_t)(INPUT_CAPTURE_SYNC_TIMER_FIRST + timer);
+            input_capture_pulse_source(cpu, source);
+            output_compare_pulse_source(cpu, source);
+        }
+        sources >>= 1u;
+        timer++;
     }
 }
 
@@ -8044,7 +8341,8 @@ static uint64_t timer_ticks_until_period(const Dspic33* cpu, uint8_t timer) {
     return maximum - current + 1u + period;
 }
 
-static void clock_timer(Dspic33* cpu, uint8_t timer, uint64_t clocks) {
+static void clock_timer(Dspic33* cpu, uint8_t timer, uint64_t clocks,
+                        uint16_t* synchronization_sources, bool flush_sources) {
     uint16_t control = raw_word(cpu, timer_controls[timer]);
     uint32_t prescale = timer_prescale(control);
     uint64_t accumulated = cpu->io.timer_fraction[timer] + clocks;
@@ -8055,8 +8353,21 @@ static void clock_timer(Dspic33* cpu, uint8_t timer, uint64_t clocks) {
     cpu->io.timer_fraction[timer] = (uint32_t)(accumulated % prescale);
     while (ticks != 0u) {
         uint64_t step = ticks;
-        if (signal_timer < 5u && input_capture_source_awaited(cpu, sync_source)) {
+        if (signal_timer < 5u && (input_capture_source_awaited(cpu, sync_source) ||
+                                  output_compare_source_awaited(cpu, sync_source))) {
             uint64_t boundary = timer_ticks_until_period(cpu, timer);
+            if (boundary < step) {
+                step = boundary;
+            }
+        }
+        if (timer < 5u) {
+            uint64_t boundary = output_compare_clock_boundary_ticks(cpu, timer);
+            if (boundary < step) {
+                step = boundary;
+            }
+        }
+        if (signal_timer != timer && signal_timer < 5u) {
+            uint64_t boundary = output_compare_clock_boundary_ticks(cpu, signal_timer);
             if (boundary < step) {
                 step = boundary;
             }
@@ -8065,13 +8376,21 @@ static void clock_timer(Dspic33* cpu, uint8_t timer, uint64_t clocks) {
             static const uint16_t capture_sources[5] = {0x1000u, 0x0400u, 0x0000u,
                                                         0x0800u, 0x0c00u};
             input_capture_advance_clock(cpu, capture_sources[timer], step);
+            output_compare_advance_clock(cpu, timer, step);
+            if (signal_timer != timer && signal_timer < 5u) {
+                output_compare_advance_clock(cpu, signal_timer, step);
+            }
         }
-        advance_timer_ticks(cpu, timer, step);
+        advance_timer_ticks(cpu, timer, step, synchronization_sources);
+        if (flush_sources) {
+            pulse_timer_synchronization_sources(cpu, synchronization_sources);
+        }
         ticks -= step;
     }
 }
 
 static void pulse_timer(Dspic33* cpu, uint8_t timer, uint32_t pulses) {
+    uint16_t synchronization_sources = 0u;
     uint16_t bit;
     uint16_t control;
     if (timer >= DSPIC33_TIMER_COUNT || pulses == 0u ||
@@ -8089,7 +8408,8 @@ static void pulse_timer(Dspic33* cpu, uint8_t timer, uint32_t pulses) {
         cpu->io.timer_external_started |= bit;
         pulses--;
     }
-    clock_timer(cpu, timer, pulses);
+    clock_timer(cpu, timer, pulses, &synchronization_sources, true);
+    pulse_timer_synchronization_sources(cpu, &synchronization_sources);
 }
 
 static void set_timer_gate(Dspic33* cpu, uint8_t timer, bool high) {
@@ -8816,6 +9136,11 @@ static void remove_nvm_events(Dspic33* cpu) {
 static void process_event(Dspic33* cpu, const Dspic33Event* event) {
     switch (event->type) {
     case DSPIC33_EVENT_INTERRUPT:
+        if (event->source == 20u) {
+            output_compare_pulse_source(cpu, OUTPUT_COMPARE_SYNC_INT1);
+        } else if (event->source == 29u) {
+            output_compare_pulse_source(cpu, OUTPUT_COMPARE_SYNC_INT2);
+        }
         dspic33_raise_interrupt(cpu, event->source);
         break;
     case DSPIC33_EVENT_TIMER:
@@ -8930,6 +9255,7 @@ static void raise_pending_timer_interrupts(Dspic33* cpu) {
 
 static void advance_timers(Dspic33* cpu, uint64_t cycles) {
     uint16_t enabled = cpu->io.timer_enabled;
+    uint16_t synchronization_sources = 0u;
     uint8_t timer = 0u;
     while (enabled != 0u) {
         if ((enabled & 1u) != 0u) {
@@ -8938,12 +9264,13 @@ static void advance_timers(Dspic33* cpu, uint64_t cycles) {
             bool gate_high = (cpu->io.timer_gate & (uint16_t)(1u << timer)) != 0u;
             if (!timer_is_paired_high(cpu, timer) && (control & TIMER_EXTERNAL) == 0u &&
                 timer_power_enabled(cpu, timer, false) && (!gated || gate_high)) {
-                clock_timer(cpu, timer, cycles);
+                clock_timer(cpu, timer, cycles, &synchronization_sources, false);
             }
         }
         enabled >>= 1u;
         timer++;
     }
+    pulse_timer_synchronization_sources(cpu, &synchronization_sources);
 }
 
 static uint64_t timer_sync_boundary_cycles(const Dspic33* cpu, uint64_t limit) {
@@ -8962,25 +9289,34 @@ static uint64_t timer_sync_boundary_cycles(const Dspic33* cpu, uint64_t limit) {
             !timer_power_enabled(cpu, timer, false) || (gated && !gate_high)) {
             continue;
         }
-        if (timer_pair_enabled(cpu, timer)) {
-            if (timer + 1u >= 5u) {
-                continue;
+        {
+            uint8_t signal_timer =
+                timer_pair_enabled(cpu, timer) ? (uint8_t)(timer + 1u) : timer;
+            uint8_t source = (uint8_t)(INPUT_CAPTURE_SYNC_TIMER_FIRST + signal_timer);
+            uint64_t clock_boundary = output_compare_clock_boundary_ticks(cpu, timer);
+            if (signal_timer != timer && signal_timer < 5u) {
+                uint64_t high_boundary =
+                    output_compare_clock_boundary_ticks(cpu, signal_timer);
+                if (high_boundary < clock_boundary) {
+                    clock_boundary = high_boundary;
+                }
             }
-            if (!input_capture_source_awaited(
-                    cpu, (uint8_t)(INPUT_CAPTURE_SYNC_TIMER_FIRST + timer + 1u))) {
-                continue;
+            ticks = UINT64_MAX;
+            if (signal_timer < 5u && (input_capture_source_awaited(cpu, source) ||
+                                      output_compare_source_awaited(cpu, source))) {
+                ticks = timer_ticks_until_period(cpu, timer);
             }
-        } else {
-            if (!input_capture_source_awaited(
-                    cpu, (uint8_t)(INPUT_CAPTURE_SYNC_TIMER_FIRST + timer))) {
-                continue;
+            if (clock_boundary < ticks) {
+                ticks = clock_boundary;
             }
         }
-        ticks = timer_ticks_until_period(cpu, timer);
         if (ticks == UINT64_MAX) {
             continue;
         }
         prescale = timer_prescale(control);
+        if (ticks > UINT64_MAX / prescale) {
+            continue;
+        }
         cycles = ticks * prescale - cpu->io.timer_fraction[timer];
         if (cycles < boundary) {
             boundary = cycles;
@@ -8992,9 +9328,9 @@ static uint64_t timer_sync_boundary_cycles(const Dspic33* cpu, uint64_t limit) {
 static void advance_device_cycles(Dspic33* cpu, uint64_t cycles) {
     cpu->device_cycles += cycles;
     advance_input_capture(cpu, cycles);
+    advance_output_compare(cpu, cycles);
     advance_timers(cpu, cycles);
     advance_pwm(cpu, cycles);
-    advance_output_compare(cpu, cycles);
     advance_qei(cpu, cycles);
     comparator_evaluate_all(cpu);
 }

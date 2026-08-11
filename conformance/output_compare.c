@@ -22,8 +22,15 @@ enum {
     COMPARE_FP_EDGE_PWM = 0x1c06u,
     COMPARE_NO_SYNC = 0x0000u,
     COMPARE_SELF_SYNC = 0x001fu,
-    COMPARE_VECTOR = 0x0240u
+    COMPARE_VECTOR = 0x0240u,
+    COMPARE_TRIGGER = 0x0080u,
+    COMPARE_TRIGGER_STATUS = 0x0040u,
+    COMPARE_TRIGGER_ONESHOT = 0x0008u
 };
+
+static const uint16_t timer_registers[] = {0x0100u, 0x0106u, 0x010au, 0x0114u, 0x0118u};
+static const uint16_t timer_periods[] = {0x0102u, 0x010cu, 0x010eu, 0x011au, 0x011cu};
+static const uint16_t timer_controls[] = {0x0104u, 0x0110u, 0x0112u, 0x011eu, 0x0120u};
 
 static void expect(OutputCompareConformance* state, bool condition, const char* name) {
     state->cases++;
@@ -931,9 +938,882 @@ static void unsupported_cases(OutputCompareConformance* state, Dspic33* cpu) {
                      "trigger mode is excluded");
     unsupported_case(state, cpu, 0x3c06u, COMPARE_SELF_SYNC,
                      "stop-in-idle mode is excluded");
-    unsupported_case(state, cpu, 0x1c0eu, COMPARE_SELF_SYNC,
-                     "one-shot trigger control is excluded");
+    unsupported_case(state, cpu, 0x1c0eu, (uint16_t)(COMPARE_TRIGGER | 1u),
+                     "one-shot self trigger is excluded");
     unsupported_case(state, cpu, 0x1c86u, COMPARE_SELF_SYNC, "fault input is excluded");
+}
+
+static void alternate_clock_cases(OutputCompareConformance* state, Dspic33* cpu) {
+    static const uint8_t selections[] = {4u, 0u, 1u, 2u, 3u};
+    static const uint8_t timers[] = {0u, 1u, 2u, 3u, 4u};
+    uint8_t channel;
+    size_t index;
+    for (channel = 0u; channel < DSPIC33_OUTPUT_COMPARE_COUNT; channel++) {
+        for (index = 0u; index < sizeof(selections) / sizeof(selections[0]); index++) {
+            uint16_t base = compare_base(channel);
+            uint8_t timer = timers[index];
+            dspic33_reset(cpu, 0u);
+            dspic33_write_word(cpu, timer_periods[timer], 100u);
+            dspic33_write_word(cpu, timer_controls[timer], 0x8000u);
+            dspic33_write_word(cpu, (uint16_t)(base + 4u), 4u);
+            dspic33_write_word(cpu, (uint16_t)(base + 6u), 2u);
+            dspic33_write_word(cpu, base,
+                               (uint16_t)((uint16_t)selections[index] << 10u | 6u));
+            dspic33_write_word(cpu, (uint16_t)(base + 2u), COMPARE_SELF_SYNC);
+            expect(state,
+                   output_is(cpu, channel, true) &&
+                       dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0u,
+                   "alternate clock starts PWM at zero");
+            expect(state, dspic33_device_advance(cpu, 2u),
+                   "advance alternate clock to duty");
+            expect(state,
+                   output_is(cpu, channel, false) &&
+                       dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 2u &&
+                       dspic33_read_word(cpu, timer_registers[timer]) == 2u,
+                   "selected timer clock reaches OC duty match");
+            expect(state, dspic33_device_advance(cpu, 2u),
+                   "advance alternate clock through period value");
+            expect(state,
+                   dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 4u &&
+                       !interrupt_flag(cpu, channel),
+                   "alternate clock retains final period value");
+            expect(state, dspic33_device_advance(cpu, 1u),
+                   "advance alternate clock through rollover");
+            expect(state,
+                   output_is(cpu, channel, true) &&
+                       dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0u &&
+                       interrupt_flag(cpu, channel),
+                   "alternate clock resets and raises PWM interrupt");
+        }
+    }
+}
+
+static bool prepare_compare_trigger_source(Dspic33* cpu, uint8_t source) {
+    if (source >= 1u && source <= 9u) {
+        configure_compare_mode(cpu, (uint8_t)(source - 1u), 5u, 1u, 0u,
+                               COMPARE_NO_SYNC);
+        return true;
+    }
+    if (source >= 11u && source <= 15u) {
+        uint8_t timer = (uint8_t)(source - 11u);
+        dspic33_write_word(cpu, timer_periods[timer], 1u);
+        dspic33_write_word(cpu, timer_controls[timer], 0x8000u);
+        return true;
+    }
+    if (source >= 16u && source <= 23u) {
+        uint16_t base = (uint16_t)(0x0140u + (source - 16u) * 8u);
+        dspic33_write_word(cpu, base, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 2u), 0u);
+        dspic33_write_word(cpu, base, 0x1c03u);
+        return true;
+    }
+    if (source >= 24u && source <= 26u) {
+        uint16_t base = (uint16_t)(0x0a84u + (source - 24u) * 8u);
+        dspic33_write_word(cpu, base, 0x8040u);
+        return true;
+    }
+    if (source == 27u) {
+        dspic33_write_word(cpu, 0x0320u, 0x8000u);
+        return true;
+    }
+    return source == 29u || source == 30u;
+}
+
+static bool emit_compare_trigger_source(Dspic33* cpu, uint8_t source) {
+    if (source >= 1u && source <= 9u) {
+        return dspic33_device_advance(cpu, 2u);
+    }
+    if (source >= 11u && source <= 15u) {
+        return dspic33_device_advance(cpu, 1u);
+    }
+    if (source >= 16u && source <= 23u) {
+        return dspic33_input_capture_input(cpu, (uint8_t)(source - 16u), true, 0u) &&
+               dspic33_device_advance(cpu, 3u);
+    }
+    if (source >= 24u && source <= 26u) {
+        return dspic33_comparator_input(cpu, (uint8_t)(source - 24u),
+                                        DSPIC33_COMPARATOR_INPUT_POSITIVE, 1u, 0u) &&
+               dspic33_device_advance(cpu, 0u);
+    }
+    if (source == 27u) {
+        dspic33_write_word(cpu, 0x0320u, 0x8002u);
+        dspic33_write_word(cpu, 0x0320u, 0x8000u);
+        return dspic33_device_advance(cpu, 12u);
+    }
+    if (source == 29u || source == 30u) {
+        uint16_t irq = source == 29u ? 20u : 29u;
+        return dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, irq, 0u, 1u) &&
+               dspic33_device_advance(cpu, 1u);
+    }
+    return false;
+}
+
+static void trigger_source_cases(OutputCompareConformance* state, Dspic33* cpu) {
+    static const uint8_t sources[] = {1u,  2u,  3u,  4u,  5u,  6u,  7u,  8u,  9u,  11u,
+                                      12u, 13u, 14u, 15u, 16u, 17u, 18u, 19u, 20u, 21u,
+                                      22u, 23u, 24u, 25u, 26u, 27u, 29u, 30u};
+    size_t index;
+    for (index = 0u; index < sizeof(sources) / sizeof(sources[0]); index++) {
+        uint8_t source = sources[index];
+        uint16_t base = compare_base(15u);
+        dspic33_reset(cpu, 0u);
+        expect(state, prepare_compare_trigger_source(cpu, source),
+               "prepare documented OC trigger source");
+        configure_compare_mode(cpu, 15u, 6u, 4u, 2u,
+                               (uint16_t)(COMPARE_TRIGGER | source));
+        expect(state,
+               dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 2u)) &
+                    COMPARE_TRIGGER_STATUS) == 0u,
+               "triggered OC timer starts held clear");
+        expect(state, emit_compare_trigger_source(cpu, source),
+               "emit documented OC trigger source");
+        expect(state,
+               dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 2u)) &
+                    COMPARE_TRIGGER_STATUS) != 0u,
+               "documented source sets OC trigger status without same-edge count");
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "advance first clock after OC trigger");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 1u,
+               "triggered OC timer counts on following clock");
+    }
+
+    dspic33_reset(cpu, 0u);
+    configure_compare_mode(cpu, 15u, 6u, 4u, 2u, COMPARE_TRIGGER);
+    expect(state, dspic33_device_advance(cpu, 5u),
+           "advance software-only triggered OC while held");
+    expect(state, dspic33_read_word(cpu, 0x099eu) == 0u,
+           "zero trigger source remains software-only");
+    dspic33_write_word(cpu, 0x0998u,
+                       (uint16_t)(COMPARE_TRIGGER | COMPARE_TRIGGER_STATUS));
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "advance software-released OC trigger");
+    expect(state,
+           dspic33_read_word(cpu, 0x099eu) == 1u &&
+               (dspic33_read_word(cpu, 0x0998u) & COMPARE_TRIGGER_STATUS) != 0u,
+           "software sets trigger status for source zero");
+
+    dspic33_reset(cpu, 0u);
+    configure_compare_mode(cpu, 15u, 6u, 4u, 2u, (uint16_t)(COMPARE_TRIGGER | 10u));
+    expect(state, dspic33_device_advance(cpu, 5u),
+           "advance no-source trigger while held");
+    expect(state,
+           dspic33_read_word(cpu, 0x099eu) == 0u &&
+               (dspic33_read_word(cpu, 0x0998u) & COMPARE_TRIGGER_STATUS) == 0u,
+           "no-source trigger remains software controlled");
+    unsupported_case(state, cpu, COMPARE_FP_EDGE_PWM, 28u,
+                     "reserved OC synchronization source is inactive");
+    unsupported_case(state, cpu, COMPARE_FP_EDGE_PWM, 16u,
+                     "input capture synchronization is excluded");
+    unsupported_case(state, cpu, COMPARE_FP_EDGE_PWM, (uint16_t)(COMPARE_TRIGGER | 1u),
+                     "OC cannot select itself as alternate trigger source");
+}
+
+static void trigger_one_shot_cases(OutputCompareConformance* state, Dspic33* cpu) {
+    uint16_t control2;
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0904u, 2u);
+    dspic33_write_word(cpu, 0x0906u, 1u);
+    dspic33_write_word(cpu, 0x0900u,
+                       (uint16_t)(COMPARE_FP | COMPARE_TRIGGER_ONESHOT | 6u));
+    dspic33_write_word(cpu, 0x0902u,
+                       (uint16_t)(COMPARE_TRIGGER | COMPARE_TRIGGER_STATUS | 29u));
+    expect(state, (dspic33_read_word(cpu, 0x0902u) & COMPARE_TRIGGER_STATUS) == 0u,
+           "one-shot trigger status rejects software set");
+    expect(state,
+           dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 20u, 0u, 1u) &&
+               dspic33_device_advance(cpu, 1u),
+           "emit first one-shot trigger");
+    expect(state,
+           (dspic33_read_word(cpu, 0x0902u) & COMPARE_TRIGGER_STATUS) != 0u &&
+               dspic33_read_word(cpu, 0x0908u) == 0u,
+           "hardware releases one-shot timer");
+    expect(state, dspic33_device_advance(cpu, 3u),
+           "advance one-shot trigger through period");
+    expect(state,
+           (dspic33_read_word(cpu, 0x0902u) & COMPARE_TRIGGER_STATUS) == 0u &&
+               dspic33_read_word(cpu, 0x0908u) == 0u && interrupt_flag(cpu, 0u),
+           "one-shot rollover clears trigger status and holds timer");
+    clear_interrupt(cpu, 0u);
+    expect(state, dspic33_device_advance(cpu, 2u), "advance held one-shot timer");
+    expect(state, dspic33_read_word(cpu, 0x0908u) == 0u,
+           "one-shot timer remains held for next trigger");
+    expect(state,
+           dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 20u, 0u, 1u) &&
+               dspic33_device_advance(cpu, 2u),
+           "retrigger one-shot timer");
+    control2 = dspic33_read_word(cpu, 0x0902u);
+    expect(state,
+           (control2 & COMPARE_TRIGGER_STATUS) != 0u &&
+               dspic33_read_word(cpu, 0x0908u) == 1u,
+           "new hardware trigger starts another one-shot period");
+}
+
+static void synchronization_source_cases(OutputCompareConformance* state,
+                                         Dspic33* cpu) {
+    static const uint8_t sources[] = {1u,  2u,  3u,  4u,  5u,  6u,  7u,  8u,  9u,  11u,
+                                      12u, 13u, 14u, 15u, 24u, 25u, 26u, 27u, 29u, 30u};
+    size_t index;
+    for (index = 0u; index < sizeof(sources) / sizeof(sources[0]); index++) {
+        uint8_t source = sources[index];
+        uint16_t base = compare_base(15u);
+        dspic33_reset(cpu, 0u);
+        expect(state, prepare_compare_trigger_source(cpu, source),
+               "prepare documented OC synchronization source");
+        configure_compare_mode(cpu, 15u, 6u, 100u, 50u, source);
+        expect(state, emit_compare_trigger_source(cpu, source),
+               "emit documented OC synchronization source");
+        expect(state,
+               (cpu->io.output_compare.sync_reset_pending & 0x8000u) != 0u &&
+                   !interrupt_flag(cpu, 15u),
+               "synchronization pulse preserves timer through source edge");
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "advance clock after OC synchronization pulse");
+        expect(state,
+               dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0u &&
+                   interrupt_flag(cpu, 15u),
+               "synchronization resets OC timer on following clock");
+    }
+}
+
+static void alternate_clock_batch_cases(OutputCompareConformance* state, Dspic33* cpu) {
+    Dspic33 copy;
+    bool initialized = dspic33_initialize(&copy);
+    uint64_t cycle;
+    expect(state, initialized, "initialize alternate-clock batch copy");
+    if (!initialized) {
+        return;
+    }
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, timer_periods[2], 100u);
+    dspic33_write_word(cpu, timer_controls[2], 0x8010u);
+    dspic33_write_word(cpu, 0x0904u, 4u);
+    dspic33_write_word(cpu, 0x0906u, 2u);
+    dspic33_write_word(cpu, 0x0900u, 0x0406u);
+    dspic33_write_word(cpu, 0x0902u, COMPARE_SELF_SYNC);
+    expect(state, dspic33_copy(&copy, cpu), "copy prescaled alternate OC clock");
+    expect(state, dspic33_device_advance(cpu, 160u),
+           "batch advance prescaled alternate OC clock");
+    for (cycle = 0u; cycle < 160u; cycle++) {
+        if (!dspic33_device_advance(&copy, 1u)) {
+            break;
+        }
+    }
+    expect(state, cycle == 160u, "step prescaled alternate OC clock");
+    expect(state,
+           dspic33_read_word(cpu, 0x0908u) == dspic33_read_word(&copy, 0x0908u) &&
+               dspic33_read_word(cpu, timer_registers[2]) ==
+                   dspic33_read_word(&copy, timer_registers[2]) &&
+               (cpu->io.output_compare.output_high & 1u) ==
+                   (copy.io.output_compare.output_high & 1u) &&
+               interrupt_flag(cpu, 0u) == interrupt_flag(&copy, 0u) &&
+               cpu->device_cycles == copy.device_cycles,
+           "batched alternate OC clock matches stepped execution");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, timer_periods[0], 2u);
+    dspic33_write_word(cpu, timer_controls[0], 0x8000u);
+    configure_compare_mode(cpu, 15u, 6u, 100u, 50u, 11u);
+    expect(state, dspic33_copy(&copy, cpu), "copy timer-synchronized OC state");
+    expect(state, dspic33_device_advance(cpu, 25u),
+           "batch advance repeated timer synchronization");
+    for (cycle = 0u; cycle < 25u; cycle++) {
+        if (!dspic33_device_advance(&copy, 1u)) {
+            break;
+        }
+    }
+    expect(state, cycle == 25u, "step repeated timer synchronization");
+    expect(state,
+           dspic33_read_word(cpu, 0x099eu) == dspic33_read_word(&copy, 0x099eu) &&
+               dspic33_read_word(cpu, timer_registers[0]) ==
+                   dspic33_read_word(&copy, timer_registers[0]) &&
+               interrupt_flag(cpu, 15u) == interrupt_flag(&copy, 15u) &&
+               cpu->events.count == copy.events.count,
+           "batched timer synchronization matches stepped execution");
+    dspic33_destroy(&copy);
+}
+
+static void timer_clock_synchronization_cases(OutputCompareConformance* state,
+                                              Dspic33* cpu) {
+    static const uint8_t selections[] = {4u, 0u, 1u, 2u, 3u};
+    uint8_t timer;
+    for (timer = 0u; timer < 5u; timer++) {
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, timer_periods[timer], 2u);
+        dspic33_write_word(cpu, timer_controls[timer], 0x8000u);
+        dspic33_write_word(cpu, 0x0904u, 100u);
+        dspic33_write_word(cpu, 0x0906u, 50u);
+        dspic33_write_word(cpu, 0x0900u,
+                           (uint16_t)((uint16_t)selections[timer] << 10u | 6u));
+        dspic33_write_word(cpu, 0x0902u, (uint16_t)(11u + timer));
+        expect(state, dspic33_device_advance(cpu, 2u),
+               "advance common timer clock to synchronization match");
+        expect(state,
+               dspic33_read_word(cpu, 0x0908u) == 2u &&
+                   (cpu->io.output_compare.sync_reset_pending & 1u) != 0u,
+               "timer match requests synchronization after common clock edge");
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "advance common clock through synchronization reset");
+        expect(state, dspic33_read_word(cpu, 0x0908u) == 0u && interrupt_flag(cpu, 0u),
+               "common timer clock resets OC on following edge");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, timer_periods[timer], 2u);
+        dspic33_write_word(cpu, timer_controls[timer], 0x8000u);
+        dspic33_write_word(cpu, 0x0904u, 4u);
+        dspic33_write_word(cpu, 0x0906u, 2u);
+        dspic33_write_word(cpu, 0x0900u,
+                           (uint16_t)((uint16_t)selections[timer] << 10u | 6u));
+        dspic33_write_word(cpu, 0x0902u,
+                           (uint16_t)(COMPARE_TRIGGER | (uint16_t)(11u + timer)));
+        expect(state, dspic33_device_advance(cpu, 2u),
+               "advance common timer clock to trigger match");
+        expect(state,
+               dspic33_read_word(cpu, 0x0908u) == 0u &&
+                   (dspic33_read_word(cpu, 0x0902u) & COMPARE_TRIGGER_STATUS) != 0u,
+               "timer match releases trigger without same-edge count");
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "advance common timer clock after trigger");
+        expect(state, dspic33_read_word(cpu, 0x0908u) == 1u,
+               "common timer clock counts after trigger edge");
+    }
+}
+
+static void cross_timer_source_ordering_cases(OutputCompareConformance* state,
+                                              Dspic33* cpu) {
+    static const uint8_t source_timers[] = {0u, 1u};
+    static const uint8_t clock_timers[] = {1u, 0u};
+    size_t order;
+    for (order = 0u; order < 2u; order++) {
+        uint8_t source_timer = source_timers[order];
+        uint8_t clock_timer = clock_timers[order];
+        uint16_t clock_selection = clock_timer == 0u ? 0x1000u : 0u;
+        uint16_t source = (uint16_t)(11u + source_timer);
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, timer_periods[source_timer], 1u);
+        dspic33_write_word(cpu, timer_periods[clock_timer], 100u);
+        dspic33_write_word(cpu, timer_controls[source_timer], 0x8000u);
+        dspic33_write_word(cpu, timer_controls[clock_timer], 0x8000u);
+        configure_compare_mode(cpu, 0u, 6u, 100u, 50u,
+                               (uint16_t)(COMPARE_TRIGGER | source));
+        dspic33_write_word(cpu, 0x0900u, (uint16_t)(clock_selection | 6u));
+        expect(state,
+               dspic33_device_advance(cpu, 1u) &&
+                   (dspic33_read_word(cpu, 0x0902u) & COMPARE_TRIGGER_STATUS) != 0u &&
+                   dspic33_read_word(cpu, 0x0908u) == 0u,
+               "cross-timer trigger does not count on the source edge");
+        expect(state,
+               dspic33_device_advance(cpu, 1u) && dspic33_read_word(cpu, 0x0908u) == 1u,
+               "cross-timer trigger counts on the following selected clock");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, timer_periods[source_timer], 1u);
+        dspic33_write_word(cpu, timer_periods[clock_timer], 100u);
+        dspic33_write_word(cpu, timer_controls[clock_timer], 0x8000u);
+        configure_compare_mode(cpu, 0u, 6u, 100u, 50u, source);
+        dspic33_write_word(cpu, 0x0900u, (uint16_t)(clock_selection | 6u));
+        expect(state,
+               dspic33_device_advance(cpu, 5u) && dspic33_read_word(cpu, 0x0908u) == 5u,
+               "cross-timer synchronization starts from a nonzero timer");
+        dspic33_write_word(cpu, timer_controls[source_timer], 0x8000u);
+        expect(state,
+               dspic33_device_advance(cpu, 1u) &&
+                   dspic33_read_word(cpu, 0x0908u) == 6u &&
+                   (cpu->io.output_compare.sync_reset_pending & 1u) != 0u,
+               "cross-timer synchronization remains pending on the source edge");
+        expect(state,
+               dspic33_device_advance(cpu, 1u) &&
+                   dspic33_read_word(cpu, 0x0908u) == 0u &&
+                   (cpu->io.output_compare.sync_reset_pending & 1u) == 0u,
+               "cross-timer synchronization resets on the following selected clock");
+    }
+}
+
+static void synchronization_control_cases(OutputCompareConformance* state,
+                                          Dspic33* cpu) {
+    uint16_t generation;
+    dspic33_reset(cpu, 0u);
+    configure_compare_mode(cpu, 0u, 6u, 2u, 1u, 1u);
+    expect(state, dspic33_device_advance(cpu, 2u),
+           "advance alternate self-selection period");
+    expect(state, dspic33_read_word(cpu, 0x0908u) == 2u,
+           "alternate self-selection retains final period value");
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "advance alternate self-selection rollover");
+    expect(state, dspic33_read_word(cpu, 0x0908u) == 0u && interrupt_flag(cpu, 0u),
+           "channel-number self-selection uses secondary period");
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "advance channel-number self-selection after rollover");
+    expect(state,
+           dspic33_read_word(cpu, 0x0908u) == 1u &&
+               (cpu->io.output_compare.sync_reset_pending & 1u) == 0u,
+           "alternate self-selection does not queue a duplicate reset");
+
+    dspic33_reset(cpu, 0u);
+    configure_compare_mode(cpu, 0u, 5u, 2u, 1u, COMPARE_NO_SYNC);
+    configure_compare_mode(cpu, 15u, 6u, 4u, 2u, (uint16_t)(COMPARE_TRIGGER | 1u));
+    dspic33_write_word(cpu, 0x0900u, 0u);
+    expect(state, (dspic33_read_word(cpu, 0x0998u) & COMPARE_TRIGGER_STATUS) != 0u,
+           "disabling OC source emits documented trigger pulse");
+
+    dspic33_reset(cpu, 0u);
+    configure_compare_mode(cpu, 15u, 6u, 100u, 50u, 29u);
+    expect(state,
+           dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 20u, 0u, 1u) &&
+               dspic33_device_advance(cpu, 1u),
+           "queue synchronization before source replacement");
+    expect(state, (cpu->io.output_compare.sync_reset_pending & 0x8000u) != 0u,
+           "old source leaves synchronization pending");
+    dspic33_write_word(cpu, 0x0998u, 30u);
+    expect(state, (cpu->io.output_compare.sync_reset_pending & 0x8000u) == 0u,
+           "source replacement cancels pending synchronization");
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "advance stale synchronization event");
+    expect(state, dspic33_read_word(cpu, 0x099eu) == 2u && !interrupt_flag(cpu, 15u),
+           "stale synchronization event cannot reset replaced source");
+
+    dspic33_reset(cpu, 0u);
+    configure_compare_mode(cpu, 15u, 6u, 4u, 2u, (uint16_t)(COMPARE_TRIGGER | 29u));
+    generation = cpu->io.output_compare.timer_generation[15u];
+    expect(state,
+           dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 20u, 0u, 1u) &&
+               dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 20u, 0u, 1u) &&
+               dspic33_device_advance(cpu, 1u),
+           "emit repeated trigger pulses on one cycle");
+    expect(state,
+           (dspic33_read_word(cpu, 0x0998u) & COMPARE_TRIGGER_STATUS) != 0u &&
+               cpu->io.output_compare.timer_generation[15u] ==
+                   (uint16_t)(generation + 1u),
+           "trigger status coalesces repeated source pulses");
+
+    dspic33_reset(cpu, 0u);
+    configure_compare_mode(cpu, 15u, 6u, 4u, 2u, COMPARE_TRIGGER);
+    dspic33_write_word(cpu, 0x0998u,
+                       (uint16_t)(COMPARE_TRIGGER | COMPARE_TRIGGER_STATUS));
+    expect(state, dspic33_device_advance(cpu, 2u),
+           "advance software-triggered OC before clear");
+    dspic33_write_word(cpu, 0x0998u, COMPARE_TRIGGER);
+    expect(state,
+           dspic33_read_word(cpu, 0x099eu) == 2u &&
+               (cpu->io.output_compare.sync_reset_pending & 0x8000u) != 0u,
+           "software trigger clear waits for the next clock reset");
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "advance software trigger clear edge");
+    expect(state,
+           dspic33_read_word(cpu, 0x099eu) == 0u &&
+               (cpu->io.output_compare.sync_reset_pending & 0x8000u) == 0u &&
+               (dspic33_read_word(cpu, 0x0998u) & COMPARE_TRIGGER_STATUS) == 0u,
+           "software trigger clear resets and holds the timer");
+
+    dspic33_reset(cpu, 0u);
+    configure_compare_mode(cpu, 0u, 6u, 2u, 1u, (uint16_t)(COMPARE_TRIGGER | 29u));
+    configure_compare_mode(cpu, 15u, 6u, 4u, 2u, (uint16_t)(COMPARE_TRIGGER | 1u));
+    expect(state,
+           dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 20u, 0u, 1u) &&
+               dspic33_device_advance(cpu, 4u),
+           "advance triggered OC source through its period");
+    expect(state,
+           (dspic33_read_word(cpu, 0x0998u) & COMPARE_TRIGGER_STATUS) != 0u &&
+               dspic33_read_word(cpu, 0x099eu) == 0u,
+           "triggered OC period emits downstream trigger output");
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "advance downstream OC after triggered source period");
+    expect(state, dspic33_read_word(cpu, 0x099eu) == 1u,
+           "downstream OC counts after triggered source output");
+}
+
+static void alternate_clock_control_cases(OutputCompareConformance* state,
+                                          Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0904u, 100u);
+    dspic33_write_word(cpu, 0x0906u, 50u);
+    dspic33_write_word(cpu, 0x0900u, 0x0006u);
+    dspic33_write_word(cpu, 0x0902u, COMPARE_SELF_SYNC);
+    expect(state, dspic33_device_advance(cpu, 5u),
+           "advance OC with selected timer stopped");
+    expect(state, dspic33_read_word(cpu, 0x0908u) == 0u,
+           "stopped selected timer supplies no OC clocks");
+    dspic33_write_word(cpu, timer_periods[1], 100u);
+    dspic33_write_word(cpu, timer_controls[1], 0x8000u);
+    expect(state, dspic33_device_advance(cpu, 1u), "start selected timer clock");
+    expect(state, dspic33_read_word(cpu, 0x0908u) == 1u,
+           "started selected timer advances OC");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, timer_periods[1], 100u);
+    dspic33_write_word(cpu, timer_controls[1], 0x8040u);
+    dspic33_write_word(cpu, 0x0904u, 100u);
+    dspic33_write_word(cpu, 0x0906u, 50u);
+    dspic33_write_word(cpu, 0x0900u, 0x0006u);
+    dspic33_write_word(cpu, 0x0902u, COMPARE_SELF_SYNC);
+    expect(state, dspic33_device_advance(cpu, 3u),
+           "advance gated selected timer while gate low");
+    expect(state, dspic33_read_word(cpu, 0x0908u) == 0u,
+           "low timer gate suppresses selected OC clock");
+    expect(state,
+           dspic33_timer_gate(cpu, 1u, true, 0u) && dspic33_device_advance(cpu, 0u) &&
+               dspic33_device_advance(cpu, 2u),
+           "raise selected timer gate and advance");
+    expect(state, dspic33_read_word(cpu, 0x0908u) == 2u,
+           "high timer gate supplies selected OC clocks");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, timer_periods[1], 100u);
+    dspic33_write_word(cpu, timer_controls[1], 0x8002u);
+    dspic33_write_word(cpu, 0x0904u, 100u);
+    dspic33_write_word(cpu, 0x0906u, 50u);
+    dspic33_write_word(cpu, 0x0900u, 0x0006u);
+    dspic33_write_word(cpu, 0x0902u, COMPARE_SELF_SYNC);
+    expect(state,
+           dspic33_timer_pulse(cpu, 1u, 3u, 0u) && dspic33_device_advance(cpu, 0u),
+           "pulse external selected timer clock");
+    expect(state,
+           dspic33_read_word(cpu, timer_registers[1]) == 2u &&
+               dspic33_read_word(cpu, 0x0908u) == 2u,
+           "external timer pulses clock OC after synchronizer start");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, timer_periods[0], 100u);
+    dspic33_write_word(cpu, timer_controls[0], 0x8002u);
+    dspic33_write_word(cpu, 0x0904u, 100u);
+    dspic33_write_word(cpu, 0x0906u, 50u);
+    dspic33_write_word(cpu, 0x0900u, 0x1006u);
+    dspic33_write_word(cpu, 0x0902u, COMPARE_SELF_SYNC);
+    expect(state,
+           dspic33_timer_pulse(cpu, 0u, 3u, 0u) && dspic33_device_advance(cpu, 0u),
+           "pulse asynchronous Timer1 source");
+    expect(state,
+           dspic33_read_word(cpu, timer_registers[0]) == 2u &&
+               dspic33_read_word(cpu, 0x0908u) == 0u,
+           "asynchronous Timer1 clock is unavailable to OC");
+    dspic33_write_word(cpu, timer_controls[0], 0x8006u);
+    expect(state,
+           dspic33_timer_pulse(cpu, 0u, 3u, 0u) && dspic33_device_advance(cpu, 0u),
+           "pulse synchronized external Timer1 source");
+    expect(state, dspic33_read_word(cpu, 0x0908u) == 2u,
+           "synchronized Timer1 clock advances OC");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, timer_periods[1], 100u);
+    dspic33_write_word(cpu, timer_periods[2], 0u);
+    dspic33_write_word(cpu, timer_controls[1], 0x8008u);
+    configure_compare_mode(cpu, 0u, 6u, 100u, 50u, COMPARE_SELF_SYNC);
+    dspic33_write_word(cpu, 0x0900u, 0x0006u);
+    configure_compare_mode(cpu, 1u, 6u, 100u, 50u, COMPARE_SELF_SYNC);
+    dspic33_write_word(cpu, 0x090au, 0x0406u);
+    expect(state, dspic33_device_advance(cpu, 3u),
+           "advance paired Timer2 and Timer3 clocks");
+    expect(state,
+           dspic33_read_word(cpu, 0x0908u) == 3u &&
+               dspic33_read_word(cpu, 0x0912u) == 3u &&
+               dspic33_read_word(cpu, timer_registers[1]) == 3u &&
+               dspic33_read_word(cpu, timer_registers[2]) == 0u,
+           "paired low and high timer selections share clock edges");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, timer_periods[1], 100u);
+    dspic33_write_word(cpu, timer_controls[1], 0x8000u);
+    configure_compare_mode(cpu, 0u, 6u, 100u, 50u, COMPARE_SELF_SYNC);
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "advance FP clock before live source change");
+    dspic33_write_word(cpu, 0x0900u, 0x0006u);
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "advance Timer2 after live OC clock change");
+    expect(state, dspic33_read_word(cpu, 0x0908u) == 2u,
+           "live FP to Timer2 change preserves timer phase without double count");
+    dspic33_write_word(cpu, 0x0900u, COMPARE_FP_EDGE_PWM);
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "advance FP after restoring live OC clock");
+    expect(state, dspic33_read_word(cpu, 0x0908u) == 3u,
+           "live Timer2 to FP change preserves timer phase");
+}
+
+static void alternate_instruction_activation_cases(OutputCompareConformance* state,
+                                                   Dspic33* cpu) {
+    static const uint32_t program[] = {0x200040u, 0x884820u, 0x200020u, 0x884830u,
+                                       0x200060u, 0x884800u, 0x000000u};
+    size_t index;
+    bool loaded = true;
+    bool ran = true;
+    dspic33_reset(cpu, 0x200u);
+    dspic33_write_word(cpu, timer_periods[1], 100u);
+    dspic33_write_word(cpu, timer_controls[1], 0x8000u);
+    dspic33_write_word(cpu, 0x0902u, COMPARE_SELF_SYNC);
+    for (index = 0u; index < sizeof(program) / sizeof(program[0]); index++) {
+        loaded = loaded && dspic33_load_program_word(
+                               cpu, 0x200u + (uint32_t)(index * 2u), program[index]);
+    }
+    expect(state, loaded, "load alternate-clock activation sequence");
+    for (index = 0u; index < 6u; index++) {
+        ran = ran && dspic33_step(cpu) == DSPIC33_RUNNING;
+    }
+    expect(state,
+           ran && dspic33_read_word(cpu, 0x0908u) == 0u &&
+               dspic33_read_word(cpu, timer_registers[1]) != 0u,
+           "alternate OC enable instruction does not consume timer clocks");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_read_word(cpu, 0x0908u) == 1u,
+           "alternate OC starts on first clock after enabling instruction");
+}
+
+static void trigger_instruction_transition_cases(OutputCompareConformance* state,
+                                                 Dspic33* cpu) {
+    static const uint32_t fp_program[] = {0x200c00u, 0x884810u, 0x000000u, 0x000000u,
+                                          0x200800u, 0x884810u, 0x000000u};
+    static const uint32_t timer_program[] = {0x200c00u, 0x884810u, 0x200800u, 0x884810u,
+                                             0x000000u};
+    size_t index;
+    bool loaded = true;
+
+    dspic33_reset(cpu, 0x200u);
+    configure_compare_mode(cpu, 0u, 6u, 20u, 10u, COMPARE_TRIGGER);
+    for (index = 0u; index < sizeof(fp_program) / sizeof(fp_program[0]); index++) {
+        loaded = loaded && dspic33_load_program_word(
+                               cpu, 0x200u + (uint32_t)(index * 2u), fp_program[index]);
+    }
+    expect(state, loaded, "load FP trigger-status instruction sequence");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               (dspic33_read_word(cpu, 0x0902u) & COMPARE_TRIGGER_STATUS) != 0u &&
+               dspic33_read_word(cpu, 0x0908u) == 0u,
+           "FP trigger set instruction does not advance OC timer");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_read_word(cpu, 0x0908u) == 1u,
+           "FP trigger set takes effect on the following clock");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_read_word(cpu, 0x0908u) == 2u &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_read_word(cpu, 0x0908u) == 3u,
+           "FP trigger timer advances before clear instruction");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               (dspic33_read_word(cpu, 0x0902u) & COMPARE_TRIGGER_STATUS) == 0u &&
+               dspic33_read_word(cpu, 0x0908u) == 3u,
+           "FP trigger clear instruction preserves OC timer");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_read_word(cpu, 0x0908u) == 0u,
+           "FP trigger clear resets OC timer on the following clock");
+
+    loaded = true;
+    dspic33_reset(cpu, 0x200u);
+    configure_compare_mode(cpu, 0u, 6u, 20u, 10u, COMPARE_TRIGGER);
+    dspic33_write_word(cpu, 0x0900u, 0x0006u);
+    for (index = 0u; index < sizeof(timer_program) / sizeof(timer_program[0]);
+         index++) {
+        loaded =
+            loaded && dspic33_load_program_word(cpu, 0x200u + (uint32_t)(index * 2u),
+                                                timer_program[index]);
+    }
+    expect(state, loaded && dspic33_step(cpu) == DSPIC33_RUNNING,
+           "load prescaled Timer2 trigger-status instruction sequence");
+    dspic33_write_word(cpu, timer_periods[1], 100u);
+    dspic33_write_word(cpu, timer_controls[1], 0x8010u);
+    expect(state, dspic33_device_advance(cpu, 7u),
+           "advance Timer2 prescaler before trigger set instruction");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               (dspic33_read_word(cpu, 0x0902u) & COMPARE_TRIGGER_STATUS) != 0u &&
+               dspic33_read_word(cpu, 0x0908u) == 0u,
+           "Timer2 trigger set instruction does not consume selected clock");
+    expect(state,
+           dspic33_device_advance(cpu, 7u) && dspic33_read_word(cpu, 0x0908u) == 0u &&
+               dspic33_device_advance(cpu, 1u) && dspic33_read_word(cpu, 0x0908u) == 1u,
+           "Timer2 trigger set takes effect on the following selected clock");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_device_advance(cpu, 6u) &&
+               dspic33_read_word(cpu, 0x0908u) == 1u,
+           "align Timer2 prescaler before trigger clear instruction");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               (dspic33_read_word(cpu, 0x0902u) & COMPARE_TRIGGER_STATUS) == 0u &&
+               dspic33_read_word(cpu, 0x0908u) == 1u,
+           "Timer2 trigger clear instruction preserves OC timer");
+    expect(state,
+           dspic33_device_advance(cpu, 7u) && dspic33_read_word(cpu, 0x0908u) == 1u &&
+               dspic33_device_advance(cpu, 1u) && dspic33_read_word(cpu, 0x0908u) == 0u,
+           "Timer2 trigger clear resets OC timer on the following selected clock");
+}
+
+static void synchronization_lifecycle_cases(OutputCompareConformance* state,
+                                            Dspic33* cpu) {
+    Dspic33 copy;
+    bool initialized = dspic33_initialize(&copy);
+    expect(state, initialized, "initialize synchronization lifecycle copy");
+    if (!initialized) {
+        return;
+    }
+    dspic33_reset(cpu, 0u);
+    configure_compare_mode(cpu, 15u, 6u, 100u, 50u, 29u);
+    expect(state,
+           dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 20u, 0u, 1u) &&
+               dspic33_device_advance(cpu, 1u) && dspic33_copy(&copy, cpu),
+           "copy pending OC synchronization");
+    expect(state, dspic33_device_advance(cpu, 1u) && dspic33_device_advance(&copy, 1u),
+           "advance original and copied synchronization");
+    expect(state,
+           dspic33_read_word(cpu, 0x099eu) == 0u &&
+               dspic33_read_word(&copy, 0x099eu) == 0u && interrupt_flag(cpu, 15u) &&
+               interrupt_flag(&copy, 15u) &&
+               cpu->io.output_compare.sync_reset_pending ==
+                   copy.io.output_compare.sync_reset_pending,
+           "copied synchronization completes independently");
+
+    dspic33_reset(cpu, 0u);
+    configure_compare_mode(cpu, 15u, 6u, 4u, 2u, (uint16_t)(COMPARE_TRIGGER | 29u));
+    expect(state,
+           dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 20u, 0u, 1u) &&
+               dspic33_device_advance(cpu, 1u),
+           "set trigger state before reset");
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           cpu->io.output_compare.sync_reset_pending == 0u &&
+               cpu->io.output_compare.deferred_sync_pulses == 0u &&
+               !cpu->io.output_compare.clock_advancing &&
+               dspic33_read_word(cpu, 0x099eu) == 0u && cpu->events.count == 0u,
+           "reset clears OC synchronization and trigger lifecycle");
+
+    dspic33_reset(cpu, 0u);
+    configure_compare_mode(cpu, 15u, 6u, 4u, 2u, (uint16_t)(COMPARE_TRIGGER | 24u));
+    dspic33_write_word(cpu, 0x0a84u, 0x8040u);
+    cpu->device_cycles = UINT64_MAX;
+    expect(
+        state,
+        dspic33_comparator_input(cpu, 0u, DSPIC33_COMPARATOR_INPUT_POSITIVE, 1u, 0u) &&
+            !dspic33_device_advance(cpu, 0u),
+        "process trigger source at maximum device cycle");
+    expect(state,
+           cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR &&
+               (dspic33_read_word(cpu, 0x0996u) & 7u) == 0u && cpu->events.count == 0u,
+           "trigger reschedule failure aborts OC channel");
+    dspic33_destroy(&copy);
+}
+
+static void channel_trigger_matrix_cases(OutputCompareConformance* state,
+                                         Dspic33* cpu) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_OUTPUT_COMPARE_COUNT; channel++) {
+        uint16_t base = compare_base(channel);
+        dspic33_reset(cpu, 0u);
+        configure_compare_mode(cpu, channel, 6u, 4u, 2u,
+                               (uint16_t)(COMPARE_TRIGGER | 29u));
+        expect(state,
+               dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 2u)) &
+                    COMPARE_TRIGGER_STATUS) == 0u,
+               "channel trigger matrix starts held");
+        expect(state,
+               dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 20u, 0u, 1u) &&
+                   dspic33_device_advance(cpu, 1u),
+               "channel trigger matrix emits source");
+        expect(state,
+               dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 2u)) &
+                    COMPARE_TRIGGER_STATUS) != 0u,
+               "channel trigger matrix sets hardware status");
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "channel trigger matrix advances first count");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 1u,
+               "channel trigger matrix counts after source");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 4u), 2u);
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 1u);
+        dspic33_write_word(cpu, base,
+                           (uint16_t)(COMPARE_FP | COMPARE_TRIGGER_ONESHOT | 6u));
+        dspic33_write_word(cpu, (uint16_t)(base + 2u),
+                           (uint16_t)(COMPARE_TRIGGER | 29u));
+        dspic33_write_word(cpu, (uint16_t)(base + 2u),
+                           (uint16_t)(COMPARE_TRIGGER | COMPARE_TRIGGER_STATUS | 29u));
+        expect(state,
+               (dspic33_read_word(cpu, (uint16_t)(base + 2u)) &
+                COMPARE_TRIGGER_STATUS) == 0u,
+               "one-shot channel rejects software trigger set");
+        expect(state,
+               dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 20u, 0u, 1u) &&
+                   dspic33_device_advance(cpu, 1u),
+               "one-shot channel accepts hardware trigger");
+        dspic33_write_word(cpu, (uint16_t)(base + 2u),
+                           (uint16_t)(COMPARE_TRIGGER | 29u));
+        expect(state,
+               (dspic33_read_word(cpu, (uint16_t)(base + 2u)) &
+                COMPARE_TRIGGER_STATUS) != 0u,
+               "one-shot channel rejects software trigger clear");
+        expect(state, dspic33_device_advance(cpu, 3u),
+               "one-shot channel advances to hardware clear");
+        expect(state,
+               (dspic33_read_word(cpu, (uint16_t)(base + 2u)) &
+                COMPARE_TRIGGER_STATUS) == 0u,
+               "one-shot channel clears trigger at rollover");
+    }
+}
+
+static void trigger_source_negative_cases(OutputCompareConformance* state,
+                                          Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    configure_compare_mode(cpu, 15u, 6u, 4u, 2u, (uint16_t)(COMPARE_TRIGGER | 29u));
+    dspic33_raise_interrupt(cpu, 20u);
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "advance after software INT1 flag set");
+    expect(state,
+           (dspic33_read_word(cpu, 0x0998u) & COMPARE_TRIGGER_STATUS) == 0u &&
+               dspic33_read_word(cpu, 0x099eu) == 0u,
+           "software interrupt flag does not synthesize external trigger edge");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0142u, 0u);
+    dspic33_write_word(cpu, 0x0140u, 0x1c23u);
+    configure_compare_mode(cpu, 15u, 6u, 4u, 2u, (uint16_t)(COMPARE_TRIGGER | 16u));
+    expect(state,
+           dspic33_input_capture_input(cpu, 0u, true, 0u) &&
+               dspic33_device_advance(cpu, 3u),
+           "capture without interrupt advances");
+    expect(state, (dspic33_read_word(cpu, 0x0998u) & COMPARE_TRIGGER_STATUS) == 0u,
+           "capture event without IC interrupt does not trigger OC");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0a84u, 0x8000u);
+    configure_compare_mode(cpu, 15u, 6u, 4u, 2u, (uint16_t)(COMPARE_TRIGGER | 24u));
+    expect(
+        state,
+        dspic33_comparator_input(cpu, 0u, DSPIC33_COMPARATOR_INPUT_POSITIVE, 1u, 0u) &&
+            dspic33_device_advance(cpu, 0u),
+        "comparator transition without event advances");
+    expect(state, (dspic33_read_word(cpu, 0x0998u) & COMPARE_TRIGGER_STATUS) == 0u,
+           "comparator output without compare event does not trigger OC");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0360u, 0x8000u);
+    configure_compare_mode(cpu, 15u, 6u, 4u, 2u, (uint16_t)(COMPARE_TRIGGER | 27u));
+    dspic33_write_word(cpu, 0x0360u, 0x8002u);
+    dspic33_write_word(cpu, 0x0360u, 0x8000u);
+    expect(state, dspic33_device_advance(cpu, 12u),
+           "complete ADC2 conversion beside OC trigger");
+    expect(state, (dspic33_read_word(cpu, 0x0998u) & COMPARE_TRIGGER_STATUS) == 0u,
+           "ADC2 completion does not drive ADC1 trigger source");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, timer_periods[1], 1u);
+    dspic33_write_word(cpu, timer_controls[1], 0x8000u);
+    configure_compare_mode(cpu, 15u, 6u, 4u, 2u, (uint16_t)(COMPARE_TRIGGER | 11u));
+    expect(state, dspic33_device_advance(cpu, 2u), "advance nonselected timer period");
+    expect(state, (dspic33_read_word(cpu, 0x0998u) & COMPARE_TRIGGER_STATUS) == 0u,
+           "Timer2 period does not drive Timer1 trigger selection");
+
+    dspic33_reset(cpu, 0u);
+    configure_compare_mode(cpu, 15u, 6u, 4u, 2u, (uint16_t)(COMPARE_TRIGGER | 30u));
+    expect(state,
+           dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 21u, 0u, 1u) &&
+               dspic33_device_advance(cpu, 1u),
+           "raise unrelated interrupt beside INT2 trigger");
+    expect(state, (dspic33_read_word(cpu, 0x0998u) & COMPARE_TRIGGER_STATUS) == 0u,
+           "unrelated interrupt does not drive external trigger source");
 }
 
 static void coexistence_cases(OutputCompareConformance* state, Dspic33* cpu) {
@@ -1250,6 +2130,20 @@ int main(void) {
         channel_mode_matrix_cases(&state, &cpu);
         one_shot_restart_cases(&state, &cpu);
         unsupported_cases(&state, &cpu);
+        alternate_clock_cases(&state, &cpu);
+        trigger_source_cases(&state, &cpu);
+        trigger_one_shot_cases(&state, &cpu);
+        synchronization_source_cases(&state, &cpu);
+        alternate_clock_batch_cases(&state, &cpu);
+        timer_clock_synchronization_cases(&state, &cpu);
+        cross_timer_source_ordering_cases(&state, &cpu);
+        synchronization_control_cases(&state, &cpu);
+        alternate_clock_control_cases(&state, &cpu);
+        alternate_instruction_activation_cases(&state, &cpu);
+        trigger_instruction_transition_cases(&state, &cpu);
+        synchronization_lifecycle_cases(&state, &cpu);
+        channel_trigger_matrix_cases(&state, &cpu);
+        trigger_source_negative_cases(&state, &cpu);
         coexistence_cases(&state, &cpu);
         lifecycle_cases(&state, &cpu);
         dspic33_destroy(&cpu);
