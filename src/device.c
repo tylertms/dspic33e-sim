@@ -8824,6 +8824,12 @@ static uint16_t pwm_saturated_add(uint16_t value, uint16_t increment) {
     return UINT16_MAX - value > increment ? (uint16_t)(value + increment) : UINT16_MAX;
 }
 
+typedef enum {
+    PWM_COMPENSATION_ORDINARY,
+    PWM_COMPENSATION_ZERO,
+    PWM_COMPENSATION_FULL
+} PwmCompensationResult;
+
 static uint16_t pwm_compensated_duty(const Dspic33* cpu, uint8_t generator,
                                      uint16_t duty, uint16_t compensation) {
     bool input = (cpu->io.pwm_dead_time_sampled & (uint8_t)(1u << generator)) != 0u;
@@ -8832,6 +8838,25 @@ static uint16_t pwm_compensated_duty(const Dspic33* cpu, uint8_t generator,
         return duty > compensation ? (uint16_t)(duty - compensation) : 0u;
     }
     return pwm_saturated_add(duty, compensation);
+}
+
+static uint16_t pwm_b1_edge_compensated_duty(const Dspic33* cpu, uint8_t generator,
+                                             uint16_t duty, uint16_t compensation,
+                                             PwmCompensationResult* result) {
+    bool input = (cpu->io.pwm_dead_time_sampled & (uint8_t)(1u << generator)) != 0u;
+    bool polarity = (pwm_register(cpu, generator, 0u) & 0x0020u) != 0u;
+    uint16_t period = pwm_period(cpu, generator, 0u);
+    uint32_t threshold = (uint32_t)compensation * 2u;
+    *result = PWM_COMPENSATION_ORDINARY;
+    if (input == polarity && (uint32_t)duty < threshold) {
+        *result = PWM_COMPENSATION_ZERO;
+        return 0u;
+    }
+    if (input != polarity && (uint32_t)duty + threshold >= period) {
+        *result = PWM_COMPENSATION_FULL;
+        return period;
+    }
+    return pwm_compensated_duty(cpu, generator, duty, compensation);
 }
 
 static void pwm_waveform_pair(const Dspic33* cpu, uint8_t generator, bool* high,
@@ -8861,17 +8886,28 @@ static void pwm_waveform_pair(const Dspic33* cpu, uint8_t generator, bool* high,
             *high = primary;
             *low = !primary;
         } else if (dead_mode == 0x00c0u) {
-            uint16_t compensated =
-                pwm_compensated_duty(cpu, generator, duty, primary_dead);
             if ((control & PWM_CENTER_ALIGNED) != 0u) {
+                uint16_t compensated =
+                    pwm_compensated_duty(cpu, generator, duty, primary_dead);
                 uint16_t half_dead = (uint16_t)((alternate_dead + 1u) / 2u);
-                *high = high_counter <= (compensated > half_dead
-                                             ? (uint16_t)(compensated - half_dead)
-                                             : 0u);
+                *high = high_counter <= compensated;
                 *low = high_counter > pwm_saturated_add(compensated, half_dead);
             } else {
-                *high = high_counter >= alternate_dead && high_counter <= compensated;
-                *low = high_counter > pwm_saturated_add(compensated, alternate_dead);
+                PwmCompensationResult result;
+                uint16_t compensated = pwm_b1_edge_compensated_duty(
+                    cpu, generator, duty, primary_dead, &result);
+                if (result == PWM_COMPENSATION_ZERO) {
+                    *high = false;
+                    *low = true;
+                } else if (result == PWM_COMPENSATION_FULL) {
+                    *high = true;
+                    *low = false;
+                } else {
+                    *high =
+                        high_counter >= alternate_dead && high_counter <= compensated;
+                    *low =
+                        high_counter > pwm_saturated_add(compensated, alternate_dead);
+                }
             }
         } else if (dead_mode == 0x0040u && (control & PWM_CENTER_ALIGNED) == 0u) {
             *high = high_counter <= pwm_saturated_add(duty, alternate_dead);
@@ -8882,8 +8918,13 @@ static void pwm_waveform_pair(const Dspic33* cpu, uint8_t generator, bool* high,
                 high_counter <= (duty > half_dead ? (uint16_t)(duty - half_dead) : 0u);
             *low = high_counter > pwm_saturated_add(duty, half_dead);
         } else {
-            *high = high_counter >= primary_dead && high_counter <= duty;
-            *low = high_counter > pwm_saturated_add(duty, alternate_dead);
+            if (duty < alternate_dead) {
+                *high = high_counter <= duty;
+                *low = high_counter > duty;
+            } else {
+                *high = high_counter >= primary_dead && high_counter <= duty;
+                *low = high_counter > pwm_saturated_add(duty, alternate_dead);
+            }
         }
         return;
     }

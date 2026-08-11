@@ -281,6 +281,70 @@ static void dead_time_cases(PwmConformance* state, Dspic33* cpu) {
            "compensation polarity inversion");
 }
 
+static void b1_dead_time_cases(PwmConformance* state, Dspic33* cpu) {
+    uint8_t generator;
+    for (generator = 0u; generator < DSPIC33_PWM_COUNT; generator++) {
+        uint16_t address = base(generator);
+        dspic33_reset(cpu, 0u);
+        configure_generator(cpu, generator, 0u, 15u, 5u, 0x00c0u);
+        dspic33_write_word(cpu, (uint16_t)(address + 0x0au), 3u);
+        dspic33_write_word(cpu, (uint16_t)(address + 0x0cu), 1u);
+        enable_pwm(cpu, 0u);
+        expect(state, dspic33_pwm_output(cpu, generator, false),
+               "B1 zero compensation bypasses alternate dead time");
+        dspic33_device_advance(cpu, 1u);
+        expect(state, !dspic33_pwm_output(cpu, generator, true),
+               "B1 subtract compensation saturates below twice DTR");
+
+        dspic33_reset(cpu, 0u);
+        configure_generator(cpu, generator, 0u, 15u, 6u, 0x00c0u);
+        dspic33_write_word(cpu, (uint16_t)(address + 0x0au), 3u);
+        dspic33_write_word(cpu, (uint16_t)(address + 0x0cu), 1u);
+        enable_pwm(cpu, 0u);
+        dspic33_device_advance(cpu, 1u);
+        expect(state, dspic33_pwm_output(cpu, generator, true),
+               "B1 subtract compensation retains twice DTR boundary");
+
+        dspic33_reset(cpu, 0u);
+        expect(state, dspic33_pwm_dead_time(cpu, generator, true, 0u),
+               "schedule B1 additive compensation");
+        dspic33_device_advance(cpu, 0u);
+        configure_generator(cpu, generator, 0u, 15u, 9u, 0x00c0u);
+        dspic33_write_word(cpu, (uint16_t)(address + 0x0au), 3u);
+        dspic33_write_word(cpu, (uint16_t)(address + 0x0cu), 1u);
+        enable_pwm(cpu, 0u);
+        expect(state, dspic33_pwm_output(cpu, generator, true),
+               "B1 full compensation bypasses alternate dead time");
+        dspic33_device_advance(cpu, 7u);
+        expect(state, dspic33_pwm_output(cpu, generator, true),
+               "B1 add compensation saturates at twice DTR boundary");
+
+        dspic33_reset(cpu, 0u);
+        configure_generator(cpu, generator, 0u, 15u, 2u, 0u);
+        dspic33_write_word(cpu, (uint16_t)(address + 0x0au), 1u);
+        dspic33_write_word(cpu, (uint16_t)(address + 0x0cu), 3u);
+        enable_pwm(cpu, 0u);
+        expect(state, dspic33_pwm_output(cpu, generator, true),
+               "B1 short edge duty removes leading dead time");
+        dspic33_device_advance(cpu, 3u);
+        expect(state, dspic33_pwm_output(cpu, generator, false),
+               "B1 short edge duty removes trailing dead time");
+
+        dspic33_reset(cpu, 0u);
+        configure_generator(cpu, generator, 0u, 15u, 7u, 0x02c4u);
+        dspic33_write_word(cpu, (uint16_t)(address + 8u), 15u);
+        dspic33_write_word(cpu, (uint16_t)(address + 0x0au), 0u);
+        dspic33_write_word(cpu, (uint16_t)(address + 0x0cu), 4u);
+        enable_pwm(cpu, 0u);
+        dspic33_device_advance(cpu, 6u);
+        expect(state, dspic33_pwm_output(cpu, generator, true),
+               "B1 center compensation leaves high edge unchanged");
+        dspic33_device_advance(cpu, 2u);
+        expect(state, !dspic33_pwm_output(cpu, generator, false),
+               "B1 center compensation extends low edge");
+    }
+}
+
 static void duty_cases(PwmConformance* state, Dspic33* cpu) {
     uint8_t generator;
     uint16_t duty;
@@ -757,6 +821,7 @@ int main(void) {
     mode_cases(&state, &cpu);
     duty_cases(&state, &cpu);
     dead_time_cases(&state, &cpu);
+    b1_dead_time_cases(&state, &cpu);
     update_cases(&state, &cpu);
     trigger_cases(&state, &cpu);
     protection_cases(&state, &cpu);
