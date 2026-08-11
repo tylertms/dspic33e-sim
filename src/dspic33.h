@@ -231,7 +231,10 @@ typedef struct {
     uint16_t active_r[DSPIC33_OUTPUT_COMPARE_COUNT];
     uint16_t active_rs[DSPIC33_OUTPUT_COMPARE_COUNT];
     uint16_t generation[DSPIC33_OUTPUT_COMPARE_COUNT];
+    uint16_t timer_generation[DSPIC33_OUTPUT_COMPARE_COUNT];
     uint16_t output_high;
+    uint8_t phase[DSPIC33_OUTPUT_COMPARE_COUNT];
+    bool sync_emitted[DSPIC33_OUTPUT_COMPARE_COUNT];
     uint64_t activation_cycle[DSPIC33_OUTPUT_COMPARE_COUNT];
 } Dspic33OutputCompare;
 

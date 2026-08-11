@@ -294,18 +294,32 @@ enum {
     OUTPUT_COMPARE_TIMER_SOURCE_FP = 0x1c00u,
     OUTPUT_COMPARE_CON1_UNSUPPORTED = 0x23f8u,
     OUTPUT_COMPARE_MODE_MASK = 0x0007u,
+    OUTPUT_COMPARE_MODE_SINGLE_HIGH = 0x0001u,
+    OUTPUT_COMPARE_MODE_SINGLE_LOW = 0x0002u,
+    OUTPUT_COMPARE_MODE_SINGLE_TOGGLE = 0x0003u,
+    OUTPUT_COMPARE_MODE_DUAL_SINGLE = 0x0004u,
+    OUTPUT_COMPARE_MODE_DUAL_CONTINUOUS = 0x0005u,
     OUTPUT_COMPARE_MODE_EDGE_PWM = 0x0006u,
-    OUTPUT_COMPARE_CON2_UNSUPPORTED = 0xf020u,
+    OUTPUT_COMPARE_MODE_CENTER_PWM = 0x0007u,
+    OUTPUT_COMPARE_CON2_UNSUPPORTED = 0xe000u,
+    OUTPUT_COMPARE_INVERT = 0x1000u,
     OUTPUT_COMPARE_32_BIT = 0x0100u,
     OUTPUT_COMPARE_TRIGGER = 0x0080u,
     OUTPUT_COMPARE_TRISTATE = 0x0020u,
     OUTPUT_COMPARE_SYNC_MASK = 0x001fu,
     OUTPUT_COMPARE_SYNC_NONE = 0x0000u,
     OUTPUT_COMPARE_SYNC_SELF = 0x001fu,
-    OUTPUT_COMPARE_EVENT_KIND_MASK = 0x00000001u,
-    OUTPUT_COMPARE_EVENT_DUTY = 0u,
-    OUTPUT_COMPARE_EVENT_PERIOD = 1u,
-    OUTPUT_COMPARE_EVENT_GENERATION_SHIFT = 1u,
+    OUTPUT_COMPARE_EVENT_KIND_MASK = 0x0000000fu,
+    OUTPUT_COMPARE_EVENT_PRIMARY = 0u,
+    OUTPUT_COMPARE_EVENT_SECONDARY = 1u,
+    OUTPUT_COMPARE_EVENT_BOUNDARY = 2u,
+    OUTPUT_COMPARE_EVENT_APPLY_PRIMARY = 3u,
+    OUTPUT_COMPARE_EVENT_APPLY_SECONDARY = 4u,
+    OUTPUT_COMPARE_EVENT_INTERRUPT = 5u,
+    OUTPUT_COMPARE_EVENT_SYNC = 6u,
+    OUTPUT_COMPARE_EVENT_SYNC_BOUNDARY = 7u,
+    OUTPUT_COMPARE_EVENT_SYNC_PRIMARY = 8u,
+    OUTPUT_COMPARE_EVENT_GENERATION_SHIFT = 4u,
     COMPARATOR_STATUS = 0x0a80u,
     COMPARATOR_REFERENCE = 0x0a82u,
     COMPARATOR_BASE = 0x0a84u,
@@ -2814,11 +2828,11 @@ static uint16_t output_compare_base(uint8_t channel) {
 
 static bool output_compare_configuration_supported(uint16_t control1,
                                                    uint16_t control2) {
+    uint16_t mode = control1 & OUTPUT_COMPARE_MODE_MASK;
     uint16_t synchronization = control2 & OUTPUT_COMPARE_SYNC_MASK;
     return (control1 & OUTPUT_COMPARE_TIMER_SOURCE_MASK) ==
                OUTPUT_COMPARE_TIMER_SOURCE_FP &&
-           (control1 & OUTPUT_COMPARE_CON1_UNSUPPORTED) == 0u &&
-           (control1 & OUTPUT_COMPARE_MODE_MASK) == OUTPUT_COMPARE_MODE_EDGE_PWM &&
+           (control1 & OUTPUT_COMPARE_CON1_UNSUPPORTED) == 0u && mode != 0u &&
            (control2 & OUTPUT_COMPARE_CON2_UNSUPPORTED) == 0u &&
            (control2 & OUTPUT_COMPARE_32_BIT) == 0u &&
            (control2 & OUTPUT_COMPARE_TRIGGER) == 0u &&
@@ -2841,21 +2855,36 @@ static void output_compare_set_high(Dspic33* cpu, uint8_t channel, bool high) {
     }
 }
 
+static bool output_compare_high(const Dspic33* cpu, uint8_t channel) {
+    return (cpu->io.output_compare.output_high & (uint16_t)(1u << channel)) != 0u;
+}
+
 static void output_compare_abort(Dspic33* cpu, uint8_t channel) {
     uint16_t base = output_compare_base(channel);
     cpu->io.output_compare.generation[channel]++;
+    cpu->io.output_compare.timer_generation[channel]++;
     raw_write_word(cpu, base,
                    (uint16_t)(raw_word(cpu, base) & ~OUTPUT_COMPARE_MODE_MASK));
     raw_write_word(cpu, (uint16_t)(base + 8u), 0u);
     output_compare_set_high(cpu, channel, false);
+    cpu->io.output_compare.phase[channel] = 0u;
+    cpu->io.output_compare.sync_emitted[channel] = false;
     cpu->io.output_compare.activation_cycle[channel] = 0u;
     cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
 }
 
 static bool output_compare_schedule(Dspic33* cpu, uint8_t channel, uint32_t kind,
                                     uint64_t delay) {
-    uint32_t value = kind | ((uint32_t)cpu->io.output_compare.generation[channel]
-                             << OUTPUT_COMPARE_EVENT_GENERATION_SHIFT);
+    bool timer_event = kind == OUTPUT_COMPARE_EVENT_PRIMARY ||
+                       kind == OUTPUT_COMPARE_EVENT_SECONDARY ||
+                       kind == OUTPUT_COMPARE_EVENT_BOUNDARY ||
+                       kind == OUTPUT_COMPARE_EVENT_SYNC ||
+                       kind == OUTPUT_COMPARE_EVENT_SYNC_BOUNDARY ||
+                       kind == OUTPUT_COMPARE_EVENT_SYNC_PRIMARY;
+    uint16_t generation = timer_event ? cpu->io.output_compare.timer_generation[channel]
+                                      : cpu->io.output_compare.generation[channel];
+    uint32_t value =
+        kind | ((uint32_t)generation << OUTPUT_COMPARE_EVENT_GENERATION_SHIFT);
     if (dspic33_schedule(cpu, DSPIC33_EVENT_OUTPUT_COMPARE, channel, value, delay)) {
         return true;
     }
@@ -2882,20 +2911,54 @@ static uint32_t output_compare_boundary_delay(const Dspic33* cpu, uint8_t channe
 static bool output_compare_schedule_next(Dspic33* cpu, uint8_t channel,
                                          uint64_t initial_delay) {
     uint16_t base = output_compare_base(channel);
+    uint16_t mode = raw_word(cpu, base) & OUTPUT_COMPARE_MODE_MASK;
     uint16_t r = cpu->io.output_compare.active_r[channel];
     uint16_t rs = cpu->io.output_compare.active_rs[channel];
     uint16_t timer = raw_word(cpu, (uint16_t)(base + 8u));
     uint32_t boundary = output_compare_boundary_delay(cpu, channel);
-    bool duty_eligible = r != 0u && timer < r;
-    if (output_compare_self_synchronized(cpu, channel)) {
-        duty_eligible = duty_eligible && r < rs;
+    uint16_t target = r;
+    uint32_t kind = OUTPUT_COMPARE_EVENT_PRIMARY;
+    uint32_t delay = boundary;
+    bool eligible = false;
+    if (mode == OUTPUT_COMPARE_MODE_EDGE_PWM) {
+        eligible = r != 0u && timer < r;
+        if (output_compare_self_synchronized(cpu, channel)) {
+            eligible = eligible && r < rs;
+        }
+    } else if (mode == OUTPUT_COMPARE_MODE_SINGLE_HIGH ||
+               mode == OUTPUT_COMPARE_MODE_SINGLE_LOW) {
+        eligible = cpu->io.output_compare.phase[channel] == 0u && timer < r;
+    } else if (mode == OUTPUT_COMPARE_MODE_SINGLE_TOGGLE) {
+        eligible = cpu->io.output_compare.phase[channel] == 0u && timer < r;
+    } else if (mode == OUTPUT_COMPARE_MODE_DUAL_SINGLE ||
+               mode == OUTPUT_COMPARE_MODE_DUAL_CONTINUOUS ||
+               mode == OUTPUT_COMPARE_MODE_CENTER_PWM) {
+        if (cpu->io.output_compare.phase[channel] == 0u) {
+            eligible = timer < r;
+        } else if (cpu->io.output_compare.phase[channel] == 1u) {
+            target = rs;
+            kind = OUTPUT_COMPARE_EVENT_SECONDARY;
+            eligible = timer < rs;
+        }
     }
-    if (duty_eligible && (uint32_t)(r - timer) < boundary) {
-        return output_compare_schedule(cpu, channel, OUTPUT_COMPARE_EVENT_DUTY,
-                                       initial_delay + r - timer);
+    if (eligible && (uint32_t)(target - timer) < delay) {
+        delay = (uint32_t)(target - timer);
+    } else {
+        kind = OUTPUT_COMPARE_EVENT_BOUNDARY;
     }
-    return output_compare_schedule(cpu, channel, OUTPUT_COMPARE_EVENT_PERIOD,
-                                   initial_delay + boundary);
+    if (!output_compare_self_synchronized(cpu, channel) &&
+        !cpu->io.output_compare.sync_emitted[channel] && timer <= rs) {
+        uint32_t sync_delay = (uint32_t)rs + 1u - timer;
+        if (sync_delay < delay) {
+            kind = OUTPUT_COMPARE_EVENT_SYNC;
+            delay = sync_delay;
+        } else if (sync_delay == delay && kind == OUTPUT_COMPARE_EVENT_PRIMARY) {
+            kind = OUTPUT_COMPARE_EVENT_SYNC_PRIMARY;
+        } else if (sync_delay == delay && kind == OUTPUT_COMPARE_EVENT_BOUNDARY) {
+            kind = OUTPUT_COMPARE_EVENT_SYNC_BOUNDARY;
+        }
+    }
+    return output_compare_schedule(cpu, channel, kind, initial_delay + delay);
 }
 
 static void output_compare_start(Dspic33* cpu, uint8_t channel) {
@@ -2903,55 +2966,195 @@ static void output_compare_start(Dspic33* cpu, uint8_t channel) {
     uint64_t activation_delay =
         cpu->instruction_active ? cpu->current_instruction_cycles : 0u;
     cpu->io.output_compare.generation[channel]++;
+    cpu->io.output_compare.timer_generation[channel]++;
     cpu->io.output_compare.active_rs[channel] = raw_word(cpu, (uint16_t)(base + 4u));
     cpu->io.output_compare.active_r[channel] = raw_word(cpu, (uint16_t)(base + 6u));
+    cpu->io.output_compare.phase[channel] = 0u;
+    cpu->io.output_compare.sync_emitted[channel] = false;
     cpu->io.output_compare.activation_cycle[channel] =
         cpu->device_cycles + activation_delay;
     raw_write_word(cpu, (uint16_t)(base + 8u), 0u);
     output_compare_set_high(cpu, channel,
-                            cpu->io.output_compare.active_r[channel] != 0u);
+                            (raw_word(cpu, base) & OUTPUT_COMPARE_MODE_MASK) ==
+                                    OUTPUT_COMPARE_MODE_SINGLE_LOW ||
+                                ((raw_word(cpu, base) & OUTPUT_COMPARE_MODE_MASK) ==
+                                     OUTPUT_COMPARE_MODE_EDGE_PWM &&
+                                 cpu->io.output_compare.active_r[channel] != 0u));
     output_compare_schedule_next(cpu, channel, activation_delay);
 }
 
 static void output_compare_stop(Dspic33* cpu, uint8_t channel) {
     cpu->io.output_compare.generation[channel]++;
+    cpu->io.output_compare.timer_generation[channel]++;
     raw_write_word(cpu, (uint16_t)(output_compare_base(channel) + 8u), 0u);
     output_compare_set_high(cpu, channel, false);
+    cpu->io.output_compare.phase[channel] = 0u;
+    cpu->io.output_compare.sync_emitted[channel] = false;
     cpu->io.output_compare.activation_cycle[channel] = 0u;
+}
+
+static void output_compare_raise(Dspic33* cpu, uint8_t channel) {
+    dspic33_raise_interrupt(cpu, output_compare_irqs[channel]);
+}
+
+static void output_compare_pulse_sync_source(Dspic33* cpu, uint8_t channel) {
+    if (channel < 9u) {
+        input_capture_pulse_source(cpu,
+                                   (uint8_t)(INPUT_CAPTURE_SYNC_OC_FIRST + channel));
+    }
+}
+
+static bool output_compare_primary_match(Dspic33* cpu, uint8_t channel, uint16_t mode) {
+    if (mode == OUTPUT_COMPARE_MODE_SINGLE_HIGH) {
+        cpu->io.output_compare.phase[channel] = 2u;
+    } else if (mode == OUTPUT_COMPARE_MODE_SINGLE_LOW) {
+        cpu->io.output_compare.phase[channel] = 2u;
+    } else if (mode == OUTPUT_COMPARE_MODE_SINGLE_TOGGLE) {
+        cpu->io.output_compare.phase[channel] = 1u;
+    } else if (mode == OUTPUT_COMPARE_MODE_DUAL_SINGLE ||
+               mode == OUTPUT_COMPARE_MODE_DUAL_CONTINUOUS ||
+               mode == OUTPUT_COMPARE_MODE_CENTER_PWM) {
+        cpu->io.output_compare.phase[channel] = 1u;
+    } else if (mode == OUTPUT_COMPARE_MODE_EDGE_PWM) {
+        output_compare_set_high(cpu, channel, false);
+        return true;
+    }
+    if (mode <= OUTPUT_COMPARE_MODE_SINGLE_TOGGLE &&
+        !output_compare_schedule(cpu, channel, OUTPUT_COMPARE_EVENT_INTERRUPT, 3u)) {
+        return false;
+    }
+    return output_compare_schedule(cpu, channel, OUTPUT_COMPARE_EVENT_APPLY_PRIMARY,
+                                   1u);
+}
+
+static bool output_compare_secondary_match(Dspic33* cpu, uint8_t channel,
+                                           uint16_t mode) {
+    cpu->io.output_compare.phase[channel] =
+        mode == OUTPUT_COMPARE_MODE_DUAL_SINGLE ? 2u : 0u;
+    return output_compare_schedule(cpu, channel, OUTPUT_COMPARE_EVENT_INTERRUPT, 3u) &&
+           output_compare_schedule(cpu, channel, OUTPUT_COMPARE_EVENT_APPLY_SECONDARY,
+                                   1u);
+}
+
+static bool output_compare_boundary(Dspic33* cpu, uint8_t channel, uint16_t mode) {
+    uint16_t base = output_compare_base(channel);
+    raw_write_word(cpu, (uint16_t)(base + 8u), 0u);
+    cpu->io.output_compare.sync_emitted[channel] = false;
+    if (mode == OUTPUT_COMPARE_MODE_EDGE_PWM ||
+        mode == OUTPUT_COMPARE_MODE_CENTER_PWM) {
+        cpu->io.output_compare.active_rs[channel] =
+            raw_word(cpu, (uint16_t)(base + 4u));
+        cpu->io.output_compare.active_r[channel] = raw_word(cpu, (uint16_t)(base + 6u));
+    }
+    if (mode == OUTPUT_COMPARE_MODE_EDGE_PWM) {
+        output_compare_set_high(cpu, channel,
+                                cpu->io.output_compare.active_r[channel] != 0u);
+        output_compare_raise(cpu, channel);
+    } else if (mode == OUTPUT_COMPARE_MODE_SINGLE_TOGGLE) {
+        cpu->io.output_compare.phase[channel] = 0u;
+        if (cpu->io.output_compare.active_r[channel] == 0u &&
+            !output_compare_self_synchronized(cpu, channel) &&
+            !output_compare_primary_match(cpu, channel, mode)) {
+            return false;
+        }
+    } else if ((mode == OUTPUT_COMPARE_MODE_SINGLE_HIGH ||
+                mode == OUTPUT_COMPARE_MODE_SINGLE_LOW) &&
+               cpu->io.output_compare.phase[channel] == 0u &&
+               cpu->io.output_compare.active_r[channel] == 0u &&
+               !output_compare_self_synchronized(cpu, channel) &&
+               !output_compare_primary_match(cpu, channel, mode)) {
+        return false;
+    } else if (mode == OUTPUT_COMPARE_MODE_DUAL_SINGLE ||
+               mode == OUTPUT_COMPARE_MODE_DUAL_CONTINUOUS ||
+               mode == OUTPUT_COMPARE_MODE_CENTER_PWM) {
+        uint16_t r = cpu->io.output_compare.active_r[channel];
+        uint16_t rs = cpu->io.output_compare.active_rs[channel];
+        if (r == 0u && rs == 0u) {
+            output_compare_set_high(cpu, channel, false);
+            cpu->io.output_compare.phase[channel] = 0u;
+        } else if (cpu->io.output_compare.phase[channel] == 1u && rs == 0u) {
+            if (!output_compare_secondary_match(cpu, channel, mode)) {
+                return false;
+            }
+        } else if (cpu->io.output_compare.phase[channel] == 0u && r == 0u) {
+            if (!output_compare_primary_match(cpu, channel, mode)) {
+                return false;
+            }
+        }
+    }
+    if (output_compare_self_synchronized(cpu, channel)) {
+        output_compare_pulse_sync_source(cpu, channel);
+    }
+    return true;
 }
 
 static void run_output_compare(Dspic33* cpu, uint16_t source, uint32_t value) {
     uint16_t generation;
     uint8_t channel;
     uint32_t kind;
+    bool timer_event;
     if (source >= DSPIC33_OUTPUT_COMPARE_COUNT) {
         return;
     }
     channel = (uint8_t)source;
-    generation = (uint16_t)(value >> OUTPUT_COMPARE_EVENT_GENERATION_SHIFT);
-    if (generation != cpu->io.output_compare.generation[channel] ||
-        !output_compare_supported(cpu, channel)) {
-        return;
-    }
     kind = value & OUTPUT_COMPARE_EVENT_KIND_MASK;
-    if (kind == OUTPUT_COMPARE_EVENT_DUTY) {
-        output_compare_set_high(cpu, channel, false);
-        output_compare_schedule_next(cpu, channel, 0u);
+    timer_event = kind == OUTPUT_COMPARE_EVENT_PRIMARY ||
+                  kind == OUTPUT_COMPARE_EVENT_SECONDARY ||
+                  kind == OUTPUT_COMPARE_EVENT_BOUNDARY ||
+                  kind == OUTPUT_COMPARE_EVENT_SYNC ||
+                  kind == OUTPUT_COMPARE_EVENT_SYNC_BOUNDARY ||
+                  kind == OUTPUT_COMPARE_EVENT_SYNC_PRIMARY;
+    generation = (uint16_t)(value >> OUTPUT_COMPARE_EVENT_GENERATION_SHIFT);
+    if (generation != (timer_event ? cpu->io.output_compare.timer_generation[channel]
+                                   : cpu->io.output_compare.generation[channel]) ||
+        !output_compare_supported(cpu, channel)) {
         return;
     }
     {
         uint16_t base = output_compare_base(channel);
-        raw_write_word(cpu, (uint16_t)(base + 8u), 0u);
-        cpu->io.output_compare.active_rs[channel] =
-            raw_word(cpu, (uint16_t)(base + 4u));
-        cpu->io.output_compare.active_r[channel] = raw_word(cpu, (uint16_t)(base + 6u));
-        output_compare_set_high(cpu, channel,
-                                cpu->io.output_compare.active_r[channel] != 0u);
-        if (channel < 9u) {
-            input_capture_pulse_source(
-                cpu, (uint8_t)(INPUT_CAPTURE_SYNC_OC_FIRST + channel));
+        uint16_t mode = raw_word(cpu, base) & OUTPUT_COMPARE_MODE_MASK;
+        if (kind == OUTPUT_COMPARE_EVENT_PRIMARY) {
+            if (!output_compare_primary_match(cpu, channel, mode)) {
+                return;
+            }
+        } else if (kind == OUTPUT_COMPARE_EVENT_SECONDARY) {
+            if (!output_compare_secondary_match(cpu, channel, mode)) {
+                return;
+            }
+        } else if (kind == OUTPUT_COMPARE_EVENT_BOUNDARY) {
+            if (!output_compare_boundary(cpu, channel, mode)) {
+                return;
+            }
+        } else if (kind == OUTPUT_COMPARE_EVENT_SYNC) {
+            cpu->io.output_compare.sync_emitted[channel] = true;
+            output_compare_pulse_sync_source(cpu, channel);
+        } else if (kind == OUTPUT_COMPARE_EVENT_SYNC_BOUNDARY) {
+            if (!output_compare_boundary(cpu, channel, mode)) {
+                return;
+            }
+            output_compare_pulse_sync_source(cpu, channel);
+        } else if (kind == OUTPUT_COMPARE_EVENT_SYNC_PRIMARY) {
+            cpu->io.output_compare.sync_emitted[channel] = true;
+            output_compare_pulse_sync_source(cpu, channel);
+            if (!output_compare_primary_match(cpu, channel, mode)) {
+                return;
+            }
+        } else if (kind == OUTPUT_COMPARE_EVENT_APPLY_PRIMARY) {
+            if (mode == OUTPUT_COMPARE_MODE_SINGLE_TOGGLE) {
+                output_compare_set_high(cpu, channel,
+                                        !output_compare_high(cpu, channel));
+            } else {
+                output_compare_set_high(cpu, channel,
+                                        mode != OUTPUT_COMPARE_MODE_SINGLE_LOW);
+            }
+            return;
+        } else if (kind == OUTPUT_COMPARE_EVENT_APPLY_SECONDARY) {
+            output_compare_set_high(cpu, channel, false);
+            return;
+        } else {
+            output_compare_raise(cpu, channel);
+            return;
         }
-        dspic33_raise_interrupt(cpu, output_compare_irqs[channel]);
         output_compare_schedule_next(cpu, channel, 0u);
     }
 }
@@ -2975,7 +3178,7 @@ static void update_output_compare_register(Dspic33* cpu, uint16_t address,
     channel = (uint8_t)((address - OUTPUT_COMPARE_BASE) / OUTPUT_COMPARE_STRIDE);
     base = output_compare_base(channel);
     offset = (uint16_t)(address - base);
-    if (offset != 0u && offset != 2u) {
+    if (offset != 0u && offset != 2u && offset != 4u && offset != 6u) {
         return;
     }
     control1 = raw_word(cpu, base);
@@ -2988,11 +3191,37 @@ static void update_output_compare_register(Dspic33* cpu, uint16_t address,
         output_compare_start(cpu, channel);
     } else if (was_supported && !is_supported) {
         output_compare_stop(cpu, channel);
-    } else if (was_supported && is_supported &&
-               (previous2 & OUTPUT_COMPARE_SYNC_MASK) !=
-                   (control2 & OUTPUT_COMPARE_SYNC_MASK)) {
-        cpu->io.output_compare.generation[channel]++;
-        output_compare_schedule_next(cpu, channel, 0u);
+    } else if (was_supported && is_supported) {
+        uint16_t mode = control1 & OUTPUT_COMPARE_MODE_MASK;
+        bool mode_changed = (previous1 & OUTPUT_COMPARE_MODE_MASK) != mode;
+        bool low_control_written =
+            offset == 0u &&
+            (!cpu->io.cpu_write_valid ||
+             (cpu->io.cpu_write_address <= base &&
+              cpu->io.cpu_write_address + cpu->io.cpu_write_width > base));
+        if (mode_changed ||
+            (mode == OUTPUT_COMPARE_MODE_DUAL_SINGLE && low_control_written)) {
+            output_compare_start(cpu, channel);
+        } else if ((previous2 & OUTPUT_COMPARE_SYNC_MASK) !=
+                       (control2 & OUTPUT_COMPARE_SYNC_MASK) ||
+                   ((offset == 4u || offset == 6u) &&
+                    mode != OUTPUT_COMPARE_MODE_EDGE_PWM &&
+                    mode != OUTPUT_COMPARE_MODE_CENTER_PWM)) {
+            if ((previous2 & OUTPUT_COMPARE_SYNC_MASK) !=
+                (control2 & OUTPUT_COMPARE_SYNC_MASK)) {
+                cpu->io.output_compare.sync_emitted[channel] = false;
+            }
+            if (offset == 4u) {
+                cpu->io.output_compare.active_rs[channel] =
+                    raw_word(cpu, (uint16_t)(base + 4u));
+                cpu->io.output_compare.sync_emitted[channel] = false;
+            } else if (offset == 6u) {
+                cpu->io.output_compare.active_r[channel] =
+                    raw_word(cpu, (uint16_t)(base + 6u));
+            }
+            cpu->io.output_compare.timer_generation[channel]++;
+            output_compare_schedule_next(cpu, channel, 0u);
+        }
     }
 }
 
@@ -10747,11 +10976,14 @@ bool dspic33_input_capture_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t de
 }
 
 bool dspic33_output_compare_output(const Dspic33* cpu, uint8_t channel, bool* high) {
+    uint16_t control2;
     if (channel >= DSPIC33_OUTPUT_COMPARE_COUNT || high == NULL ||
         !output_compare_supported(cpu, channel)) {
         return false;
     }
-    *high = (cpu->io.output_compare.output_high & (uint16_t)(1u << channel)) != 0u;
+    control2 = raw_word(cpu, (uint16_t)(output_compare_base(channel) + 2u));
+    *high =
+        output_compare_high(cpu, channel) != ((control2 & OUTPUT_COMPARE_INVERT) != 0u);
     return true;
 }
 
