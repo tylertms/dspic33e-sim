@@ -12,6 +12,7 @@ static void oscillator_startup_configuration_changed(Dspic33* cpu, uint8_t previ
 static void oscillator_pll_configuration_changed(Dspic33* cpu, uint8_t previous);
 static void start_automatic_oscillator_switch(Dspic33* cpu, uint8_t source);
 static void refresh_gpio_change_notification(Dspic33* cpu);
+static void refresh_external_interrupts(Dspic33* cpu);
 static void output_compare_pulse_source(Dspic33* cpu, uint8_t source);
 static void output_compare_update_power_state(Dspic33* cpu);
 static void output_compare_raise(Dspic33* cpu, uint8_t channel);
@@ -63,6 +64,8 @@ static const uint16_t input_capture_pps_registers[DSPIC33_INPUT_CAPTURE_COUNT / 
 static const uint8_t output_compare_irqs[DSPIC33_OUTPUT_COMPARE_COUNT] = {
     2u,  6u,   25u,  26u,  41u,  42u,  43u,  44u,
     92u, 124u, 126u, 128u, 134u, 136u, 138u, 140u};
+static const uint8_t external_interrupt_irqs[DSPIC33_EXTERNAL_INTERRUPT_COUNT] = {
+    0u, 20u, 29u, 53u, 54u};
 static const uint8_t pwm_irqs[DSPIC33_PWM_COUNT] = {94u, 95u, 96u, 97u, 98u, 99u};
 static const uint16_t qei_bases[DSPIC33_QEI_COUNT] = {0x01c0u, 0x05c0u};
 static const uint8_t qei_irqs[DSPIC33_QEI_COUNT] = {58u, 75u};
@@ -3271,6 +3274,7 @@ static void output_compare_fault_pin_input(Dspic33* cpu, uint8_t pin, bool high)
         (uint16_t)((cpu->io.gpio[mapping->port] & ~bit) | (high ? bit : 0u));
     cpu->io.gpio_driven[mapping->port] |= bit;
     refresh_gpio_change_notification(cpu);
+    refresh_external_interrupts(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
 }
 
@@ -4521,6 +4525,7 @@ static void comparator_set_output(Dspic33* cpu, uint8_t comparator, bool high) {
     }
     raw_write_word(cpu, base, control);
     comparator_refresh_status(cpu);
+    refresh_external_interrupts(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
     if (rising) {
         input_capture_pulse_source(
@@ -7257,6 +7262,32 @@ void dspic33_raise_interrupt(Dspic33* cpu, uint16_t irq) {
     value = raw_word(cpu, address);
     value = (uint16_t)(value | (uint16_t)(1u << (irq % 16u)));
     raw_write_word(cpu, address, value);
+}
+
+static void raise_external_interrupt(Dspic33* cpu, uint8_t channel) {
+    if (channel == 0u) {
+        uint8_t module;
+        dspic33_dma_request(cpu, 0u, 0u, 0u);
+        for (module = 0u; module < DSPIC33_ADC_COUNT; module++) {
+            dspic33_adc_trigger(cpu, module, 1u, 0u);
+        }
+    } else if (channel == 1u) {
+        output_compare_pulse_source(cpu, OUTPUT_COMPARE_SYNC_INT1);
+    } else if (channel == 2u) {
+        output_compare_pulse_source(cpu, OUTPUT_COMPARE_SYNC_INT2);
+    }
+    dspic33_raise_interrupt(cpu, external_interrupt_irqs[channel]);
+}
+
+static void raise_scheduled_interrupt(Dspic33* cpu, uint16_t irq) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_EXTERNAL_INTERRUPT_COUNT; channel++) {
+        if (external_interrupt_irqs[channel] == irq) {
+            raise_external_interrupt(cpu, channel);
+            return;
+        }
+    }
+    dspic33_raise_interrupt(cpu, irq);
 }
 
 static uint8_t interrupt_priority(const Dspic33* cpu, uint16_t irq) {
@@ -11006,12 +11037,7 @@ static void remove_nvm_events(Dspic33* cpu) {
 static void process_event(Dspic33* cpu, const Dspic33Event* event) {
     switch (event->type) {
     case DSPIC33_EVENT_INTERRUPT:
-        if (event->source == 20u) {
-            output_compare_pulse_source(cpu, OUTPUT_COMPARE_SYNC_INT1);
-        } else if (event->source == 29u) {
-            output_compare_pulse_source(cpu, OUTPUT_COMPARE_SYNC_INT2);
-        }
-        dspic33_raise_interrupt(cpu, event->source);
+        raise_scheduled_interrupt(cpu, event->source);
         break;
     case DSPIC33_EVENT_TIMER:
         pulse_timer(cpu, (uint8_t)event->source, event->value);
@@ -12881,6 +12907,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
         }
     }
     refresh_gpio_change_notification(cpu);
+    refresh_external_interrupts(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
     dci_refresh_pps_inputs(cpu);
     dspic33_i2c_refresh_pins(cpu);
@@ -12955,6 +12982,70 @@ static void refresh_gpio_change_notification(Dspic33* cpu) {
     }
     if (changed) {
         dspic33_raise_interrupt(cpu, 19u);
+    }
+}
+
+static uint8_t external_interrupt_selection(const Dspic33* cpu, uint8_t channel) {
+    static const uint16_t addresses[DSPIC33_EXTERNAL_INTERRUPT_COUNT] = {
+        0u, 0x06a0u, 0x06a2u, 0x06a2u, 0x06a4u};
+    static const uint8_t shifts[DSPIC33_EXTERNAL_INTERRUPT_COUNT] = {0u, 8u, 0u, 8u,
+                                                                     0u};
+    if (channel == 0u) {
+        return 64u;
+    }
+    return (uint8_t)((raw_word(cpu, addresses[channel]) >> shifts[channel]) & 0x007fu);
+}
+
+static bool external_interrupt_level(const Dspic33* cpu, uint8_t channel,
+                                     uint8_t selection, bool* high) {
+    const Dspic33PpsPin* mapping;
+    uint16_t bit;
+    if (channel != 0u && selection == 0u) {
+        *high = false;
+        return true;
+    }
+    if (channel != 0u && selection == 1u) {
+        *high = (cpu->io.comparator.output_high & 1u) != 0u;
+        return true;
+    }
+    mapping = pps_pin(selection);
+    if (mapping == NULL || !pps_physical_input_enabled(cpu, selection)) {
+        return false;
+    }
+    bit = (uint16_t)(1u << mapping->bit);
+    *high = (gpio_pin_values(cpu, mapping->port) & bit) != 0u;
+    return true;
+}
+
+static void refresh_external_interrupts(Dspic33* cpu) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_EXTERNAL_INTERRUPT_COUNT; channel++) {
+        uint8_t mask = (uint8_t)(1u << channel);
+        uint8_t selection = external_interrupt_selection(cpu, channel);
+        bool previous_high = (cpu->io.external_interrupt_levels & mask) != 0u;
+        bool previous_qualified = (cpu->io.external_interrupt_qualified & mask) != 0u;
+        bool high = false;
+        bool qualified = external_interrupt_level(cpu, channel, selection, &high);
+        bool reconfigured =
+            selection != cpu->io.external_interrupt_selection[channel] ||
+            qualified != previous_qualified;
+        cpu->io.external_interrupt_selection[channel] = selection;
+        if (high) {
+            cpu->io.external_interrupt_levels |= mask;
+        } else {
+            cpu->io.external_interrupt_levels &= (uint8_t)~mask;
+        }
+        if (qualified) {
+            cpu->io.external_interrupt_qualified |= mask;
+        } else {
+            cpu->io.external_interrupt_qualified &= (uint8_t)~mask;
+        }
+        if (!reconfigured && qualified && high != previous_high) {
+            bool falling = (raw_word(cpu, 0x08c2u) & mask) != 0u;
+            if (falling == previous_high) {
+                raise_external_interrupt(cpu, channel);
+            }
+        }
     }
 }
 
@@ -13641,6 +13732,7 @@ bool dspic33_gpio_drive(Dspic33* cpu, uint8_t port, uint16_t value, uint16_t mas
         (uint16_t)((cpu->io.gpio[port] & ~selected) | (value & selected));
     cpu->io.gpio_driven[port] |= selected;
     refresh_gpio_change_notification(cpu);
+    refresh_external_interrupts(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
     dci_refresh_pps_inputs(cpu);
     dspic33_i2c_refresh_pins(cpu);
@@ -13653,6 +13745,7 @@ bool dspic33_gpio_release(Dspic33* cpu, uint8_t port, uint16_t mask) {
     }
     cpu->io.gpio_driven[port] &= (uint16_t)~(mask & gpio_port_masks[port]);
     refresh_gpio_change_notification(cpu);
+    refresh_external_interrupts(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
     dci_refresh_pps_inputs(cpu);
     dspic33_i2c_refresh_pins(cpu);
@@ -13742,6 +13835,7 @@ void dspic33_device_reset(Dspic33* cpu) {
     raw_write_word(cpu, DMA_LCA, 0x000fu);
     pps_capture_shadow(cpu);
     refresh_gpio_change_notification(cpu);
+    refresh_external_interrupts(cpu);
     dci_refresh_pps_inputs(cpu);
     dspic33_i2c_refresh_pins(cpu);
 }

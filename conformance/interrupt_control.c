@@ -12,10 +12,31 @@ enum {
     INTCON3 = 0x08c4u,
     INTCON4 = 0x08c6u,
     INTTREG = 0x08c8u,
+    RPINR0 = 0x06a0u,
+    RPINR1 = 0x06a2u,
+    RPINR2 = 0x06a4u,
+    TRISD = 0x0e30u,
+    ANSELD = 0x0e3eu,
+    DMA_TEST_PAD = 0x0906u,
+    COMPARATOR1_CONTROL = 0x0a84u,
+    OUTPUT_COMPARE16_CONTROL1 = 0x0996u,
+    OUTPUT_COMPARE16_CONTROL2 = 0x0998u,
+    OUTPUT_COMPARE16_SECONDARY = 0x099au,
+    OUTPUT_COMPARE16_PRIMARY = 0x099cu,
+    OUTPUT_COMPARE_TRIGGER = 0x0080u,
+    OUTPUT_COMPARE_TRIGGER_STATUS = 0x0040u,
+    OUTPUT_COMPARE_FP = 0x1c00u,
+    OUTPUT_COMPARE_EDGE_PWM = 6u,
     OPCODE_MOV_W0_INTCON2 = 0x884610u,
     OPCODE_MOV_W0_INTCON3 = 0x884620u,
+    OPCODE_RESET = 0xfe0000u,
     OPCODE_RETFIE = 0x064000u
 };
+
+static const uint8_t external_interrupt_irqs[DSPIC33_EXTERNAL_INTERRUPT_COUNT] = {
+    0u, 20u, 29u, 53u, 54u};
+static const uint16_t external_interrupt_pins[DSPIC33_EXTERNAL_INTERRUPT_COUNT] = {
+    0x0001u, 0x0002u, 0x0004u, 0x0008u, 0x0010u};
 
 typedef struct {
     uint32_t cases;
@@ -43,6 +64,65 @@ static Dspic33PendingSoftTrap* pending_trap(Dspic33* cpu, uint16_t trap) {
         }
     }
     return NULL;
+}
+
+static bool interrupt_flag(Dspic33* cpu, uint8_t irq) {
+    uint16_t address = (uint16_t)(0x0800u + (irq / 16u) * 2u);
+    return (dspic33_read_word(cpu, address) & (uint16_t)(1u << (irq % 16u))) != 0u;
+}
+
+static void clear_interrupt(Dspic33* cpu, uint8_t irq) {
+    uint16_t address = (uint16_t)(0x0800u + (irq / 16u) * 2u);
+    uint16_t mask = (uint16_t)(1u << (irq % 16u));
+    dspic33_write_word(cpu, address,
+                       (uint16_t)(dspic33_read_word(cpu, address) & ~mask));
+}
+
+static void clear_external_interrupts(Dspic33* cpu) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_EXTERNAL_INTERRUPT_COUNT; channel++) {
+        clear_interrupt(cpu, external_interrupt_irqs[channel]);
+    }
+}
+
+static uint8_t external_interrupt_flags(Dspic33* cpu) {
+    uint8_t channel;
+    uint8_t flags = 0u;
+    for (channel = 0u; channel < DSPIC33_EXTERNAL_INTERRUPT_COUNT; channel++) {
+        if (interrupt_flag(cpu, external_interrupt_irqs[channel])) {
+            flags |= (uint8_t)(1u << channel);
+        }
+    }
+    return flags;
+}
+
+static void prepare_external_interrupts(Dspic33* cpu, uint16_t levels,
+                                        uint16_t polarity) {
+    dspic33_gpio_drive(cpu, 3u, levels, 0x003fu);
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, ANSELD, 0u);
+    dspic33_write_word(cpu, TRISD, UINT16_MAX);
+    dspic33_write_word(cpu, RPINR0, 65u << 8u);
+    dspic33_write_word(cpu, RPINR1, (uint16_t)(66u | (67u << 8u)));
+    dspic33_write_word(cpu, RPINR2, 68u);
+    dspic33_write_word(cpu, INTCON2, (uint16_t)(0x8000u | polarity));
+    clear_external_interrupts(cpu);
+}
+
+static void enable_interrupt(Dspic33* cpu, uint8_t irq, uint8_t priority,
+                             uint32_t vector) {
+    uint16_t enable = (uint16_t)(0x0820u + (irq / 16u) * 2u);
+    uint16_t priority_address = (uint16_t)(0x0840u + (irq / 4u) * 2u);
+    uint16_t enable_mask = (uint16_t)(1u << (irq % 16u));
+    uint16_t shift = (uint16_t)((irq % 4u) * 4u);
+    dspic33_write_word(cpu, enable,
+                       (uint16_t)(dspic33_read_word(cpu, enable) | enable_mask));
+    dspic33_write_word(cpu, priority_address,
+                       (uint16_t)((dspic33_read_word(cpu, priority_address) &
+                                   ~(uint16_t)(7u << shift)) |
+                                  (uint16_t)(priority << shift)));
+    dspic33_load_program_word(cpu, (uint32_t)(0x0014u + irq * 2u), vector);
+    dspic33_load_program_word(cpu, vector, 0u);
 }
 
 static void access_cases(InterruptControlConformance* state, Dspic33* cpu) {
@@ -191,6 +271,274 @@ static void generic_soft_cases(InterruptControlConformance* state, Dspic33* cpu)
            "RETFIE returns after soft sources clear");
 }
 
+static void external_interrupt_edge_cases(InterruptControlConformance* state,
+                                          Dspic33* cpu) {
+    uint8_t channel;
+    prepare_external_interrupts(cpu, 0u, 0u);
+    for (channel = 0u; channel < DSPIC33_EXTERNAL_INTERRUPT_COUNT; channel++) {
+        uint8_t irq = external_interrupt_irqs[channel];
+        uint16_t pin = external_interrupt_pins[channel];
+        dspic33_gpio_drive(cpu, 3u, pin, pin);
+        expect(state, external_interrupt_flags(cpu) == (uint8_t)(1u << channel),
+               "positive INT edge raises only its matching flag");
+        clear_interrupt(cpu, irq);
+        dspic33_gpio_drive(cpu, 3u, pin, pin);
+        expect(state, !interrupt_flag(cpu, irq),
+               "stable high INT input does not retrigger");
+        dspic33_gpio_drive(cpu, 3u, 0u, pin);
+        expect(state, !interrupt_flag(cpu, irq),
+               "falling edge does not match positive polarity");
+    }
+
+    prepare_external_interrupts(cpu, 0x001fu, 0x001fu);
+    for (channel = 0u; channel < DSPIC33_EXTERNAL_INTERRUPT_COUNT; channel++) {
+        uint8_t irq = external_interrupt_irqs[channel];
+        uint16_t pin = external_interrupt_pins[channel];
+        dspic33_gpio_drive(cpu, 3u, 0u, pin);
+        expect(state, external_interrupt_flags(cpu) == (uint8_t)(1u << channel),
+               "negative INT edge raises only its matching flag");
+        clear_interrupt(cpu, irq);
+        dspic33_gpio_drive(cpu, 3u, 0u, pin);
+        expect(state, !interrupt_flag(cpu, irq),
+               "stable low INT input does not retrigger");
+        dspic33_gpio_drive(cpu, 3u, pin, pin);
+        expect(state, !interrupt_flag(cpu, irq),
+               "rising edge does not match negative polarity");
+    }
+
+    prepare_external_interrupts(cpu, 0u, 0u);
+    dspic33_write_byte(cpu, INTCON2, 0x1fu);
+    expect(state,
+           !interrupt_flag(cpu, 0u) && !interrupt_flag(cpu, 20u) &&
+               !interrupt_flag(cpu, 29u) && !interrupt_flag(cpu, 53u) &&
+               !interrupt_flag(cpu, 54u),
+           "polarity reconfiguration does not synthesize an edge");
+}
+
+static void external_interrupt_selection_cases(InterruptControlConformance* state,
+                                               Dspic33* cpu) {
+    prepare_external_interrupts(cpu, 0u, 0u);
+    dspic33_gpio_drive(cpu, 3u, 0x0020u, 0x0020u);
+    dspic33_write_byte(cpu, RPINR0 + 1u, 69u);
+    expect(state,
+           !interrupt_flag(cpu, 20u) &&
+               cpu->io.external_interrupt_selection[1] == 69u &&
+               (cpu->io.external_interrupt_levels & 0x02u) != 0u,
+           "INT1 remap baselines the selected high pin");
+    dspic33_write_word(cpu, INTCON2, 0x8002u);
+    dspic33_gpio_drive(cpu, 3u, 0u, 0x0020u);
+    expect(state, interrupt_flag(cpu, 20u), "remapped INT1 detects the selected edge");
+
+    clear_interrupt(cpu, 20u);
+    dspic33_write_word(cpu, RPINR0, 48u << 8u);
+    dspic33_gpio_drive(cpu, 3u, 0x0020u, 0x0020u);
+    expect(state,
+           !interrupt_flag(cpu, 20u) &&
+               (cpu->io.external_interrupt_qualified & 0x02u) == 0u,
+           "unimplemented PPS selection cannot drive INT1");
+    dspic33_write_word(cpu, RPINR0, 0u);
+    expect(state,
+           !interrupt_flag(cpu, 20u) &&
+               (cpu->io.external_interrupt_qualified & 0x02u) != 0u &&
+               (cpu->io.external_interrupt_levels & 0x02u) == 0u,
+           "PPS selection zero ties INT1 to VSS without an edge");
+
+    prepare_external_interrupts(cpu, 0u, 0u);
+    dspic33_write_word(cpu, RPINR0, 1u << 8u);
+    dspic33_comparator_input(cpu, 0u, DSPIC33_COMPARATOR_INPUT_POSITIVE, 0u, 0u);
+    dspic33_comparator_input(cpu, 0u, DSPIC33_COMPARATOR_INPUT_NEGATIVE_2, 100u, 0u);
+    dspic33_device_advance(cpu, 0u);
+    dspic33_write_word(cpu, COMPARATOR1_CONTROL, 0x8000u);
+    clear_interrupt(cpu, 20u);
+    dspic33_comparator_input(cpu, 0u, DSPIC33_COMPARATOR_INPUT_POSITIVE, 200u, 0u);
+    dspic33_device_advance(cpu, 0u);
+    expect(state, interrupt_flag(cpu, 20u), "CMP1 rising output drives selected INT1");
+    clear_interrupt(cpu, 20u);
+    dspic33_write_word(cpu, INTCON2, 0x8002u);
+    dspic33_comparator_input(cpu, 0u, DSPIC33_COMPARATOR_INPUT_POSITIVE, 0u, 0u);
+    dspic33_device_advance(cpu, 0u);
+    expect(state, interrupt_flag(cpu, 20u), "CMP1 falling output drives selected INT1");
+
+    prepare_external_interrupts(cpu, 0u, 0u);
+    dspic33_write_word(cpu, TRISD, (uint16_t)(UINT16_MAX & ~0x0002u));
+    dspic33_gpio_drive(cpu, 3u, 0x0002u, 0x0002u);
+    expect(state, !interrupt_flag(cpu, 20u), "output mode suppresses INT1 input edges");
+    dspic33_write_word(cpu, TRISD, UINT16_MAX);
+    expect(state, !interrupt_flag(cpu, 20u),
+           "input qualification baselines INT1 level");
+    dspic33_gpio_drive(cpu, 3u, 0u, 0x0002u);
+    dspic33_gpio_drive(cpu, 3u, 0x0002u, 0x0002u);
+    expect(state, interrupt_flag(cpu, 20u),
+           "qualified digital input restores INT1 edges");
+
+    clear_interrupt(cpu, 20u);
+    dspic33_write_word(cpu, ANSELD, 0x0002u);
+    dspic33_gpio_drive(cpu, 3u, 0u, 0x0002u);
+    expect(state, !interrupt_flag(cpu, 20u), "analog mode suppresses INT1 input edges");
+    dspic33_write_word(cpu, ANSELD, 0u);
+    expect(state, !interrupt_flag(cpu, 20u),
+           "digital qualification rebaselines INT1 level");
+    dspic33_gpio_drive(cpu, 3u, 0x0002u, 0x0002u);
+    expect(state, interrupt_flag(cpu, 20u), "digital mode restores INT1 input edges");
+}
+
+static void configure_output_compare_trigger(Dspic33* cpu, uint8_t source) {
+    dspic33_write_word(cpu, OUTPUT_COMPARE16_CONTROL1, 0u);
+    dspic33_write_word(cpu, OUTPUT_COMPARE16_CONTROL2, 0u);
+    dspic33_write_word(cpu, OUTPUT_COMPARE16_SECONDARY, 4u);
+    dspic33_write_word(cpu, OUTPUT_COMPARE16_PRIMARY, 2u);
+    dspic33_write_word(cpu, OUTPUT_COMPARE16_CONTROL1,
+                       OUTPUT_COMPARE_FP | OUTPUT_COMPARE_EDGE_PWM);
+    dspic33_write_word(cpu, OUTPUT_COMPARE16_CONTROL2,
+                       (uint16_t)(OUTPUT_COMPARE_TRIGGER | source));
+}
+
+static void configure_dma_request(Dspic33* cpu, uint8_t request, uint16_t source) {
+    dspic33_write_word(cpu, source, 0x5aa5u);
+    dspic33_write_word(cpu, 0x0b00u, 0u);
+    dspic33_write_word(cpu, 0x0b02u, request);
+    dspic33_write_word(cpu, 0x0b04u, source);
+    dspic33_write_word(cpu, 0x0b06u, 0u);
+    dspic33_write_word(cpu, 0x0b0cu, DMA_TEST_PAD);
+    dspic33_write_word(cpu, 0x0b0eu, 0u);
+    dspic33_write_word(cpu, 0x0b00u, 0xa001u);
+}
+
+static void external_interrupt_interaction_cases(InterruptControlConformance* state,
+                                                 Dspic33* cpu) {
+    prepare_external_interrupts(cpu, 0u, 0u);
+    configure_dma_request(cpu, 0u, 0x2200u);
+    dspic33_gpio_drive(cpu, 3u, 0x0001u, 0x0001u);
+    expect(state,
+           interrupt_flag(cpu, 0u) && (cpu->io.dma_peripheral_pending & 1u) != 0u,
+           "INT0 edge raises its interrupt and DMA request");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) &&
+               dspic33_read_word(cpu, DMA_TEST_PAD) == 0x5aa5u,
+           "INT0 DMA request performs the configured transfer");
+
+    prepare_external_interrupts(cpu, 0u, 0u);
+    configure_dma_request(cpu, 20u, 0x2202u);
+    dspic33_gpio_drive(cpu, 3u, 0x0002u, 0x0002u);
+    expect(state,
+           interrupt_flag(cpu, 20u) && cpu->io.dma_peripheral_pending == 0u &&
+               dspic33_read_word(cpu, DMA_TEST_PAD) == 0u,
+           "INT1 edge does not produce an unsupported DMA request");
+
+    prepare_external_interrupts(cpu, 0u, 0u);
+    dspic33_adc_input(cpu, 0u, 400u);
+    dspic33_write_word(cpu, 0x0320u, 0u);
+    dspic33_write_word(cpu, 0x0322u, 0u);
+    dspic33_write_word(cpu, 0x0328u, 0u);
+    dspic33_write_word(cpu, 0x0320u, 0x8010u);
+    dspic33_write_word(cpu, 0x0320u, 0x8012u);
+    dspic33_gpio_drive(cpu, 3u, 0x0001u, 0x0001u);
+    expect(state,
+           dspic33_device_advance(cpu, 0u) &&
+               (dspic33_read_word(cpu, 0x0320u) & 0x0002u) == 0u,
+           "INT0 edge starts the selected ADC conversion");
+    expect(state,
+           dspic33_device_advance(cpu, 12u) &&
+               dspic33_read_word(cpu, 0x0300u) == 100u &&
+               (dspic33_read_word(cpu, 0x0320u) & 0x0001u) == 0u,
+           "INT0 conversion completes with the B1 DONE behavior");
+
+    prepare_external_interrupts(cpu, 0u, 0u);
+    configure_output_compare_trigger(cpu, 29u);
+    dspic33_gpio_drive(cpu, 3u, 0x0002u, 0x0002u);
+    expect(state,
+           interrupt_flag(cpu, 20u) &&
+               (dspic33_read_word(cpu, OUTPUT_COMPARE16_CONTROL2) &
+                OUTPUT_COMPARE_TRIGGER_STATUS) != 0u,
+           "INT1 pin edge triggers its selected Output Compare source");
+
+    prepare_external_interrupts(cpu, 0u, 0u);
+    configure_output_compare_trigger(cpu, 30u);
+    dspic33_gpio_drive(cpu, 3u, 0x0004u, 0x0004u);
+    expect(state,
+           interrupt_flag(cpu, 29u) &&
+               (dspic33_read_word(cpu, OUTPUT_COMPARE16_CONTROL2) &
+                OUTPUT_COMPARE_TRIGGER_STATUS) != 0u,
+           "INT2 pin edge triggers its selected Output Compare source");
+}
+
+static void external_interrupt_wake_lifecycle_cases(InterruptControlConformance* state,
+                                                    Dspic33* source, Dspic33* copy) {
+    prepare_external_interrupts(source, 0u, 0u);
+    enable_interrupt(source, 20u, 0u, 0x04e0u);
+    source->power_state = DSPIC33_POWER_SLEEP;
+    dspic33_gpio_drive(source, 3u, 0x0002u, 0x0002u);
+    expect(state,
+           interrupt_flag(source, 20u) && !dspic33_device_wake(source) &&
+               source->power_state == DSPIC33_POWER_SLEEP,
+           "priority-zero external interrupt cannot wake from Sleep");
+
+    prepare_external_interrupts(source, 0u, 0u);
+    enable_interrupt(source, 53u, 3u, 0x0500u);
+    source->w[15] = 0x1800u;
+    source->sr = 0x0040u;
+    source->power_state = DSPIC33_POWER_SLEEP;
+    dspic33_gpio_drive(source, 3u, 0x0008u, 0x0008u);
+    expect(state,
+           dspic33_device_wake(source) && source->last_interrupt == 53u &&
+               source->pc == 0x0500u && source->w[15] == 0x1804u,
+           "higher-priority INT3 edge wakes through its documented vector");
+    expect(state, dspic33_read_word(source, INTTREG) == 0x033du,
+           "INT3 wake latches its vector number and priority");
+
+    prepare_external_interrupts(source, 0u, 0u);
+    enable_interrupt(source, 54u, 2u, 0x0520u);
+    source->w[15] = 0x1900u;
+    source->sr = 0x0040u;
+    source->power_state = DSPIC33_POWER_IDLE;
+    dspic33_gpio_drive(source, 3u, 0x0010u, 0x0010u);
+    expect(state,
+           dspic33_device_wake(source) && source->interrupt_count == 0u &&
+               source->w[15] == 0x1900u && interrupt_flag(source, 54u),
+           "equal-priority INT4 edge wakes from Idle without a frame");
+    source->sr = 0u;
+    expect(state,
+           dspic33_device_service_interrupt(source) && source->last_interrupt == 54u &&
+               source->pc == 0x0520u,
+           "retained INT4 flag vectors after lowering IPL");
+
+    prepare_external_interrupts(source, 0u, 0u);
+    expect(state, dspic33_copy(copy, source), "copy preserves external INT state");
+    dspic33_gpio_drive(source, 3u, 0x0002u, 0x0002u);
+    expect(state,
+           interrupt_flag(source, 20u) && !interrupt_flag(copy, 20u) &&
+               source->io.external_interrupt_levels !=
+                   copy->io.external_interrupt_levels,
+           "copied external INT edge state diverges independently");
+
+    clear_external_interrupts(source);
+    dspic33_load_program_word(source, 0u, OPCODE_RESET);
+    source->pc = 0u;
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING &&
+               dspic33_read_word(source, RPINR0) == 0u &&
+               source->io.external_interrupt_selection[1] == 0u &&
+               !interrupt_flag(source, 20u),
+           "warm reset clears INT remap and rebaselines retained pins");
+    dspic33_write_word(source, ANSELD, 0u);
+    dspic33_write_word(source, TRISD, UINT16_MAX);
+    dspic33_write_word(source, RPINR0, 65u << 8u);
+    expect(state, !interrupt_flag(source, 20u),
+           "warm-reset remap baselines the retained high pin");
+    dspic33_gpio_drive(source, 3u, 0u, 0x0002u);
+    dspic33_gpio_drive(source, 3u, 0x0002u, 0x0002u);
+    expect(state, interrupt_flag(source, 20u),
+           "warm-reset external INT state detects later edges");
+
+    dspic33_reset(source, 0u);
+    expect(state,
+           source->io.external_interrupt_selection[0] == 64u &&
+               source->io.external_interrupt_selection[1] == 0u &&
+               source->io.external_interrupt_qualified == 0x1fu &&
+               source->io.external_interrupt_levels == 0u,
+           "POR restores fixed INT0 and VSS-remapped INT1 through INT4 state");
+}
+
 static void lifecycle_cases(InterruptControlConformance* state, Dspic33* source,
                             Dspic33* copy) {
     dspic33_reset(source, 0u);
@@ -226,8 +574,12 @@ int main(void) {
     access_cases(&state, &source);
     generic_hard_cases(&state, &source);
     generic_soft_cases(&state, &source);
+    external_interrupt_edge_cases(&state, &source);
+    external_interrupt_selection_cases(&state, &source);
+    external_interrupt_interaction_cases(&state, &source);
+    external_interrupt_wake_lifecycle_cases(&state, &source, &copy);
     lifecycle_cases(&state, &source, &copy);
-    expect(&state, state.cases == 41u, "interrupt-control assertion accounting");
+    expect(&state, state.cases == 102u, "interrupt-control assertion accounting");
     printf("[interrupt-control-summary] cases=%" PRIu32 " passed=%" PRIu32
            " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);

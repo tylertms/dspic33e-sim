@@ -39,6 +39,7 @@
 #define DSPIC33_PWM_OUTPUT_COUNT (DSPIC33_PWM_COUNT * 2u)
 #define DSPIC33_PWM_INPUT_COUNT 32u
 #define DSPIC33_GPIO_PORT_COUNT 7u
+#define DSPIC33_EXTERNAL_INTERRUPT_COUNT 5u
 #define DSPIC33_USB_ENDPOINT_COUNT 16u
 #define DSPIC33_USB_PACKET_SIZE 1023u
 #define DSPIC33_USB_PACKET_QUEUE_SIZE 64u
@@ -544,6 +545,9 @@ typedef struct {
     uint16_t gpio_cn_reference[DSPIC33_GPIO_PORT_COUNT];
     uint16_t gpio_cn_values[DSPIC33_GPIO_PORT_COUNT];
     uint16_t gpio_cn_qualified[DSPIC33_GPIO_PORT_COUNT];
+    uint8_t external_interrupt_selection[DSPIC33_EXTERNAL_INTERRUPT_COUNT];
+    uint8_t external_interrupt_levels;
+    uint8_t external_interrupt_qualified;
     uint16_t pwm[DSPIC33_PWM_OUTPUT_COUNT];
     uint16_t pwm_master_counter[2];
     uint16_t pwm_counter[DSPIC33_PWM_COUNT][2];
