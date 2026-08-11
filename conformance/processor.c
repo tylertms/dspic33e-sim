@@ -175,6 +175,7 @@ enum {
     OPCODE_MOV_W1_IFS1 = 0x884011u,
     OPCODE_CLEAR_RCOUNT = 0xef2036u,
     OPCODE_INCREMENT_W2 = 0xe80102u,
+    OPCODE_RESET = 0xfe0000u,
     OPCODE_DO_0 = 0x080000u,
     OPCODE_DO_1 = 0x080001u,
     OPCODE_DO_W0 = 0x088000u,
@@ -2488,6 +2489,166 @@ static void repeat_interrupt_cases(ProcessorConformance* state, Dspic33* cpu) {
                cpu->pc == 0x208u && cpu->rcount == 0u && cpu->repeat_active == 0u &&
                (cpu->sr & 0x0010u) == 0u && cpu->cycles == 12u,
            "cleared repeat executes final prefetched target once");
+}
+
+static void prepare_nested_do_interrupt_case(ProcessorConformance* state, Dspic33* cpu,
+                                             uint32_t entry, bool nesting_disabled) {
+    uint32_t address;
+    reset_processor_conformance(cpu, entry);
+    for (address = 0x204u; address <= 0x208u; address += 2u) {
+        load_instruction(state, cpu, address, OPCODE_NOP);
+    }
+    load_instruction(state, cpu, 0x0014u, 0x000300u);
+    load_instruction(state, cpu, 0x0016u, 0x000320u);
+    for (address = 0x300u; address <= 0x30au; address += 2u) {
+        load_instruction(state, cpu, address, OPCODE_NOP);
+    }
+    load_instruction(state, cpu, 0x30cu, OPCODE_RETFIE);
+    load_instruction(state, cpu, 0x320u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x322u, OPCODE_RETFIE);
+    cpu->w[15] = 0x5000u;
+    cpu->do_depth = 1u;
+    cpu->do_start[0] = 0x204u;
+    cpu->do_end[0] = 0x208u;
+    cpu->do_count[0] = 3u;
+    cpu->dostart = 0x204u;
+    cpu->doend = 0x208u;
+    cpu->dcount = 3u;
+    cpu->sr |= 0x0200u;
+    cpu->corcon = (uint16_t)((cpu->corcon & ~0x0700u) | 0x0100u);
+    dspic33_write_word(cpu, 0x08c0u, nesting_disabled ? 0x8000u : 0u);
+    dspic33_write_word(cpu, 0x0820u, 0x0003u);
+    dspic33_write_word(cpu, 0x0840u, 0x0042u);
+    dspic33_write_word(cpu, 0x08c2u, 0x8000u);
+}
+
+static void enter_first_nested_do_interrupt(ProcessorConformance* state, Dspic33* cpu,
+                                            bool expected_armed) {
+    dspic33_raise_interrupt(cpu, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x302u &&
+               cpu->cycles == 1u && cpu->interrupt_depth == 1u &&
+               cpu->nested_do_interrupt_armed == expected_armed,
+           "first DO-loop interrupt records the erratum window");
+    dspic33_write_word(cpu, 0x0800u, 0u);
+}
+
+static void complete_nested_do_interrupt_case(ProcessorConformance* state, Dspic33* cpu,
+                                              uint8_t delay,
+                                              bool expected_extra_decrement) {
+    uint8_t index;
+    uint8_t main_steps;
+    for (index = 1u; index < delay; index++) {
+        expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+               "first DO-loop interrupt handler advances to nested deadline");
+    }
+    dspic33_raise_interrupt(cpu, 1u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x322u &&
+               cpu->interrupt_depth == 2u &&
+               (cpu->nested_do_extra_decrement_depth != 0u) == expected_extra_decrement,
+           "higher-priority nested interrupt evaluates the exact four-cycle window");
+    dspic33_write_word(cpu, 0x0800u, 0u);
+    dspic33_write_word(cpu, 0x0820u, 0u);
+    for (index = 0u; cpu->interrupt_depth != 0u && index < 8u; index++) {
+        expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+               "nested DO-loop interrupt handlers return normally");
+    }
+    expect(state, cpu->interrupt_depth == 0u,
+           "nested DO-loop interrupt stack fully unwinds");
+    main_steps = (uint8_t)(((0x208u - cpu->pc) / 2u) + 1u);
+    for (index = 0u; index < main_steps; index++) {
+        expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+               "interrupted DO-loop reaches its iteration boundary");
+    }
+    expect(state,
+           cpu->pc == 0x204u && cpu->do_depth == 1u &&
+               cpu->dcount == (expected_extra_decrement ? 1u : 2u) &&
+               cpu->do_count[0] == cpu->dcount &&
+               cpu->nested_do_extra_decrement_depth == 0u &&
+               cpu->nested_do_extra_decrement_end == 0u &&
+               !cpu->nested_do_interrupt_armed,
+           "DO-loop iteration applies only the documented nested decrement");
+}
+
+static void nested_do_interrupt_erratum_cases(ProcessorConformance* state,
+                                              Dspic33* cpu) {
+    static const uint32_t entries[] = {0x206u, 0x208u};
+    static const uint8_t delays[] = {3u, 4u, 5u};
+    Dspic33 copy;
+    size_t entry_index;
+    size_t delay_index;
+    for (entry_index = 0u; entry_index < sizeof(entries) / sizeof(entries[0]);
+         entry_index++) {
+        for (delay_index = 0u; delay_index < sizeof(delays) / sizeof(delays[0]);
+             delay_index++) {
+            prepare_nested_do_interrupt_case(state, cpu, entries[entry_index], false);
+            enter_first_nested_do_interrupt(state, cpu, true);
+            complete_nested_do_interrupt_case(state, cpu, delays[delay_index],
+                                              delays[delay_index] == 4u);
+        }
+    }
+
+    prepare_nested_do_interrupt_case(state, cpu, 0x204u, false);
+    enter_first_nested_do_interrupt(state, cpu, false);
+    complete_nested_do_interrupt_case(state, cpu, 4u, false);
+
+    prepare_nested_do_interrupt_case(state, cpu, 0x208u, false);
+    enter_first_nested_do_interrupt(state, cpu, true);
+    dspic33_write_word(cpu, 0x0820u, 0u);
+    for (delay_index = 0u; cpu->interrupt_depth != 0u && delay_index < 8u;
+         delay_index++) {
+        expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+               "single DO-loop interrupt handler returns normally");
+    }
+    expect(state,
+           cpu->interrupt_depth == 0u && cpu->pc == 0x208u &&
+               cpu->nested_do_interrupt_armed,
+           "single DO-loop interrupt retains its window until the loop boundary");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->dcount == 2u &&
+               !cpu->nested_do_interrupt_armed &&
+               cpu->nested_do_interrupt_cycle == 0u &&
+               cpu->nested_do_interrupt_end == 0u &&
+               cpu->nested_do_interrupt_depth == 0u &&
+               cpu->nested_do_interrupt_priority == 0u,
+           "DO-loop boundary expires an unused nested-interrupt window");
+
+    prepare_nested_do_interrupt_case(state, cpu, 0x208u, true);
+    enter_first_nested_do_interrupt(state, cpu, false);
+    for (delay_index = 1u; delay_index < 4u; delay_index++) {
+        expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+               "NSTDIS handler advances without nested service");
+    }
+    dspic33_raise_interrupt(cpu, 1u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->interrupt_depth == 1u &&
+               cpu->interrupt_count == 1u && cpu->nested_do_extra_decrement_depth == 0u,
+           "NSTDIS prevents the nested DO-loop erratum sequence");
+
+    prepare_nested_do_interrupt_case(state, cpu, 0x206u, false);
+    enter_first_nested_do_interrupt(state, cpu, true);
+    expect(state, dspic33_initialize(&copy), "initialize nested DO-loop erratum copy");
+    expect(state, dspic33_copy(&copy, cpu), "copy armed nested DO-loop erratum state");
+    complete_nested_do_interrupt_case(state, cpu, 4u, true);
+    complete_nested_do_interrupt_case(state, &copy, 4u, true);
+    dspic33_destroy(&copy);
+
+    prepare_nested_do_interrupt_case(state, cpu, 0x208u, false);
+    enter_first_nested_do_interrupt(state, cpu, true);
+    load_instruction(state, cpu, 0x302u, OPCODE_RESET);
+    dspic33_write_word(cpu, 0x0800u, 0u);
+    dspic33_write_word(cpu, 0x0820u, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->software_reset_count == 1u &&
+               !cpu->nested_do_interrupt_armed &&
+               cpu->nested_do_interrupt_cycle == 0u &&
+               cpu->nested_do_interrupt_end == 0u &&
+               cpu->nested_do_interrupt_depth == 0u &&
+               cpu->nested_do_interrupt_priority == 0u &&
+               cpu->nested_do_extra_decrement_depth == 0u &&
+               cpu->nested_do_extra_decrement_end == 0u,
+           "warm reset clears nested DO-loop erratum state");
 }
 
 static void call_stack_timing_case(ProcessorConformance* state, Dspic33* cpu) {
@@ -6381,6 +6542,7 @@ int main(void) {
         earlier_deadline_case(&state, &cpu);
         repeat_exception_cases(&state, &cpu);
         repeat_interrupt_cases(&state, &cpu);
+        nested_do_interrupt_erratum_cases(&state, &cpu);
         instruction_cycle_cases(&state, &cpu);
         register_move_instruction_cases(&state, &cpu);
         direct_file_move_cases(&state, &cpu);

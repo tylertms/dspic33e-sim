@@ -3597,6 +3597,13 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
     memset(cpu->do_end, 0, sizeof(cpu->do_end));
     memset(cpu->do_count, 0, sizeof(cpu->do_count));
     memset(cpu->do_terminate, 0, sizeof(cpu->do_terminate));
+    cpu->nested_do_interrupt_cycle = 0u;
+    cpu->nested_do_interrupt_end = 0u;
+    cpu->nested_do_extra_decrement_end = 0u;
+    cpu->nested_do_interrupt_depth = 0u;
+    cpu->nested_do_interrupt_priority = 0u;
+    cpu->nested_do_extra_decrement_depth = 0u;
+    cpu->nested_do_interrupt_armed = false;
     cpu->instructions = 0u;
     cpu->cycles = 0u;
     cpu->device_cycles = 0u;
@@ -4376,6 +4383,31 @@ uint16_t dspic33_read_word(Dspic33* cpu, uint32_t address) {
     return (uint16_t)(low | (high << 8u));
 }
 
+static void complete_do_loop_iteration(Dspic33* cpu) {
+    uint8_t depth = (uint8_t)(cpu->do_depth - 1u);
+    if (cpu->do_count[depth] != 0u && cpu->do_terminate[depth] == 0u) {
+        cpu->do_count[depth]--;
+        cpu->dcount = cpu->do_count[depth];
+        cpu->pc = cpu->do_start[depth];
+        return;
+    }
+    cpu->do_terminate[depth] = 0u;
+    cpu->do_depth--;
+    cpu->corcon =
+        (uint16_t)((cpu->corcon & ~0x0700u) | ((uint16_t)cpu->do_depth << 8u));
+    if (cpu->do_depth == 0u) {
+        cpu->dostart = 0u;
+        cpu->doend = 0u;
+        cpu->dcount = 0u;
+        cpu->sr &= (uint16_t)~0x0200u;
+        return;
+    }
+    depth = (uint8_t)(cpu->do_depth - 1u);
+    cpu->dostart = cpu->do_start[depth];
+    cpu->doend = cpu->do_end[depth];
+    cpu->dcount = cpu->do_count[depth];
+}
+
 Dspic33StopReason dspic33_step(Dspic33* cpu) {
     uint16_t working_registers[16];
     uint16_t initialized_working_registers;
@@ -4645,26 +4677,27 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     }
     if (cpu->do_depth != 0u && instruction_pc == cpu->do_end[cpu->do_depth - 1u]) {
         uint8_t depth = (uint8_t)(cpu->do_depth - 1u);
-        if (cpu->do_count[depth] != 0u && cpu->do_terminate[depth] == 0u) {
-            cpu->do_count[depth]--;
-            cpu->dcount = cpu->do_count[depth];
-            cpu->pc = cpu->do_start[depth];
-        } else {
-            cpu->do_terminate[depth] = 0u;
-            cpu->do_depth--;
-            cpu->corcon =
-                (uint16_t)((cpu->corcon & ~0x0700u) | ((uint16_t)cpu->do_depth << 8u));
-            if (cpu->do_depth == 0u) {
-                cpu->dostart = 0u;
-                cpu->doend = 0u;
-                cpu->dcount = 0u;
-                cpu->sr &= (uint16_t)~0x0200u;
-            } else {
-                depth = (uint8_t)(cpu->do_depth - 1u);
-                cpu->dostart = cpu->do_start[depth];
-                cpu->doend = cpu->do_end[depth];
-                cpu->dcount = cpu->do_count[depth];
-            }
+        bool extra_decrement = cpu->nested_do_extra_decrement_depth == cpu->do_depth &&
+                               cpu->nested_do_extra_decrement_end == instruction_pc;
+        uint32_t sequential_pc = cpu->pc;
+        if (cpu->nested_do_interrupt_armed &&
+            cpu->nested_do_interrupt_depth == cpu->do_depth &&
+            cpu->nested_do_interrupt_end == instruction_pc) {
+            cpu->nested_do_interrupt_cycle = 0u;
+            cpu->nested_do_interrupt_end = 0u;
+            cpu->nested_do_interrupt_depth = 0u;
+            cpu->nested_do_interrupt_priority = 0u;
+            cpu->nested_do_interrupt_armed = false;
+        }
+        if (extra_decrement) {
+            cpu->nested_do_extra_decrement_depth = 0u;
+            cpu->nested_do_extra_decrement_end = 0u;
+        }
+        complete_do_loop_iteration(cpu);
+        if (extra_decrement && cpu->do_depth == (uint8_t)(depth + 1u) &&
+            cpu->do_end[depth] == instruction_pc) {
+            cpu->pc = sequential_pc;
+            complete_do_loop_iteration(cpu);
         }
     }
     cpu->sequential_program_hole_pc =

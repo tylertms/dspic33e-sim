@@ -732,6 +732,13 @@ typedef struct {
     uint32_t do_end[4];
     uint16_t do_count[4];
     uint8_t do_terminate[4];
+    uint64_t nested_do_interrupt_cycle;
+    uint32_t nested_do_interrupt_end;
+    uint32_t nested_do_extra_decrement_end;
+    uint8_t nested_do_interrupt_depth;
+    uint8_t nested_do_interrupt_priority;
+    uint8_t nested_do_extra_decrement_depth;
+    bool nested_do_interrupt_armed;
     uint64_t instructions;
     uint64_t cycles;
     uint64_t device_cycles;

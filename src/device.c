@@ -7372,6 +7372,39 @@ static void recover_from_doze(Dspic33* cpu) {
     }
 }
 
+static void update_nested_do_interrupt_erratum(Dspic33* cpu, uint32_t origin,
+                                               uint8_t priority) {
+    uint8_t depth = cpu->nested_do_interrupt_depth;
+    if ((raw_word(cpu, 0x08c0u) & 0x8000u) != 0u) {
+        cpu->nested_do_interrupt_armed = false;
+        return;
+    }
+    if (cpu->nested_do_interrupt_armed) {
+        if (cpu->interrupt_depth != 0u &&
+            priority > cpu->nested_do_interrupt_priority &&
+            cpu->cycles - cpu->nested_do_interrupt_cycle == 4u && depth != 0u &&
+            cpu->do_depth >= depth &&
+            cpu->do_end[depth - 1u] == cpu->nested_do_interrupt_end) {
+            cpu->nested_do_extra_decrement_depth = depth;
+            cpu->nested_do_extra_decrement_end = cpu->nested_do_interrupt_end;
+        }
+        cpu->nested_do_interrupt_armed = false;
+        return;
+    }
+    depth = cpu->do_depth;
+    if (depth != 0u) {
+        uint32_t end = cpu->do_end[depth - 1u];
+        uint32_t previous = (end - 2u) & 0x007ffffeu;
+        if (origin == end || origin == previous) {
+            cpu->nested_do_interrupt_cycle = cpu->cycles;
+            cpu->nested_do_interrupt_end = end;
+            cpu->nested_do_interrupt_depth = depth;
+            cpu->nested_do_interrupt_priority = priority;
+            cpu->nested_do_interrupt_armed = true;
+        }
+    }
+}
+
 static bool service_interrupt(Dspic33* cpu) {
     uint8_t best_priority;
     uint16_t best_irq;
@@ -7395,6 +7428,7 @@ static bool service_interrupt(Dspic33* cpu) {
     if (!dspic33_codeguard_admit_program_flow(cpu, origin, target)) {
         return true;
     }
+    update_nested_do_interrupt_erratum(cpu, origin, best_priority);
     recover_from_doze(cpu);
     dspic33_check_stack_address(cpu, cpu->w[15], cpu->w[15] > 0xfffdu, 2u);
     dspic33_write_word(cpu, cpu->w[15],
