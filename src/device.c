@@ -2896,10 +2896,7 @@ static bool output_compare_configuration_supported(uint8_t channel, uint16_t con
            (control1 & OUTPUT_COMPARE_CON1_UNSUPPORTED) == 0u && mode != 0u &&
            (control2 & OUTPUT_COMPARE_CON2_UNSUPPORTED) == 0u &&
            (control2 & OUTPUT_COMPARE_32_BIT) == 0u &&
-           synchronization != OUTPUT_COMPARE_SYNC_RESERVED &&
-           !(trigger && own_source) &&
-           !(!trigger && synchronization >= OUTPUT_COMPARE_SYNC_IC_FIRST &&
-             synchronization < OUTPUT_COMPARE_SYNC_COMPARATOR_FIRST);
+           synchronization != OUTPUT_COMPARE_SYNC_RESERVED && !(trigger && own_source);
 }
 
 static bool output_compare_cascade_controls_supported(uint8_t channel,
@@ -2915,10 +2912,7 @@ static bool output_compare_cascade_controls_supported(uint8_t channel,
            (control1 & OUTPUT_COMPARE_MODE_MASK) != 0u &&
            (control2 & OUTPUT_COMPARE_CON2_UNSUPPORTED) == 0u &&
            (control2 & OUTPUT_COMPARE_32_BIT) != 0u &&
-           synchronization != OUTPUT_COMPARE_SYNC_RESERVED &&
-           !(trigger && own_source) &&
-           !(!trigger && synchronization >= OUTPUT_COMPARE_SYNC_IC_FIRST &&
-             synchronization < OUTPUT_COMPARE_SYNC_COMPARATOR_FIRST);
+           synchronization != OUTPUT_COMPARE_SYNC_RESERVED && !(trigger && own_source);
 }
 
 static bool output_compare_cascade_supported(const Dspic33* cpu, uint8_t channel) {
@@ -3337,6 +3331,26 @@ static void output_compare_write_cascade_timer(Dspic33* cpu, uint8_t channel,
     raw_write_word(cpu, (uint16_t)(output_compare_base(low) + 8u), (uint16_t)timer);
     raw_write_word(cpu, (uint16_t)(output_compare_base(high) + 8u),
                    (uint16_t)(timer >> 16u));
+}
+
+static uint32_t output_compare_input_capture_timer(const Dspic33* cpu, uint8_t source) {
+    uint8_t channel = (uint8_t)(source - OUTPUT_COMPARE_SYNC_IC_FIRST);
+    uint32_t timer = cpu->io.input_capture.timer[channel];
+    if ((channel & 1u) == 0u && input_capture_pair_configured(cpu, channel)) {
+        timer |= (uint32_t)cpu->io.input_capture.timer[channel + 1u] << 16u;
+    }
+    return timer;
+}
+
+static void output_compare_adopt_input_capture_timer(Dspic33* cpu, uint8_t channel,
+                                                     uint8_t source) {
+    uint32_t timer = output_compare_input_capture_timer(cpu, source);
+    if (output_compare_cascade_owner(cpu, channel)) {
+        output_compare_write_cascade_timer(cpu, channel, timer);
+    } else {
+        raw_write_word(cpu, (uint16_t)(output_compare_base(channel) + 8u),
+                       (uint16_t)timer);
+    }
 }
 
 static uint32_t output_compare_cascade_r(const Dspic33* cpu, uint8_t channel) {
@@ -3925,10 +3939,16 @@ static void run_output_compare(Dspic33* cpu, uint16_t source, uint32_t value) {
                 return;
             }
         } else if (kind == OUTPUT_COMPARE_EVENT_EXTERNAL_SYNC) {
+            uint8_t synchronization = (uint8_t)(raw_word(cpu, (uint16_t)(base + 2u)) &
+                                                OUTPUT_COMPARE_SYNC_MASK);
             cpu->io.output_compare.sync_reset_pending &=
                 (uint16_t)~(uint16_t)(1u << channel);
             if (!output_compare_boundary(cpu, channel, mode)) {
                 return;
+            }
+            if (synchronization >= OUTPUT_COMPARE_SYNC_IC_FIRST &&
+                synchronization < OUTPUT_COMPARE_SYNC_COMPARATOR_FIRST) {
+                output_compare_adopt_input_capture_timer(cpu, channel, synchronization);
             }
         } else if (kind == OUTPUT_COMPARE_EVENT_APPLY_PRIMARY) {
             uint8_t output = output_compare_output_channel(cpu, channel);
