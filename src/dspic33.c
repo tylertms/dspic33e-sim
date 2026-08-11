@@ -3705,7 +3705,10 @@ void dspic33_configuration_mismatch_reset(Dspic33* cpu) {
     perform_warm_reset(cpu, 0x0200u, DSPIC33_RESET_HARDWARE);
 }
 
-void dspic33_reset(Dspic33* cpu, uint32_t entry) { reset_processor(cpu, entry, true); }
+void dspic33_reset(Dspic33* cpu, uint32_t entry) {
+    reset_processor(cpu, entry, true);
+    dspic33_device_power_on_reset(cpu);
+}
 
 void dspic33_set_async_events(Dspic33* cpu, bool enabled) {
     cpu->async_events_enabled = enabled;

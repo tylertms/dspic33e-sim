@@ -608,6 +608,7 @@ typedef struct {
     uint8_t key_lane;
     uint8_t key_stage;
     bool active;
+    bool automatic;
     bool lock_pending;
     bool source_ready;
 } Dspic33Oscillator;

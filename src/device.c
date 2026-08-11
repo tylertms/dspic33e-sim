@@ -8,7 +8,9 @@
 static void complete_oscillator_event(Dspic33* cpu, uint16_t phase,
                                       uint32_t generation);
 static void oscillator_configuration_changed(Dspic33* cpu, uint8_t previous);
+static void oscillator_startup_configuration_changed(Dspic33* cpu, uint8_t previous);
 static void oscillator_pll_configuration_changed(Dspic33* cpu, uint8_t previous);
+static void start_automatic_oscillator_switch(Dspic33* cpu, uint8_t source);
 
 static const uint16_t timer_registers[DSPIC33_TIMER_COUNT] = {
     0x0100u, 0x0106u, 0x010au, 0x0114u, 0x0118u, 0x0122u, 0x0126u, 0x0130u, 0x0134u};
@@ -8492,7 +8494,9 @@ static void reconfigure_auxiliary_pll(Dspic33* cpu) {
 void dspic33_device_configuration_changed(Dspic33* cpu, uint32_t address,
                                           uint8_t previous) {
     uint16_t control = raw_word(cpu, AUXILIARY_CLOCK_CONTROL);
-    if (address == DSPIC33_CONFIGURATION_BASE + 8u) {
+    if (address == DSPIC33_CONFIGURATION_BASE + 6u) {
+        oscillator_startup_configuration_changed(cpu, previous);
+    } else if (address == DSPIC33_CONFIGURATION_BASE + 8u) {
         if (auxiliary_pll_input(control) == 2u &&
             ((previous ^ cpu->configuration[8u]) & 0x03u) != 0u) {
             reconfigure_auxiliary_pll(cpu);
@@ -9174,6 +9178,7 @@ static void abort_oscillator_switch(Dspic33* cpu) {
     if (cpu->oscillator.active) {
         cpu->oscillator.generation++;
         cpu->oscillator.active = false;
+        cpu->oscillator.automatic = false;
         cpu->oscillator.lock_pending = false;
         cpu->oscillator.source_ready = false;
     }
@@ -9205,6 +9210,10 @@ static uint8_t oscillator_requested_source(uint16_t control) {
 
 static bool oscillator_source_available(const Dspic33* cpu, uint8_t source) {
     return (source != 2u && source != 3u) || (cpu->configuration[8u] & 0x03u) != 0x03u;
+}
+
+static bool oscillator_source_immediately_ready(uint8_t source) {
+    return source == 0u || source >= 5u;
 }
 
 static bool oscillator_configuration_locked(const Dspic33* cpu, uint16_t control) {
@@ -9243,7 +9252,7 @@ static void schedule_oscillator_readiness(Dspic33* cpu, uint16_t control) {
 static void oscillator_configuration_changed(Dspic33* cpu, uint8_t previous) {
     uint16_t control = raw_word(cpu, OSCILLATOR_CONTROL);
     uint8_t requested = oscillator_requested_source(control);
-    if (cpu->oscillator.active &&
+    if (cpu->oscillator.active && !cpu->oscillator.automatic &&
         (previous & OSCILLATOR_CONFIGURATION_SWITCH_DISABLE) == 0u &&
         (cpu->configuration[8u] & OSCILLATOR_CONFIGURATION_SWITCH_DISABLE) != 0u) {
         abort_oscillator_switch(cpu);
@@ -9273,20 +9282,59 @@ static void oscillator_pll_configuration_changed(Dspic33* cpu, uint8_t previous)
                               ~OSCILLATOR_SWITCH_ENABLE) |
                              ((control & OSCILLATOR_REQUEST_MASK) << 4u));
         cpu->oscillator.active = false;
+        cpu->oscillator.automatic = false;
         cpu->watchdog.ticks = 0u;
         raw_write_word(cpu, OSCILLATOR_CONTROL, control);
     }
 }
 
+static void oscillator_startup_configuration_changed(Dspic33* cpu, uint8_t previous) {
+    uint8_t source = (uint8_t)(cpu->configuration[6u] & 0x07u);
+    if (((previous ^ cpu->configuration[6u]) & 0x07u) == 0u ||
+        (cpu->configuration[8u] & OSCILLATOR_CONFIGURATION_SWITCH_DISABLE) == 0u) {
+        return;
+    }
+    dspic33_device_abort_oscillator_switch(cpu);
+    start_automatic_oscillator_switch(cpu, source);
+}
+
 static void start_oscillator_switch(Dspic33* cpu, uint16_t control) {
     cpu->oscillator.generation++;
     cpu->oscillator.active = true;
+    cpu->oscillator.automatic = false;
     cpu->oscillator.lock_pending = false;
     cpu->oscillator.source_ready = false;
     raw_write_word(cpu, OSCILLATOR_CONTROL,
                    (uint16_t)((control | OSCILLATOR_SWITCH_ENABLE) &
                               ~OSCILLATOR_PLL_LOCK & ~OSCILLATOR_CLOCK_FAIL));
     schedule_oscillator_readiness(cpu, control);
+}
+
+static void start_automatic_oscillator_switch(Dspic33* cpu, uint8_t source) {
+    uint16_t control = raw_word(cpu, OSCILLATOR_CONTROL);
+    control = (uint16_t)((control & ~OSCILLATOR_REQUEST_MASK & ~OSCILLATOR_PLL_LOCK &
+                          ~OSCILLATOR_CLOCK_FAIL & ~OSCILLATOR_SWITCH_ENABLE) |
+                         ((uint16_t)source << 8u));
+    raw_write_word(cpu, OSCILLATOR_CONTROL, control);
+    if (oscillator_source_immediately_ready(source)) {
+        control = (uint16_t)((control & ~OSCILLATOR_CURRENT_MASK) |
+                             ((uint16_t)source << 12u));
+        raw_write_word(cpu, OSCILLATOR_CONTROL, control);
+        return;
+    }
+    cpu->oscillator.generation++;
+    cpu->oscillator.active = true;
+    cpu->oscillator.automatic = true;
+    cpu->oscillator.lock_pending = false;
+    cpu->oscillator.source_ready = false;
+    schedule_oscillator_readiness(cpu, control);
+}
+
+void dspic33_device_power_on_reset(Dspic33* cpu) {
+    uint8_t source = (uint8_t)(cpu->configuration[6u] & 0x07u);
+    if ((cpu->configuration[6u] & 0x80u) != 0u && source != 0u) {
+        start_automatic_oscillator_switch(cpu, source);
+    }
 }
 
 static void complete_oscillator_event(Dspic33* cpu, uint16_t phase,
@@ -9305,6 +9353,7 @@ static void complete_oscillator_event(Dspic33* cpu, uint16_t phase,
                                  ((control & OSCILLATOR_REQUEST_MASK) << 4u) |
                                  OSCILLATOR_PLL_LOCK);
             cpu->oscillator.active = false;
+            cpu->oscillator.automatic = false;
             cpu->watchdog.ticks = 0u;
             raw_write_word(cpu, OSCILLATOR_CONTROL, control);
         } else if (oscillator_current_source(control) == 1u ||
@@ -9316,7 +9365,8 @@ static void complete_oscillator_event(Dspic33* cpu, uint16_t phase,
         cpu->oscillator.source_ready = false;
         return;
     }
-    if (!cpu->oscillator.active || (control & OSCILLATOR_SWITCH_ENABLE) == 0u) {
+    if (!cpu->oscillator.active ||
+        (!cpu->oscillator.automatic && (control & OSCILLATOR_SWITCH_ENABLE) == 0u)) {
         return;
     }
     if (!oscillator_source_available(cpu, oscillator_requested_source(control))) {
@@ -9335,6 +9385,7 @@ static void complete_oscillator_event(Dspic33* cpu, uint16_t phase,
         (uint16_t)((control & ~OSCILLATOR_CURRENT_MASK & ~OSCILLATOR_SWITCH_ENABLE) |
                    ((control & OSCILLATOR_REQUEST_MASK) << 4u));
     cpu->oscillator.active = false;
+    cpu->oscillator.automatic = false;
     cpu->watchdog.ticks = 0u;
     raw_write_word(cpu, OSCILLATOR_CONTROL, control);
 }
@@ -9394,7 +9445,9 @@ static void apply_oscillator_low(Dspic33* cpu, uint16_t previous, uint16_t reque
     }
     if ((requested & OSCILLATOR_SWITCH_ENABLE) == 0u) {
         raw_write_word(cpu, OSCILLATOR_CONTROL, control);
-        abort_oscillator_switch(cpu);
+        if (!cpu->oscillator.automatic) {
+            abort_oscillator_switch(cpu);
+        }
         return;
     }
     if ((cpu->configuration[8u] & OSCILLATOR_CONFIGURATION_SWITCH_DISABLE) != 0u ||
@@ -9403,7 +9456,9 @@ static void apply_oscillator_low(Dspic33* cpu, uint16_t previous, uint16_t reque
             (control & OSCILLATOR_REQUEST_MASK)) {
         raw_write_word(cpu, OSCILLATOR_CONTROL,
                        (uint16_t)(control & ~OSCILLATOR_SWITCH_ENABLE));
-        abort_oscillator_switch(cpu);
+        if (!cpu->oscillator.automatic) {
+            abort_oscillator_switch(cpu);
+        }
         return;
     }
     if (oscillator_direct_pll_transition(control)) {

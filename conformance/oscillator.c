@@ -78,6 +78,14 @@ static bool program_fosc(Dspic33* cpu, uint8_t value) {
     return dspic33_read_configuration_byte(cpu, CONFIGURATION_FOSC) == value;
 }
 
+static bool program_foscsel(Dspic33* cpu, uint8_t value) {
+    cpu->nvm.control = 0u;
+    cpu->nvm.address = CONFIGURATION_FOSCSEL;
+    cpu->nvm.latches[0] = value;
+    dspic33_complete_nvm(cpu);
+    return dspic33_read_configuration_byte(cpu, CONFIGURATION_FOSCSEL) == value;
+}
+
 static bool program_fwdt(Dspic33* cpu, uint8_t value) {
     cpu->nvm.control = 0u;
     cpu->nvm.address = CONFIGURATION_FWDT;
@@ -90,9 +98,10 @@ static void reset_cases(OscillatorConformance* state, Dspic33* cpu) {
     expect(state, dspic33_load_configuration_word(cpu, 0xf80006u, 0x00ffu),
            "load nondefault FNOSC configuration");
     dspic33_reset(cpu, 0u);
-    expect(state, control(cpu) == 0x0700u, "POR derives NOSC from FNOSC");
-    expect(state, (control(cpu) & 0x7020u) == 0u,
-           "POR starts from FRC without lock status");
+    expect(state, control(cpu) == 0x7700u,
+           "POR immediately selects ready internal FNOSC source");
+    expect(state, (control(cpu) & OSCILLATOR_PLL_LOCK) == 0u,
+           "POR internal source has no PLL lock status");
     expect(state, cpu->oscillator.generation == 0u && !cpu->oscillator.active,
            "POR clears oscillator lifecycle state");
     expect(state, cpu->events.count == 0u, "POR leaves no oscillator event");
@@ -552,6 +561,200 @@ static void pll_lock_sequence_cases(OscillatorConformance* state, Dspic33* sourc
     dspic33_load_configuration_word(source, CONFIGURATION_FWDT, 0x00ffu);
 }
 
+static void two_speed_startup_cases(OscillatorConformance* state, Dspic33* source,
+                                    Dspic33* copy) {
+    static const uint8_t internal_sources[] = {5u, 6u, 7u};
+    uint64_t deadline;
+    size_t index;
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSCSEL, 0x00f8u);
+    dspic33_reset(source, 0u);
+    expect(state, control(source) == 0u && !source->oscillator.active,
+           "Two-Speed FRC target is redundant");
+
+    for (index = 0u; index < sizeof(internal_sources) / sizeof(internal_sources[0]);
+         index++) {
+        uint8_t source_id = internal_sources[index];
+        dspic33_load_configuration_word(source, CONFIGURATION_FOSCSEL,
+                                        (uint8_t)(0xf8u | source_id));
+        dspic33_reset(source, 0u);
+        expect(state, control(source) == (uint16_t)(source_id * 0x1100u),
+               "Two-Speed immediately selects ready internal source");
+        expect(state, !source->oscillator.active && source->events.count == 0u,
+               "ready internal source needs no startup event");
+    }
+
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSCSEL, 0x00fau);
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSC, 0x005eu);
+    dspic33_load_configuration_word(source, CONFIGURATION_FWDT, 0x00ffu);
+    dspic33_reset(source, 0u);
+    expect(state,
+           control(source) == 0x0200u && source->oscillator.active &&
+               source->oscillator.automatic && source->events.count == 1u &&
+               source->events.items[0].source == 0u,
+           "Two-Speed begins on FRC while POSC becomes ready");
+    expect(state, dspic33_device_advance(source, 31u) && control(source) == 0x0200u,
+           "Two-Speed POSC remains pending before readiness");
+    expect(state, dspic33_device_advance(source, 1u) && control(source) == 0x2200u,
+           "Two-Speed transfers to ready POSC");
+
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSCSEL, 0x00fcu);
+    dspic33_reset(source, 0u);
+    expect(state,
+           control(source) == 0x0400u && source->oscillator.automatic &&
+               source->events.count == 1u,
+           "Two-Speed begins SOSC transition without LPOSCEN");
+    expect(state, dspic33_device_advance(source, 32u) && control(source) == 0x4400u,
+           "Two-Speed transfers to SOSC");
+
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSCSEL, 0x00fbu);
+    dspic33_reset(source, 0u);
+    expect(state,
+           control(source) == 0x0300u && source->oscillator.active &&
+               source->oscillator.automatic && source->events.items[0].source == 0u,
+           "Two-Speed POSCPLL starts from FRC");
+    expect(state,
+           dspic33_device_advance(source, 1u) && control(source) == 0x0300u &&
+               source->oscillator.source_ready && source->oscillator.lock_pending &&
+               source->events.items[0].source == 2u,
+           "Two-Speed PLLK one waits after source readiness");
+    expect(state, dspic33_device_advance(source, 30u) && control(source) == 0x0300u,
+           "Two-Speed PLL remains pending before lock");
+    expect(state, dspic33_device_advance(source, 1u) && control(source) == 0x3320u,
+           "Two-Speed PLLK one transfers with lock");
+
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSCSEL, 0x00f9u);
+    dspic33_load_configuration_word(source, CONFIGURATION_FWDT, 0x00dfu);
+    dspic33_reset(source, 0u);
+    expect(state, control(source) == 0x0100u && source->oscillator.automatic,
+           "Two-Speed FRCPLL starts from FRC");
+    expect(state,
+           dspic33_device_advance(source, 1u) && control(source) == 0x1100u &&
+               source->oscillator.lock_pending,
+           "Two-Speed PLLK zero transfers at source readiness");
+    expect(state, dspic33_device_advance(source, 30u) && control(source) == 0x1100u,
+           "Two-Speed PLLK zero remains unlocked before deadline");
+    expect(state, dspic33_device_advance(source, 1u) && control(source) == 0x1120u,
+           "Two-Speed PLLK zero locks after transfer");
+
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSCSEL, 0x00fau);
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSC, 0x009eu);
+    dspic33_load_configuration_word(source, CONFIGURATION_FWDT, 0x00ffu);
+    dspic33_reset(source, 0u);
+    expect(state, source->oscillator.active && source->oscillator.automatic,
+           "Two-Speed ignores software-switch disable");
+    deadline = source->events.items[0].cycle;
+    write_protected_byte(source, OSCILLATOR_CONTROL, OSCILLATOR_SWITCH_ENABLE);
+    expect(state,
+           control(source) == 0x0200u && source->oscillator.active &&
+               source->oscillator.automatic && source->oscillator.generation == 1u &&
+               source->events.items[0].cycle == deadline,
+           "FCKSM rejection preserves automatic startup deadline");
+    expect(state, dspic33_device_advance(source, 29u) && control(source) == 0x2200u,
+           "Two-Speed completes with FCKSM disabled");
+
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSC, 0x005eu);
+    dspic33_reset(source, 0u);
+    deadline = source->events.items[0].cycle;
+    write_protected_byte(source, OSCILLATOR_CONTROL, OSCILLATOR_CLOCK_LOCK);
+    write_protected_byte(source, OSCILLATOR_CONTROL,
+                         OSCILLATOR_CLOCK_LOCK | OSCILLATOR_SWITCH_ENABLE);
+    expect(state,
+           control(source) == 0x0280u && source->oscillator.active &&
+               source->oscillator.automatic && source->oscillator.generation == 1u &&
+               source->events.items[0].cycle == deadline,
+           "CLKLOCK rejection preserves automatic startup deadline");
+    expect(state, dspic33_device_advance(source, 26u) && control(source) == 0x2280u,
+           "Two-Speed completes with CLKLOCK set");
+
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSC, 0x005fu);
+    dspic33_reset(source, 0u);
+    expect(state,
+           control(source) == 0x0200u && source->oscillator.active &&
+               source->oscillator.automatic && source->events.count == 0u,
+           "Two-Speed waits for disabled POSC");
+    expect(state, program_fosc(source, 0x005eu),
+           "POSCMD RTSP enables Two-Speed target");
+    expect(state, source->events.count == 1u && source->events.items[0].source == 0u,
+           "enabled Two-Speed target schedules readiness");
+    expect(state, dspic33_device_advance(source, 32u) && control(source) == 0x2200u,
+           "enabled Two-Speed target completes");
+
+    dspic33_reset(source, 0u);
+    write_protected_byte(source, OSCILLATOR_CONTROL, OSCILLATOR_IO_LOCK);
+    expect(state,
+           control(source) == 0x0240u && source->oscillator.active &&
+               source->oscillator.automatic,
+           "OSCCON low write preserves automatic startup");
+    expect(state, dspic33_device_advance(source, 29u) && control(source) == 0x2240u,
+           "automatic startup retains original readiness deadline");
+
+    dspic33_reset(source, 0u);
+    dspic33_load_program_word(source, 0u, OPCODE_SLEEP);
+    source->pc = 0u;
+    expect(state, dspic33_step(source) == DSPIC33_SLEEPING,
+           "Sleep executes during automatic startup");
+    expect(state, !source->oscillator.active && control(source) == 0x0200u,
+           "Sleep aborts automatic startup");
+    expect(state, dspic33_device_advance(source, 32u) && control(source) == 0x0200u,
+           "Sleep prevents stale automatic completion");
+
+    dspic33_reset(source, 0u);
+    dspic33_device_advance(source, 10u);
+    dspic33_load_program_word(source, 0u, OPCODE_RESET);
+    source->pc = 0u;
+    expect(state, dspic33_step(source) == DSPIC33_RUNNING,
+           "warm reset executes during automatic startup");
+    expect(state,
+           control(source) == 0x0200u && source->oscillator.active &&
+               source->oscillator.automatic && source->events.count == 1u &&
+               source->events.items[0].source == 0u,
+           "warm reset reconstructs automatic startup");
+    expect(state, dspic33_device_advance(source, 21u) && control(source) == 0x2200u,
+           "warm-reset automatic startup completes at preserved deadline");
+
+    dspic33_reset(source, 0u);
+    dspic33_device_advance(source, 10u);
+    expect(state, dspic33_copy(copy, source), "copy preserves automatic startup");
+    expect(state,
+           copy->oscillator.active && copy->oscillator.automatic &&
+               copy->events.count == 1u,
+           "copy retains automatic startup phase");
+    expect(state,
+           dspic33_device_advance(source, 22u) && control(source) == 0x2200u &&
+               dspic33_device_advance(copy, 22u) && control(copy) == 0x2200u,
+           "copied automatic startups complete independently");
+
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSCSEL, 0x0078u);
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSC, 0x009eu);
+    dspic33_reset(source, 0u);
+    expect(state, program_foscsel(source, 0x007au),
+           "FNOSC RTSP programs while software switching is disabled");
+    expect(state,
+           control(source) == 0x0200u && source->oscillator.active &&
+               source->oscillator.automatic,
+           "disabled switching applies FNOSC immediately");
+    expect(state, dspic33_device_advance(source, 32u) && control(source) == 0x2200u,
+           "immediate FNOSC transition completes");
+
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSCSEL, 0x0078u);
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSC, 0x005eu);
+    dspic33_reset(source, 0u);
+    expect(state, program_foscsel(source, 0x007cu),
+           "FNOSC RTSP programs while switching is enabled");
+    expect(state, control(source) == 0u && source->events.count == 0u,
+           "enabled switching defers FNOSC until reset");
+    dspic33_reset(source, 0u);
+    expect(state, control(source) == 0x4400u,
+           "reset applies deferred FNOSC configuration");
+    expect(state, program_foscsel(source, 0x00fcu), "IESO RTSP changes startup policy");
+    expect(state, control(source) == 0x4400u && source->events.count == 0u,
+           "IESO RTSP does not start a mid-run transition");
+
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSCSEL, 0x0078u);
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSC, 0x005eu);
+    dspic33_load_configuration_word(source, CONFIGURATION_FWDT, 0x00ffu);
+}
+
 static void lifecycle_cases(OscillatorConformance* state, Dspic33* source,
                             Dspic33* copy) {
     dspic33_reset(source, 0u);
@@ -646,8 +849,9 @@ int main(void) {
     configuration_admission_cases(&state, &source);
     hardware_failure_cases(&state, &source);
     pll_lock_sequence_cases(&state, &source, &copy);
+    two_speed_startup_cases(&state, &source, &copy);
     lifecycle_cases(&state, &source, &copy);
-    expect(&state, state.cases == 161u, "oscillator assertion arithmetic");
+    expect(&state, state.cases == 209u, "oscillator assertion arithmetic");
     printf("[oscillator-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32
            "\n",
            state.cases, state.passed, state.failed);

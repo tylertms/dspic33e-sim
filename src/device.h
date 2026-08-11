@@ -4,6 +4,7 @@
 #include "dspic33.h"
 
 void dspic33_device_reset(Dspic33* cpu);
+void dspic33_device_power_on_reset(Dspic33* cpu);
 void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous);
 uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value);
 bool dspic33_device_advance(Dspic33* cpu, uint64_t cycles);
