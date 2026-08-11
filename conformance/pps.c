@@ -98,15 +98,15 @@ static bool physical_source(uint8_t source) {
 
 static bool load_sequence(Dspic33* cpu, uint32_t first, uint32_t second,
                           uint32_t third) {
-    return dspic33_load_program_word(cpu, 0x0020u, first) &&
-           dspic33_load_program_word(cpu, 0x0022u, second) &&
-           dspic33_load_program_word(cpu, 0x0024u, third);
+    return dspic33_load_program_word(cpu, 0x0200u, first) &&
+           dspic33_load_program_word(cpu, 0x0202u, second) &&
+           dspic33_load_program_word(cpu, 0x0204u, third);
 }
 
 static bool write_oscillator_low(Dspic33* cpu, uint8_t value) {
     load_sequence(cpu, OPCODE_MOV_BYTE_W2_W1, OPCODE_MOV_BYTE_W3_W1,
                   OPCODE_MOV_BYTE_W0_W1);
-    cpu->pc = 0x0020u;
+    cpu->pc = 0x0200u;
     dspic33_set_working_register(cpu, 0u, value);
     dspic33_set_working_register(cpu, 1u, OSCILLATOR_CONTROL);
     dspic33_set_working_register(cpu, 2u, 0x46u);

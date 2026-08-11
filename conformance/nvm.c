@@ -1136,8 +1136,8 @@ static void auxiliary_nvm_cases(NvmConformance* state, Dspic33* cpu) {
 
 static void stall_and_interrupt_cases(NvmConformance* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
-    dspic33_load_program_word(cpu, 0x0032u, 0x000100u);
-    dspic33_load_program_word(cpu, 0x0100u, 0x000000u);
+    dspic33_load_program_word(cpu, 0x0032u, 0x000300u);
+    dspic33_load_program_word(cpu, 0x0300u, 0x000000u);
     dspic33_write_word(cpu, 0x0820u, 0x8000u);
     dspic33_write_word(cpu, 0x0846u, 0x3000u);
     expect(state, start_operation(cpu, 1u, 0x3200u), "stall operation starts");
@@ -1153,7 +1153,7 @@ static void stall_and_interrupt_cases(NvmConformance* state, Dspic33* cpu) {
            "post-completion instruction advances");
     expect(state, cpu->last_interrupt == NVM_IRQ && cpu->interrupt_count == 1u,
            "NVM interrupt serviced after stall");
-    expect(state, cpu->pc == 0x0102u && cpu->instructions == 6u,
+    expect(state, cpu->pc == 0x0302u && cpu->instructions == 6u,
            "NVM vector instruction executes after service");
 }
 
@@ -1248,8 +1248,8 @@ static void power_save_cases(NvmConformance* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     cpu->write_latches[0] = 0x00112233u;
     cpu->write_latches[1] = 0x00445566u;
-    dspic33_load_program_word(cpu, 0x0032u, 0x000100u);
-    dspic33_load_program_word(cpu, 0x0100u, OPCODE_NOP);
+    dspic33_load_program_word(cpu, 0x0032u, 0x000300u);
+    dspic33_load_program_word(cpu, 0x0300u, OPCODE_NOP);
     expect(state, start_operation(cpu, 1u, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3800u),
            "interrupt-before-power-save operation starts");
     dspic33_load_program_word(cpu, cpu->pc, OPCODE_SLEEP);
@@ -1258,7 +1258,7 @@ static void power_save_cases(NvmConformance* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0846u, 0x3000u);
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_interrupt == NVM_IRQ &&
-               cpu->interrupt_count == 1u && cpu->pc == 0x0102u &&
+               cpu->interrupt_count == 1u && cpu->pc == 0x0302u &&
                cpu->power_state == DSPIC33_POWER_ACTIVE &&
                (dspic33_read_word(cpu, 0x0740u) & 0x000cu) == 0u,
            "eligible interrupt precedes ignored power-save instruction");
@@ -1841,6 +1841,143 @@ static void codeguard_vector_flow_cases(NvmConformance* state, Dspic33* cpu) {
            "sleeping restricted interrupt VFC stops at security reset");
 }
 
+static void vector_segment_execution_cases(NvmConformance* state, Dspic33* cpu) {
+    static const uint32_t vector_addresses[] = {0x000002u, 0x000004u, 0x000100u,
+                                                0x0001feu};
+    static const uint32_t vector_opcodes[] = {OPCODE_NOP, OPCODE_SLEEP};
+    const uint32_t handler = 0x000400u;
+    const uint32_t origin = 0x004600u;
+    size_t index;
+
+    for (index = 0u; index < sizeof(vector_addresses) / sizeof(vector_addresses[0]);
+         index++) {
+        uint32_t address = vector_addresses[index];
+        uint64_t cycles;
+        uint64_t instructions;
+        uint64_t trap_count;
+
+        dspic33_reset(cpu, address);
+        cpu->stop_on_trap = true;
+        dspic33_load_program_word(cpu, address, OPCODE_MOV_LITERAL_0X1234_W2);
+        dspic33_load_program_word(cpu, 0x000006u, handler);
+        dspic33_load_program_word(cpu, handler, OPCODE_NOP);
+        dspic33_set_working_register(cpu, 15u, 0x1000u);
+        dspic33_set_working_register(cpu, 2u, 0xa5a5u);
+        cycles = cpu->cycles;
+        instructions = cpu->instructions;
+        trap_count = cpu->trap_count;
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->last_trap == 1u &&
+                   cpu->trap_count == trap_count + 1u && cpu->pc == handler &&
+                   cpu->last_trap_return == address + 2u && cpu->w[2] == 0xa5a5u &&
+                   cpu->w[15] == 0x1004u &&
+                   dspic33_read_word(cpu, 0x1000u) == address + 2u &&
+                   cpu->instructions == instructions && cpu->cycles == cycles + 1u,
+               "vector-segment instruction fetch raises Address Error");
+    }
+
+    dspic33_reset(cpu, 0u);
+    load_long_program_flow(cpu, 0u, 0x000600u, false);
+    dspic33_load_program_word(cpu, 0x000600u, OPCODE_MOV_LITERAL_0X1234_W2);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000600u &&
+               cpu->instructions == 1u && cpu->cycles == 4u,
+           "primary Reset GOTO reads its address extension");
+
+    dspic33_reset(cpu, 0x000200u);
+    dspic33_load_program_word(cpu, 0x000200u, OPCODE_MOV_LITERAL_0X1234_W2);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000202u &&
+               cpu->w[2] == 0x1234u,
+           "General Segment code after IVT remains executable");
+
+    dspic33_reset(cpu, origin);
+    cpu->stop_on_trap = false;
+    load_codeguard_configuration(cpu, 0x03u, 0x31u);
+    load_long_program_flow(cpu, origin, 0x000100u, false);
+    dspic33_load_program_word(cpu, 0x000100u, OPCODE_MOV_LITERAL_0X1234_W2);
+    dspic33_load_program_word(cpu, 0x000006u, handler);
+    dspic33_set_working_register(cpu, 15u, 0x1000u);
+    dspic33_set_working_register(cpu, 2u, 0xa5a5u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000100u &&
+               cpu->last_trap == UINT16_MAX && !cpu->illegal_reset,
+           "PFC may target the vector segment");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == 1u &&
+               cpu->pc == handler && cpu->last_trap_return == 0x000102u &&
+               cpu->w[2] == 0xa5a5u && cpu->instructions == 1u && cpu->cycles == 5u,
+           "execution after vector-segment PFC raises Address Error");
+
+    dspic33_reset(cpu, origin);
+    cpu->stop_on_trap = false;
+    dspic33_load_program_word(cpu, 0x000014u, 0x000100u);
+    dspic33_load_program_word(cpu, 0x000100u, OPCODE_MOV_LITERAL_0X1234_W2);
+    dspic33_load_program_word(cpu, 0x000006u, handler);
+    dspic33_set_working_register(cpu, 15u, 0x1000u);
+    dspic33_write_word(cpu, 0x0820u, 0x0001u);
+    dspic33_write_word(cpu, 0x0840u, 0x0001u);
+    dspic33_raise_interrupt(cpu, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_interrupt == 0u &&
+               cpu->interrupt_count == 1u && cpu->last_trap == 1u &&
+               cpu->trap_count == 1u && cpu->pc == handler &&
+               cpu->last_trap_return == 0x000102u && cpu->w[15] == 0x1008u &&
+               cpu->instructions == 0u && cpu->cycles == 1u,
+           "interrupt VFC into vector segment traps before execution");
+
+    dspic33_reset(cpu, origin);
+    cpu->stop_on_trap = false;
+    dspic33_load_program_word(cpu, 0x000004u, 0x000100u);
+    dspic33_load_program_word(cpu, 0x000100u, OPCODE_MOV_LITERAL_0X1234_W2);
+    dspic33_load_program_word(cpu, 0x000006u, handler);
+    dspic33_set_working_register(cpu, 15u, 0x1000u);
+    dspic33_raise_oscillator_fail_trap(cpu);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == 1u &&
+               cpu->trap_count == 2u && cpu->pc == handler &&
+               cpu->last_trap_return == 0x000102u && cpu->w[15] == 0x1008u &&
+               (dspic33_read_word(cpu, 0x08c0u) & 0x000au) == 0x000au,
+           "trap VFC into vector segment traps before execution");
+
+    for (index = 0u; index < sizeof(vector_opcodes) / sizeof(vector_opcodes[0]);
+         index++) {
+        dspic33_reset(cpu, 0x000100u);
+        cpu->stop_on_trap = false;
+        dspic33_load_program_word(cpu, 0x000100u, vector_opcodes[index]);
+        dspic33_load_program_word(cpu, 0x000014u, 0x000300u);
+        dspic33_load_program_word(cpu, 0x000300u, OPCODE_NOP);
+        dspic33_set_working_register(cpu, 15u, 0x1000u);
+        dspic33_write_word(cpu, 0x0820u, 0x0001u);
+        dspic33_write_word(cpu, 0x0840u, 0x0001u);
+        dspic33_raise_interrupt(cpu, 0u);
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->interrupt_count == 1u &&
+                   cpu->last_interrupt == 0u && cpu->pc == 0x000302u &&
+                   cpu->trap_count == 0u && cpu->last_trap == UINT16_MAX &&
+                   cpu->instructions == 1u && cpu->w[15] == 0x1004u,
+               "vector contents do not alter pending interrupt predispatch");
+    }
+
+    dspic33_reset(cpu, origin);
+    dspic33_load_program_word(cpu, 0x000100u, 0x00ab1357u);
+    expect(state,
+           execute_codeguard_table_read(cpu, origin, 0x000100u) == 0x1357u &&
+               program_word(cpu, 0x000100u) == 0x00ab1357u,
+           "vector-segment data reads remain permitted");
+
+    dspic33_reset(cpu, 0x000100u);
+    cpu->stop_on_trap = false;
+    load_codeguard_configuration(cpu, 0x03u, 0x31u);
+    dspic33_load_program_word(cpu, 0x000006u, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x100u);
+    uint64_t reset_count = cpu->illegal_reset_count;
+    uint64_t cycles = cpu->cycles;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               codeguard_security_reset(cpu, reset_count) && cpu->cycles == cycles,
+           "restricted Address Error vector retains security-reset precedence");
+}
+
 static void codeguard_cases(NvmConformance* state, Dspic33* cpu) {
     codeguard_configuration_cases(state, cpu);
     codeguard_programming_cases(state, cpu);
@@ -1851,6 +1988,7 @@ static void codeguard_cases(NvmConformance* state, Dspic33* cpu) {
     codeguard_program_flow_configuration_cases(state, cpu);
     codeguard_program_flow_instruction_cases(state, cpu);
     codeguard_vector_flow_cases(state, cpu);
+    vector_segment_execution_cases(state, cpu);
     dspic33_load_program_word(cpu, PERSISTENT_PROGRAM_BASE, 0x00ffffffu);
     load_codeguard_configuration(cpu, 0x03u, 0x03u);
 }

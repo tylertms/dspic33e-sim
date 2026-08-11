@@ -19,9 +19,9 @@ enum {
     OPCODE_RETFIE = 0x064000u,
     OPCODE_RETLW_0X123_W2 = 0x051232u,
     OPCODE_RETLW_0X122_W15 = 0x05122fu,
-    OPCODE_CALL_0X100 = 0x020100u,
+    OPCODE_CALL_0X300 = 0x020300u,
     OPCODE_CALL_0X55800 = 0x025800u,
-    OPCODE_GOTO_0X100 = 0x040100u,
+    OPCODE_GOTO_0X300 = 0x040300u,
     OPCODE_GOTO_0X55800 = 0x045800u,
     OPCODE_CALL_W0 = 0x010000u,
     OPCODE_GOTO_W0 = 0x010400u,
@@ -254,14 +254,14 @@ static void expect_illegal_reset(ProcessorConformance* state, Dspic33* cpu,
 }
 
 static void prepare_trap_vectors(ProcessorConformance* state, Dspic33* cpu) {
-    load_instruction(state, cpu, 0x00000au, 0x000100u);
-    load_instruction(state, cpu, 0x00000cu, 0x000120u);
-    load_instruction(state, cpu, 0x000100u, OPCODE_RETFIE);
-    load_instruction(state, cpu, 0x000120u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x00000au, 0x000300u);
+    load_instruction(state, cpu, 0x00000cu, 0x000320u);
+    load_instruction(state, cpu, 0x000300u, OPCODE_RETFIE);
+    load_instruction(state, cpu, 0x000320u, OPCODE_NOP);
 }
 
 static void prepare_address_trap(ProcessorConformance* state, Dspic33* cpu) {
-    load_instruction(state, cpu, 0x000006u, 0x000140u);
+    load_instruction(state, cpu, 0x000006u, 0x000340u);
     cpu->w[15] = 0x5000u;
     cpu->stop_on_trap = true;
 }
@@ -270,7 +270,7 @@ static void expect_address_trap(ProcessorConformance* state, Dspic33* cpu,
                                 const char* execution) {
     expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED, execution);
     expect(state,
-           cpu->last_trap == 1u && cpu->last_trap_return == 2u && cpu->pc == 0x000140u,
+           cpu->last_trap == 1u && cpu->last_trap_return == 2u && cpu->pc == 0x000340u,
            "address error enters hard trap");
     expect(state,
            (dspic33_read_word(cpu, 0x08c0u) & 0x0008u) != 0u &&
@@ -419,23 +419,23 @@ static void program_target_address_error_cases(ProcessorConformance* state,
            "untaken conditional BRA skips target validation in one cycle");
 
     reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_GOTO_0X100);
+    load_instruction(state, cpu, 0u, OPCODE_GOTO_0X300);
     load_instruction(state, cpu, 2u, 0u);
-    load_instruction(state, cpu, 0x100u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x300u, OPCODE_NOP);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x100u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x300u &&
                cpu->cycles == 4u,
            "implemented literal GOTO target remains valid");
 
     reset_processor_conformance(cpu, 0x557feu);
-    load_instruction(state, cpu, 0x557feu, OPCODE_GOTO_0X100);
-    load_instruction(state, cpu, 0x100u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x557feu, OPCODE_GOTO_0X300);
+    load_instruction(state, cpu, 0x300u, OPCODE_NOP);
     cpu->w[15] = 0x5000u;
     dspic33_write_word(cpu, 0x5000u, 0xa5a5u);
     dspic33_write_word(cpu, 0x5002u, 0x5a5au);
     cpu->corcon |= 0x0004u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x100u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x300u &&
                cpu->cycles == 4u && cpu->w[15] == 0x5000u &&
                dspic33_read_word(cpu, 0x5000u) == 0xa5a5u &&
                dspic33_read_word(cpu, 0x5002u) == 0x5a5au &&
@@ -443,22 +443,22 @@ static void program_target_address_error_cases(ProcessorConformance* state,
            "boundary GOTO reads zero extension without sequential provenance");
 
     reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 0u, OPCODE_CALL_0X300);
     load_instruction(state, cpu, 2u, 0u);
-    load_instruction(state, cpu, 0x100u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x300u, OPCODE_NOP);
     cpu->w[15] = 0x5000u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x100u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x300u &&
                cpu->cycles == 4u && dspic33_read_word(cpu, 0x5000u) == 4u,
            "implemented literal CALL target remains valid");
 
     reset_processor_conformance(cpu, 0x557feu);
-    load_instruction(state, cpu, 0x557feu, OPCODE_CALL_0X100);
-    load_instruction(state, cpu, 0x100u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x557feu, OPCODE_CALL_0X300);
+    load_instruction(state, cpu, 0x300u, OPCODE_NOP);
     cpu->w[15] = 0x5000u;
     cpu->corcon |= 0x0004u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x100u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x300u &&
                cpu->cycles == 4u && cpu->w[15] == 0x5004u && cpu->call_depth == 1u &&
                dspic33_read_word(cpu, 0x5000u) == 0x5803u &&
                dspic33_read_word(cpu, 0x5002u) == 0x0005u &&
@@ -468,26 +468,26 @@ static void program_target_address_error_cases(ProcessorConformance* state,
     reset_processor_conformance(cpu, 0x557feu);
     prepare_address_trap(state, cpu);
     cpu->pc = 0x557feu;
-    load_instruction(state, cpu, 0x557feu, OPCODE_CALL_0X100);
-    load_instruction(state, cpu, 0x100u, OPCODE_RETURN);
+    load_instruction(state, cpu, 0x557feu, OPCODE_CALL_0X300);
+    load_instruction(state, cpu, 0x300u, OPCODE_RETURN);
     cpu->corcon |= 0x0004u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x100u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x300u &&
                cpu->cycles == 4u && cpu->sequential_program_hole_pc == 0u,
            "boundary CALL prepares explicit return to program hole");
     expect(state,
            dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 10u &&
-               cpu->last_trap == 1u && cpu->last_trap_return == 0x102u &&
+               cpu->last_trap == 1u && cpu->last_trap_return == 0x302u &&
                cpu->call_depth == 0u && cpu->w[15] == 0x5004u &&
                cpu->sequential_program_hole_pc == 0u,
            "boundary CALL return validates hole target without provenance reuse");
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_GOTO_W0);
-    load_instruction(state, cpu, 0x100u, OPCODE_NOP);
-    cpu->w[0] = 0x100u;
+    load_instruction(state, cpu, 0x300u, OPCODE_NOP);
+    cpu->w[0] = 0x300u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x100u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x300u &&
                cpu->cycles == 4u,
            "implemented GOTO Wn target remains valid");
 
@@ -507,11 +507,11 @@ static void program_target_address_error_cases(ProcessorConformance* state,
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_CALL_W0);
-    load_instruction(state, cpu, 0x100u, OPCODE_NOP);
-    cpu->w[0] = 0x100u;
+    load_instruction(state, cpu, 0x300u, OPCODE_NOP);
+    cpu->w[0] = 0x300u;
     cpu->w[15] = 0x5000u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x100u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x300u &&
                cpu->cycles == 4u && dspic33_read_word(cpu, 0x5000u) == 2u,
            "implemented CALL Wn target remains valid");
 
@@ -689,7 +689,7 @@ static void program_read_address_error_cases(ProcessorConformance* state,
     dspic33_write_word(cpu, 0x5000u, 0xa5a5u);
     dspic33_write_word(cpu, 0x5002u, 0x5a5au);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->pc == 0x000140u &&
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->pc == 0x000340u &&
                cpu->cycles == 2u && cpu->last_trap == 1u &&
                cpu->last_trap_return == 0x557feu && cpu->do_depth == 1u &&
                cpu->do_count[0] == 1u && cpu->do_start[0] == DSPIC33_PROGRAM_LIMIT &&
@@ -775,8 +775,8 @@ static void program_read_address_error_cases(ProcessorConformance* state,
 
     reset_processor_conformance(cpu, 0x557feu);
     load_instruction(state, cpu, 0x557feu, OPCODE_NOP);
-    load_instruction(state, cpu, 0x000014u, 0x000100u);
-    load_instruction(state, cpu, 0x000100u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x000014u, 0x000300u);
+    load_instruction(state, cpu, 0x000300u, OPCODE_NOP);
     cpu->w[15] = 0x5000u;
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
            "sequential program hole prepares interrupt return");
@@ -784,7 +784,7 @@ static void program_read_address_error_cases(ProcessorConformance* state,
     dspic33_write_word(cpu, 0x0840u, 0x0004u);
     dspic33_raise_interrupt(cpu, 0u);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000102u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000302u &&
                cpu->interrupt_log_entry[0] == DSPIC33_PROGRAM_LIMIT &&
                cpu->w[15] == 0x5004u && dspic33_read_word(cpu, 0x5000u) == 0x5800u &&
                dspic33_read_word(cpu, 0x5002u) == 0x0005u &&
@@ -794,8 +794,8 @@ static void program_read_address_error_cases(ProcessorConformance* state,
     reset_processor_conformance(cpu, 0x557feu);
     load_instruction(state, cpu, 0x557feu, OPCODE_NOP);
     load_instruction(state, cpu, 0x000014u, DSPIC33_PROGRAM_LIMIT);
-    load_instruction(state, cpu, 0x000006u, 0x000140u);
-    load_instruction(state, cpu, 0x000140u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x000006u, 0x000340u);
+    load_instruction(state, cpu, 0x000340u, OPCODE_NOP);
     cpu->stop_on_trap = false;
     cpu->w[15] = 0x5000u;
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
@@ -805,15 +805,15 @@ static void program_read_address_error_cases(ProcessorConformance* state,
     dspic33_raise_interrupt(cpu, 0u);
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->interrupt_count == 0u &&
-               cpu->last_trap == 1u && cpu->pc == 0x000142u && cpu->w[15] == 0x5004u &&
+               cpu->last_trap == 1u && cpu->pc == 0x000342u && cpu->w[15] == 0x5004u &&
                cpu->sequential_program_hole_pc == 0u && cpu->cycles == 2u,
            "unimplemented interrupt vector dispatches Address Error");
 
     reset_processor_conformance(cpu, 0x557feu);
     load_instruction(state, cpu, 0x557feu, OPCODE_NOP);
     load_instruction(state, cpu, 0x00000cu, DSPIC33_PROGRAM_LIMIT);
-    load_instruction(state, cpu, 0x000006u, 0x000140u);
-    load_instruction(state, cpu, 0x000140u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x000006u, 0x000340u);
+    load_instruction(state, cpu, 0x000340u, OPCODE_NOP);
     cpu->stop_on_trap = false;
     cpu->w[15] = 0x5000u;
     cpu->pending_soft_traps[0].trap = 4u;
@@ -823,11 +823,11 @@ static void program_read_address_error_cases(ProcessorConformance* state,
     cpu->pending_soft_traps[0].active = true;
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == 1u &&
-               cpu->pc == 0x000140u && cpu->w[15] == 0x5004u &&
+               cpu->pc == 0x000340u && cpu->w[15] == 0x5004u &&
                cpu->sequential_program_hole_pc == 0u && cpu->cycles == 1u,
            "unimplemented soft-trap vector dispatches Address Error");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000142u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000342u &&
                cpu->cycles == 2u,
            "Address Error handler continues after invalid soft-trap vector");
 
@@ -869,7 +869,7 @@ static void skip_boundary_cases(ProcessorConformance* state, Dspic33* cpu) {
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_BTSS_W2_BIT_0);
-    load_instruction(state, cpu, 2u, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 2u, OPCODE_CALL_0X300);
     load_instruction(state, cpu, 4u, 0u);
     cpu->w[2] = 1u;
     cpu->w[15] = 0x5000u;
@@ -900,7 +900,7 @@ static void skip_boundary_cases(ProcessorConformance* state, Dspic33* cpu) {
     cpu->sr = 0x0103u;
     cpu->corcon = 0x0020u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->pc == 0x140u &&
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->pc == 0x340u &&
                cpu->cycles == 2u && cpu->last_trap == 1u &&
                cpu->last_trap_return == DSPIC33_PROGRAM_LIMIT && cpu->w[15] == 0x5004u,
            "one-word boundary skip raises Address Error in two cycles");
@@ -926,7 +926,7 @@ static void skip_boundary_cases(ProcessorConformance* state, Dspic33* cpu) {
 
     reset_processor_conformance(cpu, 0x557fau);
     load_instruction(state, cpu, 0x557fau, OPCODE_BTSC_W2_BIT_0);
-    load_instruction(state, cpu, 0x557fcu, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 0x557fcu, OPCODE_CALL_0X300);
     load_instruction(state, cpu, 0x557feu, 0u);
     cpu->w[2] = 0u;
     cpu->w[15] = 0x5000u;
@@ -944,10 +944,10 @@ static void skip_boundary_cases(ProcessorConformance* state, Dspic33* cpu) {
 
     reset_processor_conformance(cpu, 0x557fau);
     load_instruction(state, cpu, 0x557fau, OPCODE_BTSC_W2_BIT_0);
-    load_instruction(state, cpu, 0x557fcu, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 0x557fcu, OPCODE_CALL_0X300);
     load_instruction(state, cpu, 0x557feu, 0u);
-    load_instruction(state, cpu, 0x000014u, 0x000100u);
-    load_instruction(state, cpu, 0x000100u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x000014u, 0x000300u);
+    load_instruction(state, cpu, 0x000300u, OPCODE_NOP);
     cpu->w[2] = 0u;
     cpu->w[15] = 0x5000u;
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
@@ -956,7 +956,7 @@ static void skip_boundary_cases(ProcessorConformance* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0840u, 0x0004u);
     dspic33_raise_interrupt(cpu, 0u);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x102u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x302u &&
                cpu->interrupt_log_entry[0] == DSPIC33_PROGRAM_LIMIT &&
                cpu->w[15] == 0x5004u && dspic33_read_word(cpu, 0x5000u) == 0x5800u &&
                dspic33_read_word(cpu, 0x5002u) == 0x0005u &&
@@ -965,7 +965,7 @@ static void skip_boundary_cases(ProcessorConformance* state, Dspic33* cpu) {
 
     reset_processor_conformance(cpu, 0x557fcu);
     load_instruction(state, cpu, 0x557fcu, OPCODE_BTSC_W2_BIT_0);
-    load_instruction(state, cpu, 0x557feu, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 0x557feu, OPCODE_CALL_0X300);
     cpu->w[2] = 0u;
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x55802u &&
@@ -1034,7 +1034,7 @@ static void compare_skip_cases(ProcessorConformance* state, Dspic33* cpu) {
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_CPSEQ | 1u);
-    load_instruction(state, cpu, 2u, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 2u, OPCODE_CALL_0X300);
     load_instruction(state, cpu, 4u, 0u);
     cpu->w[0] = 0x55aau;
     cpu->w[1] = 0x55aau;
@@ -1068,7 +1068,7 @@ static void compare_skip_cases(ProcessorConformance* state, Dspic33* cpu) {
     cpu->sr = 0x010fu;
     cpu->corcon = 0x0020u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->pc == 0x140u &&
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->pc == 0x340u &&
                cpu->cycles == 2u && cpu->last_trap == 1u &&
                cpu->last_trap_return == 0x557feu && cpu->w[15] == 0x5004u,
            "CPSEQ boundary skip traps with caller-specific return PC");
@@ -1081,7 +1081,7 @@ static void compare_skip_cases(ProcessorConformance* state, Dspic33* cpu) {
 
     reset_processor_conformance(cpu, 0x557fau);
     load_instruction(state, cpu, 0x557fau, OPCODE_CPSEQ | 2u);
-    load_instruction(state, cpu, 0x557fcu, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 0x557fcu, OPCODE_CALL_0X300);
     load_instruction(state, cpu, 0x557feu, 0u);
     cpu->w[0] = 0x55aau;
     cpu->w[2] = 0x55aau;
@@ -1092,13 +1092,13 @@ static void compare_skip_cases(ProcessorConformance* state, Dspic33* cpu) {
                cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT &&
                cpu->w[15] == 0x5000u && cpu->call_depth == 0u,
            "CPSEQ two-word boundary skip establishes sequential provenance");
-    load_instruction(state, cpu, 0x000014u, 0x000100u);
-    load_instruction(state, cpu, 0x000100u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x000014u, 0x000300u);
+    load_instruction(state, cpu, 0x000300u, OPCODE_NOP);
     dspic33_write_word(cpu, 0x0820u, 0x0001u);
     dspic33_write_word(cpu, 0x0840u, 0x0004u);
     dspic33_raise_interrupt(cpu, 0u);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x102u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x302u &&
                cpu->interrupt_log_entry[0] == DSPIC33_PROGRAM_LIMIT &&
                cpu->sequential_program_hole_pc == 0u && cpu->cycles == 4u,
            "interrupt clears CPSEQ two-word skip provenance");
@@ -1545,8 +1545,8 @@ static void pseudo_linear_page_cases(ProcessorConformance* state, Dspic33* cpu) 
                cpu->w[2] == 0x4444u && cpu->dsrpag == 0x0200u,
            "first PSV read page underflows into base data space");
 
-    reset_processor_conformance(cpu, 0x0100u);
-    load_instruction(state, cpu, 0x0100u, OPCODE_MOV_W1_PRE_INCREMENT_W2);
+    reset_processor_conformance(cpu, 0x0600u);
+    load_instruction(state, cpu, 0x0600u, OPCODE_MOV_W1_PRE_INCREMENT_W2);
     expect(state, dspic33_load_program_word(cpu, 0u, 0x5a0000u),
            "load high-byte PSV transition value");
     cpu->w[1] = 0xfffeu;
@@ -1601,8 +1601,8 @@ static void pseudo_linear_page_cases(ProcessorConformance* state, Dspic33* cpu) 
                cpu->w[2] == 0x6666u && cpu->dsrpag == 0x0200u,
            "modulo wrap leaves the PSV page unchanged");
 
-    reset_processor_conformance(cpu, 0x0100u);
-    load_instruction(state, cpu, 0x0100u, OPCODE_MOV_W1_W0_OFFSET_W2);
+    reset_processor_conformance(cpu, 0x0600u);
+    load_instruction(state, cpu, 0x0600u, OPCODE_MOV_W1_W0_OFFSET_W2);
     expect(state, dspic33_load_program_word(cpu, 0u, 0x00abcdu),
            "load indexed wrap PSV value");
     cpu->w[0] = 2u;
@@ -1613,8 +1613,8 @@ static void pseudo_linear_page_cases(ProcessorConformance* state, Dspic33* cpu) 
                cpu->w[2] == 0xabcdu && cpu->dsrpag == 0x0200u,
            "indexed overflow wraps within the current PSV page");
 
-    reset_processor_conformance(cpu, 0x0100u);
-    load_instruction(state, cpu, 0x0100u, OPCODE_MOV_W1_W0_OFFSET_W2);
+    reset_processor_conformance(cpu, 0x0600u);
+    load_instruction(state, cpu, 0x0600u, OPCODE_MOV_W1_W0_OFFSET_W2);
     expect(state, dspic33_load_program_word(cpu, 0x7ffeu, 0x00bcdeu),
            "load indexed underflow PSV value");
     cpu->w[0] = 0xfffeu;
@@ -1625,8 +1625,8 @@ static void pseudo_linear_page_cases(ProcessorConformance* state, Dspic33* cpu) 
                cpu->w[2] == 0xbcdeu && cpu->dsrpag == 0x0200u,
            "indexed underflow wraps within the current PSV page");
 
-    reset_processor_conformance(cpu, 0x0100u);
-    load_instruction(state, cpu, 0x0100u, OPCODE_MOV_W15_W0_OFFSET_W2);
+    reset_processor_conformance(cpu, 0x0600u);
+    load_instruction(state, cpu, 0x0600u, OPCODE_MOV_W15_W0_OFFSET_W2);
     cpu->w[0] = 2u;
     cpu->w[15] = 0xfffeu;
     cpu->dsrpag = 0x0200u;
@@ -1635,8 +1635,8 @@ static void pseudo_linear_page_cases(ProcessorConformance* state, Dspic33* cpu) 
                cpu->w[2] == 2u && cpu->dsrpag == 0x0200u,
            "indexed W15 overflow remains in base data space");
 
-    reset_processor_conformance(cpu, 0x0100u);
-    load_instruction(state, cpu, 0x0100u, OPCODE_MOV_W15_W0_OFFSET_W2);
+    reset_processor_conformance(cpu, 0x0600u);
+    load_instruction(state, cpu, 0x0600u, OPCODE_MOV_W15_W0_OFFSET_W2);
     dspic33_write_word(cpu, 0x7ffeu, 0xdef0u);
     cpu->w[0] = 0xfffeu;
     cpu->w[15] = 0x8000u;
@@ -1686,8 +1686,8 @@ static void pseudo_linear_page_cases(ProcessorConformance* state, Dspic33* cpu) 
                cpu->dsrpag == 0x0201u,
            "MOV.D straddle completes low word and page state before trap");
 
-    reset_processor_conformance(cpu, 0x0100u);
-    load_instruction(state, cpu, 0x0100u, OPCODE_MOV_DOUBLE_W1_W2);
+    reset_processor_conformance(cpu, 0x0600u);
+    load_instruction(state, cpu, 0x0600u, OPCODE_MOV_DOUBLE_W1_W2);
     dspic33_write_word(cpu, 0x7ffeu, 0x1111u);
     expect(state, dspic33_load_program_word(cpu, 0u, 0x002222u),
            "load split base and PSV MOV.D values");
@@ -2046,14 +2046,14 @@ static const Dspic33PendingSoftTrap* pending_trap(const Dspic33* cpu, uint16_t t
 }
 
 static void w15_write_cases(ProcessorConformance* state, Dspic33* cpu) {
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_MOV_ODD_W15);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_W0_W15);
-    load_instruction(state, cpu, 4u, OPCODE_MOV_BYTE_W0_W15);
-    load_instruction(state, cpu, 6u, OPCODE_MOV_BYTE_W15_POST_INCREMENT_W0);
-    load_instruction(state, cpu, 8u, OPCODE_MOV_BYTE_W15_PRE_INCREMENT_W1);
-    load_instruction(state, cpu, 10u, OPCODE_MOV_BYTE_W15_POST_DECREMENT_W2);
-    load_instruction(state, cpu, 12u, OPCODE_MOV_BYTE_W15_PRE_DECREMENT_W3);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_MOV_ODD_W15);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_W0_W15);
+    load_instruction(state, cpu, 0x204u, OPCODE_MOV_BYTE_W0_W15);
+    load_instruction(state, cpu, 0x206u, OPCODE_MOV_BYTE_W15_POST_INCREMENT_W0);
+    load_instruction(state, cpu, 0x208u, OPCODE_MOV_BYTE_W15_PRE_INCREMENT_W1);
+    load_instruction(state, cpu, 0x20au, OPCODE_MOV_BYTE_W15_POST_DECREMENT_W2);
+    load_instruction(state, cpu, 0x20cu, OPCODE_MOV_BYTE_W15_PRE_DECREMENT_W3);
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "execute odd W15 literal");
     expect(state, cpu->w[15] == 0x5000u, "literal write clears W15 low bit");
     cpu->w[0] = 0x5001u;
@@ -2093,10 +2093,10 @@ static void w15_write_cases(ProcessorConformance* state, Dspic33* cpu) {
 }
 
 static void valid_stack_frame_cases(ProcessorConformance* state, Dspic33* cpu) {
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_LNK_0);
-    load_instruction(state, cpu, 2u, OPCODE_ULNK);
-    load_instruction(state, cpu, 4u, OPCODE_NOP);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_LNK_0);
+    load_instruction(state, cpu, 0x202u, OPCODE_ULNK);
+    load_instruction(state, cpu, 0x204u, OPCODE_NOP);
     dspic33_write_word(cpu, 0x0020u, 0x5100u);
     cpu->w[14] = 0x4444u;
     cpu->w[15] = 0x5000u;
@@ -2117,12 +2117,12 @@ static void valid_stack_frame_cases(ProcessorConformance* state, Dspic33* cpu) {
 }
 
 static void invalid_lnk_case(ProcessorConformance* state, Dspic33* cpu) {
-    reset_processor_conformance(cpu, 0u);
+    reset_processor_conformance(cpu, 0x200u);
     cpu->stop_on_trap = false;
     prepare_trap_vectors(state, cpu);
-    load_instruction(state, cpu, 0u, OPCODE_LNK_0);
-    load_instruction(state, cpu, 2u, OPCODE_LNK_0);
-    load_instruction(state, cpu, 4u, OPCODE_MOV_SENTINEL_W1);
+    load_instruction(state, cpu, 0x200u, OPCODE_LNK_0);
+    load_instruction(state, cpu, 0x202u, OPCODE_LNK_0);
+    load_instruction(state, cpu, 0x204u, OPCODE_MOV_SENTINEL_W1);
     dspic33_write_word(cpu, 0x0020u, 0x5100u);
     cpu->w[14] = 0x4444u;
     cpu->w[15] = 0x5000u;
@@ -2136,17 +2136,17 @@ static void invalid_lnk_case(ProcessorConformance* state, Dspic33* cpu) {
     expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED,
            "invalid SFA LNK traps after one instruction");
     expect(state, cpu->w[1] == 0x1111u, "invalid SFA LNK executes one sentinel");
-    expect(state, cpu->last_trap == 3u && cpu->pc == 0x000100u,
+    expect(state, cpu->last_trap == 3u && cpu->pc == 0x000300u,
            "invalid SFA LNK enters stack trap");
-    expect(state, cpu->w[15] == 0x5008u && dspic33_read_word(cpu, 0x5004u) == 0x0007u,
+    expect(state, cpu->w[15] == 0x5008u && dspic33_read_word(cpu, 0x5004u) == 0x0207u,
            "invalid SFA LNK stacks completed return state");
 }
 
 static void invalid_ulnk_case(ProcessorConformance* state, Dspic33* cpu) {
-    reset_processor_conformance(cpu, 0u);
+    reset_processor_conformance(cpu, 0x200u);
     prepare_trap_vectors(state, cpu);
-    load_instruction(state, cpu, 0u, OPCODE_ULNK);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_SENTINEL_W1);
+    load_instruction(state, cpu, 0x200u, OPCODE_ULNK);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_SENTINEL_W1);
     dspic33_write_word(cpu, 0x0020u, 0x5100u);
     dspic33_write_word(cpu, 0x5000u, 0xabcdu);
     cpu->w[14] = 0x5002u;
@@ -2160,17 +2160,17 @@ static void invalid_ulnk_case(ProcessorConformance* state, Dspic33* cpu) {
     expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED,
            "invalid SFA ULNK traps after one instruction");
     expect(state, cpu->w[1] == 0x1111u, "invalid SFA ULNK executes one sentinel");
-    expect(state, cpu->last_trap == 3u && cpu->pc == 0x000100u,
+    expect(state, cpu->last_trap == 3u && cpu->pc == 0x000300u,
            "invalid SFA ULNK enters stack trap");
 }
 
 static void simultaneous_trap_case(ProcessorConformance* state, Dspic33* cpu) {
     const Dspic33PendingSoftTrap* pending;
-    reset_processor_conformance(cpu, 0u);
+    reset_processor_conformance(cpu, 0x200u);
     cpu->stop_on_trap = false;
     prepare_trap_vectors(state, cpu);
-    load_instruction(state, cpu, 0u, OPCODE_SFTAC_A_W5);
-    load_instruction(state, cpu, 2u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x200u, OPCODE_SFTAC_A_W5);
+    load_instruction(state, cpu, 0x202u, OPCODE_NOP);
     dspic33_write_word(cpu, 0x0020u, 0x5100u);
     cpu->w[5] = 17u;
     cpu->w[15] = 0x5000u;
@@ -2181,24 +2181,24 @@ static void simultaneous_trap_case(ProcessorConformance* state, Dspic33* cpu) {
            "simultaneous trap sources remain distinct");
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
            "service simultaneous trap boundary");
-    expect(state, cpu->last_trap == 3u && cpu->pc == 0x000100u,
+    expect(state, cpu->last_trap == 3u && cpu->pc == 0x000300u,
            "simultaneous trap boundary chooses stack priority");
     pending = pending_trap(cpu, 4u);
     expect(state, pending != NULL && pending->delay == 0u,
            "simultaneous boundary retains ready math trap");
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
            "return from stack trap with retained math trap");
-    expect(state, cpu->last_trap == 4u && cpu->pc == 0x000120u && cpu->trap_count == 2u,
+    expect(state, cpu->last_trap == 4u && cpu->pc == 0x000320u && cpu->trap_count == 2u,
            "retained math trap enters after stack RETFIE");
 }
 
 static void earlier_deadline_case(ProcessorConformance* state, Dspic33* cpu) {
     const Dspic33PendingSoftTrap* pending;
-    reset_processor_conformance(cpu, 0u);
+    reset_processor_conformance(cpu, 0x200u);
     cpu->stop_on_trap = false;
     prepare_trap_vectors(state, cpu);
-    load_instruction(state, cpu, 0u, OPCODE_SFTAC_A_W5);
-    load_instruction(state, cpu, 2u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x200u, OPCODE_SFTAC_A_W5);
+    load_instruction(state, cpu, 0x202u, OPCODE_NOP);
     dspic33_write_word(cpu, 0x0020u, 0x5100u);
     cpu->w[5] = 17u;
     cpu->w[15] = 0x5000u;
@@ -2206,14 +2206,14 @@ static void earlier_deadline_case(ProcessorConformance* state, Dspic33* cpu) {
     dspic33_check_stack_address(cpu, 0x5102, false, 2u);
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
            "service earlier math deadline");
-    expect(state, cpu->last_trap == 4u && cpu->pc == 0x000120u,
+    expect(state, cpu->last_trap == 4u && cpu->pc == 0x000320u,
            "earlier math deadline precedes later stack priority");
     pending = pending_trap(cpu, 3u);
     expect(state, pending != NULL && pending->delay == 1u,
            "later stack deadline remains pending");
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
            "advance math handler to stack deadline");
-    expect(state, cpu->last_trap == 3u && cpu->pc == 0x000100u && cpu->trap_count == 2u,
+    expect(state, cpu->last_trap == 3u && cpu->pc == 0x000300u && cpu->trap_count == 2u,
            "ready stack trap preempts math handler");
 }
 
@@ -2225,10 +2225,10 @@ static void repeat_exception_cases(ProcessorConformance* state, Dspic33* cpu) {
 
     for (index = 0u; index < sizeof(divide_opcodes) / sizeof(divide_opcodes[0]);
          index++) {
-        reset_processor_conformance(cpu, 0u);
-        load_instruction(state, cpu, 0x00000cu, 0x000120u);
-        load_instruction(state, cpu, 0u, 0x090011u);
-        load_instruction(state, cpu, 2u, divide_opcodes[index]);
+        reset_processor_conformance(cpu, 0x200u);
+        load_instruction(state, cpu, 0x00000cu, 0x000320u);
+        load_instruction(state, cpu, 0x200u, 0x090011u);
+        load_instruction(state, cpu, 0x202u, divide_opcodes[index]);
         cpu->w[0] = 0xaaaau;
         cpu->w[1] = 0xbbbbu;
         cpu->w[2] = 0x2222u;
@@ -2240,29 +2240,29 @@ static void repeat_exception_cases(ProcessorConformance* state, Dspic33* cpu) {
         expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
                "initialize repeated divide");
         expect(state,
-               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x202u &&
                    cpu->rcount == 16u && cpu->repeat_active != 0u &&
                    (dspic33_read_word(cpu, 0x08c0u) & 0x0050u) == 0x0050u &&
                    pending_trap(cpu, 4u) != NULL && pending_trap(cpu, 4u)->delay == 1u,
                "first divide cycle latches delayed math trap");
         expect(state,
                dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->last_trap == 4u &&
-                   cpu->last_trap_return == 2u && cpu->pc == 0x000120u &&
+                   cpu->last_trap_return == 0x202u && cpu->pc == 0x000320u &&
                    cpu->rcount == 15u && cpu->repeat_active == 0u &&
                    (cpu->sr & 0x0010u) == 0u && cpu->cycles == 3u,
                "second divide cycle enters math trap");
         expect(state,
-               cpu->w[15] == 0x5004u && dspic33_read_word(cpu, 0x5000u) == 2u &&
+               cpu->w[15] == 0x5004u && dspic33_read_word(cpu, 0x5000u) == 0x202u &&
                    (dspic33_read_word(cpu, 0x5002u) & 0x1000u) != 0u &&
                    dspic33_read_word(cpu, 0x08c8u) == 0x0b04u,
                "divide math trap preserves repeat frame state");
     }
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0x00000cu, 0x000100u);
-    load_instruction(state, cpu, 0x000100u, OPCODE_RETFIE);
-    load_instruction(state, cpu, 0u, 0x090011u);
-    load_instruction(state, cpu, 2u, OPCODE_DIV_SW_W2_W3);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x00000cu, 0x000300u);
+    load_instruction(state, cpu, 0x000300u, OPCODE_RETFIE);
+    load_instruction(state, cpu, 0x200u, 0x090011u);
+    load_instruction(state, cpu, 0x202u, OPCODE_DIV_SW_W2_W3);
     cpu->w[2] = 42u;
     cpu->w[3] = 0u;
     cpu->w[15] = 0x5000u;
@@ -2271,12 +2271,12 @@ static void repeat_exception_cases(ProcessorConformance* state, Dspic33* cpu) {
            "initialize recursive math repeat");
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "latch recursive math source");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000100u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000300u &&
                cpu->trap_count == 1u && cpu->rcount == 15u,
            "enter first repeated divide math trap");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000100u &&
-               cpu->trap_count == 2u && cpu->last_trap_return == 2u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000300u &&
+               cpu->trap_count == 2u && cpu->last_trap_return == 0x202u &&
                cpu->rcount == 15u && cpu->w[15] == 0x5004u && cpu->cycles == 8u,
            "uncleared MATHERR re-enters before repeated instruction");
     dspic33_write_word(cpu, 0x08c0u, 0x0040u);
@@ -2287,9 +2287,9 @@ static void repeat_exception_cases(ProcessorConformance* state, Dspic33* cpu) {
     expect(state, dspic33_read_word(cpu, 0x08c0u) == 0u,
            "software clears independent DIV0ERR cause");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
-               cpu->repeat_active != 0u && cpu->repeat_pc == 2u && cpu->rcount == 15u &&
-               (cpu->sr & 0x0010u) != 0u && cpu->cycles == 14u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x202u &&
+               cpu->repeat_active != 0u && cpu->repeat_pc == 0x202u &&
+               cpu->rcount == 15u && (cpu->sr & 0x0010u) != 0u && cpu->cycles == 14u,
            "RETFIE restores suspended repeat state");
 
     dspic33_write_word(cpu, 0x08c0u, 0x0010u);
@@ -2301,9 +2301,9 @@ static void repeat_exception_cases(ProcessorConformance* state, Dspic33* cpu) {
            dspic33_read_word(cpu, 0x08c0u) == 0u && pending_trap(cpu, 4u) == NULL,
            "software MATHERR clear cancels pending level source");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, 0x090010u);
-    load_instruction(state, cpu, 2u, OPCODE_DIV_SW_W2_W3);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, 0x090010u);
+    load_instruction(state, cpu, 0x202u, OPCODE_DIV_SW_W2_W3);
     cpu->w[2] = 42u;
     cpu->w[3] = 0u;
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
@@ -2315,10 +2315,10 @@ static void repeat_exception_cases(ProcessorConformance* state, Dspic33* cpu) {
     expect(state, dspic33_read_word(cpu, 0x08c0u) == 0u && cpu->trap_count == 0u,
            "repeat count below seventeen does not latch DIV0");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, 0x090012u);
-    load_instruction(state, cpu, 2u, OPCODE_DIV_SW_W2_W3);
-    load_instruction(state, cpu, 0x00000cu, 0x000120u);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, 0x090012u);
+    load_instruction(state, cpu, 0x202u, OPCODE_DIV_SW_W2_W3);
+    load_instruction(state, cpu, 0x00000cu, 0x000320u);
     cpu->w[2] = 42u;
     cpu->w[3] = 0u;
     cpu->w[15] = 0x5000u;
@@ -2331,15 +2331,15 @@ static void repeat_exception_cases(ProcessorConformance* state, Dspic33* cpu) {
            "RCOUNT seventeen latches delayed DIV0");
     expect(state,
            dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->rcount == 15u &&
-               cpu->last_trap_return == 2u,
+               cpu->last_trap_return == 0x202u,
            "nonstandard long repeat enters delayed DIV0 at proven stage");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_REPEAT_2);
-    load_instruction(state, cpu, 2u, OPCODE_NOP);
-    load_instruction(state, cpu, 0x000014u, 0x000100u);
-    load_instruction(state, cpu, 0x000100u, OPCODE_NOP);
-    load_instruction(state, cpu, 0x000102u, OPCODE_RETFIE);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_REPEAT_2);
+    load_instruction(state, cpu, 0x202u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x000014u, 0x000300u);
+    load_instruction(state, cpu, 0x000300u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x000302u, OPCODE_RETFIE);
     cpu->w[15] = 0x5000u;
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
            "initialize interruptible repeat");
@@ -2347,27 +2347,27 @@ static void repeat_exception_cases(ProcessorConformance* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0840u, 0x0004u);
     dspic33_raise_interrupt(cpu, 0u);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000102u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000302u &&
                cpu->repeat_active == 0u && cpu->rcount == 2u &&
                (cpu->sr & 0x0010u) == 0u &&
                (dspic33_read_word(cpu, 0x5002u) & 0x1000u) != 0u,
            "interrupt entry suspends repeat and stacks RA");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
-               cpu->repeat_active != 0u && cpu->repeat_pc == 2u && cpu->rcount == 2u &&
-               (cpu->sr & 0x0010u) != 0u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x202u &&
+               cpu->repeat_active != 0u && cpu->repeat_pc == 0x202u &&
+               cpu->rcount == 2u && (cpu->sr & 0x0010u) != 0u,
            "interrupt RETFIE restores repeat state");
 }
 
 static void repeat_interrupt_cases(ProcessorConformance* state, Dspic33* cpu) {
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_DISI_2);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_W1_IFS1);
-    load_instruction(state, cpu, 4u, OPCODE_REPEAT_2);
-    load_instruction(state, cpu, 6u, OPCODE_INCREMENT_W2);
-    load_instruction(state, cpu, 0x00003cu, 0x000100u);
-    load_instruction(state, cpu, 0x000100u, OPCODE_NOP);
-    load_instruction(state, cpu, 0x000102u, OPCODE_RETFIE);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_DISI_2);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_W1_IFS1);
+    load_instruction(state, cpu, 0x204u, OPCODE_REPEAT_2);
+    load_instruction(state, cpu, 0x206u, OPCODE_INCREMENT_W2);
+    load_instruction(state, cpu, 0x00003cu, 0x000300u);
+    load_instruction(state, cpu, 0x000300u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x000302u, OPCODE_RETFIE);
     cpu->w[1] = 0x0010u;
     cpu->w[15] = 0x5000u;
     dspic33_write_word(cpu, 0x0822u, 0x0010u);
@@ -2383,13 +2383,13 @@ static void repeat_interrupt_cases(ProcessorConformance* state, Dspic33* cpu) {
            "word IFS write consumes one disabled cycle");
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->disicnt == 0u &&
-               cpu->repeat_active != 0u && cpu->repeat_pc == 6u && cpu->rcount == 2u &&
-               cpu->cycles == 3u,
+               cpu->repeat_active != 0u && cpu->repeat_pc == 0x206u &&
+               cpu->rcount == 2u && cpu->cycles == 3u,
            "REPEAT consumes final disabled cycle");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000102u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000302u &&
                cpu->last_interrupt == 20u && cpu->w[15] == 0x5004u &&
-               dspic33_read_word(cpu, 0x5000u) == 6u &&
+               dspic33_read_word(cpu, 0x5000u) == 0x206u &&
                (dspic33_read_word(cpu, 0x5002u) & 0x1000u) != 0u &&
                cpu->repeat_active == 0u && cpu->rcount == 2u &&
                (cpu->sr & 0x00f0u) == 0x0080u && cpu->cycles == 4u,
@@ -2397,34 +2397,34 @@ static void repeat_interrupt_cases(ProcessorConformance* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0802u, 0u);
     dspic33_write_word(cpu, 0x0822u, 0u);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 6u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x206u &&
                cpu->w[15] == 0x5000u && cpu->repeat_active != 0u &&
-               cpu->repeat_pc == 6u && cpu->rcount == 2u && (cpu->sr & 0x0010u) != 0u &&
-               cpu->cycles == 10u,
+               cpu->repeat_pc == 0x206u && cpu->rcount == 2u &&
+               (cpu->sr & 0x0010u) != 0u && cpu->cycles == 10u,
            "integrated RETFIE restores repeat state in six cycles");
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 1u &&
-               cpu->rcount == 1u && cpu->pc == 6u && cpu->cycles == 11u,
+               cpu->rcount == 1u && cpu->pc == 0x206u && cpu->cycles == 11u,
            "restored repeat executes first target");
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 2u &&
-               cpu->rcount == 0u && cpu->pc == 6u && cpu->cycles == 12u,
+               cpu->rcount == 0u && cpu->pc == 0x206u && cpu->cycles == 12u,
            "restored repeat executes second target");
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 3u &&
-               cpu->repeat_active == 0u && cpu->pc == 8u && (cpu->sr & 0x0010u) == 0u &&
-               cpu->cycles == 13u,
+               cpu->repeat_active == 0u && cpu->pc == 0x208u &&
+               (cpu->sr & 0x0010u) == 0u && cpu->cycles == 13u,
            "restored repeat completes all targets");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_DISI_2);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_W1_IFS1);
-    load_instruction(state, cpu, 4u, OPCODE_REPEAT_2);
-    load_instruction(state, cpu, 6u, OPCODE_INCREMENT_W2);
-    load_instruction(state, cpu, 0x00003cu, 0x000100u);
-    load_instruction(state, cpu, 0x000100u, OPCODE_NOP);
-    load_instruction(state, cpu, 0x000102u, OPCODE_CLEAR_RCOUNT);
-    load_instruction(state, cpu, 0x000104u, OPCODE_RETFIE);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_DISI_2);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_W1_IFS1);
+    load_instruction(state, cpu, 0x204u, OPCODE_REPEAT_2);
+    load_instruction(state, cpu, 0x206u, OPCODE_INCREMENT_W2);
+    load_instruction(state, cpu, 0x00003cu, 0x000300u);
+    load_instruction(state, cpu, 0x000300u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x000302u, OPCODE_CLEAR_RCOUNT);
+    load_instruction(state, cpu, 0x000304u, OPCODE_RETFIE);
     cpu->w[1] = 0x0010u;
     cpu->w[15] = 0x5000u;
     dspic33_write_word(cpu, 0x0822u, 0x0010u);
@@ -2437,25 +2437,25 @@ static void repeat_interrupt_cases(ProcessorConformance* state, Dspic33* cpu) {
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
            "arm repeat before early-termination interrupt");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000102u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000302u &&
                cpu->w[15] == 0x5004u && cpu->rcount == 2u && cpu->repeat_active == 0u &&
                (cpu->sr & 0x00f0u) == 0x0080u && cpu->cycles == 4u,
            "early-termination handler observes suspended repeat");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000104u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000304u &&
                cpu->rcount == 0u && cpu->cycles == 5u,
            "handler clears suspended RCOUNT");
     dspic33_write_word(cpu, 0x0802u, 0u);
     dspic33_write_word(cpu, 0x0822u, 0u);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 6u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x206u &&
                cpu->w[15] == 0x5000u && cpu->repeat_active != 0u &&
-               cpu->repeat_pc == 6u && cpu->rcount == 0u && (cpu->sr & 0x0010u) != 0u &&
-               cpu->cycles == 11u,
+               cpu->repeat_pc == 0x206u && cpu->rcount == 0u &&
+               (cpu->sr & 0x0010u) != 0u && cpu->cycles == 11u,
            "RETFIE restores prefetched target after RCOUNT clear");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 1u && cpu->pc == 8u &&
-               cpu->rcount == 0u && cpu->repeat_active == 0u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 1u &&
+               cpu->pc == 0x208u && cpu->rcount == 0u && cpu->repeat_active == 0u &&
                (cpu->sr & 0x0010u) == 0u && cpu->cycles == 12u,
            "cleared repeat executes final prefetched target once");
 }
@@ -2464,9 +2464,9 @@ static void call_stack_timing_case(ProcessorConformance* state, Dspic33* cpu) {
     reset_processor_conformance(cpu, 0u);
     cpu->stop_on_trap = true;
     load_instruction(state, cpu, 0x00000au, 0x000200u);
-    load_instruction(state, cpu, 0u, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 0u, OPCODE_CALL_0X300);
     load_instruction(state, cpu, 2u, OPCODE_NOP);
-    load_instruction(state, cpu, 0x000100u, OPCODE_MOV_SENTINEL_W1);
+    load_instruction(state, cpu, 0x000300u, OPCODE_MOV_SENTINEL_W1);
     dspic33_write_word(cpu, 0x0020u, 0x4ffeu);
     cpu->w[15] = 0x5000u;
     expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED,
@@ -2474,7 +2474,7 @@ static void call_stack_timing_case(ProcessorConformance* state, Dspic33* cpu) {
     expect(state, cpu->w[1] == 0u, "CALL stack fault precedes target instruction");
     expect(state, cpu->last_trap == 3u && cpu->pc == 0x000200u,
            "CALL stack fault enters stack trap");
-    expect(state, cpu->w[15] == 0x5008u && dspic33_read_word(cpu, 0x5004u) == 0x0100u,
+    expect(state, cpu->w[15] == 0x5008u && dspic33_read_word(cpu, 0x5004u) == 0x0300u,
            "CALL stack fault stacks target return PC");
 }
 
@@ -2490,14 +2490,14 @@ static void instruction_cycle_cases(ProcessorConformance* state, Dspic33* cpu) {
            "MOV.D consumes two cycles");
 
     reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 0u, OPCODE_CALL_0X300);
     load_instruction(state, cpu, 2u, OPCODE_NOP);
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 4u,
            "direct CALL consumes four cycles");
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_CALL_W0);
-    cpu->w[0] = 0x0100u;
+    cpu->w[0] = 0x0300u;
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 4u,
            "CALL Wn consumes four cycles");
 
@@ -2514,15 +2514,15 @@ static void instruction_cycle_cases(ProcessorConformance* state, Dspic33* cpu) {
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_CALL_LONG_W0);
-    cpu->w[0] = 0x0100u;
+    cpu->w[0] = 0x0300u;
     cpu->w[1] = 0u;
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 4u,
            "CALL.L consumes four cycles");
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_RETFIE);
-    load_instruction(state, cpu, 0x000100u, OPCODE_NOP);
-    dspic33_write_word(cpu, 0x5000u, 0x0100u);
+    load_instruction(state, cpu, 0x000300u, OPCODE_NOP);
+    dspic33_write_word(cpu, 0x5000u, 0x0300u);
     dspic33_write_word(cpu, 0x5002u, 0u);
     cpu->w[15] = 0x5004u;
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 6u,
@@ -2530,9 +2530,9 @@ static void instruction_cycle_cases(ProcessorConformance* state, Dspic33* cpu) {
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_RETFIE);
-    load_instruction(state, cpu, 0x000100u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x000300u, OPCODE_NOP);
     load_instruction(state, cpu, 0x000014u, 0x000200u);
-    dspic33_write_word(cpu, 0x5000u, 0x0100u);
+    dspic33_write_word(cpu, 0x5000u, 0x0300u);
     dspic33_write_word(cpu, 0x5002u, 0u);
     dspic33_write_word(cpu, 0x0820u, 0x0001u);
     dspic33_write_word(cpu, 0x0840u, 0x0004u);
@@ -2856,8 +2856,8 @@ static void non_cpu_sfr_timing_cases(ProcessorConformance* state, Dspic33* cpu) 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_BSET_BYTE_IFS0_BIT_0);
     load_instruction(state, cpu, 2u, OPCODE_NOP);
-    load_instruction(state, cpu, 0x0014u, 0x000100u);
-    load_instruction(state, cpu, 0x0100u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x0014u, 0x000300u);
+    load_instruction(state, cpu, 0x0300u, OPCODE_NOP);
     dspic33_write_word(cpu, 0x0820u, 0x0001u);
     dspic33_write_word(cpu, 0x0840u, 0x0004u);
     dspic33_write_word(cpu, 0x08c2u, 0x8000u);
@@ -2868,16 +2868,16 @@ static void non_cpu_sfr_timing_cases(ProcessorConformance* state, Dspic33* cpu) 
                cpu->disicnt == 0u,
            "non-CPU SFR wait cycle completes DISI countdown");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0102u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0302u &&
                cpu->w[15] == 0x5004u,
            "non-CPU SFR wait cycle releases new interrupt before next instruction");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_BSET_BYTE_IFS0_BIT_0);
-    load_instruction(state, cpu, 2u, OPCODE_NOP);
-    load_instruction(state, cpu, 4u, OPCODE_NOP);
-    load_instruction(state, cpu, 0x0014u, 0x000100u);
-    load_instruction(state, cpu, 0x0100u, OPCODE_NOP);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_BSET_BYTE_IFS0_BIT_0);
+    load_instruction(state, cpu, 0x202u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x204u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x0014u, 0x000300u);
+    load_instruction(state, cpu, 0x0300u, OPCODE_NOP);
     dspic33_write_word(cpu, 0x0820u, 0x0001u);
     dspic33_write_word(cpu, 0x0840u, 0x0004u);
     dspic33_write_word(cpu, 0x08c2u, 0x8000u);
@@ -2889,37 +2889,37 @@ static void non_cpu_sfr_timing_cases(ProcessorConformance* state, Dspic33* cpu) 
                cpu->interrupt_count == 0u,
            "nested non-CPU SFR wait retains new interrupt deferral");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 4u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x204u &&
                cpu->interrupt_count == 0u,
            "nested new interrupt deferral spans following instruction");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0102u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0302u &&
                cpu->interrupt_count == 1u,
            "nested new interrupt dispatches after deferred instruction");
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_POWER_SAVE_SLEEP);
-    load_instruction(state, cpu, 0x0014u, 0x000100u);
-    load_instruction(state, cpu, 0x0100u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x0014u, 0x000300u);
+    load_instruction(state, cpu, 0x0300u, OPCODE_NOP);
     dspic33_write_word(cpu, 0x0820u, 0x0001u);
     dspic33_write_word(cpu, 0x0840u, 0x0004u);
     dspic33_write_word(cpu, 0x08c2u, 0x8000u);
     dspic33_raise_interrupt(cpu, 0u);
     cpu->w[15] = 0x5000u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0100u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0300u &&
                cpu->power_state == DSPIC33_POWER_ACTIVE && cpu->interrupt_count == 1u &&
                cpu->w[15] == 0x5004u && dspic33_read_word(cpu, 0x5000u) == 2u,
            "power-save instruction completes before wake dispatch");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0102u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0302u &&
                cpu->interrupt_count == 1u && cpu->w[15] == 0x5004u,
            "power-save wake dispatch executes handler");
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_POWER_SAVE_SLEEP);
-    load_instruction(state, cpu, 0x0014u, 0x000100u);
-    load_instruction(state, cpu, 0x0100u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x0014u, 0x000300u);
+    load_instruction(state, cpu, 0x0300u, OPCODE_NOP);
     dspic33_write_word(cpu, 0x0820u, 0x0001u);
     dspic33_write_word(cpu, 0x0840u, 0x0004u);
     dspic33_write_word(cpu, 0x08c2u, 0x8000u);
@@ -2927,7 +2927,7 @@ static void non_cpu_sfr_timing_cases(ProcessorConformance* state, Dspic33* cpu) 
     cpu->pc = 1u;
     cpu->w[15] = 0x5000u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0102u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0302u &&
                cpu->interrupt_count == 1u && cpu->w[15] == 0x5004u,
            "odd PC does not inherit preceding power-save dispatch ordering");
 
@@ -3038,7 +3038,7 @@ static void non_cpu_sfr_timing_cases(ProcessorConformance* state, Dspic33* cpu) 
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_BTSS_IFS0_BIT_0);
-    load_instruction(state, cpu, 2u, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 2u, OPCODE_CALL_0X300);
     load_instruction(state, cpu, 4u, 0u);
     dspic33_write_word(cpu, 0x0800u, 1u);
     expect(state,
@@ -3234,7 +3234,7 @@ static void psv_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_BTSS_W4_POST_INCREMENT_BIT_0);
-    load_instruction(state, cpu, 2u, OPCODE_CALL_0X100);
+    load_instruction(state, cpu, 2u, OPCODE_CALL_0X300);
     load_instruction(state, cpu, 4u, 0u);
     dspic33_set_working_register(cpu, 4u, 0xc000u);
     cpu->dsrpag = 0x0200u;
@@ -3261,9 +3261,9 @@ static void psv_repeat_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
     };
     size_t index;
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_REPEAT_2);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_REPEAT_2);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_W1_POST_INCREMENT_W2);
     for (index = 0u; index < sizeof(values) / sizeof(values[0]); index++) {
         expect(state,
                dspic33_load_program_word(cpu, 0x4000u + (uint32_t)index * 2u,
@@ -3284,9 +3284,9 @@ static void psv_repeat_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
                cpu->repeat_active == 0u && !cpu->repeat_psv_started,
            "optimized PSV postincrement completes repeat state");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_REPEAT_2);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_W1_POST_DECREMENT_W2);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_REPEAT_2);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_W1_POST_DECREMENT_W2);
     dspic33_set_working_register(cpu, 1u, 0xc006u);
     cpu->dsrpag = 0x0200u;
     expect_step_cycles(state, cpu, 1u, "PSV postdecrement REPEAT setup");
@@ -3299,9 +3299,9 @@ static void psv_repeat_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
     expect(state, cpu->w[1] == 0xc000u && cpu->w[2] == 0x2222u,
            "optimized PSV postdecrement reads each word");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_REPEAT_2);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_BYTE_W1_POST_INCREMENT_W2);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_REPEAT_2);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_BYTE_W1_POST_INCREMENT_W2);
     dspic33_set_working_register(cpu, 1u, 0xc000u);
     cpu->dsrpag = 0x0200u;
     expect_step_cycles(state, cpu, 1u, "byte PSV REPEAT setup");
@@ -3314,9 +3314,9 @@ static void psv_repeat_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
     expect(state, cpu->w[1] == 0xc003u,
            "byte PSV postincrement remains outside optimized schedule");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_REPEAT_2);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_W1_PRE_INCREMENT_W2);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_REPEAT_2);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_W1_PRE_INCREMENT_W2);
     dspic33_set_working_register(cpu, 1u, 0xbffeu);
     cpu->dsrpag = 0x0200u;
     expect_step_cycles(state, cpu, 1u, "preincrement PSV REPEAT setup");
@@ -3329,9 +3329,9 @@ static void psv_repeat_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
     expect(state, cpu->w[1] == 0xc004u && cpu->w[2] == 0x3333u,
            "preincrement PSV remains outside optimized schedule");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_REPEAT_2);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_DOUBLE_W1_POST_INCREMENT_W2);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_REPEAT_2);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_DOUBLE_W1_POST_INCREMENT_W2);
     dspic33_set_working_register(cpu, 1u, 0xc000u);
     cpu->dsrpag = 0x0200u;
     expect_step_cycles(state, cpu, 1u, "MOV.D PSV REPEAT setup");
@@ -3344,9 +3344,9 @@ static void psv_repeat_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
     expect(state, cpu->w[1] == 0xc00cu && cpu->w[2] == 0x5555u && cpu->w[3] == 0x6666u,
            "MOV.D PSV postincrement remains outside optimized schedule");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_REPEAT_2);
-    load_instruction(state, cpu, 2u, OPCODE_DSP_X_W8_INCREMENT_Y_W10_DECREMENT);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_REPEAT_2);
+    load_instruction(state, cpu, 0x202u, OPCODE_DSP_X_W8_INCREMENT_Y_W10_DECREMENT);
     dspic33_set_working_register(cpu, 4u, 3u);
     dspic33_set_working_register(cpu, 5u, 4u);
     dspic33_set_working_register(cpu, 8u, 0xc000u);
@@ -3368,12 +3368,12 @@ static void psv_repeat_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
                cpu->w[5] == 0x9999u,
            "DSP PSV postincrement uses optimized repeat schedule");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, 0x090004u);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_W1_POST_INCREMENT_W2);
-    load_instruction(state, cpu, 0x0014u, 0x000100u);
-    load_instruction(state, cpu, 0x0100u, OPCODE_NOP);
-    load_instruction(state, cpu, 0x0102u, OPCODE_RETFIE);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, 0x090004u);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    load_instruction(state, cpu, 0x0014u, 0x000300u);
+    load_instruction(state, cpu, 0x0300u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x0302u, OPCODE_RETFIE);
     dspic33_set_working_register(cpu, 1u, 0xc000u);
     cpu->w[15] = 0x5000u;
     cpu->dsrpag = 0x0200u;
@@ -3393,12 +3393,13 @@ static void psv_repeat_timing_cases(ProcessorConformance* state, Dspic33* cpu) {
     expect_step_cycles(state, cpu, 1u,
                        "interrupt dispatch executes handler instruction");
     expect(state,
-           cpu->pc == 0x0102u && cpu->repeat_active == 0u && cpu->rcount == 2u &&
+           cpu->pc == 0x0302u && cpu->repeat_active == 0u && cpu->rcount == 2u &&
                (dspic33_read_word(cpu, 0x5002u) & 0x1000u) != 0u,
            "interrupt entry stacks optimized repeat state");
     dspic33_write_word(cpu, 0x0800u, 0u);
     expect_step_cycles(state, cpu, 6u, "RETFIE restores optimized repeat state");
-    expect(state, cpu->repeat_active != 0u && cpu->repeat_psv_reentry && cpu->pc == 2u,
+    expect(state,
+           cpu->repeat_active != 0u && cpu->repeat_psv_reentry && cpu->pc == 0x202u,
            "RETFIE arms PSV repeat re-entry timing");
     expect_step_cycles(state, cpu, 5u, "re-entered PSV repeat access uses five cycles");
     expect_step_cycles(state, cpu, 1u,
@@ -3506,19 +3507,19 @@ static void psv_program_hole_cases(ProcessorConformance* state, Dspic33* cpu) {
 
 static void address_register_dependency_cases(ProcessorConformance* state,
                                               Dspic33* cpu) {
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_MOV_LITERAL_0X1000_W2);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_W2_INDIRECT_W3);
-    load_instruction(state, cpu, 4u, OPCODE_MOV_W2_W3);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_MOV_LITERAL_0X1000_W2);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_W2_INDIRECT_W3);
+    load_instruction(state, cpu, 0x204u, OPCODE_MOV_W2_W3);
     dspic33_write_word(cpu, 0x1000u, 0x4567u);
     expect_step_cycles(state, cpu, 1u, "direct pointer write uses one cycle");
     expect_step_cycles(state, cpu, 2u, "direct write to indirect source stalls");
     expect(state, cpu->w[3] == 0x4567u, "dependency stall preserves source value");
     expect_step_cycles(state, cpu, 1u, "direct source does not calculate an address");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_MOV_W2_W2);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_W2_INDIRECT_W3);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_MOV_W2_W2);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_W2_INDIRECT_W3);
     dspic33_set_working_register(cpu, 2u, 0x1000u);
     dspic33_write_word(cpu, 0x1000u, 0x1234u);
     expect_step_cycles(state, cpu, 1u, "same-value direct write uses one cycle");
@@ -3526,10 +3527,10 @@ static void address_register_dependency_cases(ProcessorConformance* state,
                        "same-value direct write still creates dependency");
     expect(state, cpu->w[3] == 0x1234u, "same-value dependency preserves source value");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_MOV_LITERAL_0X1000_W2);
-    load_instruction(state, cpu, 2u, OPCODE_NOP);
-    load_instruction(state, cpu, 4u, OPCODE_MOV_W2_INDIRECT_W3);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_MOV_LITERAL_0X1000_W2);
+    load_instruction(state, cpu, 0x202u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x204u, OPCODE_MOV_W2_INDIRECT_W3);
     dspic33_write_word(cpu, 0x1000u, 0x2345u);
     expect_step_cycles(state, cpu, 1u,
                        "intervening-control pointer setup uses one cycle");
@@ -3539,9 +3540,9 @@ static void address_register_dependency_cases(ProcessorConformance* state,
                        "source after intervening instruction does not stall");
     expect(state, cpu->w[3] == 0x2345u, "intervening instruction control reads value");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_MOV_W3_W2_INDIRECT);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_W2_INDIRECT_W4);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_MOV_W3_W2_INDIRECT);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_W2_INDIRECT_W4);
     dspic33_set_working_register(cpu, 2u, 0x1000u);
     dspic33_set_working_register(cpu, 3u, 0xa55au);
     expect_step_cycles(state, cpu, 1u, "indirect destination preserves pointer timing");
@@ -3549,9 +3550,9 @@ static void address_register_dependency_cases(ProcessorConformance* state,
                        "unmodified indirect destination does not create dependency");
     expect(state, cpu->w[4] == 0xa55au, "unmodified pointer reads stored value");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_MOV_W3_W2_POST_INCREMENT);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_W2_INDIRECT_W4);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_MOV_W3_W2_POST_INCREMENT);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_W2_INDIRECT_W4);
     dspic33_set_working_register(cpu, 2u, 0x1000u);
     dspic33_set_working_register(cpu, 3u, 0x1111u);
     dspic33_write_word(cpu, 0x1002u, 0x2222u);
@@ -3561,9 +3562,9 @@ static void address_register_dependency_cases(ProcessorConformance* state,
     expect(state, cpu->w[2] == 0x1002u && cpu->w[4] == 0x2222u,
            "destination dependency uses updated pointer");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_MOV_W2_POST_INCREMENT_W3);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_W2_INDIRECT_W4);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_MOV_W2_POST_INCREMENT_W3);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_W2_INDIRECT_W4);
     dspic33_set_working_register(cpu, 2u, 0x1000u);
     dspic33_write_word(cpu, 0x1000u, 0x3333u);
     dspic33_write_word(cpu, 0x1002u, 0x4444u);
@@ -3573,9 +3574,9 @@ static void address_register_dependency_cases(ProcessorConformance* state,
     expect(state, cpu->w[3] == 0x3333u && cpu->w[4] == 0x4444u,
            "source dependency preserves both reads");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_MOV_LITERAL_0X1000_W2);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_W3_W2_INDIRECT);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_MOV_LITERAL_0X1000_W2);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_W3_W2_INDIRECT);
     dspic33_set_working_register(cpu, 3u, 0x5a5au);
     expect_step_cycles(state, cpu, 1u, "destination pointer setup uses one cycle");
     expect_step_cycles(state, cpu, 1u,
@@ -3583,36 +3584,36 @@ static void address_register_dependency_cases(ProcessorConformance* state,
     expect(state, dspic33_read_word(cpu, 0x1000u) == 0x5a5au,
            "destination-only dependency control stores value");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_MOV_LITERAL_0X1000_W2);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_W2_W4_OFFSET_W3);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_MOV_LITERAL_0X1000_W2);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_W2_W4_OFFSET_W3);
     dspic33_set_working_register(cpu, 4u, 2u);
     dspic33_write_word(cpu, 0x1002u, 0x6789u);
     expect_step_cycles(state, cpu, 1u, "indexed base setup uses one cycle");
     expect_step_cycles(state, cpu, 2u, "indexed source depends on base register");
     expect(state, cpu->w[3] == 0x6789u, "indexed base dependency reads value");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_MOV_LITERAL_2_W4);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_W2_W4_OFFSET_W3);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_MOV_LITERAL_2_W4);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_W2_W4_OFFSET_W3);
     dspic33_set_working_register(cpu, 2u, 0x1000u);
     dspic33_write_word(cpu, 0x1002u, 0x789au);
     expect_step_cycles(state, cpu, 1u, "indexed offset setup uses one cycle");
     expect_step_cycles(state, cpu, 2u, "indexed source depends on offset register");
     expect(state, cpu->w[3] == 0x789au, "indexed offset dependency reads value");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_MOV_LITERAL_0X1000_W2);
-    load_instruction(state, cpu, 2u, OPCODE_TBLRDL_W2_W3);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_MOV_LITERAL_0X1000_W2);
+    load_instruction(state, cpu, 0x202u, OPCODE_TBLRDL_W2_W3);
     expect(state, dspic33_load_program_word(cpu, 0x1000u, 0x00abcdefu),
            "load table dependency value");
     expect_step_cycles(state, cpu, 1u, "table pointer setup uses one cycle");
     expect_step_cycles(state, cpu, 6u, "table read source pointer dependency stalls");
     expect(state, cpu->w[3] == 0xcdefu, "table dependency preserves read value");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_MOV_LITERAL_0X8100_W2);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_W2_INDIRECT_W3);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_MOV_LITERAL_0X8100_W2);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_W2_INDIRECT_W3);
     expect(state, dspic33_load_program_word(cpu, 0x0100u, 0x00123456u),
            "load PSV dependency value");
     cpu->dsrpag = 0x0200u;
@@ -3620,9 +3621,9 @@ static void address_register_dependency_cases(ProcessorConformance* state,
     expect_step_cycles(state, cpu, 6u, "PSV access composes with dependency stall");
     expect(state, cpu->w[3] == 0x3456u, "PSV dependency preserves read value");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_MOV_LITERAL_0X1000_W8);
-    load_instruction(state, cpu, 2u, OPCODE_DSP_X_NO_UPDATE_Y_W10_DECREMENT);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_MOV_LITERAL_0X1000_W8);
+    load_instruction(state, cpu, 0x202u, OPCODE_DSP_X_NO_UPDATE_Y_W10_DECREMENT);
     dspic33_set_working_register(cpu, 4u, 3u);
     dspic33_set_working_register(cpu, 5u, 4u);
     dspic33_set_working_register(cpu, 10u, 0x9002u);
@@ -3634,11 +3635,11 @@ static void address_register_dependency_cases(ProcessorConformance* state,
     expect(state, cpu->w[4] == 0x1357u && cpu->w[5] == 0x2468u,
            "DSP dependency preserves both prefetches");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_CALL_0X100);
-    load_instruction(state, cpu, 2u, 0u);
-    load_instruction(state, cpu, 4u, OPCODE_MOV_W2_INDIRECT_W3);
-    load_instruction(state, cpu, 0x0100u, OPCODE_RETURN);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_CALL_0X300);
+    load_instruction(state, cpu, 0x202u, 0u);
+    load_instruction(state, cpu, 0x204u, OPCODE_MOV_W2_INDIRECT_W3);
+    load_instruction(state, cpu, 0x0300u, OPCODE_RETURN);
     cpu->w[15] = 0x5000u;
     dspic33_set_working_register(cpu, 2u, 0x1000u);
     dspic33_write_word(cpu, 0x1000u, 0x3579u);
@@ -3647,11 +3648,11 @@ static void address_register_dependency_cases(ProcessorConformance* state,
     expect_step_cycles(state, cpu, 1u, "RETURN does not create following dependency");
     expect(state, cpu->w[3] == 0x3579u, "post-RETURN source completes without stall");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_CALL_0X100);
-    load_instruction(state, cpu, 2u, 0u);
-    load_instruction(state, cpu, 4u, OPCODE_MOV_W2_INDIRECT_W3);
-    load_instruction(state, cpu, 0x0100u, OPCODE_RETLW_0X10_W2);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_CALL_0X300);
+    load_instruction(state, cpu, 0x202u, 0u);
+    load_instruction(state, cpu, 0x204u, OPCODE_MOV_W2_INDIRECT_W3);
+    load_instruction(state, cpu, 0x0300u, OPCODE_RETLW_0X10_W2);
     cpu->w[15] = 0x5000u;
     dspic33_set_working_register(cpu, 8u, 0x5000u);
     expect_step_cycles(state, cpu, 4u, "RETLW caller writes stack pointer");
@@ -3659,11 +3660,11 @@ static void address_register_dependency_cases(ProcessorConformance* state,
     expect_step_cycles(state, cpu, 2u, "RETLW destination creates dependency");
     expect(state, cpu->w[3] == 0x5000u, "RETLW dependency reads literal pointer");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_MOV_LITERAL_0X1000_W2);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_W2_INDIRECT_W3);
-    load_instruction(state, cpu, 0x0014u, 0x000100u);
-    load_instruction(state, cpu, 0x0100u, OPCODE_RETFIE);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_MOV_LITERAL_0X1000_W2);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_W2_INDIRECT_W3);
+    load_instruction(state, cpu, 0x0014u, 0x000300u);
+    load_instruction(state, cpu, 0x0300u, OPCODE_RETFIE);
     dspic33_write_word(cpu, 0x1000u, 0x9abcu);
     cpu->w[15] = 0x5000u;
     expect_step_cycles(state, cpu, 1u, "interrupt dependency writer completes");
@@ -3676,9 +3677,9 @@ static void address_register_dependency_cases(ProcessorConformance* state,
                        "source after interrupt does not retain prior dependency");
     expect(state, cpu->w[3] == 0x9abcu, "post-interrupt source preserves value");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_REPEAT_2);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_W2_POST_INCREMENT_W3);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_REPEAT_2);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_W2_POST_INCREMENT_W3);
     dspic33_set_working_register(cpu, 2u, 0x1000u);
     dspic33_write_word(cpu, 0x1000u, 0x1111u);
     dspic33_write_word(cpu, 0x1002u, 0x2222u);
@@ -3690,10 +3691,10 @@ static void address_register_dependency_cases(ProcessorConformance* state,
     expect(state, cpu->w[2] == 0x1006u && cpu->w[3] == 0x3333u,
            "REPEAT dependency advances every iteration");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_DO_1);
-    load_instruction(state, cpu, 2u, 0u);
-    load_instruction(state, cpu, 4u, OPCODE_MOV_W2_POST_INCREMENT_W3);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_DO_1);
+    load_instruction(state, cpu, 0x202u, 0u);
+    load_instruction(state, cpu, 0x204u, OPCODE_MOV_W2_POST_INCREMENT_W3);
     dspic33_set_working_register(cpu, 2u, 0x1000u);
     dspic33_write_word(cpu, 0x1000u, 0x5555u);
     dspic33_write_word(cpu, 0x1002u, 0xaaaau);
@@ -3703,11 +3704,11 @@ static void address_register_dependency_cases(ProcessorConformance* state,
     expect(state, cpu->w[2] == 0x1004u && cpu->w[3] == 0xaaaau && cpu->do_depth == 0u,
            "DO dependency completes loop state");
 
-    reset_processor_conformance(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_MOV_LITERAL_0X1000_W2);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_W2_INDIRECT_W3);
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_MOV_LITERAL_0X1000_W2);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_W2_INDIRECT_W3);
     expect_step_cycles(state, cpu, 1u, "reset dependency writer completes");
-    dspic33_reset(cpu, 2u);
+    dspic33_reset(cpu, 0x202u);
     dspic33_set_working_register(cpu, 2u, 0x1000u);
     dspic33_write_word(cpu, 0x1000u, 0xabcdu);
     expect_step_cycles(state, cpu, 1u, "reset clears pending dependency");
@@ -4248,8 +4249,8 @@ static void move_double_stack_timing_cases(ProcessorConformance* state, Dspic33*
 static void return_instruction_cycle_cases(ProcessorConformance* state, Dspic33* cpu) {
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_RETURN);
-    load_instruction(state, cpu, 0x000100u, OPCODE_NOP);
-    dspic33_write_word(cpu, 0x5000u, 0x0100u);
+    load_instruction(state, cpu, 0x000300u, OPCODE_NOP);
+    dspic33_write_word(cpu, 0x5000u, 0x0300u);
     dspic33_write_word(cpu, 0x5002u, 0u);
     cpu->call_depth = 1u;
     cpu->w[15] = 0x5004u;
@@ -4260,21 +4261,21 @@ static void return_instruction_cycle_cases(ProcessorConformance* state, Dspic33*
     cpu->stop_on_trap = true;
     load_instruction(state, cpu, 0x00000au, 0x000200u);
     load_instruction(state, cpu, 0u, OPCODE_RETURN);
-    load_instruction(state, cpu, 0x000100u, OPCODE_MOV_SENTINEL_W1);
+    load_instruction(state, cpu, 0x000300u, OPCODE_MOV_SENTINEL_W1);
     dspic33_write_word(cpu, 0x0020u, 0x5000u);
-    dspic33_write_word(cpu, 0x5000u, 0x0100u);
+    dspic33_write_word(cpu, 0x5000u, 0x0300u);
     dspic33_write_word(cpu, 0x5002u, 0u);
     cpu->call_depth = 1u;
     cpu->w[15] = 0x5004u;
     expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 5u,
            "RETURN with pending exception consumes five cycles");
-    expect(state, cpu->w[1] == 0u && cpu->last_trap_return == 0x000100u,
+    expect(state, cpu->w[1] == 0u && cpu->last_trap_return == 0x000300u,
            "RETURN stack fault precedes restored instruction");
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_RETLW_0X123_W2);
-    load_instruction(state, cpu, 0x000100u, OPCODE_NOP);
-    dspic33_write_word(cpu, 0x5000u, 0x0100u);
+    load_instruction(state, cpu, 0x000300u, OPCODE_NOP);
+    dspic33_write_word(cpu, 0x5000u, 0x0300u);
     dspic33_write_word(cpu, 0x5002u, 0u);
     cpu->call_depth = 1u;
     cpu->w[15] = 0x5004u;
@@ -4286,9 +4287,9 @@ static void return_instruction_cycle_cases(ProcessorConformance* state, Dspic33*
     cpu->stop_on_trap = true;
     load_instruction(state, cpu, 0x00000au, 0x000200u);
     load_instruction(state, cpu, 0u, OPCODE_RETLW_0X123_W2);
-    load_instruction(state, cpu, 0x000100u, OPCODE_MOV_SENTINEL_W1);
+    load_instruction(state, cpu, 0x000300u, OPCODE_MOV_SENTINEL_W1);
     dspic33_write_word(cpu, 0x0020u, 0x5000u);
-    dspic33_write_word(cpu, 0x5000u, 0x0100u);
+    dspic33_write_word(cpu, 0x5000u, 0x0300u);
     dspic33_write_word(cpu, 0x5002u, 0u);
     cpu->call_depth = 1u;
     cpu->w[15] = 0x5004u;
@@ -4296,17 +4297,17 @@ static void return_instruction_cycle_cases(ProcessorConformance* state, Dspic33*
            "RETLW with pending exception consumes five cycles");
     expect(state,
            cpu->w[2] == 0x0123u && cpu->w[1] == 0u &&
-               cpu->last_trap_return == 0x000100u,
+               cpu->last_trap_return == 0x000300u,
            "RETLW stack fault completes literal and precedes target");
 
     reset_processor_conformance(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_RETLW_0X122_W15);
-    load_instruction(state, cpu, 0x000100u, OPCODE_NOP);
-    dspic33_write_word(cpu, 0x5000u, 0x0100u);
+    load_instruction(state, cpu, 0x000300u, OPCODE_NOP);
+    dspic33_write_word(cpu, 0x5000u, 0x0300u);
     dspic33_write_word(cpu, 0x5002u, 0u);
     cpu->call_depth = 1u;
     cpu->w[15] = 0x5004u;
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000100u,
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000300u,
            "RETLW W15 restores PC from original stack frame");
     expect(state, cpu->w[15] == 0x0122u && cpu->cycles == 6u,
            "RETLW W15 writes even literal after frame pop");
@@ -4317,15 +4318,15 @@ static void retfie_stack_timing_case(ProcessorConformance* state, Dspic33* cpu) 
     cpu->stop_on_trap = true;
     load_instruction(state, cpu, 0x00000au, 0x000200u);
     load_instruction(state, cpu, 0u, OPCODE_RETFIE);
-    load_instruction(state, cpu, 0x000100u, OPCODE_MOV_SENTINEL_W1);
+    load_instruction(state, cpu, 0x000300u, OPCODE_MOV_SENTINEL_W1);
     dspic33_write_word(cpu, 0x0020u, 0x5000u);
-    dspic33_write_word(cpu, 0x5000u, 0x0100u);
+    dspic33_write_word(cpu, 0x5000u, 0x0300u);
     dspic33_write_word(cpu, 0x5002u, 0u);
     cpu->w[15] = 0x5004u;
     expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 5u,
            "RETFIE stack fault matures within RETFIE cycles");
     expect(state, cpu->w[1] == 0u, "RETFIE stack fault precedes restored instruction");
-    expect(state, cpu->last_trap_return == 0x000100u && cpu->pc == 0x000200u,
+    expect(state, cpu->last_trap_return == 0x000300u && cpu->pc == 0x000200u,
            "RETFIE stack fault stacks restored PC");
 }
 
@@ -4334,9 +4335,9 @@ static void interrupt_stack_timing_case(ProcessorConformance* state, Dspic33* cp
     reset_processor_conformance(cpu, 0u);
     cpu->stop_on_trap = true;
     load_instruction(state, cpu, 0x00000au, 0x000200u);
-    load_instruction(state, cpu, 0x000014u, 0x000100u);
-    load_instruction(state, cpu, 0x000100u, OPCODE_MOV_W0_SPLIM);
-    load_instruction(state, cpu, 0x000102u, OPCODE_MOV_SENTINEL_W1);
+    load_instruction(state, cpu, 0x000014u, 0x000300u);
+    load_instruction(state, cpu, 0x000300u, OPCODE_MOV_W0_SPLIM);
+    load_instruction(state, cpu, 0x000302u, OPCODE_MOV_SENTINEL_W1);
     dspic33_write_word(cpu, 0x0020u, 0x4ffeu);
     dspic33_write_word(cpu, 0x0820u, 0x0001u);
     dspic33_write_word(cpu, 0x0840u, 0x0004u);
@@ -4347,12 +4348,12 @@ static void interrupt_stack_timing_case(ProcessorConformance* state, Dspic33* cp
            "IRQ stack fault allows first handler instruction");
     pending = pending_trap(cpu, 3u);
     expect(state,
-           cpu->pc == 0x000102u && cpu->splim == 0x5100u && pending != NULL &&
+           cpu->pc == 0x000302u && cpu->splim == 0x5100u && pending != NULL &&
                pending->delay == 1u,
            "IRQ stack fault retains second handler boundary");
     expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED,
            "IRQ stack fault traps after second handler instruction");
-    expect(state, cpu->w[1] == 0x1111u && cpu->last_trap_return == 0x000104u,
+    expect(state, cpu->w[1] == 0x1111u && cpu->last_trap_return == 0x000304u,
            "IRQ stack fault stacks third handler PC");
 }
 
@@ -5195,7 +5196,7 @@ static void file_multiply_encoding_matrix_cases(ProcessorConformance* state,
     uint8_t byte_mode;
     uint16_t address;
 
-    expect(state, dspic33_load_program_word(cpu, 0x000006u, 0x000140u),
+    expect(state, dspic33_load_program_word(cpu, 0x000006u, 0x000340u),
            "load file multiply address-error vector");
     for (byte_mode = 0u; byte_mode < 2u; byte_mode++) {
         for (address = 0u; address < 0x2000u; address++) {
@@ -5212,7 +5213,7 @@ static void file_multiply_encoding_matrix_cases(ProcessorConformance* state,
             if (byte_mode == 0u && (address & 1u) != 0u) {
                 matches = matches && dspic33_step(cpu) == DSPIC33_TRAPPED &&
                           cpu->last_trap == 1u && cpu->last_trap_return == 2u &&
-                          cpu->pc == 0x000140u &&
+                          cpu->pc == 0x000340u &&
                           (dspic33_read_word(cpu, 0x08c0u) & 0x0008u) != 0u;
             } else {
                 matches = matches && dspic33_step(cpu) == DSPIC33_RUNNING &&
@@ -5788,7 +5789,7 @@ static void move_data_encoding_matrix_cases(ProcessorConformance* state, Dspic33
         matches = dspic33_load_program_word(cpu, 0u, opcode);
         reason = dspic33_step(cpu);
         if (encoded_address >= 0xe000u) {
-            matches = matches && reason == DSPIC33_TRAPPED && cpu->pc == 0x000140u &&
+            matches = matches && reason == DSPIC33_TRAPPED && cpu->pc == 0x000340u &&
                       cpu->last_trap == 1u && cpu->last_trap_return == 2u;
         } else {
             matches = matches && reason == DSPIC33_RUNNING && cpu->pc == 2u &&
@@ -5841,7 +5842,7 @@ static void file_move_encoding_matrix_cases(ProcessorConformance* state, Dspic33
 
     dspic33_reset(cpu, 0u);
     dspic33_set_async_events(cpu, false);
-    expect(state, dspic33_load_program_word(cpu, 0x000006u, 0x000140u),
+    expect(state, dspic33_load_program_word(cpu, 0x000006u, 0x000340u),
            "load file MOV address trap vector");
     for (byte_mode = 0u; byte_mode < 2u; byte_mode++) {
         for (address = 0u; address < 0x2000u; address++) {
@@ -5860,7 +5861,7 @@ static void file_move_encoding_matrix_cases(ProcessorConformance* state, Dspic33
             reason = dspic33_step(cpu);
             if (byte_mode == 0u && (address & 1u) != 0u) {
                 matches = matches && reason == DSPIC33_TRAPPED &&
-                          cpu->pc == 0x000140u && cpu->last_trap == 1u &&
+                          cpu->pc == 0x000340u && cpu->last_trap == 1u &&
                           cpu->last_trap_return == 2u;
             } else {
                 matches = matches && reason == DSPIC33_RUNNING && cpu->pc == 2u &&
@@ -5923,7 +5924,7 @@ static void file_move_encoding_matrix_cases(ProcessorConformance* state, Dspic33
                 reason = dspic33_step(cpu);
                 if (byte_mode == 0u && (address & 1u) != 0u) {
                     matches = matches && reason == DSPIC33_TRAPPED &&
-                              cpu->pc == 0x000140u && cpu->last_trap == 1u &&
+                              cpu->pc == 0x000340u && cpu->last_trap == 1u &&
                               cpu->last_trap_return == 2u;
                 } else {
                     matches = matches && reason == DSPIC33_RUNNING && cpu->pc == 2u &&
@@ -6099,9 +6100,9 @@ static void illegal_condition_reset_cases(ProcessorConformance* state, Dspic33* 
     dspic33_write_word(cpu, 0x1000u, 0x1234u);
     expect_illegal_reset(state, cpu, "raw host W pointer does not initialize register");
 
-    dspic33_reset(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_MOV_BYTE_LITERAL_W1);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_W1_W2);
+    dspic33_reset(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_MOV_BYTE_LITERAL_W1);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_W1_W2);
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING &&
                (cpu->initialized_working_registers & 0x0002u) == 0u,
@@ -6318,9 +6319,9 @@ static void illegal_condition_reset_cases(ProcessorConformance* state, Dspic33* 
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset_count == 0u,
            "DO count register is not an address-pointer tag use");
 
-    dspic33_reset(cpu, 0u);
-    load_instruction(state, cpu, 0u, OPCODE_PUSH_SHADOW);
-    load_instruction(state, cpu, 2u, OPCODE_MOV_W0_W2);
+    dspic33_reset(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, OPCODE_PUSH_SHADOW);
+    load_instruction(state, cpu, 0x202u, OPCODE_MOV_W0_W2);
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset_count == 0u,
            "PUSH.S values are not address-pointer tag uses");

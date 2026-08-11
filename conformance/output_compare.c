@@ -267,10 +267,10 @@ static void instruction_transition_cases(OutputCompareConformance* state,
     bool loaded = true;
     bool ran = true;
     size_t index;
-    dspic33_reset(cpu, 0u);
+    dspic33_reset(cpu, 0x200u);
     for (index = 0u; index < sizeof(program) / sizeof(program[0]); index++) {
-        loaded = loaded &&
-                 dspic33_load_program_word(cpu, (uint32_t)(index * 2u), program[index]);
+        loaded = loaded && dspic33_load_program_word(
+                               cpu, 0x200u + (uint32_t)(index * 2u), program[index]);
     }
     expect(state, loaded, "load exact OC synchronization transition sequence");
     for (index = 0u; index < 7u; index++) {

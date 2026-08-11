@@ -67,9 +67,9 @@ static uint16_t control(Dspic33* cpu) {
 
 static bool load_sequence(Dspic33* cpu, uint32_t first, uint32_t second,
                           uint32_t third) {
-    return dspic33_load_program_word(cpu, 0x0020u, first) &&
-           dspic33_load_program_word(cpu, 0x0022u, second) &&
-           dspic33_load_program_word(cpu, 0x0024u, third);
+    return dspic33_load_program_word(cpu, 0x0200u, first) &&
+           dspic33_load_program_word(cpu, 0x0202u, second) &&
+           dspic33_load_program_word(cpu, 0x0204u, third);
 }
 
 static Dspic33StopReason write_protected_byte(Dspic33* cpu, uint16_t address,
@@ -78,7 +78,7 @@ static Dspic33StopReason write_protected_byte(Dspic33* cpu, uint16_t address,
     uint8_t second = address == OSCILLATOR_CONTROL ? 0x57u : 0x9au;
     load_sequence(cpu, OPCODE_MOV_BYTE_W2_W1, OPCODE_MOV_BYTE_W3_W1,
                   OPCODE_MOV_BYTE_W0_W1);
-    cpu->pc = 0x0020u;
+    cpu->pc = 0x0200u;
     dspic33_set_working_register(cpu, 0u, value);
     dspic33_set_working_register(cpu, 1u, address);
     dspic33_set_working_register(cpu, 2u, first);
@@ -169,8 +169,8 @@ static void protection_cases(OscillatorConformance* state, Dspic33* cpu) {
 
     dspic33_reset(cpu, 0u);
     load_sequence(cpu, OPCODE_MOV_BYTE_W2_W1, OPCODE_NOP, OPCODE_MOV_BYTE_W3_W1);
-    dspic33_load_program_word(cpu, 0x0026u, OPCODE_MOV_BYTE_W0_W1);
-    cpu->pc = 0x0020u;
+    dspic33_load_program_word(cpu, 0x0206u, OPCODE_MOV_BYTE_W0_W1);
+    cpu->pc = 0x0200u;
     dspic33_set_working_register(cpu, 0u, 0x40u);
     dspic33_set_working_register(cpu, 1u, OSCILLATOR_CONTROL);
     dspic33_set_working_register(cpu, 2u, 0x46u);
@@ -184,7 +184,7 @@ static void protection_cases(OscillatorConformance* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     load_sequence(cpu, OPCODE_MOV_BYTE_W2_W1, OPCODE_MOV_BYTE_W3_W1,
                   OPCODE_MOV_BYTE_W0_W1);
-    cpu->pc = 0x0020u;
+    cpu->pc = 0x0200u;
     dspic33_set_working_register(cpu, 0u, 0x40u);
     dspic33_set_working_register(cpu, 1u, OSCILLATOR_CONTROL);
     dspic33_set_working_register(cpu, 2u, 0x46u);
@@ -197,7 +197,7 @@ static void protection_cases(OscillatorConformance* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     load_sequence(cpu, OPCODE_MOV_BYTE_W2_W1, OPCODE_MOV_BYTE_W3_W1,
                   OPCODE_MOV_BYTE_W0_W1);
-    cpu->pc = 0x0020u;
+    cpu->pc = 0x0200u;
     dspic33_set_working_register(cpu, 0u, 0x40u);
     dspic33_set_working_register(cpu, 1u, OSCILLATOR_CONTROL);
     dspic33_set_working_register(cpu, 2u, 0x46u);
@@ -274,8 +274,8 @@ static void switch_cases(OscillatorConformance* state, Dspic33* cpu) {
 
     write_protected_byte(cpu, OSCILLATOR_CONTROL + 1u, 0x03u);
     write_protected_byte(cpu, OSCILLATOR_CONTROL, OSCILLATOR_SWITCH_ENABLE);
-    dspic33_load_program_word(cpu, 0x0020u, OPCODE_SLEEP);
-    cpu->pc = 0x0020u;
+    dspic33_load_program_word(cpu, 0x0200u, OPCODE_SLEEP);
+    cpu->pc = 0x0200u;
     expect(state, dspic33_step(cpu) == DSPIC33_SLEEPING,
            "Sleep executes during clock switch");
     expect(state, !cpu->oscillator.active && (control(cpu) & 1u) == 0u,
@@ -296,7 +296,7 @@ static void switch_cases(OscillatorConformance* state, Dspic33* cpu) {
 
 static void failure_trap_cases(OscillatorConformance* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
-    dspic33_load_program_word(cpu, 0x0004u, 0x000100u);
+    dspic33_load_program_word(cpu, 0x0004u, 0x000300u);
     dspic33_set_working_register(cpu, 15u, 0x2000u);
     cpu->stop_on_trap = true;
     expect(state,
@@ -307,13 +307,13 @@ static void failure_trap_cases(OscillatorConformance* state, Dspic33* cpu) {
            "oscillator-fail trap leaves CF set");
     expect(state, (dspic33_read_word(cpu, 0x08c0u) & 0x0002u) != 0u,
            "oscillator-fail trap sets OSCFAIL status");
-    expect(state, cpu->last_trap == 0u && cpu->last_trap_return == 0x0026u,
+    expect(state, cpu->last_trap == 0u && cpu->last_trap_return == 0x0206u,
            "oscillator-fail trap records source and return PC");
     expect(state,
-           dspic33_read_word(cpu, 0x2000u) == 0x0026u &&
+           dspic33_read_word(cpu, 0x2000u) == 0x0206u &&
                (dspic33_read_word(cpu, 0x2002u) & 0x007fu) == 0u,
            "oscillator-fail trap stacks return address");
-    expect(state, cpu->pc == 0x000100u && cpu->w[15] == 0x2004u,
+    expect(state, cpu->pc == 0x000300u && cpu->w[15] == 0x2004u,
            "oscillator-fail trap enters vector four");
     dspic33_reset(cpu, 0u);
     cpu->data[OSCILLATOR_CONTROL] = OSCILLATOR_CLOCK_FAIL;
@@ -449,7 +449,7 @@ static void hardware_failure_cases(OscillatorConformance* state, Dspic33* cpu) {
     dspic33_load_configuration_word(cpu, CONFIGURATION_FOSCSEL, 0x007au);
     dspic33_load_configuration_word(cpu, CONFIGURATION_FOSC, 0x001eu);
     dspic33_reset(cpu, 0u);
-    dspic33_load_program_word(cpu, 0x0004u, 0x000100u);
+    dspic33_load_program_word(cpu, 0x0004u, 0x000300u);
     dspic33_set_working_register(cpu, 15u, 0x2000u);
     cpu->stop_on_trap = true;
     expect(state, dspic33_oscillator_failure_detected(cpu),
@@ -461,7 +461,7 @@ static void hardware_failure_cases(OscillatorConformance* state, Dspic33* cpu) {
     expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED,
            "FSCM dispatches oscillator-fail trap");
     expect(state,
-           cpu->pc == 0x000102u && cpu->last_trap == 0u && cpu->last_trap_return == 0u,
+           cpu->pc == 0x000302u && cpu->last_trap == 0u && cpu->last_trap_return == 0u,
            "FSCM enters oscillator-fail vector");
 
     dspic33_load_configuration_word(cpu, CONFIGURATION_FOSC, 0x005eu);
@@ -1118,8 +1118,8 @@ static void main_pll_configuration_cases(OscillatorConformance* state, Dspic33* 
 static void configure_doze_interrupt(Dspic33* cpu, uint8_t priority) {
     dspic33_write_word(cpu, 0x0820u, 1u);
     dspic33_write_word(cpu, 0x0840u, priority);
-    dspic33_load_program_word(cpu, 0x0014u, 0x0100u);
-    dspic33_load_program_word(cpu, 0x0100u, OPCODE_NOP);
+    dspic33_load_program_word(cpu, 0x0014u, 0x0300u);
+    dspic33_load_program_word(cpu, 0x0300u, OPCODE_NOP);
     dspic33_set_working_register(cpu, 15u, 0x1800u);
     dspic33_raise_interrupt(cpu, 0u);
 }
@@ -1200,9 +1200,9 @@ static void doze_cases(OscillatorConformance* state, Dspic33* source, Dspic33* c
                source->device_cycles - device_cycles == 8u,
            "DOZE scales the separated non-CPU SFR wait cycle");
 
-    dspic33_reset(source, 0u);
-    dspic33_load_program_word(source, 0u, OPCODE_MOV_W0_W1);
-    dspic33_load_program_word(source, 2u, OPCODE_NOP);
+    dspic33_reset(source, 0x200u);
+    dspic33_load_program_word(source, 0x200u, OPCODE_MOV_W0_W1);
+    dspic33_load_program_word(source, 0x202u, OPCODE_NOP);
     dspic33_set_working_register(source, 0u, 0x1800u);
     dspic33_set_working_register(source, 1u, MAIN_CLOCK_DIVISOR);
     cpu_cycles = source->cycles;
@@ -1218,7 +1218,7 @@ static void doze_cases(OscillatorConformance* state, Dspic33* source, Dspic33* c
            dspic33_step(source) == DSPIC33_RUNNING &&
                source->device_cycles - device_cycles == 2u,
            "instruction after DOZEN setting uses the new ratio");
-    source->pc = 0u;
+    source->pc = 0x200u;
     dspic33_set_working_register(source, 0u, 0x1000u);
     device_cycles = source->device_cycles;
     expect(state,
@@ -1289,7 +1289,7 @@ static void doze_cases(OscillatorConformance* state, Dspic33* source, Dspic33* c
     device_cycles = source->device_cycles;
     expect(state,
            dspic33_step(source) == DSPIC33_RUNNING && source->last_interrupt == 0u &&
-               source->pc == 0x0102u &&
+               source->pc == 0x0302u &&
                (dspic33_read_word(source, MAIN_CLOCK_DIVISOR) &
                 MAIN_CLOCK_DOZE_ENABLE) != 0u &&
                source->device_cycles - device_cycles == 2u,
@@ -1303,7 +1303,7 @@ static void doze_cases(OscillatorConformance* state, Dspic33* source, Dspic33* c
     device_cycles = source->device_cycles;
     expect(state,
            dspic33_step(source) == DSPIC33_RUNNING && source->last_interrupt == 0u &&
-               source->pc == 0x0102u &&
+               source->pc == 0x0302u &&
                (dspic33_read_word(source, MAIN_CLOCK_DIVISOR) &
                 MAIN_CLOCK_DOZE_ENABLE) == 0u &&
                source->device_cycles - device_cycles == 1u,
@@ -1404,8 +1404,8 @@ static void doze_cases(OscillatorConformance* state, Dspic33* source, Dspic33* c
     dspic33_reset(source, 0u);
     dspic33_write_word(source, MAIN_CLOCK_DIVISOR,
                        MAIN_CLOCK_RECOVER_INTERRUPT | 0x1800u);
-    dspic33_load_program_word(source, 0x0008u, 0x0100u);
-    dspic33_load_program_word(source, 0x0100u, OPCODE_NOP);
+    dspic33_load_program_word(source, 0x0008u, 0x0300u);
+    dspic33_load_program_word(source, 0x0300u, OPCODE_NOP);
     dspic33_set_working_register(source, 15u, 0x1800u);
     dspic33_write_word(source, 0x08c6u, 1u);
     source->pc = 0u;
@@ -1413,7 +1413,7 @@ static void doze_cases(OscillatorConformance* state, Dspic33* source, Dspic33* c
     trap_result = dspic33_step(source);
     expect(state,
            trap_result == DSPIC33_TRAPPED && source->last_trap == 2u &&
-               source->pc == 0x0102u &&
+               source->pc == 0x0302u &&
                (dspic33_read_word(source, MAIN_CLOCK_DIVISOR) &
                 MAIN_CLOCK_DOZE_ENABLE) != 0u &&
                source->device_cycles - device_cycles == 2u,
@@ -1501,7 +1501,7 @@ static void lifecycle_cases(OscillatorConformance* state, Dspic33* source,
     write_protected_byte(source, OSCILLATOR_CONTROL + 1u, 0x03u);
     load_sequence(source, OPCODE_MOV_BYTE_W2_W1, OPCODE_MOV_BYTE_W3_W1,
                   OPCODE_MOV_BYTE_W0_W1);
-    source->pc = 0x0020u;
+    source->pc = 0x0200u;
     dspic33_set_working_register(source, 0u, OSCILLATOR_SWITCH_ENABLE);
     dspic33_set_working_register(source, 1u, OSCILLATOR_CONTROL);
     dspic33_set_working_register(source, 2u, 0x46u);
@@ -1517,8 +1517,8 @@ static void lifecycle_cases(OscillatorConformance* state, Dspic33* source,
 
     dspic33_reset(source, 0u);
     load_sequence(source, OPCODE_MOV_BYTE_W2_W1, OPCODE_RESET, OPCODE_MOV_BYTE_W3_W1);
-    dspic33_load_program_word(source, 0x0026u, OPCODE_MOV_BYTE_W0_W1);
-    source->pc = 0x0020u;
+    dspic33_load_program_word(source, 0x0206u, OPCODE_MOV_BYTE_W0_W1);
+    source->pc = 0x0200u;
     dspic33_set_working_register(source, 0u, 0x40u);
     dspic33_set_working_register(source, 1u, OSCILLATOR_CONTROL);
     dspic33_set_working_register(source, 2u, 0x46u);
@@ -1527,7 +1527,7 @@ static void lifecycle_cases(OscillatorConformance* state, Dspic33* source,
            "reset invalidation first key executes");
     expect(state, dspic33_step(source) == DSPIC33_RUNNING,
            "reset executes between protected keys");
-    source->pc = 0x0024u;
+    source->pc = 0x0204u;
     expect(state, dspic33_step(source) == DSPIC33_RUNNING,
            "post-reset second key executes");
     expect(state, dspic33_step(source) == DSPIC33_RUNNING,

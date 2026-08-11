@@ -247,11 +247,14 @@ static void power_cases(WatchdogConformance* state, Dspic33* cpu) {
     dspic33_watchdog_advance_lprc(cpu, 10u);
     dspic33_write_word(cpu, 0x0820u, 0x0008u);
     dspic33_device_advance(cpu, 2u);
-    dspic33_load_program_word(cpu, 0x001au, 0x0020u);
-    dspic33_load_program_word(cpu, 0x0020u, OPCODE_NOP);
+    dspic33_load_program_word(cpu, 0x001au, 0x0300u);
+    dspic33_load_program_word(cpu, 0x0300u, OPCODE_NOP);
     dspic33_set_working_register(cpu, 15u, 0x1000u);
     dspic33_raise_interrupt(cpu, 3u);
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->interrupt_count == 1u &&
+               cpu->last_interrupt == 3u && cpu->pc == 0x0302u &&
+               cpu->trap_count == 0u && !cpu->illegal_reset,
            "interrupt wakes processor from Idle");
     expect(state, cpu->power_state == DSPIC33_POWER_ACTIVE && cpu->watchdog.ticks == 0u,
            "interrupt wake clears watchdog counter");

@@ -111,8 +111,8 @@ static void access_cases(InterruptControlConformance* state, Dspic33* cpu) {
 static void generic_hard_cases(InterruptControlConformance* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     dspic33_load_program_word(cpu, 0u, OPCODE_MOV_W0_INTCON2);
-    dspic33_load_program_word(cpu, 0x0008u, 0x000100u);
-    dspic33_load_program_word(cpu, 0x0100u, OPCODE_RETFIE);
+    dspic33_load_program_word(cpu, 0x0008u, 0x000300u);
+    dspic33_load_program_word(cpu, 0x0300u, OPCODE_RETFIE);
     dspic33_set_working_register(cpu, 0u, 0xa000u);
     dspic33_set_working_register(cpu, 15u, 0x2000u);
     cpu->sr = 0x0105u;
@@ -124,7 +124,7 @@ static void generic_hard_cases(InterruptControlConformance* state, Dspic33* cpu)
                dspic33_read_word(cpu, INTCON4) == 0x0001u,
            "SWTRAP sets persistent hard-trap sources");
     expect(state,
-           cpu->last_trap == 2u && cpu->last_trap_return == 2u && cpu->pc == 0x0100u &&
+           cpu->last_trap == 2u && cpu->last_trap_return == 2u && cpu->pc == 0x0300u &&
                cpu->trap_count == 1u,
            "generic hard trap records source and vector");
     expect(state,
@@ -158,8 +158,8 @@ static void generic_hard_cases(InterruptControlConformance* state, Dspic33* cpu)
 static void generic_soft_cases(InterruptControlConformance* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     dspic33_load_program_word(cpu, 0u, OPCODE_MOV_W0_INTCON3);
-    dspic33_load_program_word(cpu, 0x0010u, 0x000120u);
-    dspic33_load_program_word(cpu, 0x0120u, OPCODE_RETFIE);
+    dspic33_load_program_word(cpu, 0x0010u, 0x000320u);
+    dspic33_load_program_word(cpu, 0x0320u, OPCODE_RETFIE);
     dspic33_set_working_register(cpu, 0u, 0x0070u);
     dspic33_set_working_register(cpu, 15u, 0x3000u);
     cpu->sr = 0x0105u;
@@ -169,7 +169,7 @@ static void generic_soft_cases(InterruptControlConformance* state, Dspic33* cpu)
     expect(state, dspic33_read_word(cpu, INTCON3) == 0x0070u,
            "generic soft sources retain all requested status bits");
     expect(state,
-           cpu->last_trap == 6u && cpu->last_trap_return == 2u && cpu->pc == 0x0120u &&
+           cpu->last_trap == 6u && cpu->last_trap_return == 2u && cpu->pc == 0x0320u &&
                cpu->trap_count == 1u,
            "generic soft trap coalesces sources at vector sixteen");
     expect(state,

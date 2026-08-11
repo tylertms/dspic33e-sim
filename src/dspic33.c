@@ -21,6 +21,8 @@ static const uint8_t configuration_program_masks[] = {0x33u, 0x87u, 0xe7u, 0xffu
 enum {
     PERSISTENT_PROGRAM_PHYSICAL_BASE = 0x2000u,
     PERSISTENT_PROGRAM_PHYSICAL_LIMIT = 0x5000u,
+    VECTOR_SEGMENT_EXECUTION_BASE = 0x000002u,
+    VECTOR_SEGMENT_LIMIT = 0x000200u,
     CODEGUARD_GENERAL_CONFIGURATION_OFFSET = 0x04u,
     CODEGUARD_AUXILIARY_CONFIGURATION_OFFSET = 0x10u
 };
@@ -51,6 +53,11 @@ bool dspic33_program_range_implemented(uint32_t address, uint32_t size) {
 static bool program_target_requires_address_error(uint32_t address) {
     return address < DSPIC33_AUXILIARY_PROGRAM_LIMIT &&
            !dspic33_program_range_implemented(address, 2u);
+}
+
+static bool vector_segment_execution_address(uint32_t address) {
+    return (address & 1u) == 0u && address >= VECTOR_SEGMENT_EXECUTION_BASE &&
+           address < VECTOR_SEGMENT_LIMIT;
 }
 
 static uint32_t program_address_add(uint32_t address, int32_t offset) {
@@ -4316,8 +4323,8 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         cpu->stop_reason = DSPIC33_RUNNING;
     } else {
         power_save_next =
-            !cpu->nvm.active && (cpu->pc & 1u) == 0u &&
-            dspic33_program_range_implemented(cpu->pc, 2u) &&
+            !cpu->nvm.active && !vector_segment_execution_address(cpu->pc) &&
+            (cpu->pc & 1u) == 0u && dspic33_program_range_implemented(cpu->pc, 2u) &&
             (dspic33_read_program_word(cpu, cpu->pc) & 0xfffffeu) == 0xfe4000u;
         exception_dispatched = service_pending_soft_trap(cpu);
         if (!exception_dispatched && !power_save_next) {
@@ -4333,6 +4340,16 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     }
     sequential_hole_fetch = cpu->sequential_program_hole_pc == cpu->pc &&
                             program_target_requires_address_error(cpu->pc);
+    if (vector_segment_execution_address(cpu->pc)) {
+        uint32_t return_pc = program_address_add(cpu->pc, 2);
+        device_ratio = dspic33_device_instruction_cycles(cpu, 1u);
+        cpu->sequential_program_hole_pc = 0u;
+        enter_address_trap(cpu, return_pc, false);
+        if (!cpu->illegal_reset) {
+            advance_instruction(cpu, 1u, false, device_ratio);
+        }
+        return cpu->stop_reason;
+    }
     if ((cpu->pc & 1u) != 0u ||
         (!dspic33_program_range_implemented(cpu->pc, 2u) && !sequential_hole_fetch)) {
         cpu->sequential_program_hole_pc = 0u;

@@ -160,7 +160,7 @@ static void core_control_cases(CoreSfrConformance* state, Dspic33* cpu) {
 }
 
 static void disicnt_cases(CoreSfrConformance* state, Dspic33* cpu) {
-    dspic33_reset(cpu, 0u);
+    dspic33_reset(cpu, 0x200u);
     dspic33_write_word(cpu, DISI_COUNT, 0x1234u);
     expect(state, cpu->disicnt == 0u,
            "DISICNT write cannot initiate an interrupt-disable interval");
@@ -169,11 +169,11 @@ static void disicnt_cases(CoreSfrConformance* state, Dspic33* cpu) {
     expect(state, cpu->disicnt == 0u,
            "DISICNT byte writes cannot initiate an interval");
 
-    dspic33_load_program_word(cpu, 0u, OPCODE_MOV_W0_DISICNT);
+    dspic33_load_program_word(cpu, 0x200u, OPCODE_MOV_W0_DISICNT);
     dspic33_set_working_register(cpu, 0u, 0x1234u);
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->disicnt == 0u,
            "instruction data write cannot initiate a DISICNT interval");
-    dspic33_load_program_word(cpu, 2u, OPCODE_DISI_6);
+    dspic33_load_program_word(cpu, 0x202u, OPCODE_DISI_6);
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->disicnt == 6u &&
                (dspic33_read_word(cpu, INTCON2) & 0x4000u) != 0u,
