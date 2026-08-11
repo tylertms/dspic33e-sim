@@ -7352,8 +7352,7 @@ static bool service_interrupt(Dspic33* cpu) {
                                                 : 0x0014u + best_irq * 2u) &
              0x007ffffeu;
     if (!dspic33_program_range_implemented(target, 2u)) {
-        dspic33_raise_program_vector_error(cpu, origin,
-                                           origin >= DSPIC33_AUXILIARY_PROGRAM_BASE);
+        dspic33_raise_program_vector_error(cpu, origin);
         return true;
     }
     if (!dspic33_codeguard_admit_program_flow(cpu, origin, target)) {

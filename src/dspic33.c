@@ -37,7 +37,7 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
 static void clear_watchdog(Dspic33* cpu);
 static void enter_trap(Dspic33* cpu, uint16_t trap, uint32_t vector, uint8_t priority,
                        uint16_t status, uint32_t return_pc, bool auxiliary_vector);
-static void enter_address_trap(Dspic33* cpu, uint32_t return_pc, bool auxiliary_vector);
+static void enter_address_trap(Dspic33* cpu, uint32_t return_pc);
 static void schedule_soft_trap(Dspic33* cpu, uint16_t trap, uint32_t vector,
                                uint8_t priority, uint8_t delay);
 static void check_stack_address(Dspic33* cpu, int32_t address, bool wrapped);
@@ -2593,7 +2593,7 @@ static void enter_trap(Dspic33* cpu, uint16_t trap, uint32_t vector, uint8_t pri
     dspic33_write_word(cpu, 0x08c0u,
                        (uint16_t)(dspic33_read_word(cpu, 0x08c0u) | status));
     if (trap != 1u && program_target_requires_address_error(target)) {
-        enter_address_trap(cpu, return_pc, auxiliary_vector);
+        enter_address_trap(cpu, return_pc);
         return;
     }
     if (!dspic33_codeguard_admit_program_flow(cpu, origin, target)) {
@@ -2629,19 +2629,17 @@ static void enter_trap(Dspic33* cpu, uint16_t trap, uint32_t vector, uint8_t pri
     }
 }
 
-static void enter_address_trap(Dspic33* cpu, uint32_t return_pc,
-                               bool auxiliary_vector) {
+static void enter_address_trap(Dspic33* cpu, uint32_t return_pc) {
     uint16_t sfa = (uint16_t)(cpu->corcon & 0x0004u);
     cpu->corcon &= (uint16_t)~0x0004u;
-    enter_trap(cpu, 1u, 0x000006u, 14u, 0x0008u, return_pc, auxiliary_vector);
+    enter_trap(cpu, 1u, 0x000006u, 14u, 0x0008u, return_pc, false);
     if (!cpu->illegal_reset) {
         cpu->corcon |= sfa;
     }
 }
 
-void dspic33_raise_program_vector_error(Dspic33* cpu, uint32_t return_pc,
-                                        bool auxiliary_vector) {
-    enter_address_trap(cpu, return_pc, auxiliary_vector);
+void dspic33_raise_program_vector_error(Dspic33* cpu, uint32_t return_pc) {
+    enter_address_trap(cpu, return_pc);
 }
 
 static void schedule_soft_trap(Dspic33* cpu, uint16_t trap, uint32_t vector,
@@ -4401,7 +4399,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         uint32_t return_pc = program_address_add(cpu->pc, 2);
         device_ratio = dspic33_device_instruction_cycles(cpu, 1u);
         cpu->sequential_program_hole_pc = 0u;
-        enter_address_trap(cpu, return_pc, false);
+        enter_address_trap(cpu, return_pc);
         if (!cpu->illegal_reset || cpu->nvm.reset_pending) {
             advance_instruction(cpu, 1u, false, device_ratio);
         }
@@ -4426,8 +4424,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         target = cpu->pc;
         cpu->instructions++;
         if (program_target_requires_address_error(target)) {
-            enter_address_trap(cpu, program_address_add(instruction_pc, 2),
-                               auxiliary_program_address(instruction_pc));
+            enter_address_trap(cpu, program_address_add(instruction_pc, 2));
             cycles = 5u;
         } else if (!dspic33_codeguard_admit_program_flow(cpu, instruction_pc, target)) {
             if (cpu->nvm.reset_pending) {
@@ -4455,8 +4452,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         cpu->pc = target;
         cpu->instructions++;
         if (program_target_requires_address_error(target)) {
-            enter_address_trap(cpu, program_address_add(instruction_pc, 2),
-                               auxiliary_program_address(instruction_pc));
+            enter_address_trap(cpu, program_address_add(instruction_pc, 2));
             cycles = 5u;
         } else if (!dspic33_codeguard_admit_program_flow(cpu, instruction_pc, target)) {
             if (cpu->nvm.reset_pending) {
@@ -4569,11 +4565,9 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         cpu->address_error_control_state_completed = false;
         cpu->previous_working_register_writes = 0u;
         if (control_state_completed) {
-            enter_address_trap(cpu, return_pc,
-                               auxiliary_program_address(instruction_pc));
+            enter_address_trap(cpu, return_pc);
         } else {
-            enter_trap(cpu, 1u, 0x000006u, 14u, 0x0008u, return_pc,
-                       auxiliary_program_address(instruction_pc));
+            enter_trap(cpu, 1u, 0x000006u, 14u, 0x0008u, return_pc, false);
         }
         if (cpu->illegal_reset && !cpu->nvm.reset_pending) {
             return cpu->stop_reason;

@@ -1007,6 +1007,7 @@ static void auxiliary_access_and_execution_cases(NvmConformance* state, Dspic33*
 
     dspic33_reset(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE);
     dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE, OPCODE_MOV_W1_W2);
+    dspic33_load_program_word(cpu, 0x000006u, 0x000240u);
     dspic33_load_program_word(cpu, 0x007ffffau,
                               DSPIC33_AUXILIARY_PROGRAM_BASE + 0x0200u);
     dspic33_set_working_register(cpu, 1u, 0x1001u);
@@ -1015,12 +1016,40 @@ static void auxiliary_access_and_execution_cases(NvmConformance* state, Dspic33*
     expect(state,
            dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->last_trap == 1u &&
                cpu->last_trap_return == DSPIC33_AUXILIARY_PROGRAM_BASE + 2u &&
-               cpu->pc == DSPIC33_AUXILIARY_PROGRAM_BASE + 0x0200u,
-           "auxiliary execution routes trap through single vector");
+               cpu->pc == 0x000240u,
+           "B1 auxiliary Address Error routes through general vector");
+
+    dspic33_reset(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE);
+    cpu->stop_on_trap = false;
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE, OPCODE_NOP);
+    dspic33_load_program_word(cpu, 0x000006u, 0x000280u);
+    dspic33_load_program_word(cpu, 0x000280u, OPCODE_NOP);
+    dspic33_load_program_word(cpu, 0x007ffffau, 0x00060000u);
+    dspic33_set_working_register(cpu, 15u, 0x5000u);
+    dspic33_write_word(cpu, 0x0820u, 0x0001u);
+    dspic33_write_word(cpu, 0x0840u, 0x0004u);
+    dspic33_raise_interrupt(cpu, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == 1u &&
+               cpu->last_trap_return == DSPIC33_AUXILIARY_PROGRAM_BASE &&
+               cpu->pc == 0x000282u && cpu->last_interrupt == UINT16_MAX,
+           "B1 invalid auxiliary interrupt vector uses general Address Error");
+
+    dspic33_reset(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE);
+    dspic33_load_program_word(cpu, 0x000006u, 0x0002a0u);
+    dspic33_load_program_word(cpu, 0x007ffffau, 0x00060000u);
+    dspic33_set_working_register(cpu, 15u, 0x5000u);
+    dspic33_raise_dma_collision_trap(cpu);
+    expect(state,
+           cpu->last_trap == 1u &&
+               cpu->last_trap_return == DSPIC33_AUXILIARY_PROGRAM_BASE &&
+               cpu->pc == 0x0002a0u &&
+               (dspic33_read_word(cpu, 0x08c0u) & 0x0028u) == 0x0028u,
+           "B1 invalid auxiliary trap vector uses general Address Error");
 
     dspic33_reset(cpu, 0x007ffffeu);
     dspic33_load_program_word(cpu, 0x007ffffeu, OPCODE_MOV_W1_W2);
-    dspic33_load_program_word(cpu, 0x000006u, 0x000100u);
+    dspic33_load_program_word(cpu, 0x000006u, 0x000260u);
     dspic33_load_program_word(cpu, 0x007ffffau,
                               DSPIC33_AUXILIARY_PROGRAM_BASE + 0x0300u);
     dspic33_set_working_register(cpu, 1u, 0x1001u);
@@ -1028,11 +1057,10 @@ static void auxiliary_access_and_execution_cases(NvmConformance* state, Dspic33*
     cpu->stop_on_trap = true;
     expect(state,
            dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->last_trap == 1u &&
-               cpu->last_trap_return == 0u &&
-               cpu->pc == DSPIC33_AUXILIARY_PROGRAM_BASE + 0x0300u &&
+               cpu->last_trap_return == 0u && cpu->pc == 0x000260u &&
                dspic33_read_word(cpu, 0x5000u) == 0u &&
                (dspic33_read_word(cpu, 0x5002u) & 0x007fu) == 0u,
-           "final auxiliary instruction retains trap vector provenance");
+           "B1 final auxiliary Address Error uses general vector");
 
     initialized = dspic33_initialize(&copy);
     expect(state, initialized, "initialize auxiliary program copy");

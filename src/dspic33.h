@@ -787,8 +787,7 @@ bool dspic33_load_program_word(Dspic33* cpu, uint32_t address, uint32_t word);
 bool dspic33_program_range_implemented(uint32_t address, uint32_t size);
 bool dspic33_codeguard_admit_program_flow(Dspic33* cpu, uint32_t origin,
                                           uint32_t target);
-void dspic33_raise_program_vector_error(Dspic33* cpu, uint32_t return_pc,
-                                        bool auxiliary_vector);
+void dspic33_raise_program_vector_error(Dspic33* cpu, uint32_t return_pc);
 void dspic33_complete_nvm(Dspic33* cpu);
 bool dspic33_complete_nvm_reset(Dspic33* cpu);
 bool dspic33_load_configuration_word(Dspic33* cpu, uint32_t address, uint32_t word);
