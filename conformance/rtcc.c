@@ -966,13 +966,13 @@ static void lifecycle_cases(RtccConformance* state, Dspic33* cpu) {
     expect(state,
            dspic33_read_word(cpu, RTCC_CONTROL) == (RTCC_ENABLE | RTCC_WRITE_ENABLE),
            "warm reset preserves RCFGCAL");
-    expect(state, dspic33_read_word(cpu, RTCC_ALARM_CONTROL) == 0u,
-           "warm reset resets alarm control");
-    expect(
-        state,
-        cpu->io.rtcc.alarm[0] == 0u && !cpu->io.rtcc.alarm_output &&
-            !cpu->io.rtcc.pmd_disabled && cpu->io.rtcc.pmd_generation == 0u,
-        "warm reset uses deterministic undefined alarm state and resets module state");
+    expect(state, dspic33_read_word(cpu, RTCC_ALARM_CONTROL) == 0x91a5u,
+           "warm reset preserves alarm control");
+    expect(state,
+           cpu->io.rtcc.alarm[0] == 0x5678u && cpu->io.rtcc.alarm[2] == 0x0912u &&
+               cpu->io.rtcc.alarm_output && !cpu->io.rtcc.pmd_disabled &&
+               cpu->io.rtcc.pmd_generation == 0u,
+           "warm reset preserves alarm state and resets PMD state");
 
     dspic33_reset(cpu, 0u);
     enable_clock(cpu);

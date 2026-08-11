@@ -4,7 +4,9 @@
 #include <string.h>
 
 #include "device.h"
+#define DSPIC33_SFR_INCLUDE_MASTER_CLEAR_RESETS
 #include "dspic33ep512mu810_sfr_map.h"
+#undef DSPIC33_SFR_INCLUDE_MASTER_CLEAR_RESETS
 
 enum {
     PSV_ADDRESS = 0x01000000u,
@@ -3643,12 +3645,31 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
     dspic33_device_reset(cpu);
 }
 
+static void apply_master_clear_sfr_reset(Dspic33* cpu, const uint8_t* previous) {
+    size_t index;
+    for (index = 0u; index < DSPIC33_SFR_MASTER_CLEAR_RESET_COUNT; index++) {
+        const Dspic33SfrMasterClearReset* reset =
+            &dspic33_sfr_master_clear_resets[index];
+        uint16_t address = reset->address;
+        uint16_t current =
+            (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[address + 1u] << 8u));
+        uint16_t prior =
+            (uint16_t)(previous[address] | ((uint16_t)previous[address + 1u] << 8u));
+        uint16_t mask = (uint16_t)(reset->known_mask | reset->unchanged);
+        uint16_t value =
+            (uint16_t)((current & ~mask) | reset->value | (prior & reset->unchanged));
+        cpu->data[address] = (uint8_t)value;
+        cpu->data[address + 1u] = (uint8_t)(value >> 8u);
+    }
+}
+
 static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind kind) {
     static const uint16_t preserved_addresses[] = {
         0x0626u, 0x0728u, 0x0742u, 0x0744u, 0x0746u, 0x0748u, 0x0758u, 0x075au,
     };
     uint16_t
         preserved_values[sizeof(preserved_addresses) / sizeof(preserved_addresses[0])];
+    uint8_t previous_sfr[0x1000u];
     uint16_t adc[DSPIC33_ADC_CHANNEL_COUNT];
     uint16_t gpio[DSPIC33_GPIO_PORT_COUNT];
     uint16_t comparator_input[DSPIC33_COMPARATOR_COUNT][DSPIC33_COMPARATOR_INPUT_COUNT];
@@ -3674,7 +3695,8 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
     uint64_t oscillator_remaining = 0u;
     uint16_t oscillator_phase = 0u;
     uint16_t reset_interrupt = cpu->last_interrupt;
-    uint16_t rcon = dspic33_read_word(cpu, 0x0740u);
+    uint16_t rcon =
+        (uint16_t)(cpu->data[0x0740u] | ((uint16_t)cpu->data[0x0741u] << 8u));
     uint8_t uart_cts = cpu->io.uart_cts;
     uint8_t spi_selected = cpu->io.spi_selected;
     uint16_t timer_gate = cpu->io.timer_gate;
@@ -3731,6 +3753,7 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
         preserved_values[index] =
             (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[address + 1u] << 8u));
     }
+    memcpy(previous_sfr, cpu->data, sizeof(previous_sfr));
     memcpy(adc, cpu->io.adc, sizeof(adc));
     memcpy(gpio, cpu->io.gpio, sizeof(gpio));
     memcpy(comparator_input, cpu->io.comparator.input, sizeof(comparator_input));
@@ -3742,6 +3765,7 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
             (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[address + 1u] << 8u));
     }
     reset_processor(cpu, auxiliary_security_reset ? 0u : reset_entry, false);
+    apply_master_clear_sfr_reset(cpu, previous_sfr);
     for (index = 0u;
          index < sizeof(preserved_addresses) / sizeof(preserved_addresses[0]);
          index++) {
@@ -3761,7 +3785,9 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
     }
     cpu->io.dci.input = dci_input;
     memcpy(cpu->io.rtcc.calendar, rtcc.calendar, sizeof(rtcc.calendar));
+    memcpy(cpu->io.rtcc.alarm, rtcc.alarm, sizeof(rtcc.alarm));
     cpu->io.rtcc.prescaler = rtcc.prescaler;
+    cpu->io.rtcc.alarm_output = rtcc.alarm_output;
     cpu->io.rtcc.calibration_pending = rtcc.calibration_pending;
     cpu->io.uart_cts = uart_cts;
     cpu->io.spi_selected = spi_selected;
@@ -3803,6 +3829,7 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
                       0xcadfu);
     cpu->data[0x0740u] = (uint8_t)rcon;
     cpu->data[0x0741u] = (uint8_t)(rcon >> 8u);
+    dspic33_device_reset_restored(cpu);
 }
 
 static bool watchdog_enabled(const Dspic33* cpu) {
@@ -3885,6 +3912,21 @@ bool dspic33_complete_nvm_reset(Dspic33* cpu) {
 
 void dspic33_configuration_mismatch_reset(Dspic33* cpu) {
     perform_warm_reset(cpu, 0x0200u, DSPIC33_RESET_HARDWARE);
+}
+
+void dspic33_mclr_reset(Dspic33* cpu) {
+    perform_warm_reset(cpu, 0x0080u, DSPIC33_RESET_HARDWARE);
+}
+
+void dspic33_brown_out_reset(Dspic33* cpu) {
+    uint16_t previous_rcon = dspic33_read_word(cpu, 0x0740u);
+    cpu->nvm.active = false;
+    perform_warm_reset(cpu, 0u, DSPIC33_RESET_HARDWARE);
+    previous_rcon = (uint16_t)((previous_rcon & 0x0081u) | 0x0002u |
+                               (cpu->reset_locked ? 0x4000u : 0u));
+    cpu->data[0x0740u] = (uint8_t)previous_rcon;
+    cpu->data[0x0741u] = (uint8_t)(previous_rcon >> 8u);
+    dspic33_device_brown_out_reset(cpu);
 }
 
 void dspic33_reset(Dspic33* cpu, uint32_t entry) {

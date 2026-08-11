@@ -11,6 +11,7 @@ static void oscillator_configuration_changed(Dspic33* cpu, uint8_t previous);
 static void oscillator_startup_configuration_changed(Dspic33* cpu, uint8_t previous);
 static void oscillator_pll_configuration_changed(Dspic33* cpu, uint8_t previous);
 static void start_automatic_oscillator_switch(Dspic33* cpu, uint8_t source);
+static void reset_main_oscillator(Dspic33* cpu);
 static void refresh_gpio_change_notification(Dspic33* cpu);
 static void refresh_external_interrupts(Dspic33* cpu);
 static void output_compare_pulse_source(Dspic33* cpu, uint8_t source);
@@ -11970,11 +11971,48 @@ static void start_automatic_oscillator_switch(Dspic33* cpu, uint8_t source) {
     schedule_oscillator_readiness(cpu, control);
 }
 
+static void reset_main_oscillator(Dspic33* cpu) {
+    uint8_t source = (uint8_t)(cpu->configuration[6u] & 0x07u);
+    uint16_t control = (uint16_t)(source << 8u);
+    if ((cpu->configuration[6u] & 0x80u) == 0u) {
+        control |= (uint16_t)(source << 12u);
+        if (source == 1u || source == 3u) {
+            control |= OSCILLATOR_PLL_LOCK;
+        }
+    }
+    raw_write_word(cpu, OSCILLATOR_CONTROL, control);
+}
+
 void dspic33_device_power_on_reset(Dspic33* cpu) {
     uint8_t source = (uint8_t)(cpu->configuration[6u] & 0x07u);
     if ((cpu->configuration[6u] & 0x80u) != 0u && source != 0u) {
         start_automatic_oscillator_switch(cpu, source);
     }
+}
+
+void dspic33_device_reset_restored(Dspic33* cpu) {
+    pps_capture_shadow(cpu);
+    refresh_gpio_change_notification(cpu);
+    refresh_external_interrupts(cpu);
+    output_compare_refresh_fault_pps_inputs(cpu);
+    dci_refresh_pps_inputs(cpu);
+    dspic33_i2c_refresh_pins(cpu);
+}
+
+void dspic33_device_brown_out_reset(Dspic33* cpu) {
+    size_t destination = 0u;
+    size_t source;
+    for (source = 0u; source < cpu->events.count; source++) {
+        if (cpu->events.items[source].type != DSPIC33_EVENT_OSCILLATOR) {
+            cpu->events.items[destination++] = cpu->events.items[source];
+        }
+    }
+    cpu->events.count = destination;
+    dspic33_reorder_events(cpu);
+    memset(&cpu->oscillator, 0, sizeof(cpu->oscillator));
+    reset_main_oscillator(cpu);
+    dspic33_device_power_on_reset(cpu);
+    dspic33_device_reset_restored(cpu);
 }
 
 static void complete_oscillator_event(Dspic33* cpu, uint16_t phase,
@@ -13795,8 +13833,6 @@ void dspic33_gpio_input(Dspic33* cpu, uint8_t port, uint16_t value) {
 void dspic33_device_reset(Dspic33* cpu) {
     uint16_t gpio[DSPIC33_GPIO_PORT_COUNT];
     uint16_t gpio_driven[DSPIC33_GPIO_PORT_COUNT];
-    uint16_t oscillator_control;
-    uint8_t oscillator_source;
     size_t index;
     memcpy(gpio, cpu->io.gpio, sizeof(gpio));
     memcpy(gpio_driven, cpu->io.gpio_driven, sizeof(gpio_driven));
@@ -13821,21 +13857,9 @@ void dspic33_device_reset(Dspic33* cpu) {
     dspic33_i2c_reset(cpu);
     usb_reset_registers(cpu);
     raw_write_word(cpu, USB_PWRC, 0u);
-    oscillator_source = (uint8_t)(cpu->configuration[6u] & 0x07u);
-    oscillator_control = (uint16_t)(oscillator_source << 8u);
-    if ((cpu->configuration[6u] & 0x80u) == 0u) {
-        oscillator_control |= (uint16_t)(oscillator_source << 12u);
-        if (oscillator_source == 1u || oscillator_source == 3u) {
-            oscillator_control |= OSCILLATOR_PLL_LOCK;
-        }
-    }
-    raw_write_word(cpu, OSCILLATOR_CONTROL, oscillator_control);
+    reset_main_oscillator(cpu);
     raw_write_word(cpu, 0x08c2u, 0x8000u);
     raw_write_word(cpu, 0x08c8u, 0u);
     raw_write_word(cpu, DMA_LCA, 0x000fu);
-    pps_capture_shadow(cpu);
-    refresh_gpio_change_notification(cpu);
-    refresh_external_interrupts(cpu);
-    dci_refresh_pps_inputs(cpu);
-    dspic33_i2c_refresh_pins(cpu);
+    dspic33_device_reset_restored(cpu);
 }

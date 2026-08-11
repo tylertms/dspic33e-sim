@@ -26,6 +26,9 @@ EXPECTED_CONDITIONAL_RESERVED_BITS = 64
 EXPECTED_IMPLEMENTED_WORDS = 977
 EXPECTED_ABSENT_WORDS = 1071
 EXPECTED_ABSENT_RANGES = 77
+EXPECTED_MASTER_CLEAR_RESET_RECORDS = 49
+EXPECTED_MASTER_CLEAR_UNCHANGED_BITS = 729
+EXPECTED_MASTER_CLEAR_CHANGED_BITS = 2
 EXPECTED_ACCESS_BITS = {
     "-": 2933,
     "c": 167,
@@ -612,6 +615,37 @@ def implementation_bitmap(defaults):
 
 def render_map(defaults):
     bitmap = implementation_bitmap(defaults)
+    master_clear_resets = []
+    for register in defaults:
+        por = register["por"]
+        mclr = register["mclr"]
+        known_mask = pattern_mask(mclr, "01")
+        value = pattern_mask(mclr, "1")
+        unchanged = pattern_mask(mclr, "u")
+        por_value = pattern_mask(por, "1")
+        if unchanged or ((value ^ por_value) & known_mask):
+            master_clear_resets.append(
+                {
+                    "address": int(register["address"], 16),
+                    "known_mask": known_mask,
+                    "value": value,
+                    "unchanged": unchanged,
+                    "por_value": por_value,
+                }
+            )
+    unchanged_bits = sum(
+        reset["unchanged"].bit_count() for reset in master_clear_resets
+    )
+    changed_bits = sum(
+        ((reset["value"] ^ reset["por_value"]) & reset["known_mask"]).bit_count()
+        for reset in master_clear_resets
+    )
+    if len(master_clear_resets) != EXPECTED_MASTER_CLEAR_RESET_RECORDS:
+        raise ValueError(f"manifest has {len(master_clear_resets)} MCLR reset records")
+    if unchanged_bits != EXPECTED_MASTER_CLEAR_UNCHANGED_BITS:
+        raise ValueError(f"MCLR reset records have {unchanged_bits} unchanged bits")
+    if changed_bits != EXPECTED_MASTER_CLEAR_CHANGED_BITS:
+        raise ValueError(f"MCLR reset records have {changed_bits} changed bits")
     lines = [
         "#ifndef DSPIC33EP512MU810_SFR_MAP_H",
         "#define DSPIC33EP512MU810_SFR_MAP_H",
@@ -624,6 +658,7 @@ def render_map(defaults):
         f"    DSPIC33_SFR_IMPLEMENTED_WORD_COUNT = {EXPECTED_IMPLEMENTED_WORDS}u,",
         f"    DSPIC33_SFR_ABSENT_WORD_COUNT = {EXPECTED_ABSENT_WORDS}u,",
         f"    DSPIC33_SFR_ABSENT_RANGE_COUNT = {EXPECTED_ABSENT_RANGES}u,",
+        f"    DSPIC33_SFR_MASTER_CLEAR_RESET_COUNT = {len(master_clear_resets)}u,",
         "};",
         "",
         "static const uint8_t dspic33_sfr_implementation_bitmap[] = {",
@@ -631,7 +666,33 @@ def render_map(defaults):
     for offset in range(0, len(bitmap), 12):
         values = ", ".join(f"0x{value:02x}u" for value in bitmap[offset : offset + 12])
         lines.append(f"    {values},")
-    lines.extend(["};", "", "#endif", ""])
+    lines.extend(
+        [
+            "};",
+            "",
+            "#ifdef DSPIC33_SFR_INCLUDE_MASTER_CLEAR_RESETS",
+            "typedef struct {",
+            "    uint16_t address;",
+            "    uint16_t known_mask;",
+            "    uint16_t value;",
+            "    uint16_t unchanged;",
+            "} Dspic33SfrMasterClearReset;",
+            "",
+            "static const Dspic33SfrMasterClearReset dspic33_sfr_master_clear_resets[] = {",
+        ]
+    )
+    reset_entries = [
+        "{"
+        f"0x{reset['address']:04x}u, "
+        f"0x{reset['known_mask']:04x}u, "
+        f"0x{reset['value']:04x}u, "
+        f"0x{reset['unchanged']:04x}u"
+        "},"
+        for reset in master_clear_resets
+    ]
+    for offset in range(0, len(reset_entries), 2):
+        lines.append(f"    {' '.join(reset_entries[offset : offset + 2])}")
+    lines.extend(["};", "#endif", "", "#endif", ""])
     return "\n".join(lines).encode("ascii")
 
 

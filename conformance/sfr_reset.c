@@ -17,6 +17,16 @@ int main(void) {
         printf("%04x", (unsigned)dspic33_read_word(&cpu, address));
     }
     putchar('\n');
+    for (address = 0u; address < 0x1000u; address += 2u) {
+        cpu.data[address] = 0xffu;
+        cpu.data[address + 1u] = 0xffu;
+    }
+    dspic33_mclr_reset(&cpu);
+    printf("[sfr-mclr-snapshot] ");
+    for (address = 0u; address < 0x1000u; address += 2u) {
+        printf("%04x", (unsigned)dspic33_read_word(&cpu, address));
+    }
+    putchar('\n');
     dspic33_destroy(&cpu);
     return 0;
 }
