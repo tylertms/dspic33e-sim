@@ -4996,7 +4996,10 @@ typedef enum {
     DIRECT_FILE_NEG,
     DIRECT_FILE_COM,
     DIRECT_FILE_CLR,
-    DIRECT_FILE_SETM
+    DIRECT_FILE_SETM,
+    DIRECT_FILE_CP,
+    DIRECT_FILE_CPB,
+    DIRECT_FILE_CP0
 } DirectFileOperation;
 
 typedef struct {
@@ -5600,6 +5603,10 @@ static bool direct_file_reads_source(DirectFileOperation operation) {
     return operation != DIRECT_FILE_CLR && operation != DIRECT_FILE_SETM;
 }
 
+static bool direct_file_writes_result(DirectFileOperation operation) {
+    return operation < DIRECT_FILE_CP;
+}
+
 static uint16_t direct_file_result(DirectFileOperation operation, uint16_t left,
                                    uint16_t right, uint16_t initial_status,
                                    bool byte_mode) {
@@ -5634,6 +5641,18 @@ static uint16_t direct_file_result(DirectFileOperation operation, uint16_t left,
     }
     if (operation == DIRECT_FILE_COM) {
         return (uint16_t)(~left & mask);
+    }
+    if (operation == DIRECT_FILE_CP) {
+        return binary_matrix_result(ARITHMETIC_MATRIX_SUB, left, right, initial_status,
+                                    byte_mode);
+    }
+    if (operation == DIRECT_FILE_CPB) {
+        return binary_matrix_result(ARITHMETIC_MATRIX_SUBB, left, right, initial_status,
+                                    byte_mode);
+    }
+    if (operation == DIRECT_FILE_CP0) {
+        return binary_matrix_result(ARITHMETIC_MATRIX_SUB, left, 0u, initial_status,
+                                    byte_mode);
     }
     return operation == DIRECT_FILE_SETM ? mask : 0u;
 }
@@ -5679,6 +5698,18 @@ static uint16_t direct_file_status(DirectFileOperation operation, uint16_t left,
     }
     if (operation == DIRECT_FILE_NEG) {
         return binary_matrix_status(ARITHMETIC_MATRIX_SUB, 0u, left, initial_status,
+                                    byte_mode);
+    }
+    if (operation == DIRECT_FILE_CP) {
+        return binary_matrix_status(ARITHMETIC_MATRIX_SUB, left, right, initial_status,
+                                    byte_mode);
+    }
+    if (operation == DIRECT_FILE_CPB) {
+        return binary_matrix_status(ARITHMETIC_MATRIX_SUBB, left, right, initial_status,
+                                    byte_mode);
+    }
+    if (operation == DIRECT_FILE_CP0) {
+        return binary_matrix_status(ARITHMETIC_MATRIX_SUB, left, 0u, initial_status,
                                     byte_mode);
     }
     return initial_status;
@@ -5922,6 +5953,7 @@ static uint16_t run_direct_file_reference(Dspic33* cpu, DirectFileOperation oper
                                           bool file_destination) {
     uint64_t device_ratio = dspic33_device_instruction_cycles(cpu, 1u);
     bool reads_source = direct_file_reads_source(operation);
+    bool writes_result = direct_file_writes_result(operation);
     bool non_cpu_sfr = reads_source &&
                        (address & (byte_mode ? 0xffffu : 0xfffeu)) >= 0x005au &&
                        address < 0x1000u && direct_file_address_implemented(address);
@@ -5950,14 +5982,16 @@ static uint16_t run_direct_file_reference(Dspic33* cpu, DirectFileOperation oper
     value = direct_file_result(operation, left, right, initial_status, byte_mode);
     status = direct_file_status(operation, left, right, initial_status, byte_mode);
     cpu->sr = status;
-    if (file_destination) {
-        if (byte_mode) {
-            dspic33_write_byte(cpu, address, (uint8_t)value);
+    if (writes_result) {
+        if (file_destination) {
+            if (byte_mode) {
+                dspic33_write_byte(cpu, address, (uint8_t)value);
+            } else {
+                dspic33_write_word(cpu, address, value);
+            }
         } else {
-            dspic33_write_word(cpu, address, value);
+            write_direct_file_reference_result(cpu, value, byte_mode);
         }
-    } else {
-        write_direct_file_reference_result(cpu, value, byte_mode);
     }
     cpu->instruction_active = false;
     cpu->previous_working_register_writes = cpu->instruction_working_register_writes;
@@ -6050,6 +6084,7 @@ static bool run_direct_file_odd_word_case(Dspic33* cpu, Dspic33* reference,
     uint16_t value;
     uint16_t status;
     bool matches;
+    bool writes_result = direct_file_writes_result(operation);
     uint64_t device_ratio = dspic33_device_instruction_cycles(reference, 1u);
     bool non_cpu_sfr = reads_source && address >= 0x005bu && address < 0x1000u &&
                        direct_file_address_implemented(address);
@@ -6074,7 +6109,7 @@ static bool run_direct_file_odd_word_case(Dspic33* cpu, Dspic33* reference,
     value = direct_file_result(operation, left, right, initial_status, false);
     status = direct_file_status(operation, left, right, initial_status, false);
     reference->sr = status;
-    if (!file_destination) {
+    if (!file_destination && writes_result) {
         write_direct_file_reference_result(reference, value, false);
     }
     reference->instruction_active = false;
@@ -6114,7 +6149,7 @@ static bool run_direct_file_odd_word_case(Dspic33* cpu, Dspic33* reference,
         direct_file_io_states_match(cpu, reference) &&
         direct_file_event_queues_match(cpu, reference);
 
-    if (file_destination) {
+    if (file_destination || !writes_result) {
         matches = matches && cpu->w[0] == right;
     } else {
         matches = matches && cpu->w[0] == value;
@@ -6379,6 +6414,161 @@ static void direct_file_unary_encoding_matrix_cases(ProcessorConformance* state)
     }
     dspic33_destroy(&actual);
     dspic33_destroy(&reference);
+}
+
+static void run_legal_compare_register_case(ProcessorConformance* state, Dspic33* cpu,
+                                            uint32_t opcode) {
+    bool compare_zero = (opcode & 0xff0000u) == 0xe00000u;
+    bool with_borrow = !compare_zero && (opcode & 0x008000u) != 0u;
+    bool byte_mode = (opcode & 0x000400u) != 0u;
+    uint8_t width = byte_mode ? 1u : 2u;
+    uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
+    uint8_t source_register = (uint8_t)(opcode & 0x0fu);
+    uint8_t base_register = (uint8_t)((opcode >> 11u) & 0x0fu);
+    bool literal = !compare_zero && source_mode >= 6u;
+    uint16_t initial_status =
+        (uint16_t)((opcode & 1u) | (((opcode >> 7u) & 1u) << 1u) |
+                   (((opcode >> 8u) & 1u) << 2u) | (((opcode >> 9u) & 1u) << 3u) |
+                   (((opcode >> 10u) & 1u) << 8u));
+    uint16_t registers[16];
+    BinaryMatrixOperand source = {0u, true};
+    uint16_t source_value = byte_mode ? (uint16_t)(0x0080u | (opcode & 0x007fu))
+                                      : (uint16_t)(0x8000u | (opcode & 0x03ffu));
+    uint16_t left;
+    uint16_t right;
+    uint16_t expected_status;
+    uint64_t cycles;
+    bool matches;
+
+    prepare_arithmetic_matrix_case(cpu, registers, initial_status);
+    left = compare_zero ? 0u
+                        : (byte_mode ? (uint8_t)registers[base_register]
+                                     : registers[base_register]);
+    if (literal) {
+        right = (uint16_t)(((opcode >> 2u) & 0x00e0u) | (opcode & 0x001fu));
+    } else {
+        source = binary_matrix_operand(registers, source_mode, source_register, width);
+        right = source.direct ? (byte_mode ? (uint8_t)registers[source_register]
+                                           : registers[source_register])
+                              : source_value;
+    }
+    if (compare_zero) {
+        left = right;
+        right = 0u;
+    }
+    if (!literal && !source.direct) {
+        if (byte_mode) {
+            dspic33_write_byte(cpu, source.address, (uint8_t)source_value);
+        } else {
+            dspic33_write_word(cpu, source.address, source_value);
+        }
+    }
+    expected_status = binary_matrix_status(with_borrow ? ARITHMETIC_MATRIX_SUBB
+                                                       : ARITHMETIC_MATRIX_SUB,
+                                           left, right, initial_status, byte_mode);
+    cycles = cpu->cycles;
+    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+              cpu->cycles - cycles == 1u && cpu->sr == expected_status &&
+              cpu->corcon == 0x0020u && cpu->unsupported_opcode == 0u &&
+              !cpu->address_error && !cpu->illegal_reset &&
+              cpu->last_trap == UINT16_MAX &&
+              binary_matrix_registers_match(cpu, registers);
+    if (!literal && !source.direct) {
+        matches =
+            matches &&
+            (byte_mode ? dspic33_read_byte(cpu, source.address) == (uint8_t)source_value
+                       : dspic33_read_word(cpu, source.address) == source_value);
+    }
+    expect_dsp_matrix_case(state, matches, opcode, "legal compare encoding");
+}
+
+static void compare_register_encoding_matrix_cases(ProcessorConformance* state,
+                                                   Dspic33* cpu) {
+    uint32_t legal = 0u;
+    uint32_t invalid = 0u;
+    uint32_t opcode;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    for (opcode = 0xe00000u; opcode < 0xe20000u; opcode++) {
+        uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
+        bool compare_zero = (opcode & 0xff0000u) == 0xe00000u;
+        bool valid = compare_zero ? (opcode & 0x00fb80u) == 0u && source_mode < 6u
+                                  : source_mode >= 6u || (opcode & 0x000380u) == 0u;
+
+        if (valid) {
+            run_legal_compare_register_case(state, cpu, opcode);
+            legal++;
+        } else {
+            run_invalid_binary_matrix_case(state, cpu, opcode);
+            invalid++;
+        }
+    }
+    expect(state, legal == 22720u,
+           "compare register legal encoding matrix is exhaustive");
+    expect(state, invalid == 108352u,
+           "compare register illegal encoding matrix is exhaustive");
+}
+
+static void compare_direct_file_encoding_matrix_cases(ProcessorConformance* state,
+                                                      Dspic33* invalid_cpu) {
+    static Dspic33 actual;
+    static Dspic33 reference;
+    uint32_t legal = 0u;
+    uint32_t invalid = 0u;
+    uint32_t opcode;
+    bool actual_initialized = dspic33_initialize(&actual);
+    bool reference_initialized = dspic33_initialize(&reference);
+
+    expect(state, actual_initialized && reference_initialized,
+           "initialize direct-file compare processors");
+    if (!actual_initialized || !reference_initialized) {
+        if (actual_initialized) {
+            dspic33_destroy(&actual);
+        }
+        if (reference_initialized) {
+            dspic33_destroy(&reference);
+        }
+        return;
+    }
+    expect(state,
+           load_direct_file_trap_vectors(&actual) &&
+               load_direct_file_trap_vectors(&reference),
+           "load direct-file compare address-error vectors");
+    for (opcode = 0xe20000u; opcode < 0xe40000u; opcode++) {
+        bool compare_zero = (opcode & 0xff0000u) == 0xe20000u;
+        bool valid =
+            compare_zero ? (opcode & 0x00a000u) == 0u : (opcode & 0x002000u) == 0u;
+
+        if (valid) {
+            uint16_t address = (uint16_t)(opcode & 0x1fffu);
+            bool byte_mode = (opcode & 0x004000u) != 0u;
+            DirectFileOperation operation = compare_zero ? DIRECT_FILE_CP0
+                                            : (opcode & 0x008000u) != 0u
+                                                ? DIRECT_FILE_CPB
+                                                : DIRECT_FILE_CP;
+            bool matches = run_direct_file_case(&actual, &reference, opcode, operation,
+                                                address, byte_mode, false);
+            expect_dsp_matrix_case(state, matches, opcode,
+                                   "direct-file compare encoding");
+            legal++;
+        } else {
+            run_invalid_binary_matrix_case(state, invalid_cpu, opcode);
+            invalid++;
+        }
+    }
+    expect(state, legal == 49152u,
+           "direct-file compare legal encoding matrix is exhaustive");
+    expect(state, invalid == 81920u,
+           "direct-file compare illegal encoding matrix is exhaustive");
+    dspic33_destroy(&actual);
+    dspic33_destroy(&reference);
+}
+
+static void compare_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu) {
+    compare_register_encoding_matrix_cases(state, cpu);
+    compare_direct_file_encoding_matrix_cases(state, cpu);
 }
 
 static void run_legal_dsp_matrix_case(ProcessorConformance* state, Dspic33* cpu,
@@ -8079,6 +8269,7 @@ int main(void) {
         dsp_prefetch_destination_collision_cases(&state, &cpu);
         arithmetic_encoding_matrix_cases(&state, &cpu);
         general_unary_encoding_matrix_cases(&state, &cpu);
+        compare_encoding_matrix_cases(&state, &cpu);
         direct_file_arithmetic_encoding_matrix_cases(&state);
         direct_file_logical_encoding_matrix_cases(&state, &cpu);
         direct_file_unary_encoding_matrix_cases(&state);

@@ -1235,6 +1235,10 @@ static bool execute_compare(Dspic33* cpu, uint32_t opcode) {
     uint16_t value;
     if ((opcode & 0xff0000u) == 0xe00000u) {
         uint8_t mode = (uint8_t)((opcode >> 4u) & 0x07u);
+        if ((opcode & 0x00fb80u) != 0u || mode >= 6u) {
+            perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+            return true;
+        }
         byte_mode = (opcode & 0x000400u) != 0u;
         left = byte_mode ? read_operand_byte(cpu, mode, (uint8_t)(opcode & 0x0fu), 0u)
                          : read_operand_word(cpu, mode, (uint8_t)(opcode & 0x0fu), 0u);
@@ -1248,25 +1252,38 @@ static bool execute_compare(Dspic33* cpu, uint32_t opcode) {
             right = (uint16_t)(((opcode >> 2u) & 0x00e0u) | (opcode & 0x001fu));
         } else {
             uint8_t mode = (uint8_t)((opcode >> 4u) & 0x07u);
+            if ((opcode & 0x0380u) != 0u) {
+                perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+                return true;
+            }
             right = byte_mode
                         ? read_operand_byte(cpu, mode, (uint8_t)(opcode & 0x0fu), 0u)
                         : read_operand_word(cpu, mode, (uint8_t)(opcode & 0x0fu), 0u);
         }
         with_borrow = (opcode & 0x008000u) != 0u;
     } else if ((opcode & 0xff0000u) == 0xe30000u) {
+        if ((opcode & 0x002000u) != 0u) {
+            perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+            return true;
+        }
         uint16_t address = (uint16_t)(opcode & 0x1fffu);
         byte_mode = (opcode & 0x004000u) != 0u;
-        left = byte_mode ? read_data_byte(cpu, address) : read_data_word(cpu, address);
+        left = byte_mode ? read_data_byte(cpu, address) : read_file_word(cpu, address);
         right = byte_mode ? (uint8_t)cpu->w[0] : cpu->w[0];
         with_borrow = (opcode & 0x008000u) != 0u;
-    } else if ((opcode & 0xff8000u) == 0xe20000u) {
+    } else if ((opcode & 0xff0000u) == 0xe20000u) {
+        if ((opcode & 0x00a000u) != 0u) {
+            perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+            return true;
+        }
         uint16_t address = (uint16_t)(opcode & 0x1fffu);
         byte_mode = (opcode & 0x004000u) != 0u;
-        left = byte_mode ? read_data_byte(cpu, address) : read_data_word(cpu, address);
+        left = byte_mode ? read_data_byte(cpu, address) : read_file_word(cpu, address);
         right = 0u;
         with_borrow = false;
     } else {
-        return false;
+        perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+        return true;
     }
     if (cpu->illegal_reset) {
         return true;
