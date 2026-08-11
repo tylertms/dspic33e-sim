@@ -252,6 +252,15 @@ static void record_transfer(Dspic33* cpu, uint8_t channel, Dspic33I2cTransferTyp
     }
 }
 
+static bool slave_acknowledges(uint16_t status) {
+    return (status & (I2C_RBF | I2C_OVERFLOW)) == 0u;
+}
+
+static void record_slave_acknowledgement(Dspic33* cpu, uint8_t channel,
+                                         bool acknowledge) {
+    record_transfer(cpu, channel, DSPIC33_I2C_ACKNOWLEDGE, 0u, acknowledge, false);
+}
+
 static uint64_t operation_cycles(const Dspic33* cpu, uint8_t channel,
                                  uint8_t half_periods) {
     uint64_t scaled =
@@ -520,6 +529,7 @@ static void slave_start(Dspic33* cpu, uint8_t channel, uint16_t payload) {
     bool read = (payload & I2C_EXTERNAL_READ) != 0u;
     bool ten_bit = (payload & I2C_EXTERNAL_TEN_BIT) != 0u;
     bool general_call = !ten_bit && address == 0u && !read;
+    bool acknowledge = slave_acknowledges(status);
     uint8_t bit = (uint8_t)(1u << channel);
     if (!module_enabled(cpu, channel)) {
         return;
@@ -531,11 +541,14 @@ static void slave_start(Dspic33* cpu, uint8_t channel, uint16_t payload) {
                         ~(I2C_STOP_STATUS | I2C_GENERAL_CALL | I2C_TEN_BIT));
     raw_write_word(cpu, (uint16_t)(base + I2C_STAT), status);
     if (ten_bit && !ten_bit_high_matches(cpu, channel, address)) {
+        record_slave_acknowledgement(cpu, channel, false);
         reject_slave(cpu, channel);
         return;
     }
-    if (!ten_bit && (!general_call || (control & I2C_GCEN) == 0u) &&
-        !address_matches(cpu, channel, address)) {
+    if (!ten_bit && (control & I2C_IPMIEN) == 0u &&
+        ((general_call && (control & I2C_GCEN) == 0u) ||
+         (!general_call && !address_matches(cpu, channel, address)))) {
+        record_slave_acknowledgement(cpu, channel, false);
         reject_slave(cpu, channel);
         return;
     }
@@ -569,7 +582,12 @@ static void slave_start(Dspic33* cpu, uint8_t channel, uint16_t payload) {
     }
     raw_write_word(cpu, (uint16_t)(base + I2C_CON), control);
     raw_write_word(cpu, (uint16_t)(base + I2C_STAT), status);
+    record_slave_acknowledgement(cpu, channel, acknowledge);
     raise_slave(cpu, channel);
+    if (ten_bit && acknowledge &&
+        !schedule_external(cpu, channel, I2C_EVENT_SLAVE_TEN_SECOND, address, 1u)) {
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    }
 }
 
 static void slave_ten_second(Dspic33* cpu, uint8_t channel, uint16_t address) {
@@ -578,6 +596,7 @@ static void slave_ten_second(Dspic33* cpu, uint8_t channel, uint16_t address) {
     uint16_t status = raw_word(cpu, (uint16_t)(base + I2C_STAT));
     uint16_t configured = raw_word(cpu, (uint16_t)(base + I2C_ADD));
     uint16_t mask = raw_word(cpu, (uint16_t)(base + I2C_MSK));
+    bool acknowledge = slave_acknowledges(status);
     uint8_t bit = (uint8_t)(1u << channel);
     if (!module_enabled(cpu, channel) || (cpu->io.i2c_slave_active & bit) == 0u ||
         cpu->io.i2c_slave_address[channel] != address) {
@@ -589,6 +608,7 @@ static void slave_ten_second(Dspic33* cpu, uint8_t channel, uint16_t address) {
     }
     if ((control & I2C_IPMIEN) == 0u &&
         ((address ^ configured) & (uint16_t)~mask & 0x00ffu) != 0u) {
+        record_slave_acknowledgement(cpu, channel, false);
         reject_slave(cpu, channel);
         return;
     }
@@ -602,6 +622,7 @@ static void slave_ten_second(Dspic33* cpu, uint8_t channel, uint16_t address) {
     control &= (uint16_t)~I2C_SCLREL;
     raw_write_word(cpu, (uint16_t)(base + I2C_CON), control);
     raw_write_word(cpu, (uint16_t)(base + I2C_STAT), status);
+    record_slave_acknowledgement(cpu, channel, acknowledge);
     raise_slave(cpu, channel);
 }
 
@@ -610,10 +631,15 @@ static void slave_ten_restart(Dspic33* cpu, uint8_t channel, uint16_t address) {
     uint16_t control = raw_word(cpu, (uint16_t)(base + I2C_CON));
     uint16_t status = raw_word(cpu, (uint16_t)(base + I2C_STAT));
     uint8_t bit = (uint8_t)(1u << channel);
+    bool acknowledge = slave_acknowledges(status);
     bool ipmi;
     if (!module_enabled(cpu, channel) || (cpu->io.i2c_slave_active & bit) == 0u ||
-        cpu->io.i2c_slave_address[channel] != address || (status & I2C_TEN_BIT) == 0u ||
-        !ten_bit_high_matches(cpu, channel, address)) {
+        cpu->io.i2c_slave_address[channel] != address || (status & I2C_TEN_BIT) == 0u) {
+        return;
+    }
+    if (!ten_bit_high_matches(cpu, channel, address)) {
+        record_slave_acknowledgement(cpu, channel, false);
+        reject_slave(cpu, channel);
         return;
     }
     ipmi = (control & I2C_IPMIEN) != 0u;
@@ -636,6 +662,7 @@ static void slave_ten_restart(Dspic33* cpu, uint8_t channel, uint16_t address) {
     }
     raw_write_word(cpu, (uint16_t)(base + I2C_CON), control);
     raw_write_word(cpu, (uint16_t)(base + I2C_STAT), status);
+    record_slave_acknowledgement(cpu, channel, acknowledge);
     raise_slave(cpu, channel);
 }
 
@@ -643,6 +670,7 @@ static void slave_write(Dspic33* cpu, uint8_t channel, uint8_t value) {
     uint16_t base = bases[channel];
     uint16_t control = raw_word(cpu, (uint16_t)(base + I2C_CON));
     uint16_t status = raw_word(cpu, (uint16_t)(base + I2C_STAT));
+    bool acknowledge = slave_acknowledges(status);
     uint8_t bit = (uint8_t)(1u << channel);
     if (!module_enabled(cpu, channel) || (cpu->io.i2c_slave_active & bit) == 0u ||
         (cpu->io.i2c_slave_read & bit) != 0u) {
@@ -664,6 +692,7 @@ static void slave_write(Dspic33* cpu, uint8_t channel, uint8_t value) {
     }
     raw_write_word(cpu, (uint16_t)(base + I2C_CON), control);
     raw_write_word(cpu, (uint16_t)(base + I2C_STAT), status);
+    record_slave_acknowledgement(cpu, channel, acknowledge);
     raise_slave(cpu, channel);
 }
 
@@ -899,13 +928,6 @@ bool dspic33_i2c_slave_start(Dspic33* cpu, uint8_t channel, uint16_t address, bo
     }
     payload = (uint16_t)(address | (read ? I2C_EXTERNAL_READ : 0u) |
                          (ten_bit ? I2C_EXTERNAL_TEN_BIT : 0u));
-    if (ten_bit) {
-        if (delay == UINT64_MAX ||
-            !schedule_external(cpu, channel, I2C_EVENT_SLAVE_TEN_SECOND, address,
-                               delay + 1u)) {
-            return false;
-        }
-    }
     return schedule_external(cpu, channel, I2C_EVENT_SLAVE_START, payload, delay);
 }
 

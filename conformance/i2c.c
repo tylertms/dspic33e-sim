@@ -89,6 +89,13 @@ static void enable(Dspic33* cpu, uint8_t channel, uint16_t options, uint16_t bau
     dspic33_write_word(cpu, (uint16_t)(base + 6u), (uint16_t)(0x9000u | options));
 }
 
+static bool pop_slave_acknowledgement(Dspic33* cpu, uint8_t channel, bool acknowledge) {
+    Dspic33I2cTransfer transfer;
+    return dspic33_i2c_transmit(cpu, channel, &transfer) &&
+           transfer.type == DSPIC33_I2C_ACKNOWLEDGE &&
+           transfer.acknowledge == acknowledge && !transfer.master;
+}
+
 static void register_cases(I2cConformance* state, Dspic33* cpu) {
     uint8_t channel;
     dspic33_reset(cpu, 0u);
@@ -536,6 +543,8 @@ static void slave_transmit_cases(I2cConformance* state, Dspic33* cpu) {
         expect(state,
                (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x000eu) == 0x000eu,
                "slave read address status");
+        expect(state, pop_slave_acknowledgement(cpu, channel, true),
+               "slave read address acknowledgement");
         expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) == 0u,
                "slave transmitter automatic stretch");
         dspic33_read_word(cpu, base);
@@ -605,6 +614,219 @@ static void slave_transmit_cases(I2cConformance* state, Dspic33* cpu) {
         expect(state,
                (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x033cu) == 0x0034u,
                "slave stop preserves read and data status");
+    }
+}
+
+static void slave_acknowledgement_cases(I2cConformance* state, Dspic33* cpu) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_I2C_COUNT; channel++) {
+        uint16_t base = bases[channel];
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
+        enable(cpu, channel, 0u, 0u);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x52u, false, false, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   pop_slave_acknowledgement(cpu, channel, true),
+               "matched address acknowledgement output");
+        expect(state, !pop_slave_acknowledgement(cpu, channel, true),
+               "matched address emits one acknowledgement");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
+        enable(cpu, channel, 0u, 0u);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x51u, false, false, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   pop_slave_acknowledgement(cpu, channel, false),
+               "mismatched address negative acknowledgement output");
+
+        dspic33_reset(cpu, 0u);
+        enable(cpu, channel, 0x0080u, 0u);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0u, false, false, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   pop_slave_acknowledgement(cpu, channel, true),
+               "general call acknowledgement output");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 12u), 0x007fu);
+        enable(cpu, channel, 0u, 0u);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0u, false, false, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   pop_slave_acknowledgement(cpu, channel, false) &&
+                   !interrupt_flag(cpu, slave_irqs[channel]),
+               "disabled general call negative acknowledgement output");
+
+        dspic33_reset(cpu, 0u);
+        enable(cpu, channel, 0x0800u, 0u);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0u, false, false, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   pop_slave_acknowledgement(cpu, channel, true),
+               "IPMI general call acknowledgement output");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x02abu);
+        enable(cpu, channel, 0x0400u, 0u);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   pop_slave_acknowledgement(cpu, channel, true),
+               "ten bit high address acknowledgement output");
+        dspic33_read_word(cpu, base);
+        clear_interrupt(cpu, slave_irqs[channel]);
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+        expect(state,
+               dspic33_device_advance(cpu, 1u) &&
+                   pop_slave_acknowledgement(cpu, channel, true),
+               "ten bit low address acknowledgement output");
+        dspic33_read_word(cpu, base);
+        clear_interrupt(cpu, slave_irqs[channel]);
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x02abu, true, true, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   pop_slave_acknowledgement(cpu, channel, true),
+               "ten bit repeated read acknowledgement output");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x02abu);
+        enable(cpu, channel, 0x0400u, 0u);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   pop_slave_acknowledgement(cpu, channel, true),
+               "ten bit buffered high acknowledgement output");
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+        expect(state,
+               dspic33_device_advance(cpu, 1u) &&
+                   pop_slave_acknowledgement(cpu, channel, false) &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0142u) == 0x0142u,
+               "ten bit buffered low negative acknowledgement output");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x02abu);
+        enable(cpu, channel, 0x0400u, 0u);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   pop_slave_acknowledgement(cpu, channel, true),
+               "ten bit reconfigured high acknowledgement output");
+        dspic33_read_word(cpu, base);
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+        expect(state,
+               dspic33_device_advance(cpu, 1u) &&
+                   pop_slave_acknowledgement(cpu, channel, true),
+               "ten bit reconfigured low acknowledgement output");
+        dspic33_read_word(cpu, base);
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x01abu);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x02abu, true, true, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   pop_slave_acknowledgement(cpu, channel, false) &&
+                   (cpu->io.i2c_slave_rejected & (uint8_t)(1u << channel)) != 0u,
+               "ten bit reconfigured repeated read negative acknowledgement");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x02abu);
+        enable(cpu, channel, 0x0400u, 0u);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x01abu, false, true, 0u) &&
+                   dspic33_device_advance(cpu, 0u) && cpu->events.count == 0u &&
+                   pop_slave_acknowledgement(cpu, channel, false),
+               "ten bit high mismatch negative acknowledgement output");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x02abu);
+        enable(cpu, channel, 0x0400u, 0u);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x02acu, false, true, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   pop_slave_acknowledgement(cpu, channel, true),
+               "ten bit low mismatch high acknowledgement output");
+        dspic33_read_word(cpu, base);
+        clear_interrupt(cpu, slave_irqs[channel]);
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+        expect(state,
+               dspic33_device_advance(cpu, 1u) && cpu->events.count == 0u &&
+                   pop_slave_acknowledgement(cpu, channel, false),
+               "ten bit low mismatch negative acknowledgement output");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
+        enable(cpu, channel, 0u, 0u);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x52u, false, false, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   pop_slave_acknowledgement(cpu, channel, true),
+               "first buffered address acknowledgement output");
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x52u, false, false, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   pop_slave_acknowledgement(cpu, channel, false) &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0042u) == 0x0042u,
+               "full receive buffer address negative acknowledgement");
+        dspic33_read_word(cpu, base);
+        dspic33_write_word(cpu, (uint16_t)(base + 8u), 0u);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x52u, false, false, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   pop_slave_acknowledgement(cpu, channel, true),
+               "cleared receive buffer address acknowledgement recovery");
+        dspic33_read_word(cpu, base);
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9000u);
+        expect(state,
+               dspic33_i2c_slave_write(cpu, channel, 0x31u, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   pop_slave_acknowledgement(cpu, channel, true),
+               "received data acknowledgement output");
+        expect(state,
+               dspic33_i2c_slave_write(cpu, channel, 0x42u, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   pop_slave_acknowledgement(cpu, channel, false),
+               "full receive buffer data negative acknowledgement");
+        expect(state, dspic33_read_word(cpu, base) == 0x0031u,
+               "overflow retains prior received data");
+        expect(state,
+               dspic33_i2c_slave_write(cpu, channel, 0x53u, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   pop_slave_acknowledgement(cpu, channel, false) &&
+                   dspic33_read_word(cpu, base) == 0x0053u,
+               "overflow status data negative acknowledgement");
+        dspic33_write_word(cpu, (uint16_t)(base + 8u), 0u);
+        expect(state,
+               dspic33_i2c_slave_write(cpu, channel, 0x64u, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   pop_slave_acknowledgement(cpu, channel, true),
+               "cleared overflow data acknowledgement recovery");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
+        enable(cpu, channel, 0u, 0u);
+        cpu->io.i2c_tx[channel].count = DSPIC33_I2C_QUEUE_SIZE;
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x52u, false, false, 0u) &&
+                   !dspic33_device_advance(cpu, 0u) &&
+                   cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR &&
+                   cpu->io.i2c_tx[channel].count == DSPIC33_I2C_QUEUE_SIZE,
+               "slave acknowledgement output queue failure");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x02abu);
+        enable(cpu, channel, 0x0400u, 0u);
+        cpu->device_cycles = UINT64_MAX;
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
+                   !dspic33_device_advance(cpu, 0u) &&
+                   pop_slave_acknowledgement(cpu, channel, true) &&
+                   cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR &&
+                   cpu->events.count == 0u,
+               "ten bit second address scheduling failure");
     }
 }
 
@@ -1539,11 +1761,13 @@ int main(void) {
     slave_transmit_cases(&state, &cpu);
     address_mode_cases(&state, &cpu);
     address_rejection_cases(&state, &cpu);
+    slave_acknowledgement_cases(&state, &cpu);
     disable_cases(&state, &cpu);
     isolation_and_power_cases(&state, &cpu);
     pmd_transition_cases(&state, &cpu);
     slave_power_cases(&state, &cpu);
     dma_isolation_cases(&state, &cpu);
+    expect(&state, state.cases == 776u, "I2C assertion arithmetic");
     dspic33_destroy(&cpu);
     printf("[i2c-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);
