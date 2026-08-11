@@ -1654,6 +1654,7 @@ void dspic33_device_power_state_changed(Dspic33* cpu) {
     }
     output_compare_update_power_state(cpu);
     dci_update_power_state(cpu);
+    dspic33_i2c_refresh_pins(cpu);
 }
 
 static void pmp_update_address(Dspic33* cpu, uint16_t control, uint16_t mode) {
@@ -10528,6 +10529,8 @@ void dspic33_device_configuration_changed(Dspic33* cpu, uint32_t address,
         oscillator_configuration_changed(cpu, previous);
     } else if (address == DSPIC33_CONFIGURATION_BASE + 10u) {
         oscillator_pll_configuration_changed(cpu, previous);
+    } else if (address == DSPIC33_CONFIGURATION_BASE + 12u) {
+        dspic33_i2c_refresh_pins(cpu);
     }
 }
 
@@ -12410,6 +12413,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     refresh_gpio_change_notification(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
     dci_refresh_pps_inputs(cpu);
+    dspic33_i2c_refresh_pins(cpu);
 }
 
 static uint16_t gpio_pin_values(const Dspic33* cpu, uint8_t port) {
@@ -13148,6 +13152,7 @@ bool dspic33_gpio_drive(Dspic33* cpu, uint8_t port, uint16_t value, uint16_t mas
     refresh_gpio_change_notification(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
     dci_refresh_pps_inputs(cpu);
+    dspic33_i2c_refresh_pins(cpu);
     return true;
 }
 
@@ -13159,6 +13164,7 @@ bool dspic33_gpio_release(Dspic33* cpu, uint8_t port, uint16_t mask) {
     refresh_gpio_change_notification(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
     dci_refresh_pps_inputs(cpu);
+    dspic33_i2c_refresh_pins(cpu);
     return true;
 }
 
@@ -13244,4 +13250,5 @@ void dspic33_device_reset(Dspic33* cpu) {
     pps_capture_shadow(cpu);
     refresh_gpio_change_notification(cpu);
     dci_refresh_pps_inputs(cpu);
+    dspic33_i2c_refresh_pins(cpu);
 }

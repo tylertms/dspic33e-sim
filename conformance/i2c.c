@@ -16,6 +16,17 @@ static const uint16_t bases[DSPIC33_I2C_COUNT] = {0x0200u, 0x0210u};
 static const uint8_t slave_irqs[DSPIC33_I2C_COUNT] = {16u, 49u};
 static const uint8_t master_irqs[DSPIC33_I2C_COUNT] = {17u, 50u};
 
+typedef struct {
+    uint16_t configuration;
+    uint8_t channel;
+    uint8_t port;
+    uint8_t clock;
+    uint8_t data;
+} I2cPinRoute;
+
+static const I2cPinRoute pin_routes[] = {
+    {0xffefu, 0u, 3u, 10u, 9u}, {0xffffu, 1u, 5u, 5u, 4u}, {0xffdfu, 1u, 0u, 2u, 3u}};
+
 static void expect(I2cConformance* state, bool condition, const char* name) {
     state->cases++;
     if (condition) {
@@ -94,6 +105,28 @@ static bool pop_slave_acknowledgement(Dspic33* cpu, uint8_t channel, bool acknow
     return dspic33_i2c_transmit(cpu, channel, &transfer) &&
            transfer.type == DSPIC33_I2C_ACKNOWLEDGE &&
            transfer.acknowledge == acknowledge && !transfer.master;
+}
+
+static bool pin_levels(const Dspic33* cpu, uint8_t port, uint8_t clock, uint8_t data,
+                       bool clock_high, bool data_high) {
+    bool high;
+    return dspic33_i2c_pin(cpu, port, clock, &high) && high == clock_high &&
+           dspic33_i2c_pin(cpu, port, data, &high) && high == data_high;
+}
+
+static void drive_pin(const I2cPinRoute* route, Dspic33* cpu, bool clock, bool high) {
+    uint16_t mask = (uint16_t)(1u << (clock ? route->clock : route->data));
+    dspic33_gpio_drive(cpu, route->port, high ? mask : 0u, mask);
+}
+
+static void drive_byte(const I2cPinRoute* route, Dspic33* cpu, uint8_t value) {
+    uint8_t bit;
+    for (bit = 0u; bit < 8u; bit++) {
+        drive_pin(route, cpu, true, false);
+        drive_pin(route, cpu, false, (value & (uint8_t)(0x80u >> bit)) != 0u);
+        drive_pin(route, cpu, true, true);
+    }
+    drive_pin(route, cpu, true, false);
 }
 
 static void register_cases(I2cConformance* state, Dspic33* cpu) {
@@ -1774,16 +1807,14 @@ static void pin_routing_cases(I2cConformance* state, Dspic33* cpu) {
     dspic33_gpio_drive(cpu, 5u, 0u, 0x0010u);
     expect(state, dspic33_i2c_pin(cpu, 5u, 4u, &high) && !high,
            "released I2C data resolves an externally driven low");
+    dspic33_gpio_drive(cpu, 5u, 0x0010u, 0x0010u);
     dspic33_write_word(cpu, (uint16_t)(bases[1] + 6u), 0x9001u);
-    expect(state,
-           !dspic33_i2c_pin(cpu, 5u, 5u, &high) && !dspic33_i2c_pin(cpu, 5u, 4u, &high),
-           "active master start defers to the serial edge engine");
+    expect(state, pin_levels(cpu, 5u, 5u, 4u, true, true),
+           "active physical master start initially releases clock");
     expect(state, dspic33_device_advance(cpu, control_cycles(2u)),
            "complete pin-plane master start");
-    expect(state,
-           dspic33_i2c_pin(cpu, 5u, 5u, &high) && !high &&
-               !dspic33_i2c_pin(cpu, 5u, 4u, &high),
-           "master wait state holds clock low and leaves data phase unavailable");
+    expect(state, pin_levels(cpu, 5u, 5u, 4u, false, false),
+           "physical master wait state holds clock and data low");
     dspic33_write_word(cpu, (uint16_t)(bases[1] + 6u), 0u);
     expect(state,
            !dspic33_i2c_pin(cpu, 5u, 5u, &high) &&
@@ -1899,6 +1930,795 @@ static void pin_routing_cases(I2cConformance* state, Dspic33* cpu) {
     dspic33_load_configuration_word(cpu, 0xf8000cu, 0xffffu);
 }
 
+static void master_pin_sequence_cases(I2cConformance* state, Dspic33* cpu) {
+    static const uint8_t received_values[] = {0x3cu, 0xa6u, 0x59u};
+    const uint16_t baud = 2u;
+    const uint64_t half = operation_cycles(baud, 1u);
+    size_t route_index;
+
+    for (route_index = 0u; route_index < sizeof(pin_routes) / sizeof(pin_routes[0]);
+         route_index++) {
+        const I2cPinRoute* route = &pin_routes[route_index];
+        uint16_t base = bases[route->channel];
+        uint16_t clock_mask = (uint16_t)(1u << route->clock);
+        uint16_t data_mask = (uint16_t)(1u << route->data);
+        uint8_t bit_index;
+
+        dspic33_load_configuration_word(cpu, 0xf8000cu, route->configuration);
+        dspic33_reset(cpu, 0u);
+        dspic33_gpio_drive(cpu, route->port, (uint16_t)(clock_mask | data_mask),
+                           (uint16_t)(clock_mask | data_mask));
+        enable(cpu, route->channel, 1u, baud);
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, true, true),
+               "physical start begins from bus idle");
+        expect(state, dspic33_device_advance(cpu, half - 1u),
+               "physical start advances before first boundary");
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, true, true),
+               "physical start remains idle before first boundary");
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "physical start reaches data boundary");
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, true, false),
+               "physical start drives data low while clock is high");
+        expect(state, dspic33_device_advance(cpu, half),
+               "physical start reaches completion boundary");
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, false, false) &&
+                   interrupt_flag(cpu, master_irqs[route->channel]),
+               "physical start completes in the master wait state");
+        clear_interrupt(cpu, master_irqs[route->channel]);
+
+        dspic33_write_word(cpu, (uint16_t)(base + 2u), 0x00a5u);
+        for (bit_index = 0u; bit_index < 8u; bit_index++) {
+            bool bit_high = (0xa5u & (uint8_t)(0x80u >> bit_index)) != 0u;
+            expect(state,
+                   pin_levels(cpu, route->port, route->clock, route->data, false,
+                              bit_high),
+                   "physical transmit presents data while clock is low");
+            expect(state, dspic33_device_advance(cpu, half),
+                   "physical transmit reaches rising edge");
+            expect(
+                state,
+                pin_levels(cpu, route->port, route->clock, route->data, true, bit_high),
+                "physical transmit holds data through clock high");
+            expect(state, dspic33_device_advance(cpu, half),
+                   "physical transmit reaches falling edge");
+        }
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, false, true),
+               "physical transmit releases data for acknowledgement");
+        dspic33_gpio_drive(cpu, route->port, 0u, data_mask);
+        expect(state, dspic33_device_advance(cpu, half),
+               "physical transmit reaches acknowledgement sample");
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, true, false),
+               "physical transmit samples a driven acknowledgement");
+        expect(state, dspic33_device_advance(cpu, half),
+               "physical transmit completes acknowledgement");
+        expect(state,
+               (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0xc001u) == 0u &&
+                   interrupt_flag(cpu, master_irqs[route->channel]),
+               "physical acknowledgement completes transmit without NACK");
+        clear_interrupt(cpu, master_irqs[route->channel]);
+        dspic33_gpio_drive(cpu, route->port, data_mask, data_mask);
+
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9008u);
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, false, true),
+               "physical receive begins with released data");
+        for (bit_index = 0u; bit_index < 8u; bit_index++) {
+            bool bit_high =
+                (received_values[route_index] & (uint8_t)(0x80u >> bit_index)) != 0u;
+            dspic33_gpio_drive(cpu, route->port, bit_high ? data_mask : 0u, data_mask);
+            expect(state, dspic33_device_advance(cpu, half),
+                   "physical receive reaches sampling edge");
+            expect(
+                state,
+                pin_levels(cpu, route->port, route->clock, route->data, true, bit_high),
+                "physical receive samples selected data level");
+            expect(state, dspic33_device_advance(cpu, half),
+                   "physical receive returns clock low");
+        }
+        expect(state,
+               dspic33_read_word(cpu, base) == received_values[route_index] &&
+                   interrupt_flag(cpu, master_irqs[route->channel]),
+               "physical receive shifts the sampled byte into I2CxRCV");
+        clear_interrupt(cpu, master_irqs[route->channel]);
+        dspic33_gpio_drive(cpu, route->port, data_mask, data_mask);
+
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9010u);
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, false, false),
+               "physical ACK begins with driven data low");
+        expect(state, dspic33_device_advance(cpu, half),
+               "physical ACK reaches clock-high phase");
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, true, false),
+               "physical ACK holds data low while clock is high");
+        expect(state, dspic33_device_advance(cpu, half),
+               "physical ACK reaches completion");
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, false, true) &&
+                   interrupt_flag(cpu, master_irqs[route->channel]),
+               "physical ACK releases data and raises master interrupt");
+        clear_interrupt(cpu, master_irqs[route->channel]);
+
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9002u);
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, false, true),
+               "physical restart begins from released data");
+        expect(state, dspic33_device_advance(cpu, half),
+               "physical restart releases clock");
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, true, true),
+               "physical restart reaches bus idle level");
+        expect(state, dspic33_device_advance(cpu, half),
+               "physical restart drives data boundary");
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, true, false),
+               "physical restart drives data low while clock is high");
+        expect(state, dspic33_device_advance(cpu, half), "physical restart completes");
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, false, false) &&
+                   interrupt_flag(cpu, master_irqs[route->channel]),
+               "physical restart returns to master wait state");
+        clear_interrupt(cpu, master_irqs[route->channel]);
+
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9004u);
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, false, false),
+               "physical stop begins with both lines low");
+        expect(state, dspic33_device_advance(cpu, half),
+               "physical stop releases clock");
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, true, false),
+               "physical stop holds data low after clock release");
+        expect(state, dspic33_device_advance(cpu, half), "physical stop releases data");
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, true, true),
+               "physical stop creates the low-to-high data transition");
+        expect(state, dspic33_device_advance(cpu, half), "physical stop completes");
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, true, true) &&
+                   interrupt_flag(cpu, master_irqs[route->channel]),
+               "physical stop returns bus to idle and raises interrupt");
+    }
+    dspic33_load_configuration_word(cpu, 0xf8000cu, 0xffffu);
+}
+
+static void master_pin_lifecycle_cases(I2cConformance* state, Dspic33* cpu) {
+    const uint16_t base = bases[1];
+    const uint16_t clock_mask = 0x0020u;
+    const uint16_t data_mask = 0x0010u;
+    const uint64_t half = operation_cycles(2u, 1u);
+    Dspic33 copy;
+    Dspic33I2cTransfer transfer;
+    bool high;
+    bool initialized;
+
+    dspic33_load_configuration_word(cpu, 0xf8000cu, 0xffffu);
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, 5u, clock_mask, (uint16_t)(clock_mask | data_mask));
+    enable(cpu, 1u, 1u, 2u);
+    expect(state, dspic33_device_advance(cpu, half),
+           "busy physical bus reaches start sample");
+    expect(state,
+           (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0400u) != 0u &&
+               interrupt_flag(cpu, master_irqs[1]) && cpu->io.i2c_pin_active == 0u,
+           "busy physical bus raises collision and aborts start");
+    expect(state,
+           dspic33_i2c_transmit(cpu, 1u, &transfer) &&
+               transfer.type == DSPIC33_I2C_COLLISION,
+           "busy physical bus records collision output");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, 5u, (uint16_t)(clock_mask | data_mask),
+                       (uint16_t)(clock_mask | data_mask));
+    enable(cpu, 1u, 1u, 2u);
+    dspic33_device_advance(cpu, control_cycles(2u));
+    clear_interrupt(cpu, master_irqs[1]);
+    dspic33_i2c_transmit(cpu, 1u, &transfer);
+    dspic33_write_word(cpu, (uint16_t)(base + 2u), 0x00ffu);
+    dspic33_gpio_drive(cpu, 5u, 0u, data_mask);
+    expect(state, dspic33_device_advance(cpu, half),
+           "arbitration loss reaches transmit sample");
+    expect(state,
+           (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0400u) != 0u &&
+               interrupt_flag(cpu, master_irqs[1]) &&
+               (cpu->io.i2c_master_active & 2u) == 0u,
+           "released-high transmit detects physical arbitration loss");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, 5u, (uint16_t)(clock_mask | data_mask),
+                       (uint16_t)(clock_mask | data_mask));
+    enable(cpu, 1u, 1u, 2u);
+    dspic33_device_advance(cpu, control_cycles(2u));
+    clear_interrupt(cpu, master_irqs[1]);
+    dspic33_write_word(cpu, (uint16_t)(base + 2u), 0u);
+    dspic33_gpio_drive(cpu, 5u, 0u, clock_mask);
+    expect(state, dspic33_device_advance(cpu, half),
+           "physical clock stretch reaches first release");
+    expect(state,
+           cpu->io.i2c_pin_phase[1] == 0u &&
+               pin_levels(cpu, 5u, 5u, 4u, false, false) &&
+               !interrupt_flag(cpu, master_irqs[1]),
+           "external low clock postpones edge and master completion");
+    expect(state, dspic33_device_advance(cpu, 3u) && cpu->io.i2c_pin_phase[1] == 0u,
+           "physical clock stretch retains phase across repeated retries");
+    dspic33_gpio_drive(cpu, 5u, clock_mask, clock_mask);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && cpu->io.i2c_pin_phase[1] == 1u &&
+               pin_levels(cpu, 5u, 5u, 4u, true, false),
+           "clock release resumes the postponed physical edge");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, 5u, (uint16_t)(clock_mask | data_mask),
+                       (uint16_t)(clock_mask | data_mask));
+    enable(cpu, 1u, 1u, 2u);
+    dspic33_device_advance(cpu, control_cycles(2u));
+    dspic33_write_word(cpu, (uint16_t)(base + 2u), 0u);
+    dspic33_device_advance(cpu, half);
+    dspic33_write_word(cpu, 0x0764u, 0x0002u);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && (cpu->io.i2c_pmd_disabled & 2u) != 0u &&
+               cpu->io.i2c_pin_phase[1] == 1u && !dspic33_i2c_pin(cpu, 5u, 5u, &high),
+           "PMD disable releases pins and pauses physical byte phase");
+    expect(state, dspic33_device_advance(cpu, 8u) && cpu->io.i2c_pin_phase[1] == 1u,
+           "PMD-disabled physical byte remains paused");
+    dspic33_write_word(cpu, 0x0764u, 0u);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && (cpu->io.i2c_pmd_disabled & 2u) == 0u &&
+               pin_levels(cpu, 5u, 5u, 4u, true, false),
+           "PMD re-enable restores retained physical pin phase");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && cpu->io.i2c_pin_phase[1] == 2u &&
+               pin_levels(cpu, 5u, 5u, 4u, false, false),
+           "PMD-resumed physical byte reaches its next edge");
+
+    initialized = dspic33_initialize(&copy);
+    expect(state, initialized, "initialize active physical I2C copy");
+    if (initialized) {
+        expect(state, dspic33_copy(&copy, cpu), "copy active physical I2C byte");
+        expect(state,
+               copy.io.i2c_pin_phase[1] == cpu->io.i2c_pin_phase[1] &&
+                   copy.io.i2c_pin_active == cpu->io.i2c_pin_active &&
+                   copy.events.count == cpu->events.count &&
+                   copy.events.items != cpu->events.items,
+               "copy retains independent physical I2C phase and events");
+        expect(state,
+               dspic33_device_advance(cpu, half) &&
+                   dspic33_device_advance(&copy, half) &&
+                   copy.io.i2c_pin_phase[1] == cpu->io.i2c_pin_phase[1],
+               "copied physical I2C engines advance equally");
+        dspic33_destroy(&copy);
+    }
+
+    dspic33_load_program_word(cpu, 0u, 0xfe0000u);
+    cpu->pc = 0u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "warm reset executes during physical I2C byte");
+    expect(state,
+           cpu->io.i2c_pin_active == 0u && cpu->io.i2c_pin_physical == 0u &&
+               !dspic33_i2c_pin(cpu, 5u, 5u, &high),
+           "warm reset cancels physical I2C phase and releases pins");
+}
+
+static void slave_pin_receive_cases(I2cConformance* state, Dspic33* cpu) {
+    size_t route_index;
+    for (route_index = 0u; route_index < sizeof(pin_routes) / sizeof(pin_routes[0]);
+         route_index++) {
+        const I2cPinRoute* route = &pin_routes[route_index];
+        uint16_t base = bases[route->channel];
+        uint16_t pins = (uint16_t)((1u << route->clock) | (1u << route->data));
+        uint8_t value = (uint8_t)(0x31u + route_index * 0x22u);
+
+        dspic33_load_configuration_word(cpu, 0xf8000cu, route->configuration);
+        dspic33_reset(cpu, 0u);
+        dspic33_gpio_drive(cpu, route->port, pins, pins);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
+        enable(cpu, route->channel, 0u, 0u);
+        drive_pin(route, cpu, false, false);
+        expect(state,
+               cpu->io.i2c_slave_pin_state[route->channel] == 1u &&
+                   (cpu->io.i2c_slave_pin_active & (uint8_t)(1u << route->channel)) !=
+                       0u,
+               "physical slave detects selected-pin Start condition");
+        drive_byte(route, cpu, 0xa4u);
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, false, false) &&
+                   dspic33_read_word(cpu, base) == 0x00a4u &&
+                   !interrupt_flag(cpu, slave_irqs[route->channel]),
+               "physical slave receives address before ninth-clock interrupt");
+        expect(state, pop_slave_acknowledgement(cpu, route->channel, true),
+               "physical slave address records logical ACK output");
+        drive_pin(route, cpu, true, true);
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, true, false) &&
+                   !interrupt_flag(cpu, slave_irqs[route->channel]),
+               "physical slave drives address ACK while clock is high");
+        drive_pin(route, cpu, true, false);
+        expect(
+            state,
+            pin_levels(cpu, route->port, route->clock, route->data, false, false) &&
+                interrupt_flag(cpu, slave_irqs[route->channel]) &&
+                cpu->io.i2c_slave_pin_state[route->channel] == 2u,
+            "physical slave raises address interrupt and stretches after ninth clock");
+        dspic33_read_word(cpu, base);
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9000u);
+        drive_pin(route, cpu, false, true);
+
+        clear_interrupt(cpu, slave_irqs[route->channel]);
+        drive_byte(route, cpu, value);
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, false, false) &&
+                   dspic33_read_word(cpu, base) == value &&
+                   !interrupt_flag(cpu, slave_irqs[route->channel]),
+               "physical slave receives data and drives ACK before interrupt");
+        expect(state, pop_slave_acknowledgement(cpu, route->channel, true),
+               "physical slave data records logical ACK output");
+        drive_pin(route, cpu, false, true);
+        drive_pin(route, cpu, true, true);
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, true, false) &&
+                   !interrupt_flag(cpu, slave_irqs[route->channel]),
+               "physical slave holds data ACK through ninth clock high");
+        drive_pin(route, cpu, true, false);
+        expect(state, interrupt_flag(cpu, slave_irqs[route->channel]),
+               "physical slave raises data interrupt on ninth falling edge");
+        drive_pin(route, cpu, false, false);
+        drive_pin(route, cpu, true, true);
+        drive_pin(route, cpu, false, true);
+        expect(state,
+               cpu->io.i2c_slave_pin_active == 0u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0018u) ==
+                       0x0010u &&
+                   pin_levels(cpu, route->port, route->clock, route->data, true, true),
+               "physical slave Stop clears serial state and returns bus idle");
+    }
+}
+
+static void slave_pin_rejection_and_transmit_cases(I2cConformance* state,
+                                                   Dspic33* cpu) {
+    const I2cPinRoute* route = &pin_routes[1];
+    const uint16_t base = bases[1];
+    const uint16_t clock_mask = 0x0020u;
+    const uint16_t data_mask = 0x0010u;
+    const uint16_t pins = (uint16_t)(clock_mask | data_mask);
+    Dspic33I2cTransfer transfer;
+    uint8_t bit;
+
+    dspic33_load_configuration_word(cpu, 0xf8000cu, route->configuration);
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, route->port, pins, pins);
+    dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
+    enable(cpu, 1u, 0u, 0u);
+    drive_pin(route, cpu, false, false);
+    drive_byte(route, cpu, 0xa6u);
+    drive_pin(route, cpu, true, false);
+    drive_pin(route, cpu, false, true);
+    drive_pin(route, cpu, true, true);
+    expect(state,
+           pin_levels(cpu, route->port, route->clock, route->data, true, true) &&
+               !interrupt_flag(cpu, slave_irqs[1]) &&
+               (cpu->io.i2c_slave_rejected & 2u) != 0u,
+           "physical unmatched address remains released for NACK");
+    expect(state, pop_slave_acknowledgement(cpu, 1u, false),
+           "physical unmatched address records logical NACK output");
+    drive_pin(route, cpu, true, false);
+    drive_pin(route, cpu, false, false);
+    drive_pin(route, cpu, true, true);
+    drive_pin(route, cpu, false, true);
+    expect(state, cpu->io.i2c_slave_pin_active == 0u,
+           "physical Stop clears rejected-address state");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, route->port, pins, pins);
+    dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
+    enable(cpu, 1u, 0u, 0u);
+    drive_pin(route, cpu, false, false);
+    drive_byte(route, cpu, 0xa5u);
+    expect(state,
+           dspic33_read_word(cpu, base) == 0x00a5u &&
+               pop_slave_acknowledgement(cpu, 1u, true),
+           "physical slave-transmit address is received and acknowledged");
+    drive_pin(route, cpu, true, true);
+    drive_pin(route, cpu, true, false);
+    dspic33_write_word(cpu, (uint16_t)(base + 2u), 0x005au);
+    dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9000u);
+    expect(state, pin_levels(cpu, route->port, route->clock, route->data, false, false),
+           "physical slave-transmit data starts after ninth-clock service");
+    for (bit = 0u; bit < 8u; bit++) {
+        bool bit_high = (0x5au & (uint8_t)(0x80u >> bit)) != 0u;
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, false, bit_high),
+               "physical slave transmit presents data while clock is low");
+        drive_pin(route, cpu, true, true);
+        expect(state,
+               pin_levels(cpu, route->port, route->clock, route->data, true, bit_high),
+               "physical slave transmit holds data while clock is high");
+        drive_pin(route, cpu, true, false);
+    }
+    drive_pin(route, cpu, false, false);
+    expect(state, pin_levels(cpu, route->port, route->clock, route->data, false, false),
+           "physical slave releases data for master ACK");
+    drive_pin(route, cpu, true, true);
+    expect(state, pin_levels(cpu, route->port, route->clock, route->data, true, false),
+           "physical slave samples master ACK on ninth rising edge");
+    drive_pin(route, cpu, true, false);
+    expect(state,
+           dspic33_i2c_transmit(cpu, 1u, &transfer) &&
+               transfer.type == DSPIC33_I2C_WRITE && transfer.value == 0x5au &&
+               transfer.acknowledge && !transfer.master &&
+               interrupt_flag(cpu, slave_irqs[1]),
+           "physical master ACK completes slave transmit byte");
+    drive_pin(route, cpu, false, false);
+    dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9000u);
+    drive_pin(route, cpu, true, true);
+    drive_pin(route, cpu, false, true);
+    expect(state, cpu->io.i2c_slave_pin_active == 0u,
+           "physical Stop completes slave transmit transaction");
+}
+
+static void slave_pin_ten_bit_cases(I2cConformance* state, Dspic33* cpu) {
+    const I2cPinRoute* route = &pin_routes[2];
+    const uint16_t base = bases[1];
+    const uint16_t pins = 0x000cu;
+
+    dspic33_load_configuration_word(cpu, 0xf8000cu, route->configuration);
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, route->port, pins, pins);
+    dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x02abu);
+    enable(cpu, 1u, 0x0400u, 0u);
+    drive_pin(route, cpu, false, false);
+    drive_byte(route, cpu, 0xf4u);
+    expect(state,
+           dspic33_read_word(cpu, base) == 0x00f4u &&
+               pin_levels(cpu, route->port, route->clock, route->data, false, false) &&
+               pop_slave_acknowledgement(cpu, 1u, true),
+           "physical 10-bit high address matches and stretches for ACK");
+    drive_pin(route, cpu, true, true);
+    drive_pin(route, cpu, true, false);
+    dspic33_read_word(cpu, base);
+    dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+    drive_pin(route, cpu, false, true);
+    expect(state, cpu->io.i2c_slave_pin_state[1] == 7u,
+           "physical 10-bit ACK advances to second address phase");
+
+    clear_interrupt(cpu, slave_irqs[1]);
+    drive_byte(route, cpu, 0xabu);
+    expect(state,
+           dspic33_read_word(cpu, base) == 0x00abu &&
+               (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0100u) != 0u &&
+               !interrupt_flag(cpu, slave_irqs[1]) &&
+               pop_slave_acknowledgement(cpu, 1u, true),
+           "physical 10-bit second address matches and sets ADD10");
+    drive_pin(route, cpu, true, true);
+    drive_pin(route, cpu, true, false);
+    expect(state, interrupt_flag(cpu, slave_irqs[1]),
+           "physical 10-bit second address interrupts on ninth falling edge");
+    dspic33_read_word(cpu, base);
+    dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+    drive_pin(route, cpu, false, true);
+    expect(state, cpu->io.i2c_slave_pin_state[1] == 2u,
+           "physical 10-bit write enters receive data phase");
+
+    drive_pin(route, cpu, true, true);
+    drive_pin(route, cpu, false, false);
+    expect(state, cpu->io.i2c_slave_pin_state[1] == 1u,
+           "physical repeated Start returns to address phase");
+    drive_byte(route, cpu, 0xf5u);
+    expect(state,
+           dspic33_read_word(cpu, base) == 0x00f5u &&
+               (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0104u) == 0x0104u &&
+               pop_slave_acknowledgement(cpu, 1u, true),
+           "physical 10-bit repeated-read address is accepted");
+    drive_pin(route, cpu, true, false);
+    dspic33_read_word(cpu, base);
+    dspic33_write_word(cpu, (uint16_t)(base + 2u), 0x00c3u);
+    dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+    drive_pin(route, cpu, true, true);
+    drive_pin(route, cpu, true, false);
+    expect(state,
+           cpu->io.i2c_slave_pin_state[1] == 4u &&
+               pin_levels(cpu, route->port, route->clock, route->data, false, true),
+           "physical 10-bit repeated-read ACK enters transmit phase");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, route->port, pins, pins);
+    dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x02abu);
+    enable(cpu, 1u, 0x0400u, 0u);
+    drive_pin(route, cpu, false, false);
+    drive_byte(route, cpu, 0xf2u);
+    drive_pin(route, cpu, false, true);
+    drive_pin(route, cpu, true, true);
+    drive_pin(route, cpu, true, false);
+    expect(state,
+           pin_levels(cpu, route->port, route->clock, route->data, false, true) &&
+               pop_slave_acknowledgement(cpu, 1u, false) &&
+               !interrupt_flag(cpu, slave_irqs[1]),
+           "physical 10-bit high mismatch produces NACK");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, route->port, pins, pins);
+    dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x02abu);
+    enable(cpu, 1u, 0x0400u, 0u);
+    drive_pin(route, cpu, false, false);
+    drive_byte(route, cpu, 0xf4u);
+    drive_pin(route, cpu, true, true);
+    drive_pin(route, cpu, true, false);
+    dspic33_read_word(cpu, base);
+    dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+    drive_pin(route, cpu, false, true);
+    drive_byte(route, cpu, 0xacu);
+    drive_pin(route, cpu, false, true);
+    drive_pin(route, cpu, true, true);
+    drive_pin(route, cpu, true, false);
+    expect(state,
+           pin_levels(cpu, route->port, route->clock, route->data, false, true) &&
+               pop_slave_acknowledgement(cpu, 1u, true) &&
+               pop_slave_acknowledgement(cpu, 1u, false),
+           "physical 10-bit low mismatch ACKs high byte then NACKs low byte");
+    dspic33_load_configuration_word(cpu, 0xf8000cu, 0xffffu);
+}
+
+static void slave_pin_lifecycle_cases(I2cConformance* state, Dspic33* cpu) {
+    const I2cPinRoute* route = &pin_routes[1];
+    const uint16_t base = bases[1];
+    const uint16_t pins = 0x0030u;
+    Dspic33 copy;
+    bool initialized;
+    uint8_t bit;
+
+    dspic33_load_configuration_word(cpu, 0xf8000cu, route->configuration);
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, route->port, pins, pins);
+    dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
+    enable(cpu, 1u, 0u, 0u);
+    drive_pin(route, cpu, false, false);
+    for (bit = 0u; bit < 3u; bit++) {
+        drive_pin(route, cpu, true, false);
+        drive_pin(route, cpu, false, (0xa4u & (uint8_t)(0x80u >> bit)) != 0u);
+        drive_pin(route, cpu, true, true);
+    }
+    dspic33_write_word(cpu, 0x0764u, 0x0002u);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && cpu->io.i2c_slave_pin_bits[1] == 3u &&
+               !dspic33_i2c_pin(cpu, route->port, route->clock, &initialized),
+           "PMD disable releases and freezes partial physical slave byte");
+    drive_byte(route, cpu, 0xffu);
+    expect(state,
+           cpu->io.i2c_slave_pin_bits[1] == 3u && !interrupt_flag(cpu, slave_irqs[1]),
+           "PMD-disabled physical slave misses external serial edges");
+    dspic33_write_word(cpu, 0x0764u, 0u);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && (cpu->io.i2c_pmd_disabled & 2u) == 0u,
+           "PMD re-enable restores physical slave engine");
+    drive_pin(route, cpu, true, true);
+    drive_pin(route, cpu, false, false);
+    expect(state,
+           cpu->io.i2c_slave_pin_state[1] == 1u && cpu->io.i2c_slave_pin_bits[1] == 0u,
+           "fresh Start replaces partial slave byte after PMD resume");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, route->port, pins, pins);
+    dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
+    enable(cpu, 1u, 0x2000u, 0u);
+    cpu->power_state = DSPIC33_POWER_IDLE;
+    dspic33_device_power_state_changed(cpu);
+    drive_pin(route, cpu, false, false);
+    drive_byte(route, cpu, 0xa4u);
+    drive_pin(route, cpu, true, true);
+    drive_pin(route, cpu, true, false);
+    expect(state,
+           cpu->io.i2c_slave_pin_active == 0u && !interrupt_flag(cpu, slave_irqs[1]),
+           "I2CSIDL physical slave misses Start and byte edges in Idle");
+    cpu->power_state = DSPIC33_POWER_ACTIVE;
+    dspic33_device_power_state_changed(cpu);
+    drive_pin(route, cpu, true, false);
+    drive_pin(route, cpu, false, true);
+    drive_pin(route, cpu, true, true);
+    drive_pin(route, cpu, false, false);
+    expect(state, cpu->io.i2c_slave_pin_state[1] == 1u,
+           "physical slave accepts fresh Start after Idle resume");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, route->port, pins, pins);
+    dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
+    enable(cpu, 1u, 0u, 0u);
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    dspic33_device_power_state_changed(cpu);
+    drive_pin(route, cpu, false, false);
+    drive_byte(route, cpu, 0xa4u);
+    drive_pin(route, cpu, false, true);
+    drive_pin(route, cpu, true, true);
+    drive_pin(route, cpu, true, false);
+    expect(state,
+           interrupt_flag(cpu, slave_irqs[1]) && dspic33_read_word(cpu, base) == 0xa4u,
+           "physical slave continues and raises interrupt in Sleep");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, route->port, pins, pins);
+    dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
+    enable(cpu, 1u, 0u, 0u);
+    drive_pin(route, cpu, false, false);
+    for (bit = 0u; bit < 4u; bit++) {
+        drive_pin(route, cpu, true, false);
+        drive_pin(route, cpu, false, (0xa4u & (uint8_t)(0x80u >> bit)) != 0u);
+        drive_pin(route, cpu, true, true);
+    }
+    initialized = dspic33_initialize(&copy);
+    expect(state, initialized, "initialize partial physical slave copy");
+    if (initialized) {
+        expect(state, dspic33_copy(&copy, cpu), "copy partial physical slave byte");
+        for (bit = 4u; bit < 8u; bit++) {
+            bool high = (0xa4u & (uint8_t)(0x80u >> bit)) != 0u;
+            drive_pin(route, cpu, true, false);
+            drive_pin(route, &copy, true, false);
+            drive_pin(route, cpu, false, high);
+            drive_pin(route, &copy, false, high);
+            drive_pin(route, cpu, true, true);
+            drive_pin(route, &copy, true, true);
+        }
+        drive_pin(route, cpu, true, false);
+        drive_pin(route, &copy, true, false);
+        expect(state,
+               dspic33_read_word(cpu, base) == 0xa4u &&
+                   dspic33_read_word(&copy, base) == 0xa4u &&
+                   cpu->io.i2c_slave_pin_state[1] == copy.io.i2c_slave_pin_state[1],
+               "copied physical slave engines complete independently and equally");
+        dspic33_destroy(&copy);
+    }
+
+    dspic33_load_program_word(cpu, 0u, 0xfe0000u);
+    cpu->pc = 0u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "warm reset executes during physical slave ACK");
+    expect(state,
+           cpu->io.i2c_slave_pin_active == 0u && cpu->io.i2c_pin_physical == 0u &&
+               cpu->io.i2c_slave_pin_state[1] == 0u,
+           "warm reset clears physical slave engine state");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, route->port, pins, pins);
+    dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
+    enable(cpu, 1u, 0u, 0u);
+    drive_pin(route, cpu, false, false);
+    drive_byte(route, cpu, 0xa4u);
+    drive_pin(route, cpu, false, true);
+    drive_pin(route, cpu, true, true);
+    drive_pin(route, cpu, true, false);
+    dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9000u);
+    drive_pin(route, cpu, false, true);
+    drive_byte(route, cpu, 0x39u);
+    drive_pin(route, cpu, false, true);
+    drive_pin(route, cpu, true, true);
+    expect(state,
+           pin_levels(cpu, route->port, route->clock, route->data, true, true) &&
+               (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0042u) == 0x0042u,
+           "uncleared physical address byte makes following data overflow and NACK");
+}
+
+static void master_pin_collision_cases(I2cConformance* state, Dspic33* cpu) {
+    const I2cPinRoute* route = &pin_routes[1];
+    const uint16_t base = bases[1];
+    const uint16_t clock_mask = 0x0020u;
+    const uint16_t data_mask = 0x0010u;
+    const uint16_t pins = (uint16_t)(clock_mask | data_mask);
+    const uint64_t half = operation_cycles(2u, 1u);
+
+    dspic33_load_configuration_word(cpu, 0xf8000cu, route->configuration);
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, route->port, pins, pins);
+    enable(cpu, 1u, 1u, 2u);
+    dspic33_device_advance(cpu, control_cycles(2u));
+    clear_interrupt(cpu, master_irqs[1]);
+    dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9002u);
+    dspic33_gpio_drive(cpu, route->port, 0u, data_mask);
+    expect(state, dspic33_device_advance(cpu, half),
+           "repeated-start arbitration reaches released bus phase");
+    expect(state,
+           (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0400u) != 0u &&
+               interrupt_flag(cpu, master_irqs[1]) && cpu->io.i2c_pin_active == 0u,
+           "repeated-start collision aborts when released data remains low");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, route->port, pins, pins);
+    enable(cpu, 1u, 1u, 2u);
+    dspic33_device_advance(cpu, control_cycles(2u));
+    clear_interrupt(cpu, master_irqs[1]);
+    dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9004u);
+    dspic33_gpio_drive(cpu, route->port, 0u, data_mask);
+    expect(state, dspic33_device_advance(cpu, half * 2u),
+           "stop arbitration reaches data-release phase");
+    expect(state,
+           (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0400u) != 0u &&
+               interrupt_flag(cpu, master_irqs[1]) && cpu->io.i2c_pin_active == 0u,
+           "stop collision aborts when released data remains low");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, route->port, pins, pins);
+    enable(cpu, 1u, 1u, 2u);
+    dspic33_device_advance(cpu, control_cycles(2u));
+    clear_interrupt(cpu, master_irqs[1]);
+    dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9030u);
+    dspic33_gpio_drive(cpu, route->port, 0u, data_mask);
+    expect(state, dspic33_device_advance(cpu, half),
+           "released NACK arbitration reaches sample phase");
+    expect(state,
+           (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0400u) != 0u &&
+               interrupt_flag(cpu, master_irqs[1]) && cpu->io.i2c_pin_active == 0u,
+           "released NACK collision aborts on dominant data");
+}
+
+static void slave_pin_address_policy_cases(I2cConformance* state, Dspic33* cpu) {
+    const I2cPinRoute* route = &pin_routes[1];
+    const uint16_t base = bases[1];
+    const uint16_t pins = 0x0030u;
+
+    dspic33_load_configuration_word(cpu, 0xf8000cu, route->configuration);
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, route->port, pins, pins);
+    dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x20u);
+    dspic33_write_word(cpu, (uint16_t)(base + 12u), 0x7fu);
+    enable(cpu, 1u, 0u, 0u);
+    drive_pin(route, cpu, false, false);
+    drive_byte(route, cpu, 0x04u);
+    drive_pin(route, cpu, false, true);
+    drive_pin(route, cpu, true, true);
+    drive_pin(route, cpu, true, false);
+    expect(state,
+           pop_slave_acknowledgement(cpu, 1u, false) &&
+               !interrupt_flag(cpu, slave_irqs[1]),
+           "address mask cannot admit a reserved slave address");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, route->port, pins, pins);
+    dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x02u);
+    dspic33_write_word(cpu, (uint16_t)(base + 12u), 0x7fu);
+    enable(cpu, 1u, 0u, 0u);
+    drive_pin(route, cpu, false, false);
+    drive_byte(route, cpu, 0x04u);
+    drive_pin(route, cpu, false, true);
+    drive_pin(route, cpu, true, true);
+    drive_pin(route, cpu, true, false);
+    expect(state,
+           pop_slave_acknowledgement(cpu, 1u, true) &&
+               interrupt_flag(cpu, slave_irqs[1]),
+           "classic slave directly matches its configured reserved address");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, route->port, pins, pins);
+    dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x02abu);
+    enable(cpu, 1u, 0x0480u, 0u);
+    drive_pin(route, cpu, false, false);
+    drive_byte(route, cpu, 0u);
+    drive_pin(route, cpu, false, true);
+    drive_pin(route, cpu, true, true);
+    drive_pin(route, cpu, true, false);
+    expect(state,
+           pop_slave_acknowledgement(cpu, 1u, true) &&
+               (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0204u) == 0x0200u &&
+               interrupt_flag(cpu, slave_irqs[1]),
+           "general call remains a 7-bit write while 10-bit mode is selected");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, route->port, pins, pins);
+    dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
+    enable(cpu, 1u, 0x0800u, 0u);
+    drive_pin(route, cpu, false, false);
+    drive_byte(route, cpu, 0xceu);
+    drive_pin(route, cpu, false, true);
+    drive_pin(route, cpu, true, true);
+    drive_pin(route, cpu, true, false);
+    expect(state,
+           pop_slave_acknowledgement(cpu, 1u, true) &&
+               dspic33_read_word(cpu, base) == 0x00ceu &&
+               interrupt_flag(cpu, slave_irqs[1]),
+           "IPMI mode physically acknowledges an arbitrary address");
+}
+
 int main(void) {
     Dspic33 cpu;
     I2cConformance state = {0u, 0u, 0u};
@@ -1922,7 +2742,15 @@ int main(void) {
     slave_power_cases(&state, &cpu);
     dma_isolation_cases(&state, &cpu);
     pin_routing_cases(&state, &cpu);
-    expect(&state, state.cases == 808u, "I2C assertion arithmetic");
+    master_pin_sequence_cases(&state, &cpu);
+    master_pin_lifecycle_cases(&state, &cpu);
+    slave_pin_receive_cases(&state, &cpu);
+    slave_pin_rejection_and_transmit_cases(&state, &cpu);
+    slave_pin_ten_bit_cases(&state, &cpu);
+    slave_pin_lifecycle_cases(&state, &cpu);
+    master_pin_collision_cases(&state, &cpu);
+    slave_pin_address_policy_cases(&state, &cpu);
+    expect(&state, state.cases == 1182u, "I2C assertion arithmetic");
     dspic33_destroy(&cpu);
     printf("[i2c-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);
