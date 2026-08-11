@@ -26,6 +26,10 @@ enum {
     TRISD = 0x0e30u,
     ANSELD = 0x0e3eu,
     DMA_TEST_PAD = 0x0906u,
+    MAIN_CLOCK_DIVISOR = 0x0744u,
+    TIMER2_COUNTER = 0x0106u,
+    TIMER2_PERIOD = 0x010cu,
+    TIMER2_CONTROL = 0x0110u,
     COMPARATOR1_CONTROL = 0x0a84u,
     OUTPUT_COMPARE16_CONTROL1 = 0x0996u,
     OUTPUT_COMPARE16_CONTROL2 = 0x0998u,
@@ -547,6 +551,110 @@ static void external_interrupt_wake_lifecycle_cases(InterruptControlConformance*
            "POR restores fixed INT0 and VSS-remapped INT1 through INT4 state");
 }
 
+static void interrupt_entry_latency_cases(InterruptControlConformance* state,
+                                          Dspic33* cpu) {
+    uint64_t cycles;
+    uint64_t device_cycles;
+
+    dspic33_reset(cpu, 0x0200u);
+    dspic33_load_program_word(cpu, 0x0200u, 0u);
+    enable_interrupt(cpu, 0u, 1u, 0x0300u);
+    cpu->w[15] = 0x2000u;
+    dspic33_write_word(cpu, TIMER2_COUNTER, 0u);
+    dspic33_write_word(cpu, TIMER2_PERIOD, UINT16_MAX);
+    dspic33_write_word(cpu, TIMER2_CONTROL, 0x8000u);
+    dspic33_raise_interrupt(cpu, 0u);
+    expect(state,
+           dspic33_device_service_interrupt(cpu) && cpu->pc == 0x0300u &&
+               cpu->cycles == 9u && cpu->device_cycles == 9u &&
+               dspic33_read_word(cpu, TIMER2_COUNTER) == 9u &&
+               cpu->interrupt_depth == 1u && cpu->w[15] == 0x2004u,
+           "interrupt entry consumes nine cycles before the first handler instruction");
+    clear_interrupt(cpu, 0u);
+    expect(
+        state,
+        dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0302u &&
+            cpu->cycles == 10u && cpu->device_cycles == 10u &&
+            dspic33_read_word(cpu, TIMER2_COUNTER) == 10u,
+        "peripheral interrupt process reaches the handler in ten instruction cycles");
+
+    dspic33_reset(cpu, 0x0200u);
+    enable_interrupt(cpu, 0u, 1u, 0x0300u);
+    enable_interrupt(cpu, 1u, 2u, 0x0320u);
+    cpu->w[15] = 0x2100u;
+    expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 1u, 0u, 4u),
+           "schedule interrupt request during entry latency");
+    dspic33_raise_interrupt(cpu, 0u);
+    expect(
+        state,
+        dspic33_device_service_interrupt(cpu) && cpu->pc == 0x0300u &&
+            cpu->cycles == 9u && cpu->device_cycles == 9u && interrupt_flag(cpu, 1u) &&
+            cpu->interrupt_depth == 1u,
+        "entry latency processes a higher-priority request without premature service");
+    clear_interrupt(cpu, 0u);
+    expect(state,
+           dspic33_device_service_interrupt(cpu) && cpu->pc == 0x0320u &&
+               cpu->cycles == 18u && cpu->device_cycles == 18u &&
+               cpu->interrupt_depth == 2u,
+           "pending higher-priority request receives its own entry latency");
+
+    dspic33_reset(cpu, 0x0200u);
+    enable_interrupt(cpu, 0u, 1u, 0x0300u);
+    cpu->w[15] = 0x2200u;
+    dspic33_write_word(cpu, MAIN_CLOCK_DIVISOR, 0x1800u);
+    dspic33_write_word(cpu, TIMER2_COUNTER, 0u);
+    dspic33_write_word(cpu, TIMER2_PERIOD, UINT16_MAX);
+    dspic33_write_word(cpu, TIMER2_CONTROL, 0x8000u);
+    dspic33_raise_interrupt(cpu, 0u);
+    cycles = cpu->cycles;
+    device_cycles = cpu->device_cycles;
+    expect(state,
+           dspic33_device_service_interrupt(cpu) && cpu->cycles - cycles == 9u &&
+               cpu->device_cycles - device_cycles == 18u &&
+               dspic33_read_word(cpu, TIMER2_COUNTER) == 18u &&
+               (dspic33_read_word(cpu, MAIN_CLOCK_DIVISOR) & 0x0800u) != 0u,
+           "entry latency retains the divided CPU ratio when ROI is clear");
+
+    dspic33_reset(cpu, 0x0200u);
+    enable_interrupt(cpu, 0u, 1u, 0x0300u);
+    cpu->w[15] = 0x2300u;
+    dspic33_write_word(cpu, MAIN_CLOCK_DIVISOR, 0x9800u);
+    dspic33_write_word(cpu, TIMER2_COUNTER, 0u);
+    dspic33_write_word(cpu, TIMER2_PERIOD, UINT16_MAX);
+    dspic33_write_word(cpu, TIMER2_CONTROL, 0x8000u);
+    dspic33_raise_interrupt(cpu, 0u);
+    cycles = cpu->cycles;
+    device_cycles = cpu->device_cycles;
+    expect(state,
+           dspic33_device_service_interrupt(cpu) && cpu->cycles - cycles == 9u &&
+               cpu->device_cycles - device_cycles == 9u &&
+               dspic33_read_word(cpu, TIMER2_COUNTER) == 9u &&
+               (dspic33_read_word(cpu, MAIN_CLOCK_DIVISOR) & 0x0800u) == 0u,
+           "ROI restores one-to-one timing before interrupt entry");
+
+    dspic33_reset(cpu, 0x0200u);
+    enable_interrupt(cpu, 0u, 7u, 0x0300u);
+    cpu->w[15] = 0x2400u;
+    cpu->disicnt = 15u;
+    dspic33_raise_interrupt(cpu, 0u);
+    expect(state,
+           dspic33_device_service_interrupt(cpu) && cpu->disicnt == 6u &&
+               cpu->cycles == 9u,
+           "priority-seven entry consumes DISI instruction cycles");
+
+    dspic33_reset(cpu, 0x0200u);
+    enable_interrupt(cpu, 0u, 1u, 0x0300u);
+    cpu->w[15] = 0x2500u;
+    dspic33_raise_interrupt(cpu, 0u);
+    cpu->cycles = UINT64_MAX - 8u;
+    expect(state,
+           dspic33_device_service_interrupt(cpu) &&
+               cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR &&
+               cpu->cycles == UINT64_MAX - 8u && cpu->pc == 0x0200u &&
+               cpu->w[15] == 0x2500u && cpu->interrupt_count == 0u,
+           "entry-cycle overflow fails before stack or vector mutation");
+}
+
 static void lifecycle_cases(InterruptControlConformance* state, Dspic33* source,
                             Dspic33* copy) {
     dspic33_reset(source, 0u);
@@ -586,8 +694,9 @@ int main(void) {
     external_interrupt_selection_cases(&state, &source);
     external_interrupt_interaction_cases(&state, &source);
     external_interrupt_wake_lifecycle_cases(&state, &source, &copy);
+    interrupt_entry_latency_cases(&state, &source);
     lifecycle_cases(&state, &source, &copy);
-    expect(&state, state.cases == 102u, "interrupt-control assertion accounting");
+    expect(&state, state.cases == 111u, "interrupt-control assertion accounting");
     report_sfr_side_effect_coverage(
         "interrupt-control", interrupt_control_sfr_side_effect_coverage,
         SFR_SIDE_EFFECT_COVERAGE_COUNT(interrupt_control_sfr_side_effect_coverage),

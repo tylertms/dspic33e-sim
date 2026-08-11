@@ -24,6 +24,7 @@ volatile uint16_t system_data_map_trap_state[11] __attribute__((near));
 volatile uint16_t system_data_map_control_state[6] __attribute__((near));
 volatile uint16_t interrupt_count __attribute__((near));
 volatile uint16_t interrupt_mode __attribute__((near));
+volatile uint16_t interrupt_entry_timer __attribute__((near));
 volatile uint16_t interrupt_order[4] __attribute__((near));
 volatile uint16_t interrupt_entry_stack[4] __attribute__((near));
 volatile uint16_t interrupt_handler_status[4] __attribute__((near));

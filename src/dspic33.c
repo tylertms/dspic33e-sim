@@ -3620,6 +3620,8 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
     memset(cpu->pending_soft_traps, 0, sizeof(cpu->pending_soft_traps));
     cpu->address_error_return = 0u;
     cpu->instruction_active = false;
+    cpu->instruction_advancing = false;
+    cpu->interrupt_entry_active = false;
     cpu->current_instruction_cycles = 0u;
     cpu->instruction_working_register_writes = 0u;
     cpu->instruction_source_address_registers = 0u;
@@ -4708,11 +4710,13 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
                 program_target_requires_address_error(cpu->pc)
             ? cpu->pc
             : 0u;
+    cpu->instruction_advancing = true;
     advance_instruction(cpu, cycles, non_cpu_sfr_wait, device_ratio);
     if (psv_repeat_exit_latency && cpu->repeat_active != 0u &&
         dspic33_device_interrupt_pending(cpu)) {
         advance_instruction(cpu, 4u, false, device_ratio);
     }
+    cpu->instruction_advancing = false;
     if (cpu->power_state != DSPIC33_POWER_ACTIVE && dspic33_device_wake(cpu)) {
         cpu->power_state = DSPIC33_POWER_ACTIVE;
         dspic33_device_power_state_changed(cpu);

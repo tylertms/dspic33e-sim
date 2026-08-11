@@ -2,7 +2,7 @@
 .include "conformance.inc"
 
 .global _interrupt_conformance_cases
-_interrupt_conformance_cases = 37
+_interrupt_conformance_cases = 39
 .global _interrupt_conformance_group_complete
 _interrupt_conformance_group_complete = 1
 
@@ -10,6 +10,14 @@ _interrupt_conformance_group_complete = 1
 .global __\name
 __\name:
     push w0
+.if \identifier == 0
+    mov _interrupt_mode, w0
+    cp w0, #2
+    bra nz, 8f
+    mov TMR2, w0
+    mov w0, _interrupt_entry_timer
+8:
+.endif
     push w1
     push w2
     bclr IFS0, #\flag
@@ -68,6 +76,7 @@ _reset_interrupt_probe:
     bclr RCON, #3
     clr _interrupt_count
     clr _interrupt_mode
+    clr _interrupt_entry_timer
     clr _interrupt_order
     clr _interrupt_order+2
     clr _interrupt_order+4
@@ -385,6 +394,46 @@ _run_interrupt_conformance:
     mov _interrupt_handler_marker, w1
     mov _interrupt_count, w2
     record_double_case 0x0d24, w1, w2
+
+    rcall _reset_interrupt_probe
+    clr T2CON
+    clr TMR2
+    mov #0xffff, w0
+    mov w0, PR2
+    mov #2, w0
+    mov w0, _interrupt_mode
+    mov #4, w0
+    mov w0, IPC0
+    bset IEC0, #0
+    bset INTCON2, #15
+    bset T2CON, #15
+    bset IFS0, #0
+    nop
+    bclr T2CON, #15
+    bclr INTCON2, #15
+    mov _interrupt_entry_timer, w1
+    record_case 0x0d25, w1, w1
+
+    rcall _reset_interrupt_probe
+    bset CORCON, #15
+    clr T2CON
+    clr TMR2
+    mov #0xffff, w0
+    mov w0, PR2
+    mov #2, w0
+    mov w0, _interrupt_mode
+    mov #4, w0
+    mov w0, IPC0
+    bset IEC0, #0
+    bset INTCON2, #15
+    bset T2CON, #15
+    bset IFS0, #0
+    nop
+    bclr T2CON, #15
+    bclr INTCON2, #15
+    bclr CORCON, #15
+    mov _interrupt_entry_timer, w1
+    record_case 0x0d26, w1, w1
 
     rcall _reset_interrupt_probe
     end_results

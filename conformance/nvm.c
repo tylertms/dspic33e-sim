@@ -2112,7 +2112,7 @@ static void vector_segment_execution_cases(NvmConformance* state, Dspic33* cpu) 
                cpu->interrupt_count == 1u && cpu->last_trap == 1u &&
                cpu->trap_count == 1u && cpu->pc == handler &&
                cpu->last_trap_return == 0x000102u && cpu->w[15] == 0x1008u &&
-               cpu->instructions == 0u && cpu->cycles == 1u,
+               cpu->instructions == 0u && cpu->cycles == 10u,
            "interrupt VFC into vector segment traps before execution");
 
     dspic33_reset(cpu, origin);

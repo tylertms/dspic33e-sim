@@ -1360,7 +1360,7 @@ static void doze_cases(OscillatorConformance* state, Dspic33* source, Dspic33* c
                source->pc == 0x0302u &&
                (dspic33_read_word(source, MAIN_CLOCK_DIVISOR) &
                 MAIN_CLOCK_DOZE_ENABLE) != 0u &&
-               source->device_cycles - device_cycles == 2u,
+               source->device_cycles - device_cycles == 20u,
            "interrupt preserves DOZE when ROI is clear");
 
     dspic33_reset(source, 0u);
@@ -1374,7 +1374,7 @@ static void doze_cases(OscillatorConformance* state, Dspic33* source, Dspic33* c
                source->pc == 0x0302u &&
                (dspic33_read_word(source, MAIN_CLOCK_DIVISOR) &
                 MAIN_CLOCK_DOZE_ENABLE) == 0u &&
-               source->device_cycles - device_cycles == 1u,
+               source->device_cycles - device_cycles == 10u,
            "ROI clears DOZEN before the first handler instruction");
 
     dspic33_reset(source, 0u);
