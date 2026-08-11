@@ -195,13 +195,17 @@ typedef struct {
     uint16_t mode;
     uint16_t generation;
     uint16_t completing_generation;
+    uint16_t pmd_generation;
     uint16_t value;
     uint8_t width;
+    uint8_t slave_read_index;
+    uint8_t slave_write_index;
     bool active;
     bool completing_active;
     bool reading;
     bool completing_reading;
     bool last_read_valid;
+    bool pmd_disabled;
 } Dspic33Pmp;
 
 typedef struct {
@@ -743,6 +747,10 @@ bool dspic33_dma_request(Dspic33* cpu, uint8_t request, uint16_t indirect_addres
                          uint64_t delay);
 bool dspic33_pmp_respond(Dspic33* cpu, uint16_t value, uint64_t delay);
 bool dspic33_pmp_transmit(Dspic33* cpu, Dspic33PmpTransfer* transfer);
+bool dspic33_pmp_slave_read(Dspic33* cpu, uint8_t address, uint64_t delay);
+bool dspic33_pmp_slave_write(Dspic33* cpu, uint8_t address, uint8_t value,
+                             uint64_t delay);
+void dspic33_device_power_state_changed(Dspic33* cpu);
 bool dspic33_input_capture_input(Dspic33* cpu, uint8_t channel, bool high,
                                  uint64_t delay);
 bool dspic33_input_capture_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t delay);

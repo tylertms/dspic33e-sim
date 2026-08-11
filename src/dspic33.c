@@ -3319,10 +3319,12 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
             rcon |= 0x0008u;
             dspic33_device_abort_oscillator_switch(cpu);
             cpu->power_state = DSPIC33_POWER_SLEEP;
+            dspic33_device_power_state_changed(cpu);
             cpu->stop_reason = DSPIC33_SLEEPING;
         } else {
             rcon |= 0x0004u;
             cpu->power_state = DSPIC33_POWER_IDLE;
+            dspic33_device_power_state_changed(cpu);
             cpu->stop_reason = DSPIC33_IDLING;
         }
         dspic33_write_word(cpu, 0x0740u, rcon);
@@ -3648,6 +3650,7 @@ static void watchdog_timeout(Dspic33* cpu) {
     if (cpu->power_state != DSPIC33_POWER_ACTIVE) {
         cpu->data[0x0740u] |= 0x10u;
         cpu->power_state = DSPIC33_POWER_ACTIVE;
+        dspic33_device_power_state_changed(cpu);
         cpu->stop_reason = DSPIC33_RUNNING;
         return;
     }
@@ -4151,6 +4154,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         }
         cpu->previous_working_register_writes = 0u;
         cpu->power_state = DSPIC33_POWER_ACTIVE;
+        dspic33_device_power_state_changed(cpu);
         cpu->watchdog.ticks = 0u;
         cpu->stop_reason = DSPIC33_RUNNING;
     } else {
@@ -4367,6 +4371,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     }
     if (cpu->power_state != DSPIC33_POWER_ACTIVE && dspic33_device_wake(cpu)) {
         cpu->power_state = DSPIC33_POWER_ACTIVE;
+        dspic33_device_power_state_changed(cpu);
         cpu->watchdog.ticks = 0u;
         cpu->stop_reason = DSPIC33_RUNNING;
     }
