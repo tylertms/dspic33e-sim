@@ -600,9 +600,12 @@ typedef struct {
     uint64_t key_trap_count;
     uint64_t key_instruction;
     uint16_t control;
+    uint16_t reset_cause;
     uint8_t key_stage;
+    uint8_t reset_kind;
     bool active;
     bool auxiliary_origin;
+    bool reset_pending;
 } Dspic33Nvm;
 
 typedef struct {
@@ -722,6 +725,7 @@ bool dspic33_codeguard_admit_program_flow(Dspic33* cpu, uint32_t origin,
 void dspic33_raise_program_vector_error(Dspic33* cpu, uint32_t return_pc,
                                         bool auxiliary_vector);
 void dspic33_complete_nvm(Dspic33* cpu);
+bool dspic33_complete_nvm_reset(Dspic33* cpu);
 bool dspic33_load_configuration_word(Dspic33* cpu, uint32_t address, uint32_t word);
 uint32_t dspic33_read_program_word(const Dspic33* cpu, uint32_t address);
 uint8_t dspic33_read_program_byte(const Dspic33* cpu, uint32_t address);

@@ -47,6 +47,7 @@ enum {
     OPCODE_RETFIE = 0x064000u,
     OPCODE_COMPUTED_CALL_W0 = 0x018000u,
     OPCODE_COMPUTED_GOTO_W0 = 0x018400u,
+    OPCODE_ADD_W2_W4_POST_INCREMENT_W5_POST_DECREMENT = 0x4112b4u,
     OPCODE_MOV_LITERAL_0X1234_W2 = 0x212342u,
     OPCODE_MOV_W1_W2 = 0x780111u,
     OPCODE_BTSC_W2_BIT_0 = 0xa70002u,
@@ -635,6 +636,93 @@ static void configuration_operation_cases(NvmConformance* state, Dspic33* cpu) {
            "FAS protection bit cannot change zero to one");
     dspic33_load_configuration_word(cpu, DSPIC33_CONFIGURATION_BASE + 4u, 0xffcfu);
     dspic33_load_configuration_word(cpu, DSPIC33_CONFIGURATION_BASE + 0x10u, 0xffcfu);
+}
+
+static uint8_t programmed_configuration_value(uint8_t index, uint8_t current,
+                                              uint8_t latch) {
+    static const uint8_t masks[] = {0x33u, 0x87u, 0xe7u, 0xffu,
+                                    0x3fu, 0xf7u, 0x33u, 0xffu};
+    uint8_t mask = masks[index];
+    if (index == 0u || index == 6u) {
+        return (uint8_t)((current & (uint8_t)~mask) | (latch & 0x30u) |
+                         (current & latch & 0x03u));
+    }
+    return (uint8_t)((current & (uint8_t)~mask) | (latch & mask));
+}
+
+static void complete_configuration_byte(Dspic33* cpu, uint8_t index, uint8_t current,
+                                        uint8_t latch) {
+    uint32_t offset = 4u + (uint32_t)index * 2u;
+    cpu->events.count = 0u;
+    cpu->configuration[offset] = current;
+    cpu->configuration[offset + 1u] = 0xa5u;
+    cpu->nvm.control = 0u;
+    cpu->nvm.address = DSPIC33_CONFIGURATION_BASE + offset;
+    cpu->nvm.latches[0] = latch;
+    dspic33_complete_nvm(cpu);
+}
+
+static void configuration_programming_matrix_cases(NvmConformance* state,
+                                                   Dspic33* cpu) {
+    uint16_t current;
+    uint16_t latch;
+    uint16_t general;
+    uint16_t auxiliary;
+    uint8_t index;
+
+    dspic33_reset(cpu, 0u);
+    for (index = 0u; index < 8u; index++) {
+        uint32_t offset = 4u + (uint32_t)index * 2u;
+        if (index == 6u) {
+            continue;
+        }
+        for (current = 0u; current < 0x100u; current++) {
+            for (latch = 0u; latch < 0x100u; latch++) {
+                complete_configuration_byte(cpu, index, (uint8_t)current,
+                                            (uint8_t)latch);
+                expect(state,
+                       cpu->configuration[offset] ==
+                               programmed_configuration_value(index, (uint8_t)current,
+                                                              (uint8_t)latch) &&
+                           cpu->configuration[offset + 1u] == 0xa5u,
+                       "configuration programming value matrix");
+            }
+        }
+    }
+
+    for (general = 0u; general < 0x100u; general++) {
+        for (auxiliary = 0u; auxiliary < 0x100u; auxiliary++) {
+            bool allowed = ((uint8_t)general & 0x33u) == 0x03u &&
+                           ((uint8_t)auxiliary & 0x33u) == 0x03u;
+            cpu->configuration[4u] = (uint8_t)general;
+            complete_configuration_byte(cpu, 6u, (uint8_t)auxiliary, 0x31u);
+            expect(state,
+                   cpu->configuration[4u] == (uint8_t)general &&
+                       cpu->configuration[0x10u] ==
+                           (allowed ? programmed_configuration_value(
+                                          6u, (uint8_t)auxiliary, 0x31u)
+                                    : (uint8_t)auxiliary) &&
+                       cpu->configuration[0x11u] == 0xa5u,
+                   "FAS programming admission matrix");
+            if (!allowed) {
+                continue;
+            }
+            for (latch = 0u; latch < 0x100u; latch++) {
+                cpu->configuration[4u] = (uint8_t)general;
+                complete_configuration_byte(cpu, 6u, (uint8_t)auxiliary,
+                                            (uint8_t)latch);
+                expect(state,
+                       cpu->configuration[4u] == (uint8_t)general &&
+                           cpu->configuration[0x10u] ==
+                               programmed_configuration_value(6u, (uint8_t)auxiliary,
+                                                              (uint8_t)latch) &&
+                           cpu->configuration[0x11u] == 0xa5u,
+                       "FAS programming value matrix");
+            }
+        }
+    }
+    dspic33_load_configuration_word(cpu, CODEGUARD_GENERAL_CONFIGURATION, 0xffcfu);
+    dspic33_load_configuration_word(cpu, CODEGUARD_AUXILIARY_CONFIGURATION, 0xffcfu);
 }
 
 static void pair_and_capture_cases(NvmConformance* state, Dspic33* cpu) {
@@ -2097,6 +2185,171 @@ static void reset_copy_and_failure_cases(NvmConformance* state, Dspic33* cpu) {
            "warm reset preserves NVMCON POR-only fields");
 }
 
+static void deferred_reset_cases(NvmConformance* state, Dspic33* cpu) {
+    static const uint32_t targets[] = {DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3600u,
+                                       0x3e00u};
+    static const uint32_t origins[] = {NVM_SEQUENCE_BASE + 10u,
+                                       DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3800u};
+    Dspic33 copy;
+    bool copy_initialized;
+    size_t index;
+
+    for (index = 0u; index < sizeof(targets) / sizeof(targets[0]); index++) {
+        uint64_t reset_count;
+        dspic33_reset(cpu, 0u);
+        load_codeguard_configuration(cpu, 0x03u, 0x03u);
+        cpu->write_latches[0] = 0x00112233u;
+        cpu->write_latches[1] = 0x00445566u;
+        expect(state, start_operation_from(cpu, 1u, targets[index], origins[index]),
+               "deferred software-reset operation starts");
+        dspic33_load_program_word(cpu, cpu->pc, OPCODE_RESET);
+        reset_count = cpu->software_reset_count;
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING && !cpu->nvm.active &&
+                   !cpu->nvm.reset_pending &&
+                   cpu->software_reset_count == reset_count + 1u && cpu->pc == 0u &&
+                   program_word(cpu, targets[index]) == 0x00112233u &&
+                   program_word(cpu, targets[index] + 2u) == 0x00445566u &&
+                   (dspic33_read_word(cpu, 0x0740u) & 0x0040u) != 0u &&
+                   (dspic33_read_word(cpu, NVM_CONTROL) &
+                    (NVM_WRITE | NVM_WRITE_ERROR)) == 0u &&
+                   !interrupt_flag(cpu),
+               "software reset waits for opposite-segment programming");
+    }
+
+    dspic33_reset(cpu, 0u);
+    load_codeguard_configuration(cpu, 0x03u, 0x03u);
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x200u,
+                              0x00123456u);
+    expect(state, start_operation(cpu, 0x0au, 0u),
+           "deferred security-reset erase starts");
+    load_codeguard_configuration(cpu, 0x03u, 0x31u);
+    dspic33_load_program_word(cpu, cpu->pc, OPCODE_COMPUTED_GOTO_W0);
+    dspic33_set_working_register(cpu, 0u,
+                                 (uint16_t)(DSPIC33_AUXILIARY_PROGRAM_BASE + 0x100u));
+    dspic33_set_working_register(
+        cpu, 1u, (uint16_t)((DSPIC33_AUXILIARY_PROGRAM_BASE + 0x100u) >> 16u));
+    {
+        uint64_t reset_count = cpu->illegal_reset_count;
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING && !cpu->nvm.active &&
+                   !cpu->nvm.reset_pending &&
+                   cpu->illegal_reset_count == reset_count + 1u && cpu->illegal_reset &&
+                   cpu->pc == 0u &&
+                   program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x200u) ==
+                       0x00ffffffu &&
+                   (dspic33_read_word(cpu, 0x0740u) & 0x4000u) != 0u &&
+                   (dspic33_read_word(cpu, NVM_CONTROL) &
+                    (NVM_WRITE | NVM_WRITE_ERROR)) == 0u &&
+                   !interrupt_flag(cpu),
+               "security reset waits for Auxiliary Segment erase");
+    }
+
+    dspic33_reset(cpu, 0u);
+    load_codeguard_configuration(cpu, 0x03u, 0x03u);
+    cpu->write_latches[0] = 0x00123456u;
+    cpu->write_latches[1] = 0x00654321u;
+    expect(state, start_operation(cpu, 1u, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3e00u),
+           "deferred illegal-source operation starts");
+    dspic33_load_program_word(cpu, cpu->pc,
+                              OPCODE_ADD_W2_W4_POST_INCREMENT_W5_POST_DECREMENT);
+    dspic33_set_working_register(cpu, 2u, 1u);
+    cpu->w[4] = 0x1000u;
+    dspic33_set_working_register(cpu, 5u, 0x5000u);
+    dspic33_write_word(cpu, 0x1000u, 2u);
+    dspic33_write_word(cpu, 0x5000u, 0xaaaau);
+    {
+        uint64_t reset_count = cpu->illegal_reset_count;
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING && !cpu->nvm.active &&
+                   !cpu->nvm.reset_pending && cpu->illegal_reset &&
+                   cpu->illegal_reset_count == reset_count + 1u && cpu->pc == 0u &&
+                   dspic33_read_word(cpu, 0x5000u) == 0xaaaau &&
+                   program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3e00u) ==
+                       0x00123456u &&
+                   program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3e02u) ==
+                       0x00654321u &&
+                   (dspic33_read_word(cpu, 0x0740u) & 0x4000u) != 0u &&
+                   !interrupt_flag(cpu),
+               "deferred illegal source inhibits RAM write before reset");
+    }
+
+    dspic33_reset(cpu, 0u);
+    load_codeguard_configuration(cpu, 0x03u, 0x03u);
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x400u,
+                              0x00123456u);
+    expect(state, start_operation(cpu, 0x0au, 0u),
+           "deferred restricted-vector erase starts");
+    load_codeguard_configuration(cpu, 0x03u, 0x31u);
+    dspic33_load_program_word(cpu, 0x0014u, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x100u);
+    dspic33_set_working_register(cpu, 15u, 0x5000u);
+    dspic33_write_word(cpu, 0x5000u, 0xa55au);
+    dspic33_write_word(cpu, 0x5002u, 0x5aa5u);
+    dspic33_write_word(cpu, 0x0820u, 0x0001u);
+    dspic33_write_word(cpu, 0x0840u, 0x0001u);
+    dspic33_raise_interrupt(cpu, 0u);
+    {
+        uint64_t reset_count = cpu->illegal_reset_count;
+        uint64_t interrupt_count = cpu->interrupt_count;
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING && !cpu->nvm.active &&
+                   !cpu->nvm.reset_pending && cpu->illegal_reset &&
+                   cpu->illegal_reset_count == reset_count + 1u && cpu->pc == 0u &&
+                   cpu->interrupt_count == interrupt_count &&
+                   dspic33_read_word(cpu, 0x5000u) == 0xa55au &&
+                   dspic33_read_word(cpu, 0x5002u) == 0x5aa5u &&
+                   program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x400u) ==
+                       0x00ffffffu &&
+                   (dspic33_read_word(cpu, 0x0740u) & 0x4000u) != 0u &&
+                   !interrupt_flag(cpu),
+               "restricted vector reset inhibits frame before NVM completion");
+    }
+
+    copy_initialized = dspic33_initialize(&copy);
+    expect(state, copy_initialized, "initialize deferred-reset copy");
+    if (copy_initialized) {
+        dspic33_reset(cpu, 0u);
+        load_codeguard_configuration(cpu, 0x03u, 0x03u);
+        cpu->write_latches[0] = 0x00010203u;
+        cpu->write_latches[1] = 0x00040506u;
+        expect(state,
+               start_operation(cpu, 1u, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3a00u),
+               "copied deferred-reset operation starts");
+        dspic33_configuration_mismatch_reset(cpu);
+        expect(state, cpu->nvm.active && cpu->nvm.reset_pending,
+               "configuration-mismatch reset remains pending");
+        expect(state, dspic33_copy(&copy, cpu), "copy deferred-reset state");
+        expect(state, finish_operation(cpu) && finish_operation(&copy),
+               "copied deferred resets complete independently");
+        expect(state,
+               !cpu->nvm.active && !copy.nvm.active && !cpu->nvm.reset_pending &&
+                   !copy.nvm.reset_pending && cpu->pc == 0u && copy.pc == 0u &&
+                   (dspic33_read_word(cpu, 0x0740u) & 0x0200u) != 0u &&
+                   (dspic33_read_word(&copy, 0x0740u) & 0x0200u) != 0u &&
+                   program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3a00u) ==
+                       0x00010203u &&
+                   program_word(&copy, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3a00u) ==
+                       0x00010203u &&
+                   !interrupt_flag(cpu) && !interrupt_flag(&copy),
+               "copied configuration-mismatch resets follow NVM completion");
+        dspic33_destroy(&copy);
+    }
+
+    dspic33_reset(cpu, 0u);
+    load_codeguard_configuration(cpu, 0x03u, 0x03u);
+    cpu->write_latches[0] = 0x00654321u;
+    expect(state, start_operation(cpu, 1u, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3c00u),
+           "POR pending-reset operation starts");
+    dspic33_configuration_mismatch_reset(cpu);
+    expect(state, cpu->nvm.reset_pending, "POR operation has pending warm reset");
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           !cpu->nvm.active && !cpu->nvm.reset_pending && cpu->events.count == 0u &&
+               program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3c00u) ==
+                   0x00ffffffu,
+           "POR aborts operation and pending warm reset");
+}
+
 static void doze_stall_cases(NvmConformance* state, Dspic33* cpu) {
     uint64_t cpu_cycles;
     uint64_t device_cycles;
@@ -2303,6 +2556,7 @@ int main(void) {
         invalid_target_cases(&state, &cpu);
         program_range_cases(&state, &cpu);
         configuration_operation_cases(&state, &cpu);
+        configuration_programming_matrix_cases(&state, &cpu);
         pair_and_capture_cases(&state, &cpu);
         row_operation_cases(&state, &cpu);
         erase_operation_cases(&state, &cpu);
@@ -2316,6 +2570,7 @@ int main(void) {
         doze_stall_cases(&state, &cpu);
         async_suppression_cases(&state, &cpu);
         reset_copy_and_failure_cases(&state, &cpu);
+        deferred_reset_cases(&state, &cpu);
         dspic33_destroy(&cpu);
     }
     printf("[nvm-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",

@@ -8492,6 +8492,9 @@ static void complete_nvm_event(Dspic33* cpu) {
     raw_write_word(
         cpu, NVM_CONTROL,
         (uint16_t)(raw_word(cpu, NVM_CONTROL) & ~(NVM_WRITE | NVM_WRITE_ERROR)));
+    if (dspic33_complete_nvm_reset(cpu)) {
+        return;
+    }
     if (dspic33_watchdog_complete_nvm(cpu)) {
         return;
     }

@@ -167,6 +167,12 @@ static bool nvm_stalls_cpu(const Dspic33* cpu) {
     return auxiliary_target == auxiliary_program_address(cpu->pc);
 }
 
+static void advance_pending_nvm_reset(Dspic33* cpu) {
+    if (!dspic33_device_advance_nvm(cpu)) {
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    }
+}
+
 static uint32_t instruction_length(uint32_t opcode) {
     return (opcode & 0xff0000u) == 0x020000u || (opcode & 0xff0000u) == 0x040000u ||
                    (opcode & 0xff0000u) == 0x080000u
@@ -3674,6 +3680,17 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
     uint32_t auxiliary_pll_generation = cpu->io.auxiliary_pll_generation;
     Dspic33Oscillator oscillator = cpu->oscillator;
     size_t index;
+    if (cpu->nvm.active) {
+        if (!cpu->nvm.reset_pending) {
+            cpu->nvm.reset_cause = cause;
+            cpu->nvm.reset_kind = (uint8_t)kind;
+            cpu->nvm.reset_pending = true;
+        }
+        if (kind == DSPIC33_RESET_ILLEGAL) {
+            cpu->illegal_reset = true;
+        }
+        return;
+    }
     for (index = 0u; index < cpu->events.count; index++) {
         const Dspic33Event* event = &cpu->events.items[index];
         if (event->type == DSPIC33_EVENT_AUX_PLL &&
@@ -3829,6 +3846,19 @@ bool dspic33_watchdog_complete_nvm(Dspic33* cpu) {
     }
     cpu->watchdog.reset_pending = false;
     perform_warm_reset(cpu, 0x0010u, DSPIC33_RESET_HARDWARE);
+    return true;
+}
+
+bool dspic33_complete_nvm_reset(Dspic33* cpu) {
+    uint16_t cause;
+    Dspic33ResetKind kind;
+    if (!cpu->nvm.reset_pending) {
+        return false;
+    }
+    cause = cpu->nvm.reset_cause;
+    kind = (Dspic33ResetKind)cpu->nvm.reset_kind;
+    cpu->nvm.reset_pending = false;
+    perform_warm_reset(cpu, cause, kind);
     return true;
 }
 
@@ -4301,6 +4331,10 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     uint64_t base_cycles;
     uint64_t device_ratio;
     cpu->illegal_reset = false;
+    if (cpu->nvm.active && cpu->nvm.reset_pending) {
+        advance_pending_nvm_reset(cpu);
+        return cpu->stop_reason;
+    }
     if (cpu->nvm.active && nvm_stalls_cpu(cpu)) {
         if (!dspic33_device_advance_nvm(cpu)) {
             cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
@@ -4315,6 +4349,9 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
             return cpu->stop_reason;
         }
         if (cpu->illegal_reset) {
+            if (cpu->nvm.reset_pending) {
+                advance_pending_nvm_reset(cpu);
+            }
             return cpu->stop_reason;
         }
         cpu->previous_working_register_writes = 0u;
@@ -4332,6 +4369,9 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
             exception_dispatched = dspic33_device_service_interrupt(cpu);
         }
         if (cpu->illegal_reset) {
+            if (cpu->nvm.reset_pending) {
+                advance_pending_nvm_reset(cpu);
+            }
             return cpu->stop_reason;
         }
         if (exception_dispatched) {
@@ -4346,7 +4386,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         device_ratio = dspic33_device_instruction_cycles(cpu, 1u);
         cpu->sequential_program_hole_pc = 0u;
         enter_address_trap(cpu, return_pc, false);
-        if (!cpu->illegal_reset) {
+        if (!cpu->illegal_reset || cpu->nvm.reset_pending) {
             advance_instruction(cpu, 1u, false, device_ratio);
         }
         return cpu->stop_reason;
@@ -4374,6 +4414,9 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
                                auxiliary_program_address(instruction_pc));
             cycles = 5u;
         } else if (!dspic33_codeguard_admit_program_flow(cpu, instruction_pc, target)) {
+            if (cpu->nvm.reset_pending) {
+                advance_pending_nvm_reset(cpu);
+            }
             return cpu->stop_reason;
         } else {
             cycles = exception_pending(cpu) ? 5u : 6u;
@@ -4400,6 +4443,9 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
                                auxiliary_program_address(instruction_pc));
             cycles = 5u;
         } else if (!dspic33_codeguard_admit_program_flow(cpu, instruction_pc, target)) {
+            if (cpu->nvm.reset_pending) {
+                advance_pending_nvm_reset(cpu);
+            }
             return cpu->stop_reason;
         } else {
             cycles = exception_pending(cpu) ? 5u : 6u;
@@ -4450,11 +4496,14 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
             program_address_add(instruction_pc, (int32_t)instruction_length(opcode))) {
         if (!dspic33_codeguard_admit_program_flow(cpu, instruction_pc, cpu->pc)) {
             cpu->instruction_active = false;
+            if (cpu->nvm.reset_pending) {
+                advance_pending_nvm_reset(cpu);
+            }
             return cpu->stop_reason;
         }
     }
     cpu->instruction_active = false;
-    if (cpu->illegal_reset) {
+    if (cpu->illegal_reset && !cpu->nvm.reset_pending) {
         return cpu->stop_reason;
     }
     base_cycles = instruction_cycles(cpu, opcode, instruction_pc);
@@ -4510,7 +4559,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
             enter_trap(cpu, 1u, 0x000006u, 14u, 0x0008u, return_pc,
                        auxiliary_program_address(instruction_pc));
         }
-        if (cpu->illegal_reset) {
+        if (cpu->illegal_reset && !cpu->nvm.reset_pending) {
             return cpu->stop_reason;
         }
         advance_instruction(cpu, cycles, non_cpu_sfr_wait, device_ratio);
