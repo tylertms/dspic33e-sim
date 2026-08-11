@@ -622,6 +622,7 @@ typedef struct {
     Dspic33UsbHandshake usb_last_handshake;
     bool usb_host_pending;
     bool usb_host_attached;
+    bool usb_bus_idle;
     uint32_t auxiliary_pll_generation;
 } Dspic33Io;
 

@@ -10390,6 +10390,7 @@ static void usb_reset_runtime(Dspic33* cpu) {
     cpu->io.usb_last_handshake = DSPIC33_USB_HANDSHAKE_NONE;
     cpu->io.usb_host_pending = false;
     cpu->io.usb_host_attached = false;
+    cpu->io.usb_bus_idle = false;
     usb_reset_ping_pong(cpu);
 }
 
@@ -10728,6 +10729,7 @@ static void usb_run_bus_event(Dspic33* cpu, Dspic33UsbBusEvent event, uint16_t v
     uint16_t status;
     switch (event) {
     case DSPIC33_USB_BUS_RESET:
+        cpu->io.usb_bus_idle = false;
         raw_write_word(cpu, USB_ADDR, 0u);
         raw_write_word(cpu, USB_CON,
                        (uint16_t)(raw_word(cpu, USB_CON) & ~USB_PACKET_DISABLE));
@@ -10741,6 +10743,7 @@ static void usb_run_bus_event(Dspic33* cpu, Dspic33UsbBusEvent event, uint16_t v
         usb_refresh_transaction_status(cpu);
         break;
     case DSPIC33_USB_BUS_SOF:
+        cpu->io.usb_bus_idle = false;
         usb_set_frame(cpu,
                       value == UINT16_MAX ? (uint16_t)(usb_frame(cpu) + 1u) : value);
         raw_write_word(cpu, USB_IR,
@@ -10754,11 +10757,15 @@ static void usb_run_bus_event(Dspic33* cpu, Dspic33UsbBusEvent event, uint16_t v
         }
         break;
     case DSPIC33_USB_BUS_IDLE:
-        raw_write_word(cpu, USB_IR,
-                       (uint16_t)(raw_word(cpu, USB_IR) | USB_IDLE_INTERRUPT));
-        usb_refresh_interrupt(cpu);
+        if (!cpu->io.usb_bus_idle) {
+            cpu->io.usb_bus_idle = true;
+            raw_write_word(cpu, USB_IR,
+                           (uint16_t)(raw_word(cpu, USB_IR) | USB_IDLE_INTERRUPT));
+            usb_refresh_interrupt(cpu);
+        }
         break;
     case DSPIC33_USB_BUS_RESUME:
+        cpu->io.usb_bus_idle = false;
         raw_write_word(cpu, USB_PWRC,
                        (uint16_t)(raw_word(cpu, USB_PWRC) & ~USB_SUSPEND));
         raw_write_word(cpu, USB_IR,
@@ -10789,6 +10796,7 @@ static void usb_run_bus_event(Dspic33* cpu, Dspic33UsbBusEvent event, uint16_t v
         usb_refresh_interrupt(cpu);
         break;
     case DSPIC33_USB_BUS_ERROR:
+        cpu->io.usb_bus_idle = false;
         usb_set_error(cpu, (uint8_t)value);
         break;
     case DSPIC33_USB_BUS_OTG_STATE:

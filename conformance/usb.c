@@ -646,6 +646,44 @@ static void interrupt_and_bus_cases(UsbConformance* state, Dspic33* cpu) {
     expect(state, dspic33_read_word(cpu, OTGIR) == 0u, "USB OTG W1C");
 }
 
+static void idle_rearm_cases(UsbConformance* state, Dspic33* cpu) {
+    static const Dspic33UsbBusEvent resume_events[] = {
+        DSPIC33_USB_BUS_RESUME,
+        DSPIC33_USB_BUS_RESET,
+        DSPIC33_USB_BUS_SOF,
+        DSPIC33_USB_BUS_ERROR,
+    };
+    static const uint16_t resume_values[] = {0u, 0u, 1u, 1u};
+    size_t index;
+    configure_device(cpu);
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_IDLE, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               (dspic33_read_word(cpu, IR) & 0x0010u) != 0u && cpu->io.usb_bus_idle,
+           "B1 first USB idle indication sets UIDLE");
+    dspic33_write_word(cpu, IR, 0x0010u);
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_IDLE, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               (dspic33_read_word(cpu, IR) & 0x0010u) == 0u && cpu->io.usb_bus_idle,
+           "B1 persistent USB idle does not reassert UIDLE");
+    for (index = 0u; index < sizeof(resume_events) / sizeof(resume_events[0]);
+         index++) {
+        expect(state,
+               dspic33_usb_bus(cpu, resume_events[index], resume_values[index], 0u) &&
+                   dspic33_device_advance(cpu, 0u) && !cpu->io.usb_bus_idle,
+               "B1 USB bus activity rearms UIDLE detection");
+        dspic33_write_word(cpu, IR, 0xffffu);
+        dspic33_write_word(cpu, EIR, 0xffffu);
+        expect(state,
+               dspic33_usb_bus(cpu, DSPIC33_USB_BUS_IDLE, 0u, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   (dspic33_read_word(cpu, IR) & 0x0010u) != 0u && cpu->io.usb_bus_idle,
+               "B1 USB idle reasserts after bus activity");
+        dspic33_write_word(cpu, IR, 0x0010u);
+    }
+}
+
 static void host_interrupt_cases(UsbConformance* state, Dspic33* cpu) {
     Dspic33UsbPacket packet;
     uint8_t data[8] = {0u};
@@ -968,11 +1006,26 @@ static void copy_and_reset_cases(UsbConformance* state, Dspic33* cpu) {
                first.handshake == second.handshake &&
                memcmp(cpu->data + BUFFER, copy.data + BUFFER, 3u) == 0,
            "USB copied state matches");
+    configure_device(cpu);
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_IDLE, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u),
+           "USB copy idle state schedule");
+    dspic33_write_word(cpu, IR, 0x0010u);
+    expect(state, dspic33_copy(&copy, cpu), "copy B1 USB idle state");
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_IDLE, 0u, 0u) &&
+               dspic33_usb_bus(&copy, DSPIC33_USB_BUS_IDLE, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u) && dspic33_device_advance(&copy, 0u) &&
+               (dspic33_read_word(cpu, IR) & 0x0010u) == 0u &&
+               (dspic33_read_word(&copy, IR) & 0x0010u) == 0u,
+           "copied B1 USB idle state suppresses repeated UIDLE");
     dspic33_destroy(&copy);
     dspic33_reset(cpu, 0u);
     expect(state,
            cpu->io.usb_tx.count == 0u && cpu->io.usb_status_count == 0u &&
-               dspic33_read_word(cpu, PWRC) == 0u && dspic33_read_word(cpu, CON) == 0u,
+               !cpu->io.usb_bus_idle && dspic33_read_word(cpu, PWRC) == 0u &&
+               dspic33_read_word(cpu, CON) == 0u,
            "USB reset clears runtime");
 }
 
@@ -991,6 +1044,7 @@ int main(void) {
     boundary_and_order_cases(&state, &cpu);
     bus_access_error_cases(&state, &cpu);
     interrupt_and_bus_cases(&state, &cpu);
+    idle_rearm_cases(&state, &cpu);
     host_interrupt_cases(&state, &cpu);
     host_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
