@@ -601,6 +601,49 @@ static void transmit_mode_cases(UartConformance* state, Dspic33* cpu) {
     }
 }
 
+static void b1_transmit_pointer_cases(UartConformance* state, Dspic33* cpu) {
+    uint8_t channel;
+    Dspic33UartFrame output;
+    for (channel = 0u; channel < DSPIC33_UART_COUNT; channel++) {
+        uint16_t value = (uint16_t)(0xa0u + channel);
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, bases[channel], 0x8000u);
+        dspic33_write_word(cpu, (uint16_t)(bases[channel] + 4u), value);
+        expect(state,
+               cpu->io.uart_tx_fifo[channel].count == 1u &&
+                   dspic33_device_advance(cpu, 1000u) &&
+                   !dspic33_uart_transmit(cpu, channel, &output),
+               "B1 UART accepts TXREG before TXEN without transmitting");
+        dspic33_write_word(cpu, bases[channel], 0u);
+        expect(state, cpu->io.uart_tx_fifo[channel].count == 1u,
+               "B1 UART disable preserves write pointer while TXEN is clear");
+        dspic33_write_word(cpu, bases[channel], 0x8000u);
+        dspic33_write_word(cpu, (uint16_t)(bases[channel] + 2u), 0x0400u);
+        expect(state,
+               dspic33_device_advance(cpu, 160u) &&
+                   dspic33_uart_transmit(cpu, channel, &output) &&
+                   output.value == value,
+               "B1 UART transmits preserved data after TXEN is set");
+
+        dspic33_reset(cpu, 0u);
+        configure(cpu, channel, 0x8000u, 0x0400u, 0u);
+        dspic33_write_word(cpu, (uint16_t)(bases[channel] + 4u), value);
+        dspic33_write_word(cpu, (uint16_t)(bases[channel] + 4u),
+                           (uint16_t)(value + 0x10u));
+        dspic33_write_word(cpu, bases[channel], 0u);
+        expect(state,
+               cpu->io.uart_tx_fifo[channel].count == 0u &&
+                   (cpu->io.uart_tx_active & (uint8_t)(1u << channel)) == 0u,
+               "B1 UART disable clears write pointer while TXEN is set");
+        dspic33_write_word(cpu, bases[channel], 0x8000u);
+        dspic33_write_word(cpu, (uint16_t)(bases[channel] + 2u), 0x0400u);
+        expect(state,
+               dspic33_device_advance(cpu, 1000u) &&
+                   !dspic33_uart_transmit(cpu, channel, &output),
+               "B1 UART cleared write pointer does not transmit stale data");
+    }
+}
+
 static void cts_cases(UartConformance* state, Dspic33* cpu) {
     Dspic33UartFrame output;
     dspic33_reset(cpu, 0u);
@@ -736,6 +779,7 @@ int main(void) {
         transmit_fifo_cases(&state, &cpu);
         transmit_timing_cases(&state, &cpu);
         transmit_mode_cases(&state, &cpu);
+        b1_transmit_pointer_cases(&state, &cpu);
         cts_cases(&state, &cpu);
         dma_cases(&state, &cpu);
         disable_copy_and_api_cases(&state, &cpu);

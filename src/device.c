@@ -7913,6 +7913,18 @@ static void uart_reset_runtime(Dspic33* cpu, uint8_t channel) {
                    (uint16_t)(controls | UART_STATUS_TX_EMPTY | UART_STATUS_RX_IDLE));
 }
 
+static void uart_disable_module(Dspic33* cpu, uint8_t channel) {
+    uint16_t base = uart_bases[channel];
+    uint16_t status = raw_word(cpu, (uint16_t)(base + 2u));
+    bool preserve_write_pointer = (status & UART_STATUS_TX_ENABLE) == 0u;
+    Dspic33UartFifo fifo = cpu->io.uart_tx_fifo[channel];
+    uart_reset_runtime(cpu, channel);
+    if (preserve_write_pointer) {
+        cpu->io.uart_tx_fifo[channel] = fifo;
+        uart_refresh_status(cpu, channel);
+    }
+}
+
 static bool uart_transmitter_enabled(const Dspic33* cpu, uint8_t channel) {
     uint16_t base = uart_bases[channel];
     return !uart_module_disabled(cpu, channel) &&
@@ -11458,7 +11470,7 @@ static void update_uart_register(Dspic33* cpu, uint16_t address, uint16_t previo
             uint16_t mode = raw_word(cpu, base);
             if ((previous & UART_MODE_ENABLE) != 0u &&
                 (mode & UART_MODE_ENABLE) == 0u) {
-                uart_reset_runtime(cpu, channel);
+                uart_disable_module(cpu, channel);
             } else {
                 uart_refresh_status(cpu, channel);
             }
@@ -11494,7 +11506,8 @@ static void update_uart_register(Dspic33* cpu, uint16_t address, uint16_t previo
             memset(&frame, 0, sizeof(frame));
             frame.value = requested & 0x01ffu;
             raw_write_word(cpu, (uint16_t)(base + 4u), 0u);
-            if (uart_transmitter_enabled(cpu, channel) &&
+            if (!uart_module_disabled(cpu, channel) &&
+                (raw_word(cpu, base) & UART_MODE_ENABLE) != 0u &&
                 uart_fifo_push(&cpu->io.uart_tx_fifo[channel], &frame)) {
                 uart_start_transmit(cpu, channel);
             }
