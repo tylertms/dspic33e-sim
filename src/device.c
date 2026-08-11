@@ -656,6 +656,13 @@ enum {
     REFERENCE_CLOCK_CONTROL = 0x074eu,
     REFERENCE_CLOCK_ENABLE = 0x8000u,
     REFERENCE_CLOCK_DIVISOR = 0x0f00u,
+    MAIN_CLOCK_DIVISOR = 0x0744u,
+    MAIN_PLL_FEEDBACK = 0x0746u,
+    MAIN_OSCILLATOR_TUNING = 0x0748u,
+    MAIN_PLL_PRESCALER = 0x001fu,
+    MAIN_FRC_DIVISOR = 0x0700u,
+    MAIN_PLL_FEEDBACK_DIVISOR = 0x01ffu,
+    MAIN_FRC_TUNING = 0x003fu,
     AUXILIARY_PLL_ENABLE = 0x8000u,
     AUXILIARY_PLL_LOCK = 0x4000u,
     AUXILIARY_CLOCK_WRITABLE = 0xbee7u,
@@ -9252,6 +9259,70 @@ static void schedule_oscillator_readiness(Dspic33* cpu, uint16_t control) {
                                                            : OSCILLATOR_SWITCH_DELAY);
 }
 
+static uint8_t configured_main_pll_source(const Dspic33* cpu, uint16_t control) {
+    if (cpu->oscillator.active) {
+        if (oscillator_direct_pll_transition(control)) {
+            return UINT8_MAX;
+        }
+        return oscillator_requested_source(control);
+    }
+    return oscillator_current_source(control);
+}
+
+static bool main_pll_relock_required(const Dspic33* cpu, uint16_t address,
+                                     uint16_t previous, uint16_t current) {
+    uint16_t control = raw_word(cpu, OSCILLATOR_CONTROL);
+    uint8_t source = configured_main_pll_source(cpu, control);
+    uint16_t changed = (uint16_t)(previous ^ current);
+    if (source != 1u && source != 3u) {
+        return false;
+    }
+    if (address == MAIN_PLL_FEEDBACK) {
+        return (changed & MAIN_PLL_FEEDBACK_DIVISOR) != 0u;
+    }
+    if (address == MAIN_OSCILLATOR_TUNING) {
+        return source == 1u && (changed & MAIN_FRC_TUNING) != 0u;
+    }
+    if (address != MAIN_CLOCK_DIVISOR) {
+        return false;
+    }
+    if ((changed & MAIN_PLL_PRESCALER) != 0u) {
+        return true;
+    }
+    return source == 1u && (changed & MAIN_FRC_DIVISOR) != 0u;
+}
+
+static void restart_main_pll_lock(Dspic33* cpu) {
+    uint16_t control = raw_word(cpu, OSCILLATOR_CONTROL);
+    bool source_ready = cpu->oscillator.active && cpu->oscillator.source_ready;
+    cpu->oscillator.generation++;
+    cpu->oscillator.lock_pending = source_ready || !cpu->oscillator.active;
+    cpu->oscillator.source_ready = source_ready;
+    raw_write_word(cpu, OSCILLATOR_CONTROL, (uint16_t)(control & ~OSCILLATOR_PLL_LOCK));
+    if (cpu->oscillator.lock_pending) {
+        schedule_oscillator_event(cpu, OSCILLATOR_EVENT_LOCK, OSCILLATOR_SWITCH_DELAY);
+    } else {
+        schedule_oscillator_readiness(cpu, control);
+    }
+}
+
+static void update_main_clock_configuration(Dspic33* cpu, uint16_t address,
+                                            uint16_t previous) {
+    uint16_t control = raw_word(cpu, OSCILLATOR_CONTROL);
+    uint16_t current = raw_word(cpu, address);
+    if (address != MAIN_CLOCK_DIVISOR && address != MAIN_PLL_FEEDBACK &&
+        address != MAIN_OSCILLATOR_TUNING) {
+        return;
+    }
+    if (oscillator_configuration_locked(cpu, control)) {
+        raw_write_word(cpu, address, previous);
+        return;
+    }
+    if (main_pll_relock_required(cpu, address, previous, current)) {
+        restart_main_pll_lock(cpu);
+    }
+}
+
 static void oscillator_configuration_changed(Dspic33* cpu, uint8_t previous) {
     uint16_t control = raw_word(cpu, OSCILLATOR_CONTROL);
     uint8_t requested = oscillator_requested_source(control);
@@ -10223,6 +10294,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
             }
         }
     }
+    update_main_clock_configuration(cpu, base, previous);
     if (base == 0x0748u &&
         auxiliary_pll_input(raw_word(cpu, AUXILIARY_CLOCK_CONTROL)) == 1u &&
         ((previous ^ raw_word(cpu, base)) & 0x003fu) != 0u) {

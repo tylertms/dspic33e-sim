@@ -20,6 +20,9 @@ enum {
     REFERENCE_CLOCK_SLEEP = 0x2000u,
     REFERENCE_CLOCK_SOURCE = 0x1000u,
     REFERENCE_CLOCK_DIVISOR = 0x0f00u,
+    MAIN_CLOCK_DIVISOR = 0x0744u,
+    MAIN_PLL_FEEDBACK = 0x0746u,
+    MAIN_OSCILLATOR_TUNING = 0x0748u,
     CONFIGURATION_FOSCSEL = 0xf80006u,
     CONFIGURATION_FOSC = 0xf80008u,
     CONFIGURATION_FWDT = 0xf8000au,
@@ -98,6 +101,20 @@ static bool program_fwdt(Dspic33* cpu, uint8_t value) {
     cpu->nvm.latches[0] = value;
     dspic33_complete_nvm(cpu);
     return dspic33_read_configuration_byte(cpu, CONFIGURATION_FWDT) == value;
+}
+
+static bool select_locked_main_pll(Dspic33* cpu, uint8_t source) {
+    dspic33_load_configuration_word(cpu, CONFIGURATION_FOSCSEL, 0x0078u);
+    dspic33_load_configuration_word(cpu, CONFIGURATION_FOSC, 0x005eu);
+    dspic33_load_configuration_word(cpu, CONFIGURATION_FWDT, 0x00ffu);
+    dspic33_reset(cpu, 0u);
+    if (write_protected_byte(cpu, OSCILLATOR_CONTROL + 1u, source) != DSPIC33_RUNNING ||
+        write_protected_byte(cpu, OSCILLATOR_CONTROL, OSCILLATOR_SWITCH_ENABLE) !=
+            DSPIC33_RUNNING ||
+        !dspic33_device_advance(cpu, OSCILLATOR_SWITCH_DELAY)) {
+        return false;
+    }
+    return control(cpu) == (uint16_t)(source * 0x1100u + OSCILLATOR_PLL_LOCK);
 }
 
 static void reset_cases(OscillatorConformance* state, Dspic33* cpu) {
@@ -833,6 +850,261 @@ static void reference_clock_cases(OscillatorConformance* state, Dspic33* source,
            "reference clock writes create no oscillator lifecycle");
 }
 
+static void main_pll_configuration_cases(OscillatorConformance* state, Dspic33* source,
+                                         Dspic33* copy) {
+    uint32_t generation;
+    uint64_t deadline;
+
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSC, 0x005eu);
+    dspic33_reset(source, 0u);
+    write_protected_byte(source, OSCILLATOR_CONTROL, OSCILLATOR_CLOCK_LOCK);
+    generation = source->oscillator.generation;
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR, 0xffffu);
+    dspic33_write_word(source, MAIN_PLL_FEEDBACK, 0xffffu);
+    dspic33_write_word(source, MAIN_OSCILLATOR_TUNING, 0xffffu);
+    expect(state,
+           dspic33_read_word(source, MAIN_CLOCK_DIVISOR) == 0x3040u &&
+               dspic33_read_word(source, MAIN_PLL_FEEDBACK) == 0x0030u &&
+               dspic33_read_word(source, MAIN_OSCILLATOR_TUNING) == 0u,
+           "effective CLKLOCK rejects main PLL word writes");
+    dspic33_write_byte(source, MAIN_CLOCK_DIVISOR, 0x1fu);
+    dspic33_write_byte(source, MAIN_CLOCK_DIVISOR + 1u, 0x07u);
+    dspic33_write_byte(source, MAIN_PLL_FEEDBACK, 0xffu);
+    dspic33_write_byte(source, MAIN_PLL_FEEDBACK + 1u, 0x01u);
+    dspic33_write_byte(source, MAIN_OSCILLATOR_TUNING, 0x3fu);
+    expect(state,
+           dspic33_read_word(source, MAIN_CLOCK_DIVISOR) == 0x3040u &&
+               dspic33_read_word(source, MAIN_PLL_FEEDBACK) == 0x0030u &&
+               dspic33_read_word(source, MAIN_OSCILLATOR_TUNING) == 0u,
+           "effective CLKLOCK rejects main PLL byte writes");
+    expect(state,
+           source->oscillator.generation == generation && source->events.count == 0u,
+           "rejected main PLL writes preserve oscillator lifecycle");
+
+    expect(state, program_fosc(source, 0x001eu),
+           "FCKSM zero-zero immediately unlocks clock configuration");
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR, 0x071fu);
+    dspic33_write_word(source, MAIN_PLL_FEEDBACK, 0x01ffu);
+    dspic33_write_word(source, MAIN_OSCILLATOR_TUNING, 0x003fu);
+    expect(state,
+           dspic33_read_word(source, MAIN_CLOCK_DIVISOR) == 0x071fu &&
+               dspic33_read_word(source, MAIN_PLL_FEEDBACK) == 0x01ffu &&
+               dspic33_read_word(source, MAIN_OSCILLATOR_TUNING) == 0x003fu,
+           "FCKSM zero-zero permits clock configuration with CLKLOCK set");
+    expect(state,
+           source->oscillator.generation == generation && !source->oscillator.active &&
+               !source->oscillator.lock_pending && source->events.count == 0u,
+           "non-PLL configuration writes create no relock lifecycle");
+    expect(state, program_fosc(source, 0x00deu),
+           "FCKSM one-one immediately locks clock configuration");
+    dspic33_write_word(source, MAIN_PLL_FEEDBACK, 0x0030u);
+    expect(state, dspic33_read_word(source, MAIN_PLL_FEEDBACK) == 0x01ffu,
+           "FCKSM one-one enforces CLKLOCK");
+    expect(state, program_fosc(source, 0x009eu),
+           "FCKSM one-zero immediately unlocks clock configuration");
+    dspic33_write_word(source, MAIN_PLL_FEEDBACK, 0x0030u);
+    expect(state, dspic33_read_word(source, MAIN_PLL_FEEDBACK) == 0x0030u,
+           "FCKSM one-zero permits clock configuration with CLKLOCK set");
+
+    expect(state, select_locked_main_pll(source, 1u),
+           "select stable FRCPLL for relock cases");
+    generation = source->oscillator.generation;
+    dspic33_write_word(source, MAIN_PLL_FEEDBACK, 0x0031u);
+    expect(state,
+           control(source) == 0x1100u && source->oscillator.lock_pending &&
+               !source->oscillator.active &&
+               source->oscillator.generation == generation + 1u &&
+               source->events.count == 1u && source->events.items[0].source == 2u,
+           "FRCPLL feedback change restarts lock");
+    expect(state, dspic33_device_advance(source, 31u) && control(source) == 0x1100u,
+           "FRCPLL feedback remains unlocked before new deadline");
+    expect(state, dspic33_device_advance(source, 1u) && control(source) == 0x1120u,
+           "FRCPLL feedback relocks at new deadline");
+
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR, 0x3041u);
+    expect(state, control(source) == 0x1100u && source->oscillator.lock_pending,
+           "FRCPLL prescaler change restarts lock");
+    expect(state, dspic33_device_advance(source, 32u) && control(source) == 0x1120u,
+           "FRCPLL prescaler relocks");
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR, 0x3141u);
+    expect(state, control(source) == 0x1100u && source->oscillator.lock_pending,
+           "FRCPLL input divider change restarts lock");
+    expect(state, dspic33_device_advance(source, 32u) && control(source) == 0x1120u,
+           "FRCPLL input divider relocks");
+    dspic33_write_word(source, MAIN_OSCILLATOR_TUNING, 0x0001u);
+    expect(state, control(source) == 0x1100u && source->oscillator.lock_pending,
+           "FRCPLL tuning change restarts lock");
+    expect(state, dspic33_device_advance(source, 32u) && control(source) == 0x1120u,
+           "FRCPLL tuning relocks");
+
+    generation = source->oscillator.generation;
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR, 0x3101u);
+    expect(state,
+           control(source) == 0x1120u && source->oscillator.generation == generation &&
+               source->events.count == 0u,
+           "FRCPLL postscaler change preserves lock");
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR, 0x0101u);
+    expect(state,
+           control(source) == 0x1120u && source->oscillator.generation == generation &&
+               source->events.count == 0u,
+           "FRCPLL DOZE field change preserves PLL lock");
+
+    expect(state, select_locked_main_pll(source, 3u),
+           "select stable POSCPLL for relock cases");
+    dspic33_write_word(source, MAIN_PLL_FEEDBACK, 0x0031u);
+    expect(state, control(source) == 0x3300u && source->oscillator.lock_pending,
+           "POSCPLL feedback change restarts lock");
+    expect(state, dspic33_device_advance(source, 32u) && control(source) == 0x3320u,
+           "POSCPLL feedback relocks");
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR, 0x3041u);
+    expect(state, control(source) == 0x3300u && source->oscillator.lock_pending,
+           "POSCPLL prescaler change restarts lock");
+    expect(state, dspic33_device_advance(source, 32u) && control(source) == 0x3320u,
+           "POSCPLL prescaler relocks");
+    generation = source->oscillator.generation;
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR, 0x3141u);
+    dspic33_write_word(source, MAIN_OSCILLATOR_TUNING, 0x0001u);
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR, 0x3101u);
+    expect(state,
+           control(source) == 0x3320u && source->oscillator.generation == generation &&
+               source->events.count == 0u,
+           "POSCPLL irrelevant fields preserve lock");
+
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSCSEL, 0x00fbu);
+    dspic33_reset(source, 0u);
+    generation = source->oscillator.generation;
+    dspic33_write_word(source, MAIN_PLL_FEEDBACK, 0x0031u);
+    expect(state,
+           control(source) == 0x0300u && source->oscillator.active &&
+               source->oscillator.automatic && !source->oscillator.source_ready &&
+               source->oscillator.generation == generation + 1u,
+           "pre-source PLL change restarts switch generation");
+    expect(state,
+           dspic33_device_advance(source, 1u) && source->oscillator.source_ready &&
+               source->oscillator.lock_pending,
+           "restarted PLL switch reaches source-ready phase");
+    expect(state, dspic33_device_advance(source, 31u) && control(source) == 0x3320u,
+           "restarted PLL switch locks and transfers");
+
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSCSEL, 0x0078u);
+    dspic33_reset(source, 0u);
+    write_protected_byte(source, OSCILLATOR_CONTROL + 1u, 3u);
+    write_protected_byte(source, OSCILLATOR_CONTROL, OSCILLATOR_SWITCH_ENABLE);
+    dspic33_device_advance(source, 1u);
+    generation = source->oscillator.generation;
+    deadline = source->events.items[0].cycle;
+    dspic33_write_word(source, MAIN_PLL_FEEDBACK, 0x0031u);
+    expect(state,
+           source->oscillator.active && source->oscillator.source_ready &&
+               source->oscillator.lock_pending &&
+               source->oscillator.generation == generation + 1u &&
+               source->events.items[source->events.count - 1u].cycle ==
+                   source->device_cycles + OSCILLATOR_SWITCH_DELAY &&
+               source->events.items[0].cycle == deadline,
+           "source-ready PLL change replaces lock deadline and leaves stale event");
+    expect(state, dspic33_device_advance(source, 31u) && control(source) == 0x0301u,
+           "stale source-ready lock event cannot transfer");
+    expect(state, dspic33_device_advance(source, 1u) && control(source) == 0x3320u,
+           "replacement source-ready lock event transfers");
+
+    dspic33_load_configuration_word(source, CONFIGURATION_FWDT, 0x00dfu);
+    dspic33_reset(source, 0u);
+    write_protected_byte(source, OSCILLATOR_CONTROL + 1u, 1u);
+    write_protected_byte(source, OSCILLATOR_CONTROL, OSCILLATOR_SWITCH_ENABLE);
+    dspic33_device_advance(source, 1u);
+    generation = source->oscillator.generation;
+    dspic33_write_word(source, MAIN_OSCILLATOR_TUNING, 0x0001u);
+    expect(state,
+           control(source) == 0x1100u && !source->oscillator.active &&
+               source->oscillator.lock_pending &&
+               source->oscillator.generation == generation + 1u,
+           "PLLK zero post-transfer change replaces lock deadline");
+    expect(state, dspic33_device_advance(source, 31u) && control(source) == 0x1100u,
+           "stale PLLK zero lock event cannot lock");
+    expect(state, dspic33_device_advance(source, 1u) && control(source) == 0x1120u,
+           "replacement PLLK zero event locks");
+
+    dspic33_load_configuration_word(source, CONFIGURATION_FWDT, 0x00ffu);
+    expect(state, select_locked_main_pll(source, 1u),
+           "select FRCPLL for prohibited direct transition");
+    write_protected_byte(source, OSCILLATOR_CONTROL + 1u, 3u);
+    write_protected_byte(source, OSCILLATOR_CONTROL, OSCILLATOR_SWITCH_ENABLE);
+    generation = source->oscillator.generation;
+    dspic33_write_word(source, MAIN_PLL_FEEDBACK, 0x0031u);
+    expect(state,
+           control(source) == 0x1321u && source->oscillator.active &&
+               source->oscillator.generation == generation &&
+               source->events.count == 0u,
+           "PLL register write cannot complete prohibited direct transition");
+    expect(state, dspic33_device_advance(source, 32u) && control(source) == 0x1321u,
+           "prohibited direct transition remains pending after PLL write");
+
+    expect(state, select_locked_main_pll(source, 1u),
+           "select FRCPLL for switch-away configuration change");
+    generation = source->oscillator.generation;
+    dspic33_write_word(source, MAIN_PLL_FEEDBACK, 0x0030u);
+    expect(state,
+           control(source) == 0x1120u && source->oscillator.generation == generation &&
+               source->events.count == 0u,
+           "unchanged PLL configuration preserves lock lifecycle");
+    write_protected_byte(source, OSCILLATOR_CONTROL + 1u, 2u);
+    write_protected_byte(source, OSCILLATOR_CONTROL, OSCILLATOR_SWITCH_ENABLE);
+    generation = source->oscillator.generation;
+    deadline = source->events.items[0].cycle;
+    dspic33_write_word(source, MAIN_PLL_FEEDBACK, 0x0031u);
+    expect(state,
+           control(source) == 0x1201u && source->oscillator.active &&
+               source->oscillator.generation == generation &&
+               source->events.count == 1u && source->events.items[0].cycle == deadline,
+           "PLL change while switching away preserves destination readiness");
+    expect(state, dspic33_device_advance(source, 31u) && control(source) == 0x2200u,
+           "switch away from PLL completes after configuration change");
+
+    expect(state, select_locked_main_pll(source, 1u),
+           "select FRCPLL for relock lifecycle");
+    dspic33_write_word(source, MAIN_PLL_FEEDBACK, 0x0031u);
+    dspic33_device_advance(source, 10u);
+    expect(state, dspic33_copy(copy, source), "copy preserves main PLL relock");
+    expect(state,
+           copy->oscillator.lock_pending && copy->events.count == 1u &&
+               dspic33_device_advance(source, 22u) && control(source) == 0x1120u &&
+               dspic33_device_advance(copy, 22u) && control(copy) == 0x1120u,
+           "copied main PLL relocks complete independently");
+
+    dspic33_write_word(source, MAIN_PLL_FEEDBACK, 0x0032u);
+    dspic33_device_advance(source, 10u);
+    dspic33_load_program_word(source, 0u, OPCODE_RESET);
+    source->pc = 0u;
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING && source->oscillator.lock_pending &&
+               source->events.count == 1u && control(source) == 0x1100u,
+           "warm reset reconstructs main PLL relock");
+    expect(state, dspic33_device_advance(source, 21u) && control(source) == 0x1120u,
+           "warm-reset main PLL relock keeps remaining deadline");
+
+    dspic33_write_word(source, MAIN_PLL_FEEDBACK, 0x0033u);
+    dspic33_reset(source, 0u);
+    expect(state,
+           control(source) == 0u && !source->oscillator.lock_pending &&
+               source->events.count == 0u &&
+               dspic33_read_word(source, MAIN_PLL_FEEDBACK) == 0x0030u,
+           "cold reset cancels relock and restores PLL configuration");
+
+    expect(state, select_locked_main_pll(source, 1u),
+           "select FRCPLL for relock schedule failure");
+    source->device_cycles = UINT64_MAX;
+    dspic33_write_word(source, MAIN_PLL_FEEDBACK, 0x0031u);
+    expect(state,
+           source->stop_reason == DSPIC33_EVENT_QUEUE_ERROR &&
+               control(source) == 0x1100u && source->oscillator.lock_pending &&
+               source->events.count == 0u,
+           "main PLL relock schedule failure is explicit and deterministic");
+
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSCSEL, 0x0078u);
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSC, 0x005eu);
+    dspic33_load_configuration_word(source, CONFIGURATION_FWDT, 0x00ffu);
+}
+
 static void lifecycle_cases(OscillatorConformance* state, Dspic33* source,
                             Dspic33* copy) {
     dspic33_reset(source, 0u);
@@ -929,8 +1201,9 @@ int main(void) {
     pll_lock_sequence_cases(&state, &source, &copy);
     two_speed_startup_cases(&state, &source, &copy);
     reference_clock_cases(&state, &source, &copy);
+    main_pll_configuration_cases(&state, &source, &copy);
     lifecycle_cases(&state, &source, &copy);
-    expect(&state, state.cases == 224u, "oscillator assertion arithmetic");
+    expect(&state, state.cases == 276u, "oscillator assertion arithmetic");
     printf("[oscillator-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32
            "\n",
            state.cases, state.passed, state.failed);
