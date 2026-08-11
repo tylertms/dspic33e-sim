@@ -597,6 +597,7 @@ typedef struct {
     uint16_t spi_generation[DSPIC33_SPI_COUNT];
     uint8_t spi_busy;
     uint8_t spi_selected;
+    uint8_t spi_frame_active;
     uint64_t cpu_write_cycle;
     uint32_t cpu_write_address;
     uint16_t cpu_write_previous;
@@ -820,6 +821,8 @@ bool dspic33_uart_set_cts(Dspic33* cpu, uint8_t channel, bool clear, uint64_t de
 bool dspic33_uart_transmit(Dspic33* cpu, uint8_t channel, Dspic33UartFrame* frame);
 bool dspic33_spi_receive(Dspic33* cpu, uint8_t channel, uint16_t value, uint64_t delay);
 bool dspic33_spi_select(Dspic33* cpu, uint8_t channel, bool selected, uint64_t delay);
+bool dspic33_spi_frame_output(const Dspic33* cpu, uint8_t channel, bool* high);
+bool dspic33_spi_frame_pin(const Dspic33* cpu, uint8_t pin, bool* high);
 bool dspic33_i2c_respond(Dspic33* cpu, uint8_t channel, uint8_t value, bool acknowledge,
                          uint64_t delay);
 bool dspic33_i2c_slave_start(Dspic33* cpu, uint8_t channel, uint16_t address, bool read,

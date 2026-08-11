@@ -504,6 +504,133 @@ static void selection_and_frame_cases(SpiConformance* state, Dspic33* cpu) {
     }
 }
 
+static void b1_frame_output_cases(SpiConformance* state, Dspic33* cpu, Dspic33* copy) {
+    static const uint8_t frame_functions[DSPIC33_SPI_COUNT] = {7u, 10u, 33u, 36u};
+    uint8_t channel;
+    bool high = false;
+    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
+        uint16_t base = bases[channel];
+        uint8_t bit = (uint8_t)(1u << channel);
+        uint8_t master;
+        for (master = 0u; master < 2u; master++) {
+            uint8_t polarity;
+            for (polarity = 0u; polarity < 2u; polarity++) {
+                uint8_t delay;
+                for (delay = 0u; delay < 2u; delay++) {
+                    uint16_t control = master != 0u ? 0x043bu : 0x0400u;
+                    uint16_t control2 =
+                        (uint16_t)(0x8000u | ((uint16_t)polarity << 13u) |
+                                   ((uint16_t)delay << 1u));
+                    uint16_t received = (uint16_t)(0xd800u + ((uint16_t)channel << 4u) +
+                                                   ((uint16_t)master << 3u) +
+                                                   ((uint16_t)polarity << 2u) + delay);
+                    uint16_t transmitted =
+                        (uint16_t)(0xa500u + ((uint16_t)channel << 4u) +
+                                   ((uint16_t)master << 3u) +
+                                   ((uint16_t)polarity << 2u) + delay);
+                    bool starts_active =
+                        polarity != 0u && (master == 0u || delay == 0u);
+                    dspic33_reset(cpu, 0u);
+                    configure_spi(cpu, channel, control, control2, 0u);
+                    expect(state,
+                           dspic33_spi_frame_output(cpu, channel, &high) &&
+                               high == (polarity == 0u),
+                           "B1 frame output starts at inactive polarity");
+                    dspic33_write_word(cpu, (uint16_t)(base + 8u), transmitted);
+                    expect(state,
+                           dspic33_read_word(cpu, (uint16_t)(base + 4u)) == control2 &&
+                               dspic33_spi_frame_output(cpu, channel, &high) &&
+                               high == (starts_active || polarity == 0u) &&
+                               ((cpu->io.spi_frame_active & bit) != 0u) ==
+                                   starts_active &&
+                               cpu->events.count ==
+                                   (master != 0u
+                                        ? (polarity != 0u && delay != 0u ? 2u : 1u)
+                                        : 0u),
+                           "B1 framed master applies polarity and delay behavior");
+                    if (master != 0u) {
+                        uint64_t cycles = transfer_cycles(control);
+                        if (polarity != 0u && delay != 0u) {
+                            uint64_t clock = cycles / 16u;
+                            expect(state,
+                                   dspic33_device_advance(cpu, clock) &&
+                                       dspic33_spi_frame_output(cpu, channel, &high) &&
+                                       high,
+                                   "master delayed frame begins with first clock");
+                            cycles -= clock;
+                        }
+                        expect(state, dspic33_device_advance(cpu, cycles),
+                               "B1 master frame transfer completes");
+                    } else {
+                        expect(state,
+                               dspic33_spi_receive(cpu, channel, received, 1u) &&
+                                   dspic33_device_advance(cpu, 1u),
+                               "B1 slave framed master transfer completes");
+                    }
+                    expect(state,
+                           dspic33_spi_frame_output(cpu, channel, &high) &&
+                               high == (polarity == 0u) &&
+                               (cpu->io.spi_frame_active & bit) == 0u &&
+                               dspic33_read_word(cpu, (uint16_t)(base + 8u)) ==
+                                   (master != 0u ? transmitted : received),
+                           "B1 frame returns to inactive polarity after transfer");
+                }
+            }
+        }
+
+        dspic33_reset(cpu, 0u);
+        configure_spi(cpu, channel, 0x043bu, 0xa000u, 0u);
+        dspic33_write_word(cpu, 0x0680u, frame_functions[channel]);
+        expect(state, dspic33_spi_frame_pin(cpu, 64u, &high) && !high,
+               "mapped B1 frame pin starts inactive");
+        dspic33_write_word(cpu, (uint16_t)(base + 8u), (uint16_t)(0xe100u + channel));
+        expect(state, dspic33_spi_frame_pin(cpu, 64u, &high) && high,
+               "mapped B1 frame pin follows active pulse");
+        dspic33_write_word(cpu, 0x0680u, 0u);
+        expect(state, !dspic33_spi_frame_pin(cpu, 64u, &high),
+               "B1 frame pin releases after live remap");
+        dspic33_write_word(cpu, 0x0680u, frame_functions[channel]);
+        expect(state,
+               dspic33_device_advance(cpu, transfer_cycles(0x043bu)) &&
+                   dspic33_spi_frame_pin(cpu, 64u, &high) && !high,
+               "remapped B1 frame pin follows transfer completion");
+        dspic33_write_word(cpu, (uint16_t)(base + 4u), 0x8000u);
+        dspic33_write_word(cpu, (uint16_t)(base + 8u), (uint16_t)(0xe200u + channel));
+        expect(state,
+               dspic33_spi_frame_pin(cpu, 64u, &high) && high &&
+                   (cpu->io.spi_frame_active & bit) == 0u,
+               "mapped B1 frame pin suppresses active-low pulse");
+        expect(state,
+               dspic33_device_advance(cpu, transfer_cycles(0x043bu)) &&
+                   dspic33_spi_frame_pin(cpu, 64u, &high) && high,
+               "mapped B1 active-low frame remains inactive after transfer");
+    }
+
+    dspic33_reset(cpu, 0u);
+    configure_spi(cpu, 0u, 0x043bu, 0xa000u, 0u);
+    dspic33_write_word(cpu, 0x0248u, 0xea5eu);
+    expect(state, dspic33_copy(copy, cpu), "copy active B1 frame output");
+    expect(state,
+           dspic33_spi_frame_output(cpu, 0u, &high) && high &&
+               dspic33_spi_frame_output(copy, 0u, &high) && high,
+           "copied B1 frame output remains active");
+    expect(state, dspic33_device_advance(copy, transfer_cycles(0x043bu)),
+           "copied B1 frame transfer completes");
+    expect(state,
+           dspic33_spi_frame_output(copy, 0u, &high) && !high &&
+               dspic33_spi_frame_output(cpu, 0u, &high) && high,
+           "copied B1 frame output advances independently");
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           cpu->io.spi_frame_active == 0u &&
+               !dspic33_spi_frame_output(cpu, 0u, &high) &&
+               !dspic33_spi_frame_output(cpu, DSPIC33_SPI_COUNT, &high) &&
+               !dspic33_spi_frame_output(cpu, 0u, NULL) &&
+               !dspic33_spi_frame_pin(cpu, 0u, &high) &&
+               !dspic33_spi_frame_pin(cpu, 64u, NULL),
+           "reset and invalid access release B1 frame output");
+}
+
 static void clock_and_power_cases(SpiConformance* state, Dspic33* cpu) {
     uint8_t channel;
     for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
@@ -707,11 +834,13 @@ int main(void) {
         interrupt_mode_cases(&state, &cpu);
         mode_transition_cases(&state, &cpu);
         selection_and_frame_cases(&state, &cpu);
+        b1_frame_output_cases(&state, &cpu, &copy);
         clock_and_power_cases(&state, &cpu);
         pmd_cases(&state, &cpu);
         dma_cases(&state, &cpu);
         copy_and_reset_cases(&state, &cpu, &copy);
     }
+    expect(&state, state.cases == 2711u, "SPI assertion accounting");
     if (copy_initialized) {
         dspic33_destroy(&copy);
     }
