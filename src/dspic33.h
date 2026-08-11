@@ -723,6 +723,7 @@ bool dspic33_schedule(Dspic33* cpu, Dspic33EventType type, uint16_t source,
 void dspic33_reorder_events(Dspic33* cpu);
 void dspic33_raise_interrupt(Dspic33* cpu, uint16_t irq);
 void dspic33_raise_oscillator_fail_trap(Dspic33* cpu);
+bool dspic33_oscillator_failure_detected(Dspic33* cpu);
 void dspic33_set_generic_hard_trap_source(Dspic33* cpu, bool active);
 void dspic33_set_generic_soft_trap_source(Dspic33* cpu, bool active);
 bool dspic33_uart_receive(Dspic33* cpu, uint8_t channel, uint8_t value, uint64_t delay);

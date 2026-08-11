@@ -15,6 +15,8 @@ enum {
     OSCILLATOR_IO_LOCK = 0x0040u,
     OSCILLATOR_CLOCK_LOCK = 0x0080u,
     OSCILLATOR_SWITCH_DELAY = 32u,
+    CONFIGURATION_FOSCSEL = 0xf80006u,
+    CONFIGURATION_FOSC = 0xf80008u,
     OPCODE_NOP = 0x000000u,
     OPCODE_SLEEP = 0xfe4000u,
     OPCODE_RESET = 0xfe0000u,
@@ -65,6 +67,14 @@ static Dspic33StopReason write_protected_byte(Dspic33* cpu, uint16_t address,
         return cpu->stop_reason;
     }
     return dspic33_step(cpu);
+}
+
+static bool program_fosc(Dspic33* cpu, uint8_t value) {
+    cpu->nvm.control = 0u;
+    cpu->nvm.address = CONFIGURATION_FOSC;
+    cpu->nvm.latches[0] = value;
+    dspic33_complete_nvm(cpu);
+    return dspic33_read_configuration_byte(cpu, CONFIGURATION_FOSC) == value;
 }
 
 static void reset_cases(OscillatorConformance* state, Dspic33* cpu) {
@@ -225,9 +235,12 @@ static void switch_cases(OscillatorConformance* state, Dspic33* cpu) {
     write_protected_byte(cpu, OSCILLATOR_CONTROL + 1u, 0x03u);
     write_protected_byte(cpu, OSCILLATOR_CONTROL,
                          OSCILLATOR_CLOCK_LOCK | OSCILLATOR_SWITCH_ENABLE);
-    expect(state, control(cpu) == 0x0380u, "CLKLOCK blocks subsequent source switch");
+    expect(state, control(cpu) == 0x0080u, "CLKLOCK blocks subsequent source switch");
     expect(state, cpu->events.count == 0u && !cpu->oscillator.active,
            "CLKLOCK rejection schedules no switch");
+    write_protected_byte(cpu, OSCILLATOR_CONTROL,
+                         OSCILLATOR_CLOCK_LOCK | OSCILLATOR_LP_ENABLE);
+    expect(state, control(cpu) == 0x0080u, "CLKLOCK blocks LPOSCEN changes");
 }
 
 static void failure_trap_cases(OscillatorConformance* state, Dspic33* cpu) {
@@ -257,6 +270,157 @@ static void failure_trap_cases(OscillatorConformance* state, Dspic33* cpu) {
            "CF clear sequence executes");
     expect(state, (control(cpu) & OSCILLATOR_CLOCK_FAIL) == 0u,
            "CF write zero clears failure flag");
+}
+
+static void configuration_admission_cases(OscillatorConformance* state, Dspic33* cpu) {
+    static const uint8_t disabled_configurations[] = {0x9eu, 0xdeu};
+    size_t index;
+    for (index = 0u;
+         index < sizeof(disabled_configurations) / sizeof(disabled_configurations[0]);
+         index++) {
+        dspic33_load_configuration_word(cpu, CONFIGURATION_FOSC,
+                                        disabled_configurations[index]);
+        dspic33_reset(cpu, 0u);
+        write_protected_byte(cpu, OSCILLATOR_CONTROL + 1u, 0x02u);
+        write_protected_byte(cpu, OSCILLATOR_CONTROL, OSCILLATOR_SWITCH_ENABLE);
+        expect(state, control(cpu) == 0x0200u,
+               "FCKSM disabled mode rejects software switch");
+        expect(state, !cpu->oscillator.active && cpu->events.count == 0u,
+               "FCKSM rejection schedules no switch");
+    }
+
+    dspic33_load_configuration_word(cpu, CONFIGURATION_FOSC, 0x1eu);
+    dspic33_reset(cpu, 0u);
+    write_protected_byte(cpu, OSCILLATOR_CONTROL, OSCILLATOR_CLOCK_LOCK);
+    write_protected_byte(cpu, OSCILLATOR_CONTROL + 1u, 0x02u);
+    write_protected_byte(cpu, OSCILLATOR_CONTROL,
+                         OSCILLATOR_CLOCK_LOCK | OSCILLATOR_SWITCH_ENABLE);
+    expect(state, control(cpu) == 0x0281u && cpu->oscillator.active,
+           "FCKSM zero permits switch with CLKLOCK set");
+    expect(state, cpu->events.count == 1u,
+           "conditional CLKLOCK permission schedules switch");
+    write_protected_byte(cpu, OSCILLATOR_CONTROL,
+                         OSCILLATOR_CLOCK_LOCK | OSCILLATOR_LP_ENABLE);
+    expect(state, (control(cpu) & OSCILLATOR_LP_ENABLE) != 0u,
+           "FCKSM zero permits LPOSCEN change with CLKLOCK set");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_load_configuration_word(cpu, CONFIGURATION_FOSC, 0x9eu);
+    dspic33_reset(cpu, 0u);
+    expect(state, program_fosc(cpu, 0x1eu), "FOSC RTSP enables clock switching");
+    write_protected_byte(cpu, OSCILLATOR_CONTROL + 1u, 0x02u);
+    write_protected_byte(cpu, OSCILLATOR_CONTROL, OSCILLATOR_SWITCH_ENABLE);
+    expect(state, control(cpu) == 0x0201u && cpu->oscillator.active,
+           "immediate FCKSM update affects next switch");
+    expect(state, cpu->events.count == 1u, "RTSP-enabled switch schedules completion");
+    expect(state, program_fosc(cpu, 0x009eu),
+           "FOSC RTSP disables active software switching");
+    expect(state, !cpu->oscillator.active && control(cpu) == 0x0200u,
+           "switch disable aborts active software request");
+    expect(state, dspic33_device_advance(cpu, 32u) && control(cpu) == 0x0200u,
+           "switch disable invalidates stale completion");
+
+    dspic33_load_configuration_word(cpu, CONFIGURATION_FOSC, 0x5eu);
+    dspic33_load_configuration_word(cpu, CONFIGURATION_FOSCSEL, 0x0079u);
+    dspic33_reset(cpu, 0u);
+    write_protected_byte(cpu, OSCILLATOR_CONTROL + 1u, 0x03u);
+    write_protected_byte(cpu, OSCILLATOR_CONTROL, OSCILLATOR_SWITCH_ENABLE);
+    expect(state, control(cpu) == 0x1321u,
+           "FRCPLL to POSCPLL direct switch remains pending");
+    expect(state, cpu->oscillator.active && cpu->events.count == 0u,
+           "first direct PLL request schedules no completion");
+    expect(state, program_fosc(cpu, 0x005du),
+           "POSCMD mode changes during direct PLL request");
+    expect(state,
+           dspic33_device_advance(cpu, 32u) && control(cpu) == 0x1321u &&
+               cpu->events.count == 0u,
+           "POSCMD mode change cannot complete direct PLL request");
+    expect(state, program_fosc(cpu, 0x005fu),
+           "POSCMD disables target during direct PLL request");
+    expect(state, program_fosc(cpu, 0x005eu),
+           "POSCMD restores target during direct PLL request");
+    expect(state,
+           dspic33_device_advance(cpu, 32u) && control(cpu) == 0x1321u &&
+               cpu->events.count == 0u,
+           "POSCMD restoration cannot complete direct PLL request");
+    write_protected_byte(cpu, OSCILLATOR_CONTROL, 0u);
+    expect(state, control(cpu) == 0x1320u && !cpu->oscillator.active,
+           "explicit clear aborts unsupported direct PLL request");
+
+    dspic33_load_configuration_word(cpu, CONFIGURATION_FOSCSEL, 0x007bu);
+    dspic33_reset(cpu, 0u);
+    write_protected_byte(cpu, OSCILLATOR_CONTROL + 1u, 0x01u);
+    write_protected_byte(cpu, OSCILLATOR_CONTROL, OSCILLATOR_SWITCH_ENABLE);
+    expect(state, control(cpu) == 0x3121u,
+           "POSCPLL to FRCPLL direct switch remains pending");
+    expect(state, cpu->oscillator.active && cpu->events.count == 0u,
+           "second direct PLL request schedules no completion");
+
+    dspic33_load_configuration_word(cpu, CONFIGURATION_FOSCSEL, 0x0078u);
+    dspic33_load_configuration_word(cpu, CONFIGURATION_FOSC, 0x005fu);
+    dspic33_reset(cpu, 0u);
+    write_protected_byte(cpu, OSCILLATOR_CONTROL + 1u, 0x02u);
+    write_protected_byte(cpu, OSCILLATOR_CONTROL, OSCILLATOR_SWITCH_ENABLE);
+    expect(state, control(cpu) == 0x0201u && cpu->oscillator.active,
+           "disabled POSC leaves switch pending");
+    expect(state, cpu->events.count == 0u, "disabled POSC schedules no completion");
+    expect(state, program_fosc(cpu, 0x005eu), "FOSC RTSP enables pending POSC");
+    expect(state, cpu->events.count == 1u && cpu->oscillator.generation == 2u,
+           "enabled POSC restarts modeled switch interval");
+    expect(state, dspic33_device_advance(cpu, 32u) && control(cpu) == 0x2200u,
+           "enabled POSC completes pending switch");
+
+    dspic33_reset(cpu, 0u);
+    write_protected_byte(cpu, OSCILLATOR_CONTROL + 1u, 0x02u);
+    write_protected_byte(cpu, OSCILLATOR_CONTROL, OSCILLATOR_SWITCH_ENABLE);
+    expect(state, cpu->events.count == 1u && cpu->oscillator.active,
+           "available POSC starts modeled switch");
+    expect(state, program_fosc(cpu, 0x005fu), "FOSC RTSP disables pending POSC");
+    expect(state, dspic33_device_advance(cpu, 32u) && control(cpu) == 0x0201u,
+           "disabled POSC invalidates scheduled completion");
+    expect(state, program_fosc(cpu, 0x005eu), "FOSC RTSP restores pending POSC");
+    expect(state, dspic33_device_advance(cpu, 32u) && control(cpu) == 0x2200u,
+           "restored POSC completes fresh interval");
+}
+
+static void hardware_failure_cases(OscillatorConformance* state, Dspic33* cpu) {
+    dspic33_load_configuration_word(cpu, CONFIGURATION_FOSCSEL, 0x007au);
+    dspic33_load_configuration_word(cpu, CONFIGURATION_FOSC, 0x001eu);
+    dspic33_reset(cpu, 0u);
+    dspic33_load_program_word(cpu, 0x0004u, 0x000100u);
+    dspic33_set_working_register(cpu, 15u, 0x2000u);
+    cpu->stop_on_trap = true;
+    expect(state, dspic33_oscillator_failure_detected(cpu),
+           "FSCM accepts primary oscillator failure");
+    expect(state, control(cpu) == 0x0208u,
+           "FSCM falls back to FRC and retains requested source");
+    expect(state, (dspic33_read_word(cpu, 0x08c0u) & 0x0002u) != 0u,
+           "FSCM latches oscillator-fail status");
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED,
+           "FSCM dispatches oscillator-fail trap");
+    expect(state,
+           cpu->pc == 0x000102u && cpu->last_trap == 0u && cpu->last_trap_return == 0u,
+           "FSCM enters oscillator-fail vector");
+
+    dspic33_load_configuration_word(cpu, CONFIGURATION_FOSC, 0x005eu);
+    dspic33_reset(cpu, 0u);
+    expect(state, !dspic33_oscillator_failure_detected(cpu) && control(cpu) == 0x2200u,
+           "disabled FSCM ignores external-source failure");
+
+    dspic33_load_configuration_word(cpu, CONFIGURATION_FOSCSEL, 0x0078u);
+    dspic33_load_configuration_word(cpu, CONFIGURATION_FOSC, 0x001eu);
+    dspic33_reset(cpu, 0u);
+    expect(state, !dspic33_oscillator_failure_detected(cpu) && control(cpu) == 0u,
+           "FSCM ignores internal-source failure");
+
+    dspic33_load_configuration_word(cpu, CONFIGURATION_FOSCSEL, 0x007au);
+    dspic33_reset(cpu, 0u);
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    expect(state, !dspic33_oscillator_failure_detected(cpu) && control(cpu) == 0x2200u,
+           "FSCM is disabled during Sleep");
+
+    dspic33_load_configuration_word(cpu, CONFIGURATION_FOSCSEL, 0x0078u);
+    dspic33_load_configuration_word(cpu, CONFIGURATION_FOSC, 0x005eu);
 }
 
 static void lifecycle_cases(OscillatorConformance* state, Dspic33* source,
@@ -350,8 +514,10 @@ int main(void) {
     protection_cases(&state, &source);
     switch_cases(&state, &source);
     failure_trap_cases(&state, &source);
+    configuration_admission_cases(&state, &source);
+    hardware_failure_cases(&state, &source);
     lifecycle_cases(&state, &source, &copy);
-    expect(&state, state.cases == 86u, "oscillator assertion arithmetic");
+    expect(&state, state.cases == 128u, "oscillator assertion arithmetic");
     printf("[oscillator-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32
            "\n",
            state.cases, state.passed, state.failed);
