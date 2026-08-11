@@ -26,6 +26,8 @@ enum {
     NVM_WRITE_ERROR = 0x2000u,
     NVM_IRQ = 15u,
     NVM_SEQUENCE_BASE = 0x0400u,
+    CODEGUARD_GENERAL_CONFIGURATION = 0xf80004u,
+    CODEGUARD_AUXILIARY_CONFIGURATION = 0xf80010u,
     PERSISTENT_PROGRAM_TAG = 0x01000000u,
     PERSISTENT_PROGRAM_BASE = 0x2000u,
     PERSISTENT_PROGRAM_LIMIT = 0x5000u,
@@ -231,15 +233,19 @@ static void configuration_table_view_cases(NvmConformance* state, Dspic33* cpu) 
     }
 }
 
-static void load_start_sequence(Dspic33* cpu, bool delayed_write) {
-    dspic33_load_program_word(cpu, NVM_SEQUENCE_BASE, MOVE_KEY_55);
-    dspic33_load_program_word(cpu, NVM_SEQUENCE_BASE + 2u, WRITE_NVM_KEY);
-    dspic33_load_program_word(cpu, NVM_SEQUENCE_BASE + 4u, MOVE_KEY_AA);
-    dspic33_load_program_word(cpu, NVM_SEQUENCE_BASE + 6u, WRITE_NVM_KEY);
-    dspic33_load_program_word(cpu, NVM_SEQUENCE_BASE + 8u,
+static void load_start_sequence_at(Dspic33* cpu, uint32_t base, bool delayed_write) {
+    dspic33_load_program_word(cpu, base, MOVE_KEY_55);
+    dspic33_load_program_word(cpu, base + 2u, WRITE_NVM_KEY);
+    dspic33_load_program_word(cpu, base + 4u, MOVE_KEY_AA);
+    dspic33_load_program_word(cpu, base + 6u, WRITE_NVM_KEY);
+    dspic33_load_program_word(cpu, base + 8u,
                               delayed_write ? 0x000000u : SET_NVM_WRITE);
-    dspic33_load_program_word(cpu, NVM_SEQUENCE_BASE + 10u, SET_NVM_WRITE);
-    cpu->pc = NVM_SEQUENCE_BASE;
+    dspic33_load_program_word(cpu, base + 10u, SET_NVM_WRITE);
+    cpu->pc = base;
+}
+
+static void load_start_sequence(Dspic33* cpu, bool delayed_write) {
+    load_start_sequence_at(cpu, NVM_SEQUENCE_BASE, delayed_write);
 }
 
 static bool execute_start_sequence(Dspic33* cpu, bool delayed_write) {
@@ -255,7 +261,61 @@ static bool start_operation(Dspic33* cpu, uint16_t operation, uint32_t address) 
     return cpu->nvm.active;
 }
 
+static bool start_operation_from(Dspic33* cpu, uint16_t operation, uint32_t address,
+                                 uint32_t execution_address) {
+    configure_operation(cpu, operation, address, true);
+    load_start_sequence_at(cpu, execution_address, false);
+    if (!step_instructions(cpu, 5u)) {
+        return false;
+    }
+    return cpu->nvm.active;
+}
+
 static bool finish_operation(Dspic33* cpu) { return dspic33_device_advance(cpu, 2u); }
+
+static uint8_t codeguard_configuration_value(uint8_t index) {
+    return (uint8_t)((index & 0x03u) | ((index & 0x0cu) << 2u));
+}
+
+static bool codeguard_configuration_high(uint8_t configuration) {
+    uint8_t protection = (uint8_t)(configuration & 0x03u);
+    uint8_t expected_key = protection == 0x03u ? 0u : 0x30u;
+    return (protection & 0x02u) == 0u || (configuration & 0x30u) != expected_key;
+}
+
+static bool load_codeguard_configuration(Dspic33* cpu, uint8_t general,
+                                         uint8_t auxiliary) {
+    return dspic33_load_configuration_word(cpu, CODEGUARD_GENERAL_CONFIGURATION,
+                                           (uint16_t)(0xff00u | general)) &&
+           dspic33_load_configuration_word(cpu, CODEGUARD_AUXILIARY_CONFIGURATION,
+                                           (uint16_t)(0xff00u | auxiliary));
+}
+
+static uint16_t execute_codeguard_table_read(Dspic33* cpu, uint32_t origin,
+                                             uint32_t target) {
+    dspic33_load_program_word(cpu, origin, TBLRDL_W2_W3);
+    cpu->pc = origin;
+    cpu->tblpag = (uint16_t)(target >> 16u);
+    dspic33_set_working_register(cpu, 2u, (uint16_t)target);
+    dspic33_set_working_register(cpu, 3u, 0xa5a5u);
+    if (dspic33_step(cpu) != DSPIC33_RUNNING) {
+        return 0xffffu;
+    }
+    return cpu->w[3];
+}
+
+static uint16_t execute_codeguard_psv_read(Dspic33* cpu, uint32_t origin,
+                                           uint32_t target) {
+    dspic33_load_program_word(cpu, origin, OPCODE_MOV_W1_W2);
+    cpu->pc = origin;
+    cpu->dsrpag = (uint16_t)(0x0200u | ((target >> 15u) & 0x00ffu));
+    dspic33_set_working_register(cpu, 1u, (uint16_t)(0x8000u | (target & 0x7fffu)));
+    dspic33_set_working_register(cpu, 2u, 0xa5a5u);
+    if (dspic33_step(cpu) != DSPIC33_RUNNING) {
+        return 0xffffu;
+    }
+    return cpu->w[2];
+}
 
 static void reset_and_access_cases(NvmConformance* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
@@ -532,6 +592,10 @@ static void configuration_operation_cases(NvmConformance* state, Dspic33* cpu) {
 
     target = DSPIC33_CONFIGURATION_BASE + 0x10u;
     dspic33_reset(cpu, 0u);
+    expect(
+        state,
+        dspic33_load_configuration_word(cpu, DSPIC33_CONFIGURATION_BASE + 4u, 0xffcfu),
+        "load unprotected FGS before FAS programming");
     expect(state, dspic33_load_configuration_word(cpu, target, 0xffcfu),
            "load FAS configuration pair");
     cpu->write_latches[0] = 0xfdu;
@@ -546,6 +610,8 @@ static void configuration_operation_cases(NvmConformance* state, Dspic33* cpu) {
     expect(state, finish_operation(cpu), "FAS protection rewrite completes");
     expect(state, dspic33_read_configuration_byte(cpu, target) == 0xfdu,
            "FAS protection bit cannot change zero to one");
+    dspic33_load_configuration_word(cpu, DSPIC33_CONFIGURATION_BASE + 4u, 0xffcfu);
+    dspic33_load_configuration_word(cpu, DSPIC33_CONFIGURATION_BASE + 0x10u, 0xffcfu);
 }
 
 static void pair_and_capture_cases(NvmConformance* state, Dspic33* cpu) {
@@ -989,7 +1055,10 @@ static void auxiliary_nvm_cases(NvmConformance* state, Dspic33* cpu) {
     dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE, 0x00040506u);
     dspic33_load_configuration_word(cpu, 0xf80004u, 0xff30u);
     dspic33_load_configuration_word(cpu, 0xf80010u, 0xff30u);
-    expect(state, start_operation(cpu, 0x0du, 0u), "primary bulk erase starts");
+    expect(
+        state,
+        start_operation_from(cpu, 0x0du, 0u, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x100u),
+        "primary bulk erase starts");
     expect(state, finish_operation(cpu), "primary bulk erase completes");
     expect(state,
            program_word(cpu, 0x2000u) == 0x00ffffffu &&
@@ -1194,6 +1263,322 @@ static void power_save_cases(NvmConformance* state, Dspic33* cpu) {
                    cpu->watchdog.ticks == 23u,
                "priority-zero interrupt remains pending after ignored power-save");
     }
+}
+
+static void codeguard_configuration_cases(NvmConformance* state, Dspic33* cpu) {
+    uint8_t general_index;
+    uint8_t auxiliary_index;
+
+    for (general_index = 0u; general_index < 16u; general_index++) {
+        for (auxiliary_index = 0u; auxiliary_index < 16u; auxiliary_index++) {
+            uint8_t general = codeguard_configuration_value(general_index);
+            uint8_t auxiliary = codeguard_configuration_value(auxiliary_index);
+            bool allowed = general == 0x03u && auxiliary == 0x03u;
+            bool started;
+            bool completed;
+
+            dspic33_reset(cpu, 0u);
+            load_codeguard_configuration(cpu, general, auxiliary);
+            cpu->write_latches[0] = 0x31u;
+            started = start_operation(cpu, 0u, CODEGUARD_AUXILIARY_CONFIGURATION);
+            completed = finish_operation(cpu);
+            expect(state,
+                   started && completed &&
+                       dspic33_read_configuration_byte(
+                           cpu, CODEGUARD_AUXILIARY_CONFIGURATION) ==
+                           (allowed ? 0x31u : auxiliary),
+                   "CodeGuard FAS programming requires both unprotected segments");
+        }
+    }
+}
+
+static void codeguard_programming_cases(NvmConformance* state, Dspic33* cpu) {
+    static const uint16_t operations[] = {1u, 2u, 3u};
+    size_t operation_index;
+    uint8_t target_segment;
+    uint8_t origin_segment;
+    uint8_t configuration_index;
+
+    for (operation_index = 0u;
+         operation_index < sizeof(operations) / sizeof(operations[0]);
+         operation_index++) {
+        uint16_t operation = operations[operation_index];
+        for (target_segment = 0u; target_segment < 2u; target_segment++) {
+            uint32_t target = target_segment == 0u
+                                  ? 0x3000u
+                                  : DSPIC33_AUXILIARY_PROGRAM_BASE + 0x1000u;
+            for (origin_segment = 0u; origin_segment < 2u; origin_segment++) {
+                uint32_t origin = origin_segment == 0u
+                                      ? NVM_SEQUENCE_BASE
+                                      : DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3000u;
+                for (configuration_index = 0u; configuration_index < 16u;
+                     configuration_index++) {
+                    uint8_t configuration =
+                        codeguard_configuration_value(configuration_index);
+                    bool write_protected = (configuration & 0x01u) == 0u;
+                    bool high = codeguard_configuration_high(configuration);
+                    bool allowed =
+                        !write_protected && (!high || origin_segment == target_segment);
+                    uint32_t initial = operation == 3u ? 0u : 0x00ffffffu;
+                    uint32_t expected = operation == 3u ? allowed ? 0x00ffffffu : 0u
+                                        : allowed       ? 0x00123456u
+                                                        : 0x00ffffffu;
+                    bool started;
+                    bool completed;
+
+                    dspic33_reset(cpu, 0u);
+                    load_codeguard_configuration(
+                        cpu, target_segment == 0u ? configuration : 0x03u,
+                        target_segment == 0u ? 0x03u : configuration);
+                    dspic33_load_program_word(cpu, target, initial);
+                    cpu->write_latches[0] = 0x00123456u;
+                    started = start_operation_from(cpu, operation, target, origin);
+                    completed = finish_operation(cpu);
+                    expect(state,
+                           started && completed &&
+                               cpu->nvm.auxiliary_origin == (origin_segment != 0u) &&
+                               program_word(cpu, target) == expected,
+                           "CodeGuard row and page programming matrix");
+                }
+            }
+        }
+    }
+
+    for (operation_index = 0u;
+         operation_index < sizeof(operations) / sizeof(operations[0]);
+         operation_index++) {
+        uint16_t operation = operations[operation_index];
+        for (origin_segment = 0u; origin_segment < 2u; origin_segment++) {
+            uint32_t origin = origin_segment == 0u
+                                  ? NVM_SEQUENCE_BASE
+                                  : DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3000u;
+            for (configuration_index = 0u; configuration_index < 16u;
+                 configuration_index++) {
+                uint8_t configuration =
+                    codeguard_configuration_value(configuration_index);
+                bool allowed = (configuration & 0x01u) != 0u &&
+                               !codeguard_configuration_high(configuration);
+                uint32_t target = operation == 3u ? 0u : 0x0100u;
+                uint32_t initial = operation == 3u ? 0u : 0x00ffffffu;
+                uint32_t expected = operation == 3u ? allowed ? 0x00ffffffu : 0u
+                                    : allowed       ? 0x00123456u
+                                                    : 0x00ffffffu;
+                bool started;
+                bool completed;
+
+                dspic33_reset(cpu, 0u);
+                load_codeguard_configuration(cpu, configuration, 0x03u);
+                dspic33_load_program_word(cpu, target, initial);
+                cpu->write_latches[0] = 0x00123456u;
+                started = start_operation_from(cpu, operation, target, origin);
+                completed = finish_operation(cpu);
+                expect(state,
+                       started && completed && program_word(cpu, target) == expected,
+                       "CodeGuard IVT programming matrix");
+            }
+        }
+    }
+}
+
+static void codeguard_segment_erase_cases(NvmConformance* state, Dspic33* cpu) {
+    static const uint16_t operations[] = {0x0au, 0x0du};
+    size_t operation_index;
+    uint8_t origin_segment;
+
+    for (operation_index = 0u;
+         operation_index < sizeof(operations) / sizeof(operations[0]);
+         operation_index++) {
+        uint16_t operation = operations[operation_index];
+        bool auxiliary_target = operation == 0x0au;
+        uint32_t target = auxiliary_target ? DSPIC33_AUXILIARY_PROGRAM_BASE : 0x2000u;
+        for (origin_segment = 0u; origin_segment < 2u; origin_segment++) {
+            uint32_t origin = origin_segment == 0u
+                                  ? NVM_SEQUENCE_BASE
+                                  : DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3000u;
+            bool allowed = auxiliary_target != (origin_segment != 0u);
+            bool started;
+            bool completed;
+
+            dspic33_reset(cpu, 0u);
+            load_codeguard_configuration(cpu, 0x30u, 0x30u);
+            dspic33_load_program_word(cpu, target, 0u);
+            started = start_operation_from(cpu, operation, 0u, origin);
+            completed = finish_operation(cpu);
+            expect(state,
+                   started && completed &&
+                       program_word(cpu, target) == (allowed ? 0x00ffffffu : 0u) &&
+                       dspic33_read_configuration_byte(
+                           cpu, auxiliary_target ? CODEGUARD_AUXILIARY_CONFIGURATION
+                                                 : CODEGUARD_GENERAL_CONFIGURATION) ==
+                           (allowed ? 0xcfu : 0x30u),
+                   "CodeGuard segment erase requires opposite-segment execution");
+        }
+    }
+}
+
+static void codeguard_origin_capture_cases(NvmConformance* state, Dspic33* cpu) {
+    Dspic33 copy;
+    uint32_t target = DSPIC33_AUXILIARY_PROGRAM_BASE + 0x1000u;
+    bool copy_initialized;
+
+    dspic33_reset(cpu, 0u);
+    load_codeguard_configuration(cpu, 0x03u, 0x31u);
+    dspic33_load_program_word(cpu, target, 0x00ffffffu);
+    cpu->write_latches[0] = 0x00123456u;
+    expect(state, start_operation_from(cpu, 1u, target, NVM_SEQUENCE_BASE),
+           "CodeGuard captures general NVM origin");
+    cpu->pc = DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3000u;
+    expect(state,
+           finish_operation(cpu) && !cpu->nvm.auxiliary_origin &&
+               program_word(cpu, target) == 0x00ffffffu,
+           "CodeGuard preserves rejected cross-segment origin until completion");
+
+    dspic33_reset(cpu, 0u);
+    load_codeguard_configuration(cpu, 0x03u, 0x31u);
+    dspic33_load_program_word(cpu, target, 0x00ffffffu);
+    cpu->write_latches[0] = 0x00123456u;
+    expect(
+        state,
+        start_operation_from(cpu, 1u, target, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3000u),
+        "CodeGuard captures auxiliary NVM origin");
+    cpu->pc = NVM_SEQUENCE_BASE;
+    expect(state,
+           finish_operation(cpu) && cpu->nvm.auxiliary_origin &&
+               program_word(cpu, target) == 0x00123456u,
+           "CodeGuard preserves accepted self-segment origin until completion");
+
+    dspic33_reset(cpu, 0u);
+    load_codeguard_configuration(cpu, 0x03u, 0x31u);
+    dspic33_load_program_word(cpu, target, 0x00ffffffu);
+    cpu->write_latches[0] = 0x00654321u;
+    expect(
+        state,
+        start_operation_from(cpu, 1u, target, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3000u),
+        "CodeGuard auxiliary-origin copy operation starts");
+    copy_initialized = dspic33_initialize(&copy);
+    expect(state,
+           copy_initialized && dspic33_copy(&copy, cpu) && copy.nvm.active &&
+               copy.nvm.auxiliary_origin,
+           "CodeGuard copy retains active auxiliary origin");
+    if (copy_initialized) {
+        cpu->pc = NVM_SEQUENCE_BASE;
+        copy.pc = NVM_SEQUENCE_BASE;
+        expect(state,
+               finish_operation(cpu) && finish_operation(&copy) &&
+                   program_word(cpu, target) == 0x00654321u &&
+                   program_word(&copy, target) == 0x00654321u &&
+                   cpu->nvm.auxiliary_origin && copy.nvm.auxiliary_origin,
+               "CodeGuard copied auxiliary origins complete independently");
+        dspic33_destroy(&copy);
+    }
+}
+
+static void codeguard_persistent_read_cases(NvmConformance* state, Dspic33* cpu) {
+    static const uint32_t targets[] = {
+        PERSISTENT_PROGRAM_BASE, PERSISTENT_PROGRAM_TAG + PERSISTENT_PROGRAM_BASE};
+    static const uint8_t configurations[] = {0x03u, 0x31u};
+    size_t target_index;
+    size_t configuration_index;
+    uint8_t origin_segment;
+
+    for (target_index = 0u; target_index < sizeof(targets) / sizeof(targets[0]);
+         target_index++) {
+        for (origin_segment = 0u; origin_segment < 2u; origin_segment++) {
+            uint32_t origin = origin_segment == 0u
+                                  ? 0x1000u
+                                  : DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3000u;
+            for (configuration_index = 0u; configuration_index < sizeof(configurations);
+                 configuration_index++) {
+                uint8_t configuration = configurations[configuration_index];
+                bool allowed = origin_segment == 0u || configuration == 0x03u;
+
+                dspic33_reset(cpu, 0u);
+                load_codeguard_configuration(cpu, configuration, 0x03u);
+                dspic33_load_program_word(cpu, PERSISTENT_PROGRAM_BASE, 0x00ab1357u);
+                expect(
+                    state,
+                    execute_codeguard_table_read(cpu, origin, targets[target_index]) ==
+                            (allowed ? 0x1357u : 0u) &&
+                        program_word(cpu, PERSISTENT_PROGRAM_BASE) == 0x00ab1357u &&
+                        program_word(cpu, PERSISTENT_PROGRAM_TAG +
+                                              PERSISTENT_PROGRAM_BASE) == 0x00ab1357u,
+                    "CodeGuard physical and tagged persistent table reads");
+            }
+        }
+    }
+}
+
+static void codeguard_read_cases(NvmConformance* state, Dspic33* cpu) {
+    uint8_t target_segment;
+    uint8_t origin_segment;
+    uint8_t configuration_index;
+
+    for (target_segment = 0u; target_segment < 2u; target_segment++) {
+        uint32_t target =
+            target_segment == 0u ? 0x4000u : DSPIC33_AUXILIARY_PROGRAM_BASE + 0x0100u;
+        for (origin_segment = 0u; origin_segment < 2u; origin_segment++) {
+            uint32_t origin = origin_segment == 0u
+                                  ? 0x1000u
+                                  : DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3000u;
+            for (configuration_index = 0u; configuration_index < 16u;
+                 configuration_index++) {
+                uint8_t configuration =
+                    codeguard_configuration_value(configuration_index);
+                bool allowed = origin_segment == target_segment ||
+                               !codeguard_configuration_high(configuration);
+
+                dspic33_reset(cpu, 0u);
+                load_codeguard_configuration(
+                    cpu, target_segment == 0u ? configuration : 0x03u,
+                    target_segment == 0u ? 0x03u : configuration);
+                dspic33_load_program_word(cpu, target, 0x00ab1357u);
+                expect(state,
+                       execute_codeguard_table_read(cpu, origin, target) ==
+                               (allowed ? 0x1357u : 0u) &&
+                           program_word(cpu, target) == 0x00ab1357u,
+                       "CodeGuard cross-segment table-read matrix");
+            }
+        }
+    }
+
+    for (target_segment = 0u; target_segment < 2u; target_segment++) {
+        uint32_t target =
+            target_segment == 0u ? 0x4000u : DSPIC33_AUXILIARY_PROGRAM_BASE + 0x0100u;
+        for (origin_segment = 0u; origin_segment < 2u; origin_segment++) {
+            uint32_t origin = origin_segment == 0u
+                                  ? 0x1000u
+                                  : DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3000u;
+            static const uint8_t configurations[] = {0x03u, 0x31u};
+            size_t index;
+            for (index = 0u; index < sizeof(configurations); index++) {
+                uint8_t configuration = configurations[index];
+                bool allowed = origin_segment == target_segment ||
+                               !codeguard_configuration_high(configuration);
+
+                dspic33_reset(cpu, 0u);
+                load_codeguard_configuration(
+                    cpu, target_segment == 0u ? configuration : 0x03u,
+                    target_segment == 0u ? 0x03u : configuration);
+                dspic33_load_program_word(cpu, target, 0x00ab1357u);
+                expect(state,
+                       execute_codeguard_psv_read(cpu, origin, target) ==
+                               (allowed ? 0x1357u : 0u) &&
+                           program_word(cpu, target) == 0x00ab1357u,
+                       "CodeGuard cross-segment PSV matrix");
+            }
+        }
+    }
+}
+
+static void codeguard_cases(NvmConformance* state, Dspic33* cpu) {
+    codeguard_configuration_cases(state, cpu);
+    codeguard_programming_cases(state, cpu);
+    codeguard_segment_erase_cases(state, cpu);
+    codeguard_origin_capture_cases(state, cpu);
+    codeguard_read_cases(state, cpu);
+    codeguard_persistent_read_cases(state, cpu);
+    dspic33_load_program_word(cpu, PERSISTENT_PROGRAM_BASE, 0x00ffffffu);
+    load_codeguard_configuration(cpu, 0x03u, 0x03u);
 }
 
 static void async_suppression_cases(NvmConformance* state, Dspic33* cpu) {
@@ -1448,8 +1833,10 @@ static void persistent_program_alias_cases(NvmConformance* state, Dspic33* cpu) 
     dspic33_load_program_word(cpu, PERSISTENT_PROGRAM_BASE, 0u);
     dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE, 0x00010203u);
     dspic33_load_configuration_word(cpu, DSPIC33_CONFIGURATION_BASE + 4u, 0xff30u);
-    expect(state, start_operation(cpu, 0x0du, 0u),
-           "general bulk erase with persistent data starts");
+    expect(
+        state,
+        start_operation_from(cpu, 0x0du, 0u, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x200u),
+        "general bulk erase with persistent data starts");
     expect(state, finish_operation(cpu),
            "general bulk erase with persistent data completes");
     expect(state,
@@ -1512,6 +1899,7 @@ int main(void) {
         auxiliary_nvm_cases(&state, &cpu);
         stall_and_interrupt_cases(&state, &cpu);
         power_save_cases(&state, &cpu);
+        codeguard_cases(&state, &cpu);
         persistent_program_alias_cases(&state, &cpu);
         doze_stall_cases(&state, &cpu);
         async_suppression_cases(&state, &cpu);

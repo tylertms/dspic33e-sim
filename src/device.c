@@ -10240,6 +10240,12 @@ static void update_nvm_control(Dspic33* cpu, uint16_t requested) {
     }
     cpu->nvm.control = control;
     cpu->nvm.address = target;
+    cpu->nvm.auxiliary_origin =
+        cpu->instruction_active
+            ? cpu->current_instruction_pc >= DSPIC33_AUXILIARY_PROGRAM_BASE &&
+                  cpu->current_instruction_pc < DSPIC33_AUXILIARY_PROGRAM_LIMIT
+            : cpu->pc >= DSPIC33_AUXILIARY_PROGRAM_BASE &&
+                  cpu->pc < DSPIC33_AUXILIARY_PROGRAM_LIMIT;
     memcpy(cpu->nvm.latches, cpu->write_latches, sizeof(cpu->nvm.latches));
     cpu->nvm.key_stage = 0u;
     cpu->nvm.active = true;

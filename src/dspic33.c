@@ -20,7 +20,9 @@ static const uint8_t configuration_program_masks[] = {0x33u, 0x87u, 0xe7u, 0xffu
 
 enum {
     PERSISTENT_PROGRAM_PHYSICAL_BASE = 0x2000u,
-    PERSISTENT_PROGRAM_PHYSICAL_LIMIT = 0x5000u
+    PERSISTENT_PROGRAM_PHYSICAL_LIMIT = 0x5000u,
+    CODEGUARD_GENERAL_CONFIGURATION_OFFSET = 0x04u,
+    CODEGUARD_AUXILIARY_CONFIGURATION_OFFSET = 0x10u
 };
 
 static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory);
@@ -57,6 +59,64 @@ static uint32_t program_address_add(uint32_t address, int32_t offset) {
 static bool auxiliary_program_address(uint32_t address) {
     return address >= DSPIC33_AUXILIARY_PROGRAM_BASE &&
            address < DSPIC33_AUXILIARY_PROGRAM_LIMIT;
+}
+
+static bool persistent_program_tagged_address(uint32_t address) {
+    return address >= DSPIC33_PERSISTENT_PROGRAM_BASE &&
+           address < DSPIC33_PERSISTENT_PROGRAM_LIMIT;
+}
+
+static uint8_t codeguard_configuration(const Dspic33* cpu, bool auxiliary) {
+    return cpu->configuration[auxiliary ? CODEGUARD_AUXILIARY_CONFIGURATION_OFFSET
+                                        : CODEGUARD_GENERAL_CONFIGURATION_OFFSET];
+}
+
+static bool codeguard_write_protected(uint8_t configuration) {
+    return (configuration & 0x01u) == 0u;
+}
+
+static bool codeguard_high_security(uint8_t configuration) {
+    uint8_t protection = (uint8_t)(configuration & 0x03u);
+    uint8_t expected_key = protection == 0x03u ? 0u : 0x30u;
+    return (protection & 0x02u) == 0u || (configuration & 0x30u) != expected_key;
+}
+
+static bool codeguard_programming_allowed(const Dspic33* cpu, uint32_t target) {
+    bool auxiliary_target = auxiliary_program_address(target);
+    uint8_t configuration = codeguard_configuration(cpu, auxiliary_target);
+    if (codeguard_write_protected(configuration)) {
+        return false;
+    }
+    if (codeguard_high_security(configuration)) {
+        if (!auxiliary_target && (target & 0x00fff800u) == 0u) {
+            return false;
+        }
+        if (cpu->nvm.auxiliary_origin != auxiliary_target) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool codeguard_program_read_allowed(const Dspic33* cpu, uint32_t target) {
+    bool auxiliary_origin;
+    bool auxiliary_target;
+    if (persistent_program_tagged_address(target)) {
+        target -= DSPIC33_PERSISTENT_PROGRAM_BASE;
+    }
+    if (!cpu->instruction_active || !dspic33_program_range_implemented(target, 2u)) {
+        return true;
+    }
+    auxiliary_origin = auxiliary_program_address(cpu->current_instruction_pc);
+    auxiliary_target = auxiliary_program_address(target);
+    return auxiliary_origin == auxiliary_target ||
+           !codeguard_high_security(codeguard_configuration(cpu, auxiliary_target));
+}
+
+static uint32_t read_cpu_program_word(const Dspic33* cpu, uint32_t address) {
+    return codeguard_program_read_allowed(cpu, address)
+               ? dspic33_read_program_word(cpu, address)
+               : 0u;
 }
 
 static bool persistent_program_physical_address(uint32_t address) {
@@ -357,8 +417,7 @@ uint32_t dspic33_read_program_word(const Dspic33* cpu, uint32_t address) {
     if (address == 0xff0002u) {
         return 0x004002u;
     }
-    if (address >= DSPIC33_PERSISTENT_PROGRAM_BASE &&
-        address < DSPIC33_PERSISTENT_PROGRAM_LIMIT) {
+    if (persistent_program_tagged_address(address)) {
         return cpu->persistent_program[persistent_program_index(address)] & 0x00ffffffu;
     }
     if (address >= DSPIC33_WRITE_LATCH_BASE && address < DSPIC33_WRITE_LATCH_LIMIT) {
@@ -379,8 +438,7 @@ static uint32_t* writable_program_word(Dspic33* cpu, uint32_t address) {
         address < DSPIC33_AUXILIARY_PROGRAM_LIMIT) {
         return &cpu->auxiliary_program[(address - DSPIC33_AUXILIARY_PROGRAM_BASE) / 2u];
     }
-    if (address >= DSPIC33_PERSISTENT_PROGRAM_BASE &&
-        address < DSPIC33_PERSISTENT_PROGRAM_LIMIT) {
+    if (persistent_program_tagged_address(address)) {
         return &cpu->persistent_program[persistent_program_index(address)];
     }
     return NULL;
@@ -1329,7 +1387,9 @@ static bool execute_table(Dspic33* cpu, uint32_t opcode) {
     }
     address = ((((uint32_t)cpu->tblpag & 0x01ffu) << 16u) | table_offset) & 0x01fffffeu;
     unimplemented_read = !write && program_target_requires_address_error(address);
-    word = unimplemented_read ? 0u : dspic33_read_program_word(cpu, address);
+    word = unimplemented_read ? 0u
+           : write            ? dspic33_read_program_word(cpu, address)
+                              : read_cpu_program_word(cpu, address);
     if (write) {
         if (high) {
             if (!byte_mode || (table_offset & 1u) == 0u) {
@@ -3781,6 +3841,14 @@ void dspic33_complete_nvm(Dspic33* cpu) {
         if (!configuration_register_index(target, &configuration_index)) {
             return;
         }
+        if (target ==
+                DSPIC33_CONFIGURATION_BASE + CODEGUARD_AUXILIARY_CONFIGURATION_OFFSET &&
+            ((cpu->configuration[CODEGUARD_GENERAL_CONFIGURATION_OFFSET] & 0x33u) !=
+                 0x03u ||
+             (cpu->configuration[CODEGUARD_AUXILIARY_CONFIGURATION_OFFSET] & 0x33u) !=
+                 0x03u)) {
+            return;
+        }
         offset = target - DSPIC33_CONFIGURATION_BASE;
         mask = configuration_program_masks[configuration_index];
         current = cpu->configuration[offset];
@@ -3797,12 +3865,18 @@ void dspic33_complete_nvm(Dspic33* cpu) {
         return;
     }
     if (operation == 0x0au) {
+        if (cpu->nvm.auxiliary_origin) {
+            return;
+        }
         erase_program_words(cpu->auxiliary_program, DSPIC33_AUXILIARY_PROGRAM_WORDS);
         cpu->configuration[0x10u] = configuration_factory_defaults[6u];
         cpu->configuration[0x11u] = 0xffu;
         return;
     }
     if (operation == 0x0du) {
+        if (!cpu->nvm.auxiliary_origin) {
+            return;
+        }
         erase_program_words(cpu->program, DSPIC33_PROGRAM_WORDS);
         erase_program_words(
             cpu->persistent_program + PERSISTENT_PROGRAM_PHYSICAL_BASE / 2u,
@@ -3820,6 +3894,9 @@ void dspic33_complete_nvm(Dspic33* cpu) {
         count = DSPIC33_WRITE_LATCH_WORDS;
     } else if (operation == 3u) {
         target &= 0x00fff800u;
+        if (!codeguard_programming_allowed(cpu, target)) {
+            return;
+        }
         for (index = 0u; index < 0x400u; index++) {
             uint32_t* destination = writable_program_word(cpu, target + index * 2u);
             if (destination != NULL) {
@@ -3828,6 +3905,9 @@ void dspic33_complete_nvm(Dspic33* cpu) {
         }
         return;
     } else {
+        return;
+    }
+    if (!codeguard_programming_allowed(cpu, target)) {
         return;
     }
     for (index = 0u; index < count; index++) {
@@ -4064,7 +4144,7 @@ static uint8_t read_byte_value(Dspic33* cpu, uint32_t address) {
             }
             return 0u;
         }
-        word = dspic33_read_program_word(cpu, program_address & ~1u);
+        word = read_cpu_program_word(cpu, program_address & ~1u);
         if ((address & PSV_HIGH_BYTE) != 0u) {
             return (program_address & 1u) == 0u ? (uint8_t)(word >> 16u) : 0u;
         }

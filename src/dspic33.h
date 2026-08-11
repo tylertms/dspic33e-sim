@@ -598,6 +598,7 @@ typedef struct {
     uint16_t control;
     uint8_t key_stage;
     bool active;
+    bool auxiliary_origin;
 } Dspic33Nvm;
 
 typedef struct {
