@@ -3526,6 +3526,7 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
     uint32_t reset_entry = (cpu->configuration[0x0eu] & 0x04u) != 0u ? 0u : 0x007ffffcu;
     uint64_t auxiliary_pll_remaining = 0u;
     uint64_t oscillator_remaining = 0u;
+    uint16_t oscillator_phase = 0u;
     uint16_t reset_interrupt = cpu->last_interrupt;
     uint16_t rcon = dspic33_read_word(cpu, 0x0740u);
     uint8_t uart_cts = cpu->io.uart_cts;
@@ -3559,6 +3560,7 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
             event->value == oscillator.generation) {
             oscillator_remaining =
                 event->cycle > device_cycles ? event->cycle - device_cycles : 0u;
+            oscillator_phase = event->source;
             oscillator_pending = true;
             break;
         }
@@ -3617,8 +3619,8 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
     oscillator.key_stage = 0u;
     cpu->oscillator = oscillator;
     if (oscillator_pending &&
-        !dspic33_schedule(cpu, DSPIC33_EVENT_OSCILLATOR, 0u, oscillator.generation,
-                          oscillator_remaining)) {
+        !dspic33_schedule(cpu, DSPIC33_EVENT_OSCILLATOR, oscillator_phase,
+                          oscillator.generation, oscillator_remaining)) {
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
     cpu->interrupt_count = interrupt_count;

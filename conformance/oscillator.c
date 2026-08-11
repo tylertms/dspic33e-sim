@@ -17,6 +17,7 @@ enum {
     OSCILLATOR_SWITCH_DELAY = 32u,
     CONFIGURATION_FOSCSEL = 0xf80006u,
     CONFIGURATION_FOSC = 0xf80008u,
+    CONFIGURATION_FWDT = 0xf8000au,
     OPCODE_NOP = 0x000000u,
     OPCODE_SLEEP = 0xfe4000u,
     OPCODE_RESET = 0xfe0000u,
@@ -75,6 +76,14 @@ static bool program_fosc(Dspic33* cpu, uint8_t value) {
     cpu->nvm.latches[0] = value;
     dspic33_complete_nvm(cpu);
     return dspic33_read_configuration_byte(cpu, CONFIGURATION_FOSC) == value;
+}
+
+static bool program_fwdt(Dspic33* cpu, uint8_t value) {
+    cpu->nvm.control = 0u;
+    cpu->nvm.address = CONFIGURATION_FWDT;
+    cpu->nvm.latches[0] = value;
+    dspic33_complete_nvm(cpu);
+    return dspic33_read_configuration_byte(cpu, CONFIGURATION_FWDT) == value;
 }
 
 static void reset_cases(OscillatorConformance* state, Dspic33* cpu) {
@@ -343,6 +352,17 @@ static void configuration_admission_cases(OscillatorConformance* state, Dspic33*
            dspic33_device_advance(cpu, 32u) && control(cpu) == 0x1321u &&
                cpu->events.count == 0u,
            "POSCMD restoration cannot complete direct PLL request");
+    expect(state, program_fwdt(cpu, 0x00dfu), "PLLK clears during direct PLL request");
+    expect(state,
+           dspic33_device_advance(cpu, 32u) && control(cpu) == 0x1321u &&
+               cpu->events.count == 0u,
+           "PLLK clear cannot complete direct PLL request");
+    expect(state, program_fwdt(cpu, 0x00ffu),
+           "PLLK restores during direct PLL request");
+    expect(state,
+           dspic33_device_advance(cpu, 32u) && control(cpu) == 0x1321u &&
+               cpu->events.count == 0u,
+           "PLLK restore cannot complete direct PLL request");
     write_protected_byte(cpu, OSCILLATOR_CONTROL, 0u);
     expect(state, control(cpu) == 0x1320u && !cpu->oscillator.active,
            "explicit clear aborts unsupported direct PLL request");
@@ -421,6 +441,115 @@ static void hardware_failure_cases(OscillatorConformance* state, Dspic33* cpu) {
 
     dspic33_load_configuration_word(cpu, CONFIGURATION_FOSCSEL, 0x0078u);
     dspic33_load_configuration_word(cpu, CONFIGURATION_FOSC, 0x005eu);
+}
+
+static void pll_lock_sequence_cases(OscillatorConformance* state, Dspic33* source,
+                                    Dspic33* copy) {
+    dspic33_load_configuration_word(source, CONFIGURATION_FWDT, 0x00dfu);
+    dspic33_reset(source, 0u);
+    write_protected_byte(source, OSCILLATOR_CONTROL + 1u, 0x03u);
+    write_protected_byte(source, OSCILLATOR_CONTROL, OSCILLATOR_SWITCH_ENABLE);
+    expect(state,
+           control(source) == 0x3300u && !source->oscillator.active &&
+               source->oscillator.lock_pending,
+           "PLLK zero transfers source before PLL lock");
+    expect(state, source->events.count == 1u && source->events.items[0].source == 2u,
+           "PLLK zero leaves one pending lock phase");
+    write_protected_byte(source, OSCILLATOR_CONTROL, OSCILLATOR_IO_LOCK);
+    expect(state,
+           control(source) == 0x3340u && source->oscillator.lock_pending &&
+               source->events.count == 1u,
+           "unrelated OSCCON write preserves pending PLL lock");
+    expect(state, dspic33_device_advance(source, 27u) && control(source) == 0x3340u,
+           "PLLK zero remains unlocked before modeled lock deadline");
+    expect(state, dspic33_device_advance(source, 1u) && control(source) == 0x3360u,
+           "PLLK zero sets lock after source transfer");
+    expect(state, !source->oscillator.lock_pending && source->events.count == 0u,
+           "PLLK zero completion clears lock lifecycle");
+
+    dspic33_load_configuration_word(source, CONFIGURATION_FWDT, 0x00ffu);
+    dspic33_reset(source, 0u);
+    write_protected_byte(source, OSCILLATOR_CONTROL + 1u, 0x03u);
+    write_protected_byte(source, OSCILLATOR_CONTROL, OSCILLATOR_SWITCH_ENABLE);
+    expect(state, control(source) == 0x0301u && source->oscillator.active,
+           "PLLK one holds source transfer until lock");
+    expect(state,
+           source->oscillator.source_ready && source->oscillator.lock_pending &&
+               source->events.count == 1u && source->events.items[0].source == 2u,
+           "PLLK one waits for the pending lock phase");
+    expect(state, program_fwdt(source, 0x00dfu),
+           "PLLK RTSP clears pending wait policy");
+    expect(state,
+           source->oscillator.generation == 1u && source->events.count == 1u &&
+               control(source) == 0x3300u && source->oscillator.lock_pending,
+           "PLLK clear releases source without moving lock deadline");
+    expect(state, dspic33_device_advance(source, 30u) && control(source) == 0x3300u,
+           "PLLK-cleared source remains unlocked before original deadline");
+    expect(state, dspic33_device_advance(source, 1u) && control(source) == 0x3320u,
+           "PLLK clear retains original lock completion");
+
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSC, 0x005fu);
+    dspic33_reset(source, 0u);
+    write_protected_byte(source, OSCILLATOR_CONTROL + 1u, 0x03u);
+    write_protected_byte(source, OSCILLATOR_CONTROL, OSCILLATOR_SWITCH_ENABLE);
+    expect(state, source->oscillator.active && source->events.count == 0u,
+           "disabled POSC holds PLLK-zero request");
+    expect(state, program_fwdt(source, 0x00ffu),
+           "PLLK RTSP enables wait before source availability");
+    expect(state, source->events.count == 0u,
+           "unavailable source still schedules no PLL event");
+    expect(state, program_fosc(source, 0x005eu),
+           "POSCMD RTSP enables PLLK-one request");
+    expect(state, source->events.count == 1u && source->events.items[0].source == 0u,
+           "available source honors updated PLLK policy");
+    expect(state, dspic33_device_advance(source, 32u) && control(source) == 0x3320u,
+           "updated PLLK policy completes locked switch");
+
+    dspic33_load_configuration_word(source, CONFIGURATION_FWDT, 0x00dfu);
+    dspic33_reset(source, 0u);
+    write_protected_byte(source, OSCILLATOR_CONTROL + 1u, 0x03u);
+    write_protected_byte(source, OSCILLATOR_CONTROL, OSCILLATOR_SWITCH_ENABLE);
+    dspic33_device_advance(source, 10u);
+    expect(state, dspic33_copy(copy, source), "copy preserves pending PLL lock phase");
+    expect(state,
+           copy->oscillator.lock_pending && copy->events.count == 1u &&
+               copy->events.items[0].source == 2u,
+           "copy retains PLL lock phase identity");
+    expect(state, dspic33_device_advance(source, 21u) && control(source) == 0x3320u,
+           "source completes copied PLL lock phase");
+    expect(state, dspic33_device_advance(copy, 21u) && control(copy) == 0x3320u,
+           "copy independently completes PLL lock phase");
+
+    dspic33_reset(source, 0u);
+    write_protected_byte(source, OSCILLATOR_CONTROL + 1u, 0x03u);
+    write_protected_byte(source, OSCILLATOR_CONTROL, OSCILLATOR_SWITCH_ENABLE);
+    dspic33_device_advance(source, 10u);
+    dspic33_load_program_word(source, 0u, OPCODE_RESET);
+    source->pc = 0u;
+    expect(state, dspic33_step(source) == DSPIC33_RUNNING,
+           "warm reset executes during pending PLL lock");
+    expect(state,
+           control(source) == 0x3300u && source->oscillator.lock_pending &&
+               source->events.count == 1u && source->events.items[0].source == 2u,
+           "warm reset reconstructs pending PLL lock phase");
+    expect(state, dspic33_device_advance(source, 19u) && control(source) == 0x3300u,
+           "warm-reset PLL lock remains pending before deadline");
+    expect(state, dspic33_device_advance(source, 1u) && control(source) == 0x3320u,
+           "warm-reset PLL lock completes at preserved deadline");
+
+    dspic33_reset(source, 0u);
+    write_protected_byte(source, OSCILLATOR_CONTROL + 1u, 0x03u);
+    write_protected_byte(source, OSCILLATOR_CONTROL, OSCILLATOR_SWITCH_ENABLE);
+    dspic33_load_program_word(source, 0u, OPCODE_SLEEP);
+    source->pc = 0u;
+    expect(state, dspic33_step(source) == DSPIC33_SLEEPING,
+           "Sleep executes during pending PLL lock");
+    expect(state, !source->oscillator.lock_pending && control(source) == 0x3300u,
+           "Sleep cancels pending PLL lock phase");
+    expect(state, dspic33_device_advance(source, 31u) && control(source) == 0x3300u,
+           "Sleep prevents stale PLL lock completion");
+
+    dspic33_load_configuration_word(source, CONFIGURATION_FWDT, 0x00ffu);
 }
 
 static void lifecycle_cases(OscillatorConformance* state, Dspic33* source,
@@ -516,8 +645,9 @@ int main(void) {
     failure_trap_cases(&state, &source);
     configuration_admission_cases(&state, &source);
     hardware_failure_cases(&state, &source);
+    pll_lock_sequence_cases(&state, &source, &copy);
     lifecycle_cases(&state, &source, &copy);
-    expect(&state, state.cases == 128u, "oscillator assertion arithmetic");
+    expect(&state, state.cases == 161u, "oscillator assertion arithmetic");
     printf("[oscillator-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32
            "\n",
            state.cases, state.passed, state.failed);
