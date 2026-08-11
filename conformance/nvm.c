@@ -8,6 +8,11 @@
 #include "dspic33.h"
 #include "elf_image.h"
 #include "hex_image.h"
+#include "sfr_side_effect_coverage.h"
+
+static const SfrSideEffectCoverage nvm_sfr_side_effect_coverage[] = {
+    {0x0728u, 0x8000u},
+};
 
 typedef struct {
     uint32_t cases;
@@ -2669,6 +2674,10 @@ int main(void) {
         deferred_reset_cases(&state, &cpu);
         dspic33_destroy(&cpu);
     }
+    report_sfr_side_effect_coverage(
+        "nvm", nvm_sfr_side_effect_coverage,
+        SFR_SIDE_EFFECT_COVERAGE_COUNT(nvm_sfr_side_effect_coverage),
+        state.failed == 0u);
     printf("[nvm-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);
     return state.failed == 0u ? 0 : 1;

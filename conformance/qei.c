@@ -5,6 +5,14 @@
 
 #include "device.h"
 #include "dspic33.h"
+#include "sfr_side_effect_coverage.h"
+
+static const SfrSideEffectCoverage qei_sfr_side_effect_coverage[] = {
+    {0x01c4u, 0x2aaau},
+    {0x01ccu, 0xffffu},
+    {0x05c4u, 0x2aaau},
+    {0x05ccu, 0xffffu},
+};
 
 typedef struct {
     uint32_t cases;
@@ -1367,6 +1375,10 @@ int main(void) {
         expect(&state, state.cases == 472u, "QEI assertion accounting");
         dspic33_destroy(&cpu);
     }
+    report_sfr_side_effect_coverage(
+        "qei", qei_sfr_side_effect_coverage,
+        SFR_SIDE_EFFECT_COVERAGE_COUNT(qei_sfr_side_effect_coverage),
+        state.failed == 0u);
     printf("[qei-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);
     return state.failed == 0u ? 0 : 1;

@@ -5,6 +5,14 @@
 
 #include "device.h"
 #include "dspic33.h"
+#include "sfr_side_effect_coverage.h"
+
+static const SfrSideEffectCoverage dma_sfr_side_effect_coverage[] = {
+    {0x0b02u, 0x8000u}, {0x0b12u, 0x8000u}, {0x0b22u, 0x8000u}, {0x0b32u, 0x8000u},
+    {0x0b42u, 0x8000u}, {0x0b52u, 0x8000u}, {0x0b62u, 0x8000u}, {0x0b72u, 0x8000u},
+    {0x0b82u, 0x8000u}, {0x0b92u, 0x8000u}, {0x0ba2u, 0x8000u}, {0x0bb2u, 0x8000u},
+    {0x0bc2u, 0x8000u}, {0x0bd2u, 0x8000u}, {0x0be2u, 0x8000u},
+};
 
 typedef struct {
     uint32_t cases;
@@ -737,6 +745,10 @@ int main(void) {
         stale_request_cases(&state, &cpu);
         dspic33_destroy(&cpu);
     }
+    report_sfr_side_effect_coverage(
+        "dma", dma_sfr_side_effect_coverage,
+        SFR_SIDE_EFFECT_COVERAGE_COUNT(dma_sfr_side_effect_coverage),
+        state.failed == 0u);
     printf("[dma-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);
     return state.failed == 0u ? 0 : 1;

@@ -6,6 +6,14 @@
 
 #include "device.h"
 #include "dspic33.h"
+#include "sfr_side_effect_coverage.h"
+
+static const SfrSideEffectCoverage uart_sfr_side_effect_coverage[] = {
+    {0x0222u, 0x0c02u},
+    {0x0232u, 0x0c02u},
+    {0x0252u, 0x0c02u},
+    {0x02b2u, 0x0c02u},
+};
 
 typedef struct {
     uint32_t cases;
@@ -785,6 +793,10 @@ int main(void) {
         disable_copy_and_api_cases(&state, &cpu);
         dspic33_destroy(&cpu);
     }
+    report_sfr_side_effect_coverage(
+        "uart", uart_sfr_side_effect_coverage,
+        SFR_SIDE_EFFECT_COVERAGE_COUNT(uart_sfr_side_effect_coverage),
+        state.failed == 0u);
     printf("[uart-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);
     return state.failed == 0u ? 0 : 1;

@@ -5,6 +5,13 @@
 
 #include "device.h"
 #include "dspic33.h"
+#include "sfr_side_effect_coverage.h"
+
+static const SfrSideEffectCoverage oscillator_sfr_side_effect_coverage[] = {
+    {0x0742u, 0x0009u},
+    {0x0744u, 0x7800u},
+    {0x074eu, 0x0f00u},
+};
 
 enum {
     OSCILLATOR_CONTROL = 0x0742u,
@@ -1621,6 +1628,10 @@ int main(void) {
     doze_cases(&state, &source, &copy);
     lifecycle_cases(&state, &source, &copy);
     expect(&state, state.cases == 443u, "oscillator assertion arithmetic");
+    report_sfr_side_effect_coverage(
+        "oscillator", oscillator_sfr_side_effect_coverage,
+        SFR_SIDE_EFFECT_COVERAGE_COUNT(oscillator_sfr_side_effect_coverage),
+        state.failed == 0u);
     printf("[oscillator-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32
            "\n",
            state.cases, state.passed, state.failed);

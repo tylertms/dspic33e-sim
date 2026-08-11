@@ -4,6 +4,12 @@
 #include <stdio.h>
 
 #include "dspic33.h"
+#include "sfr_side_effect_coverage.h"
+
+static const SfrSideEffectCoverage processor_sfr_side_effect_coverage[] = {
+    {0x0042u, 0xfc00u},
+    {0x0044u, 0x0008u},
+};
 
 typedef struct {
     uint32_t cases;
@@ -6571,6 +6577,10 @@ int main(void) {
         illegal_condition_reset_cases(&state, &cpu);
         dspic33_destroy(&cpu);
     }
+    report_sfr_side_effect_coverage(
+        "processor", processor_sfr_side_effect_coverage,
+        SFR_SIDE_EFFECT_COVERAGE_COUNT(processor_sfr_side_effect_coverage),
+        state.failed == 0u);
     printf("[processor-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32
            "\n",
            state.cases, state.passed, state.failed);

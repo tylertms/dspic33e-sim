@@ -5,6 +5,14 @@
 
 #include "device.h"
 #include "dspic33.h"
+#include "sfr_side_effect_coverage.h"
+
+static const SfrSideEffectCoverage i2c_sfr_side_effect_coverage[] = {
+    {0x0206u, 0x101eu},
+    {0x0208u, 0x04d8u},
+    {0x0216u, 0x101eu},
+    {0x0218u, 0x04d8u},
+};
 
 typedef struct {
     uint32_t cases;
@@ -2778,6 +2786,10 @@ int main(void) {
     slave_pin_address_policy_cases(&state, &cpu);
     expect(&state, state.cases == 1184u, "I2C assertion arithmetic");
     dspic33_destroy(&cpu);
+    report_sfr_side_effect_coverage(
+        "i2c", i2c_sfr_side_effect_coverage,
+        SFR_SIDE_EFFECT_COVERAGE_COUNT(i2c_sfr_side_effect_coverage),
+        state.failed == 0u);
     printf("[i2c-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);
     return state.failed == 0u ? 0 : 1;

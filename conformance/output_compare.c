@@ -4,6 +4,18 @@
 
 #include "device.h"
 #include "dspic33.h"
+#include "sfr_side_effect_coverage.h"
+
+static const SfrSideEffectCoverage output_compare_sfr_side_effect_coverage[] = {
+    {0x0900u, 0x0070u}, {0x0902u, 0x0040u}, {0x090au, 0x0070u}, {0x090cu, 0x0040u},
+    {0x0914u, 0x0070u}, {0x0916u, 0x0040u}, {0x091eu, 0x0070u}, {0x0920u, 0x0040u},
+    {0x0928u, 0x0070u}, {0x092au, 0x0040u}, {0x0932u, 0x0070u}, {0x0934u, 0x0040u},
+    {0x093cu, 0x0070u}, {0x093eu, 0x0040u}, {0x0946u, 0x0070u}, {0x0948u, 0x0040u},
+    {0x0950u, 0x0070u}, {0x0952u, 0x0040u}, {0x095au, 0x0070u}, {0x095cu, 0x0040u},
+    {0x0964u, 0x0070u}, {0x0966u, 0x0040u}, {0x096eu, 0x0070u}, {0x0970u, 0x0040u},
+    {0x0978u, 0x0070u}, {0x097au, 0x0040u}, {0x0982u, 0x0070u}, {0x0984u, 0x0040u},
+    {0x098cu, 0x0070u}, {0x098eu, 0x0040u}, {0x0996u, 0x0070u}, {0x0998u, 0x0040u},
+};
 
 typedef struct {
     uint32_t cases;
@@ -4262,6 +4274,10 @@ int main(void) {
         lifecycle_cases(&state, &cpu);
         dspic33_destroy(&cpu);
     }
+    report_sfr_side_effect_coverage(
+        "output-compare", output_compare_sfr_side_effect_coverage,
+        SFR_SIDE_EFFECT_COVERAGE_COUNT(output_compare_sfr_side_effect_coverage),
+        state.failed == 0u);
     printf("[output-compare-summary] cases=%u passed=%u failed=%u\n", state.cases,
            state.passed, state.failed);
     return state.failed == 0u ? 0 : 1;

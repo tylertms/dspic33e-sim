@@ -6,6 +6,14 @@
 
 #include "device.h"
 #include "dspic33.h"
+#include "sfr_side_effect_coverage.h"
+
+static const SfrSideEffectCoverage rtcc_sfr_side_effect_coverage[] = {
+    {0x0620u, 0xffffu},
+    {0x0622u, 0x83ffu},
+    {0x0624u, 0xffffu},
+    {0x0626u, 0xa000u},
+};
 
 typedef struct {
     uint32_t cases;
@@ -1053,6 +1061,10 @@ int main(void) {
         expect(&state, state.cases == 1479u, "RTCC assertion arithmetic");
         dspic33_destroy(&cpu);
     }
+    report_sfr_side_effect_coverage(
+        "rtcc", rtcc_sfr_side_effect_coverage,
+        SFR_SIDE_EFFECT_COVERAGE_COUNT(rtcc_sfr_side_effect_coverage),
+        state.failed == 0u);
     printf("[rtcc-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);
     return state.failed == 0u ? 0 : 1;

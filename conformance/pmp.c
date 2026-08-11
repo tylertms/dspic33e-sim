@@ -4,6 +4,14 @@
 
 #include "device.h"
 #include "dspic33.h"
+#include "sfr_side_effect_coverage.h"
+
+static const SfrSideEffectCoverage pmp_sfr_side_effect_coverage[] = {
+    {0x0604u, 0xffffu},
+    {0x0606u, 0xffffu},
+    {0x0608u, 0xffffu},
+    {0x060au, 0xffffu},
+};
 
 typedef struct {
     uint32_t cases;
@@ -1940,6 +1948,10 @@ int main(void) {
         expect(&state, state.cases == 624u, "PMP assertion accounting");
         dspic33_destroy(&cpu);
     }
+    report_sfr_side_effect_coverage(
+        "pmp", pmp_sfr_side_effect_coverage,
+        SFR_SIDE_EFFECT_COVERAGE_COUNT(pmp_sfr_side_effect_coverage),
+        state.failed == 0u);
     printf("[pmp-summary] cases=%u passed=%u failed=%u\n", state.cases, state.passed,
            state.failed);
     return state.failed == 0u ? 0 : 1;

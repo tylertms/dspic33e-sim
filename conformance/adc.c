@@ -5,6 +5,12 @@
 
 #include "device.h"
 #include "dspic33.h"
+#include "sfr_side_effect_coverage.h"
+
+static const SfrSideEffectCoverage adc_sfr_side_effect_coverage[] = {
+    {0x0320u, 0x0001u},
+    {0x0360u, 0x0001u},
+};
 
 typedef struct {
     uint32_t cases;
@@ -657,6 +663,10 @@ int main(void) {
     power_cases(&state, &cpu);
     boundary_cases(&state, &cpu);
     copy_cases(&state, &cpu);
+    report_sfr_side_effect_coverage(
+        "adc", adc_sfr_side_effect_coverage,
+        SFR_SIDE_EFFECT_COVERAGE_COUNT(adc_sfr_side_effect_coverage),
+        state.failed == 0u);
     printf("[adc-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);
     dspic33_destroy(&cpu);

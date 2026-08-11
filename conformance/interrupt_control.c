@@ -5,6 +5,14 @@
 
 #include "device.h"
 #include "dspic33.h"
+#include "sfr_side_effect_coverage.h"
+
+static const SfrSideEffectCoverage interrupt_control_sfr_side_effect_coverage[] = {
+    {0x0052u, 0x3fffu},
+    {0x08c2u, 0x2000u},
+    {0x08c4u, 0x0070u},
+    {0x08c6u, 0x0001u},
+};
 
 enum {
     INTCON1 = 0x08c0u,
@@ -580,6 +588,10 @@ int main(void) {
     external_interrupt_wake_lifecycle_cases(&state, &source, &copy);
     lifecycle_cases(&state, &source, &copy);
     expect(&state, state.cases == 102u, "interrupt-control assertion accounting");
+    report_sfr_side_effect_coverage(
+        "interrupt-control", interrupt_control_sfr_side_effect_coverage,
+        SFR_SIDE_EFFECT_COVERAGE_COUNT(interrupt_control_sfr_side_effect_coverage),
+        state.failed == 0u);
     printf("[interrupt-control-summary] cases=%" PRIu32 " passed=%" PRIu32
            " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);

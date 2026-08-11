@@ -6,6 +6,13 @@
 
 #include "device.h"
 #include "dspic33.h"
+#include "sfr_side_effect_coverage.h"
+
+static const SfrSideEffectCoverage usb_sfr_side_effect_coverage[] = {
+    {0x0488u, 0x00fdu},
+    {0x04c0u, 0x00ffu},
+    {0x04c4u, 0x00ffu},
+};
 
 typedef struct {
     uint32_t cases;
@@ -1048,6 +1055,10 @@ int main(void) {
     host_interrupt_cases(&state, &cpu);
     host_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
+    report_sfr_side_effect_coverage(
+        "usb", usb_sfr_side_effect_coverage,
+        SFR_SIDE_EFFECT_COVERAGE_COUNT(usb_sfr_side_effect_coverage),
+        state.failed == 0u);
     printf("[usb-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);
     dspic33_destroy(&cpu);

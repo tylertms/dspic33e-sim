@@ -5,6 +5,12 @@
 
 #include "device.h"
 #include "dspic33.h"
+#include "sfr_side_effect_coverage.h"
+
+static const SfrSideEffectCoverage spi_sfr_side_effect_coverage[] = {
+    {0x0240u, 0x0040u}, {0x0248u, 0xffffu}, {0x0260u, 0x0040u}, {0x0268u, 0xffffu},
+    {0x02a0u, 0x0040u}, {0x02a8u, 0xffffu}, {0x02c0u, 0x0040u}, {0x02c8u, 0xffffu},
+};
 
 typedef struct {
     uint32_t cases;
@@ -847,6 +853,10 @@ int main(void) {
     if (initialized) {
         dspic33_destroy(&cpu);
     }
+    report_sfr_side_effect_coverage(
+        "spi", spi_sfr_side_effect_coverage,
+        SFR_SIDE_EFFECT_COVERAGE_COUNT(spi_sfr_side_effect_coverage),
+        state.failed == 0u);
     printf("[spi-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);
     return state.failed == 0u ? 0 : 1;

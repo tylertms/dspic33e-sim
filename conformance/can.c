@@ -6,6 +6,13 @@
 
 #include "device.h"
 #include "dspic33.h"
+#include "sfr_side_effect_coverage.h"
+
+static const SfrSideEffectCoverage can_sfr_side_effect_coverage[] = {
+    {0x0400u, 0x1000u}, {0x040au, 0x00efu}, {0x0420u, 0xffffu}, {0x0422u, 0xffffu},
+    {0x0428u, 0xffffu}, {0x042au, 0xffffu}, {0x0500u, 0x1000u}, {0x050au, 0x00efu},
+    {0x0520u, 0xffffu}, {0x0522u, 0xffffu}, {0x0528u, 0xffffu}, {0x052au, 0xffffu},
+};
 
 typedef struct {
     uint32_t cases;
@@ -1355,6 +1362,10 @@ int main(void) {
     mode_and_power_cases(&state, &cpu);
     interrupt_and_error_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
+    report_sfr_side_effect_coverage(
+        "can", can_sfr_side_effect_coverage,
+        SFR_SIDE_EFFECT_COVERAGE_COUNT(can_sfr_side_effect_coverage),
+        state.failed == 0u);
     printf("[can-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);
     dspic33_destroy(&cpu);

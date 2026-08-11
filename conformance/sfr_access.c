@@ -553,6 +553,18 @@ static void print_inventory(const SfrAccessCensus* census) {
         DSPIC33_SFR_MUX_ACCESS_SIDE_EFFECT_BIT_COUNT);
 }
 
+static void print_side_effect_expectations(void) {
+    uint32_t index;
+    for (index = 0u; index < DSPIC33_SFR_ACCESS_ADDRESS_COUNT; index++) {
+        const Dspic33SfrAccessExpectation* expectation =
+            &dspic33_sfr_access_expectations[index];
+        if (expectation->side_effect != 0u) {
+            printf("[sfr-side-effect-expected] address=0x%04x mask=0x%04x\n",
+                   (unsigned)expectation->address, (unsigned)expectation->side_effect);
+        }
+    }
+}
+
 static void print_access_summary(const SfrAccessCensus* census) {
     printf("[sfr-access-summary] unresolved-addresses=%" PRIu32
            " normal-addresses=%" PRIu32 " normal-bits=%" PRIu32
@@ -704,6 +716,7 @@ int main(void) {
     map_census = inspect_sfr_map(&cpu);
     dspic33_destroy(&cpu);
     print_inventory(&census);
+    print_side_effect_expectations();
     print_access_summary(&census);
     print_mux_summary(&mux_census);
     print_conditional_summary(&conditional_census);
