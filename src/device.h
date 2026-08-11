@@ -16,6 +16,8 @@ bool dspic33_device_service_interrupt(Dspic33* cpu);
 bool dspic33_device_interrupt_pending(const Dspic33* cpu);
 bool dspic33_device_wake(Dspic33* cpu);
 bool dspic33_device_dma_pad_valid(uint16_t pad, bool write);
+bool dspic33_device_gpio_input_high(const Dspic33* cpu, uint8_t port, uint8_t bit,
+                                    bool* high);
 void dspic33_device_latch_interrupt(Dspic33* cpu, uint8_t vector, uint8_t priority);
 void dspic33_device_latch_math_error(Dspic33* cpu, uint16_t cause);
 void dspic33_device_return_interrupt(Dspic33* cpu);

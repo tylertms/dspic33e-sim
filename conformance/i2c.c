@@ -1745,6 +1745,160 @@ static void dma_isolation_cases(I2cConformance* state, Dspic33* cpu) {
            "master event does not request dma");
 }
 
+static void pin_routing_cases(I2cConformance* state, Dspic33* cpu) {
+    Dspic33 copy;
+    bool copy_high;
+    bool high;
+    bool initialized;
+
+    expect(state, dspic33_load_configuration_word(cpu, 0xf8000cu, 0xffffu),
+           "load standard I2C pin configuration");
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, 5u, 0x0030u, 0x0030u);
+    enable(cpu, 1u, 0u, 2u);
+    expect(state,
+           dspic33_i2c_pin(cpu, 5u, 5u, &high) && high &&
+               dspic33_i2c_pin(cpu, 5u, 4u, &high) && high,
+           "standard I2C2 pins are selected and released");
+    dspic33_write_word(cpu, 0x0e50u,
+                       (uint16_t)(dspic33_read_word(cpu, 0x0e50u) & ~0x0030u));
+    dspic33_write_word(cpu, 0x0e54u,
+                       (uint16_t)(dspic33_read_word(cpu, 0x0e54u) & ~0x0030u));
+    expect(state,
+           dspic33_i2c_pin(cpu, 5u, 5u, &high) && high &&
+               dspic33_i2c_pin(cpu, 5u, 4u, &high) && high,
+           "enabled I2C2 owns pins independently of port output state");
+    expect(state,
+           !dspic33_i2c_pin(cpu, 0u, 2u, &high) && !dspic33_i2c_pin(cpu, 0u, 3u, &high),
+           "standard I2C2 leaves alternate pins under port control");
+    dspic33_gpio_drive(cpu, 5u, 0u, 0x0010u);
+    expect(state, dspic33_i2c_pin(cpu, 5u, 4u, &high) && !high,
+           "released I2C data resolves an externally driven low");
+    dspic33_write_word(cpu, (uint16_t)(bases[1] + 6u), 0x9001u);
+    expect(state,
+           !dspic33_i2c_pin(cpu, 5u, 5u, &high) && !dspic33_i2c_pin(cpu, 5u, 4u, &high),
+           "active master start defers to the serial edge engine");
+    expect(state, dspic33_device_advance(cpu, control_cycles(2u)),
+           "complete pin-plane master start");
+    expect(state,
+           dspic33_i2c_pin(cpu, 5u, 5u, &high) && !high &&
+               !dspic33_i2c_pin(cpu, 5u, 4u, &high),
+           "master wait state holds clock low and leaves data phase unavailable");
+    dspic33_write_word(cpu, (uint16_t)(bases[1] + 6u), 0u);
+    expect(state,
+           !dspic33_i2c_pin(cpu, 5u, 5u, &high) &&
+               dspic33_gpio_pin(cpu, 5u, 5u, &high) && !high,
+           "disabled I2C2 returns standard pins to port control");
+
+    expect(state, dspic33_load_configuration_word(cpu, 0xf8000cu, 0xffdfu),
+           "load alternate I2C2 pin configuration");
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, 0u, 0x000cu, 0x000cu);
+    enable(cpu, 1u, 0u, 0u);
+    expect(state,
+           dspic33_i2c_pin(cpu, 0u, 2u, &high) && high &&
+               dspic33_i2c_pin(cpu, 0u, 3u, &high) && high,
+           "alternate I2C2 pins are selected and released");
+    expect(state,
+           !dspic33_i2c_pin(cpu, 5u, 5u, &high) && !dspic33_i2c_pin(cpu, 5u, 4u, &high),
+           "alternate I2C2 releases standard pins");
+    dspic33_write_word(cpu, (uint16_t)(bases[1] + 10u), 0x52u);
+    dspic33_write_word(cpu, (uint16_t)(bases[1] + 6u), 0x9040u);
+    expect(state,
+           dspic33_i2c_slave_start(cpu, 1u, 0x52u, false, false, 0u) &&
+               dspic33_device_advance(cpu, 0u),
+           "alternate I2C2 accepts a slave address");
+    expect(state,
+           dspic33_i2c_pin(cpu, 0u, 2u, &high) && !high &&
+               dspic33_i2c_pin(cpu, 0u, 3u, &high) && high,
+           "I2C2 slave clock stretch drives only alternate SCL low");
+    dspic33_read_word(cpu, bases[1]);
+    dspic33_write_word(cpu, (uint16_t)(bases[1] + 6u), 0x9040u);
+    expect(state, dspic33_i2c_pin(cpu, 0u, 2u, &high) && high,
+           "I2C2 SCLREL releases the alternate clock");
+
+    expect(state, dspic33_load_configuration_word(cpu, 0xf8000cu, 0xffefu),
+           "load alternate I2C1 pin configuration");
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, 3u, 0x0600u, 0x0600u);
+    enable(cpu, 0u, 0u, 0u);
+    expect(state,
+           dspic33_i2c_pin(cpu, 3u, 10u, &high) && high &&
+               dspic33_i2c_pin(cpu, 3u, 9u, &high) && high,
+           "alternate I2C1 pins are selected and released");
+    dspic33_write_word(cpu, (uint16_t)(bases[0] + 10u), 0x52u);
+    dspic33_write_word(cpu, (uint16_t)(bases[0] + 6u), 0x9040u);
+    dspic33_i2c_slave_start(cpu, 0u, 0x52u, false, false, 0u);
+    dspic33_device_advance(cpu, 0u);
+    expect(state,
+           dspic33_i2c_pin(cpu, 3u, 10u, &high) && !high &&
+               dspic33_i2c_pin(cpu, 3u, 9u, &high) && high,
+           "I2C1 slave clock stretch drives only alternate SCL low");
+
+    expect(state, dspic33_load_configuration_word(cpu, 0xf8000cu, 0xffffu),
+           "restore standard I2C1 pin selection");
+    dspic33_reset(cpu, 0u);
+    enable(cpu, 0u, 0u, 0u);
+    expect(state,
+           !dspic33_i2c_pin(cpu, 3u, 10u, &high) &&
+               !dspic33_i2c_pin(cpu, 3u, 9u, &high) &&
+               !dspic33_i2c_pin(cpu, 6u, 2u, &high) &&
+               !dspic33_i2c_pin(cpu, 6u, 3u, &high),
+           "MU810 standard I2C1 selection has no bonded serial pins");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, 5u, 0x0030u, 0x0030u);
+    enable(cpu, 1u, 0u, 0u);
+    dspic33_write_word(cpu, 0x0764u, 0x0002u);
+    expect(state, dspic33_i2c_pin(cpu, 5u, 5u, &high) && high,
+           "pending I2C2 PMD transition retains pin ownership");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && !dspic33_i2c_pin(cpu, 5u, 5u, &high),
+           "effective I2C2 PMD disable releases pins");
+    dspic33_write_word(cpu, 0x0764u, 0u);
+    expect(state, !dspic33_i2c_pin(cpu, 5u, 5u, &high),
+           "pending I2C2 PMD enable leaves pins released");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && dspic33_i2c_pin(cpu, 5u, 5u, &high) &&
+               high,
+           "effective I2C2 PMD enable restores pin ownership");
+
+    initialized = dspic33_initialize(&copy);
+    expect(state, initialized, "initialize I2C pin-plane copy");
+    if (initialized) {
+        expect(state, dspic33_copy(&copy, cpu), "copy I2C pin-plane state");
+        expect(state,
+               dspic33_i2c_pin(cpu, 5u, 5u, &high) && high &&
+                   dspic33_i2c_pin(&copy, 5u, 5u, &copy_high) && copy_high,
+               "copy preserves independent I2C pin ownership and input level");
+        dspic33_load_configuration_word(cpu, 0xf8000cu, 0xffdfu);
+        expect(state,
+               dspic33_i2c_pin(cpu, 0u, 2u, &high) &&
+                   dspic33_i2c_pin(&copy, 5u, 5u, &copy_high),
+               "copy preserves an independent I2C pin selection");
+        dspic33_destroy(&copy);
+    }
+
+    dspic33_load_program_word(cpu, 0u, 0xfe0000u);
+    cpu->pc = 0u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "execute warm reset with alternate I2C configuration");
+    expect(state,
+           !dspic33_i2c_pin(cpu, 0u, 2u, &high) &&
+               dspic33_read_configuration_byte(cpu, 0xf8000cu) == 0xdfu,
+           "warm reset preserves selection and releases disabled I2C pins");
+    dspic33_gpio_drive(cpu, 0u, 0x000cu, 0x000cu);
+    enable(cpu, 1u, 0u, 0u);
+    expect(state, dspic33_i2c_pin(cpu, 0u, 2u, &high) && high,
+           "warm-reset I2C2 re-enable uses retained alternate pins");
+    expect(state,
+           !dspic33_i2c_pin(cpu, DSPIC33_GPIO_PORT_COUNT, 0u, &high) &&
+               !dspic33_i2c_pin(cpu, 0u, 16u, &high) &&
+               !dspic33_i2c_pin(cpu, 0u, 2u, NULL),
+           "I2C pin API rejects invalid arguments");
+    dspic33_load_configuration_word(cpu, 0xf8000cu, 0xffffu);
+}
+
 int main(void) {
     Dspic33 cpu;
     I2cConformance state = {0u, 0u, 0u};
@@ -1767,7 +1921,8 @@ int main(void) {
     pmd_transition_cases(&state, &cpu);
     slave_power_cases(&state, &cpu);
     dma_isolation_cases(&state, &cpu);
-    expect(&state, state.cases == 776u, "I2C assertion arithmetic");
+    pin_routing_cases(&state, &cpu);
+    expect(&state, state.cases == 808u, "I2C assertion arithmetic");
     dspic33_destroy(&cpu);
     printf("[i2c-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);

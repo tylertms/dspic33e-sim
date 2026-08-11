@@ -13175,6 +13175,27 @@ bool dspic33_gpio_pin(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* high)
     return true;
 }
 
+bool dspic33_device_gpio_input_high(const Dspic33* cpu, uint8_t port, uint8_t bit,
+                                    bool* high) {
+    uint16_t driven;
+    uint16_t mask;
+    uint16_t pull_down;
+    uint16_t pull_up;
+    if (port >= DSPIC33_GPIO_PORT_COUNT || bit >= 16u || high == NULL) {
+        return false;
+    }
+    mask = (uint16_t)(1u << bit);
+    if ((gpio_port_masks[port] & mask) == 0u) {
+        return false;
+    }
+    driven = cpu->io.gpio_driven[port];
+    pull_up = raw_word(cpu, gpio_pull_up_addresses[port]);
+    pull_down = raw_word(cpu, gpio_pull_down_addresses[port]);
+    *high = (((cpu->io.gpio[port] & driven) | (pull_up & ~driven & ~pull_down)) &
+             mask) != 0u;
+    return true;
+}
+
 void dspic33_gpio_input(Dspic33* cpu, uint8_t port, uint16_t value) {
     if (port < DSPIC33_GPIO_PORT_COUNT) {
         dspic33_gpio_drive(cpu, port, value, gpio_port_masks[port]);

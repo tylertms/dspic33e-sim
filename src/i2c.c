@@ -8,6 +8,12 @@ static const uint16_t bases[DSPIC33_I2C_COUNT] = {0x0200u, 0x0210u};
 static const uint8_t slave_irqs[DSPIC33_I2C_COUNT] = {16u, 49u};
 static const uint8_t master_irqs[DSPIC33_I2C_COUNT] = {17u, 50u};
 
+typedef struct {
+    uint8_t port;
+    uint8_t clock;
+    uint8_t data;
+} Dspic33I2cPinMapping;
+
 enum {
     I2C_RCV = 0u,
     I2C_TRN = 2u,
@@ -90,6 +96,32 @@ static bool module_disabled(const Dspic33* cpu, uint8_t channel) {
 static bool module_enabled(const Dspic33* cpu, uint8_t channel) {
     return !module_disabled(cpu, channel) &&
            (raw_word(cpu, (uint16_t)(bases[channel] + I2C_CON)) & I2C_ENABLE) != 0u;
+}
+
+static bool pin_mapping(const Dspic33* cpu, uint8_t channel,
+                        Dspic33I2cPinMapping* mapping) {
+    uint8_t selection;
+    if (channel >= DSPIC33_I2C_COUNT || mapping == NULL) {
+        return false;
+    }
+    selection = (uint8_t)(cpu->configuration[12u] & (uint8_t)(0x10u << channel));
+    if (channel == 0u) {
+        if (selection != 0u) {
+            return false;
+        }
+        mapping->port = 3u;
+        mapping->clock = 10u;
+        mapping->data = 9u;
+    } else if (selection != 0u) {
+        mapping->port = 5u;
+        mapping->clock = 5u;
+        mapping->data = 4u;
+    } else {
+        mapping->port = 0u;
+        mapping->clock = 2u;
+        mapping->data = 3u;
+    }
+    return true;
 }
 
 static Dspic33Event* scheduled_event(Dspic33* cpu, uint64_t sequence) {
@@ -957,6 +989,49 @@ bool dspic33_i2c_collision(Dspic33* cpu, uint8_t channel, uint64_t delay) {
 bool dspic33_i2c_transmit(Dspic33* cpu, uint8_t channel, Dspic33I2cTransfer* transfer) {
     return channel < DSPIC33_I2C_COUNT && transfer != NULL &&
            transfer_pop(&cpu->io.i2c_tx[channel], transfer);
+}
+
+bool dspic33_i2c_pin(const Dspic33* cpu, uint8_t port, uint8_t pin, bool* high) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_I2C_COUNT; channel++) {
+        Dspic33I2cPinMapping mapping;
+        uint16_t control;
+        uint16_t status;
+        uint8_t channel_bit;
+        bool clock;
+        bool serial_active;
+        if (!pin_mapping(cpu, channel, &mapping) || mapping.port != port ||
+            (mapping.clock != pin && mapping.data != pin) ||
+            !module_enabled(cpu, channel)) {
+            continue;
+        }
+        if (high == NULL) {
+            return false;
+        }
+        control = raw_word(cpu, (uint16_t)(bases[channel] + I2C_CON));
+        status = raw_word(cpu, (uint16_t)(bases[channel] + I2C_STAT));
+        channel_bit = (uint8_t)(1u << channel);
+        clock = mapping.clock == pin;
+        serial_active =
+            (control & I2C_MASTER_MASK) != 0u || (status & I2C_TRANSMIT_ACTIVE) != 0u ||
+            (((cpu->io.i2c_slave_active & cpu->io.i2c_slave_read) & channel_bit) !=
+                 0u &&
+             (control & I2C_SCLREL) != 0u);
+        if (serial_active) {
+            return false;
+        }
+        if (clock && (((cpu->io.i2c_slave_active & channel_bit) != 0u &&
+                       (control & I2C_SCLREL) == 0u) ||
+                      (cpu->io.i2c_master_active & channel_bit) != 0u)) {
+            *high = false;
+            return true;
+        }
+        if (!clock && (cpu->io.i2c_master_active & channel_bit) != 0u) {
+            return false;
+        }
+        return dspic33_device_gpio_input_high(cpu, port, pin, high);
+    }
+    return false;
 }
 
 void dspic33_i2c_reset(Dspic33* cpu) {
