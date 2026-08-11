@@ -2893,6 +2893,7 @@ static bool execute_divide(Dspic33* cpu, uint32_t opcode) {
     uint8_t divisor_register = (uint8_t)(opcode & 0x0fu);
     uint16_t divisor = cpu->w[divisor_register];
     bool overflow = false;
+    bool overflow_flag = false;
     int64_t remainder;
     int64_t quotient;
     if (divisor == 0u) {
@@ -2911,6 +2912,7 @@ static bool execute_divide(Dspic33* cpu, uint32_t opcode) {
         uint32_t unsigned_quotient = dividend / divisor;
         uint32_t unsigned_remainder = dividend % divisor;
         overflow = unsigned_quotient > UINT16_MAX;
+        overflow_flag = overflow;
         quotient = unsigned_quotient;
         remainder = unsigned_remainder;
     } else {
@@ -2922,10 +2924,14 @@ static bool execute_divide(Dspic33* cpu, uint32_t opcode) {
         quotient = (int64_t)dividend / signed_divisor;
         remainder = (int64_t)dividend % signed_divisor;
         overflow = quotient < INT16_MIN || quotient > INT16_MAX;
+        overflow_flag =
+            overflow &&
+            (!double_word || !(((dividend < 0) != (signed_divisor < 0)) ||
+                               dividend > 0x3fffffff || dividend <= -0x40000000));
     }
     write_working_register(cpu, 0u, (uint16_t)quotient);
     write_working_register(cpu, 1u, (uint16_t)remainder);
-    update_divide_flags(cpu, remainder, overflow);
+    update_divide_flags(cpu, remainder, overflow_flag);
     return true;
 }
 

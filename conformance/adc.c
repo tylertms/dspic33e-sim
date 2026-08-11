@@ -442,6 +442,10 @@ static void trigger_cases(AdcConformance* state, Dspic33* cpu) {
             finish_conversion(cpu, module);
             expect(state, dspic33_read_word(cpu, buffers[module]) == 100u,
                    "external adc trigger result");
+            expect(state,
+                   ((dspic33_read_word(cpu, controls[module]) & 1u) != 0u) ==
+                       (source != 1u),
+                   "B1 external interrupt trigger leaves adc done clear");
         }
     }
     expect(state, !dspic33_adc_trigger(cpu, 2u, 1u, 0u), "reject adc module");

@@ -2259,6 +2259,36 @@ static void repeat_exception_cases(ProcessorConformance* state, Dspic33* cpu) {
     }
 
     reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, 0x090011u);
+    load_instruction(state, cpu, 0x202u, OPCODE_DIV_SD_W4_W3);
+    cpu->w[3] = 0xffffu;
+    cpu->w[4] = 0u;
+    cpu->w[5] = 0x8000u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "initialize B1 signed double divide overflow");
+    while (cpu->repeat_active != 0u) {
+        expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+               "execute B1 signed double divide overflow");
+    }
+    expect(state, cpu->w[0] == 0u && cpu->w[1] == 0u && (cpu->sr & 0x000fu) == 0x0002u,
+           "B1 signed double divide overflow leaves OV clear");
+
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, 0x090011u);
+    load_instruction(state, cpu, 0x202u, OPCODE_DIV_SD_W4_W3);
+    cpu->w[3] = 1u;
+    cpu->w[4] = 0x9c40u;
+    cpu->w[5] = 0u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "initialize unaffected signed double divide overflow");
+    while (cpu->repeat_active != 0u) {
+        expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+               "execute unaffected signed double divide overflow");
+    }
+    expect(state, (cpu->sr & 0x0004u) != 0u,
+           "unaffected signed double divide overflow sets OV");
+
+    reset_processor_conformance(cpu, 0x200u);
     load_instruction(state, cpu, 0x00000cu, 0x000300u);
     load_instruction(state, cpu, 0x000300u, OPCODE_RETFIE);
     load_instruction(state, cpu, 0x200u, 0x090011u);

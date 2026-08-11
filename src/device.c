@@ -8575,7 +8575,7 @@ static void adc_store_result(Dspic33* cpu, uint8_t module, uint8_t channel,
 
 static void adc_begin_sampling(Dspic33* cpu, uint8_t module);
 
-static void adc_complete_conversion(Dspic33* cpu, uint8_t module) {
+static void adc_complete_conversion(Dspic33* cpu, uint8_t module, uint8_t source) {
     uint16_t control;
     uint8_t index;
     if (!adc_power_enabled(cpu, module)) {
@@ -8589,7 +8589,9 @@ static void adc_complete_conversion(Dspic33* cpu, uint8_t module) {
         adc_store_result(cpu, module, cpu->io.adc_latched_channel[module][index],
                          cpu->io.adc_latched[module][index]);
     }
-    raw_write_word(cpu, adc_controls[module], (uint16_t)(control | ADC_DONE));
+    raw_write_word(cpu, adc_controls[module],
+                   source == 1u ? (uint16_t)(control & ~ADC_DONE)
+                                : (uint16_t)(control | ADC_DONE));
     if ((control & ADC_AUTO_SAMPLE) != 0u) {
         adc_begin_sampling(cpu, module);
     }
@@ -8659,7 +8661,7 @@ static void run_adc(Dspic33* cpu, uint8_t module, uint32_t event_value) {
     source = (uint8_t)(event_value & ADC_EVENT_SOURCE_MASK);
     if ((event_value & ADC_EVENT_COMPLETE) != 0u) {
         if (generation == cpu->io.adc_generation[module]) {
-            adc_complete_conversion(cpu, module);
+            adc_complete_conversion(cpu, module, source);
         }
         return;
     }
@@ -12810,6 +12812,16 @@ static uint16_t gpio_pin_values(const Dspic33* cpu, uint8_t port) {
                           : 0u;
     uint16_t external =
         (uint16_t)((cpu->io.gpio[port] & driven) | (pull_up & ~driven & ~pull_down));
+    if (port == 2u && (cpu->configuration[8u] & 0x04u) == 0u) {
+        uint8_t source = oscillator_current_source(raw_word(cpu, OSCILLATOR_CONTROL));
+        bool frc = source == 0u || source == 1u || source == 6u || source == 7u;
+        bool external_clock =
+            (source == 2u || source == 3u) && (cpu->configuration[8u] & 0x03u) == 0u;
+        if ((frc || external_clock) &&
+            (raw_word(cpu, gpio_open_drain_addresses[0]) & 0x0008u) != 0u) {
+            open_drain |= 0x8000u;
+        }
+    }
     if (port == 6u && (raw_word(cpu, USB_CON) & USB_ENABLE) != 0u) {
         analog |= 0x000cu;
     }
@@ -12871,6 +12883,9 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
     uint8_t port;
     uint8_t channel;
     uint8_t timer;
+    if (address == 0x0741u) {
+        return (uint8_t)(value & ~0x08u);
+    }
     if (address >= INPUT_CAPTURE_BASE &&
         address <
             INPUT_CAPTURE_BASE + DSPIC33_INPUT_CAPTURE_COUNT * INPUT_CAPTURE_STRIDE) {

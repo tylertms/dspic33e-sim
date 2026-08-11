@@ -13,6 +13,7 @@ enum {
     STATUS = 0x0042u,
     CORE_CONTROL = 0x0044u,
     DISI_COUNT = 0x0052u,
+    RESET_CONTROL = 0x0740u,
     INTCON1 = 0x08c0u,
     INTCON2 = 0x08c2u,
     OPCODE_MOV_PCL_W0 = 0xbf802eu,
@@ -159,6 +160,18 @@ static void core_control_cases(CoreSfrConformance* state, Dspic33* cpu) {
            "CORCON high-byte write applies target mask");
 }
 
+static void reset_control_cases(CoreSfrConformance* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, RESET_CONTROL, 0xffffu);
+    expect(state,
+           (cpu->data[RESET_CONTROL + 1u] & 0x08u) != 0u &&
+               (dspic33_read_word(cpu, RESET_CONTROL) & 0x0800u) == 0u,
+           "B1 voltage regulator standby flag stores but reads zero");
+    dspic33_write_word(cpu, RESET_CONTROL, dspic33_read_word(cpu, RESET_CONTROL));
+    expect(state, (cpu->data[RESET_CONTROL + 1u] & 0x08u) == 0u,
+           "B1 reset control read-modify-write clears hidden regulator flag");
+}
+
 static void disicnt_cases(CoreSfrConformance* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0x200u);
     dspic33_write_word(cpu, DISI_COUNT, 0x1234u);
@@ -234,9 +247,10 @@ int main(void) {
     program_counter_cases(&state, &source);
     status_cases(&state, &source);
     core_control_cases(&state, &source);
+    reset_control_cases(&state, &source);
     disicnt_cases(&state, &source);
     lifecycle_cases(&state, &source, &copy);
-    expect(&state, state.cases == 41u, "core SFR assertion accounting");
+    expect(&state, state.cases == 43u, "core SFR assertion accounting");
     printf("[core-sfr-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32
            "\n",
            state.cases, state.passed, state.failed);

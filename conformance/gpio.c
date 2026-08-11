@@ -342,6 +342,35 @@ static void open_drain_cases(GpioConformance* state, Dspic33* cpu) {
         expect(state, (dspic33_read_word(cpu, port_addresses[port]) & mask) == mask,
                "released open-drain output resolves through enabled pull-up");
     }
+
+    dspic33_load_configuration_word(cpu, 0xf80006u, 0x0078u);
+    dspic33_load_configuration_word(cpu, 0xf80008u, 0x0000u);
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, tris_addresses[2], 0u);
+    dspic33_write_word(cpu, latch_addresses[2], 0x8000u);
+    dspic33_write_word(cpu, open_drain_addresses[0], 0x0008u);
+    dspic33_gpio_drive(cpu, 2u, 0u, 0x8000u);
+    expect(state, (dspic33_read_word(cpu, port_addresses[2]) & 0x8000u) == 0u,
+           "B1 ODCA3 releases OSC2 GPIO through RC15 open drain");
+    dspic33_gpio_drive(cpu, 2u, 0x8000u, 0x8000u);
+    expect(state, (dspic33_read_word(cpu, port_addresses[2]) & 0x8000u) != 0u,
+           "B1 ODCA3 released OSC2 GPIO follows external high");
+    dspic33_write_word(cpu, open_drain_addresses[0], 0u);
+    dspic33_gpio_drive(cpu, 2u, 0u, 0x8000u);
+    expect(state, (dspic33_read_word(cpu, port_addresses[2]) & 0x8000u) != 0u,
+           "B1 OSC2 GPIO returns to push-pull when ODCA3 clears");
+
+    dspic33_load_configuration_word(cpu, 0xf80006u, 0x007du);
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, tris_addresses[2], 0u);
+    dspic33_write_word(cpu, latch_addresses[2], 0x8000u);
+    dspic33_write_word(cpu, open_drain_addresses[0], 0x0008u);
+    dspic33_gpio_drive(cpu, 2u, 0u, 0x8000u);
+    expect(state, (dspic33_read_word(cpu, port_addresses[2]) & 0x8000u) != 0u,
+           "B1 ODCA3 does not affect OSC2 GPIO under LPRC");
+    dspic33_load_configuration_word(cpu, 0xf80006u, 0x00ffu);
+    dspic33_load_configuration_word(cpu, 0xf80008u, 0x00ffu);
+    dspic33_reset(cpu, 0u);
 }
 
 static void change_notification_port_cases(GpioConformance* state, Dspic33* cpu) {
@@ -827,7 +856,7 @@ int main(void) {
         change_notification_qualification_cases(&state, &cpu);
         change_notification_interrupt_cases(&state, &cpu);
         change_notification_dma_lifecycle_cases(&state, &cpu);
-        expect(&state, state.cases == 750u, "GPIO assertion accounting");
+        expect(&state, state.cases == 754u, "GPIO assertion accounting");
         dspic33_destroy(&cpu);
     }
     printf("[gpio-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
