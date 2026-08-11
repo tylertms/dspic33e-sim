@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "device.h"
 #include "dspic33.h"
 
 typedef struct {
@@ -17,6 +18,10 @@ static const uint16_t port_addresses[DSPIC33_GPIO_PORT_COUNT] = {
     0x0e02u, 0x0e12u, 0x0e22u, 0x0e32u, 0x0e42u, 0x0e52u, 0x0e62u};
 static const uint16_t latch_addresses[DSPIC33_GPIO_PORT_COUNT] = {
     0x0e04u, 0x0e14u, 0x0e24u, 0x0e34u, 0x0e44u, 0x0e54u, 0x0e64u};
+static const uint16_t open_drain_addresses[DSPIC33_GPIO_PORT_COUNT] = {
+    0x0e06u, 0x0e16u, 0x0e26u, 0x0e36u, 0x0e46u, 0x0e56u, 0x0e66u};
+static const uint16_t change_notification_addresses[DSPIC33_GPIO_PORT_COUNT] = {
+    0x0e08u, 0x0e18u, 0x0e28u, 0x0e38u, 0x0e48u, 0x0e58u, 0x0e68u};
 static const uint16_t analog_addresses[DSPIC33_GPIO_PORT_COUNT] = {
     0x0e0eu, 0x0e1eu, 0x0e2eu, 0x0e3eu, 0x0e4eu, 0u, 0x0e6eu};
 static const uint16_t pull_up_addresses[DSPIC33_GPIO_PORT_COUNT] = {
@@ -33,6 +38,13 @@ static const uint16_t input_only_masks[DSPIC33_GPIO_PORT_COUNT] = {0u, 0u, 0u,  
                                                                    0u, 0u, 0x000cu};
 static const uint16_t pull_masks[DSPIC33_GPIO_PORT_COUNT] = {
     0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x313fu, 0xf3c3u};
+static const uint16_t open_drain_masks[DSPIC33_GPIO_PORT_COUNT] = {
+    0xc03fu, 0u, 0u, 0xff3fu, 0u, 0x313fu, 0xf003u};
+enum {
+    CHANGE_NOTIFICATION_FLAG = 0x0008u,
+    CHANGE_NOTIFICATION_IRQ = 19u,
+    CHANGE_NOTIFICATION_VECTOR = 0x0360u
+};
 
 static void expect(GpioConformance* state, bool condition, const char* name) {
     state->cases++;
@@ -66,6 +78,25 @@ static uint16_t expected_pins(uint8_t port, uint16_t input, uint16_t tris,
     uint16_t inputs = (uint16_t)((tris & latch_masks[port]) | input_only_masks[port]);
     return (uint16_t)(((input & inputs & ~analog) | (latch & ~inputs)) &
                       port_masks[port]);
+}
+
+static bool change_notification_flag(Dspic33* cpu) {
+    return (dspic33_read_word(cpu, 0x0802u) & CHANGE_NOTIFICATION_FLAG) != 0u;
+}
+
+static void clear_change_notification_flag(Dspic33* cpu) {
+    dspic33_write_word(
+        cpu, 0x0802u,
+        (uint16_t)(dspic33_read_word(cpu, 0x0802u) & ~CHANGE_NOTIFICATION_FLAG));
+}
+
+static void configure_change_notification_pin(Dspic33* cpu, uint8_t port,
+                                              uint16_t bit) {
+    reset_released_port(cpu, port);
+    dspic33_write_word(cpu, tris_addresses[port], bit);
+    dspic33_read_word(cpu, port_addresses[port]);
+    dspic33_write_word(cpu, change_notification_addresses[port], bit);
+    clear_change_notification_flag(cpu);
 }
 
 static void core_cases(GpioConformance* state, Dspic33* cpu) {
@@ -279,6 +310,319 @@ static void pull_cases(GpioConformance* state, Dspic33* cpu) {
     }
 }
 
+static void open_drain_cases(GpioConformance* state, Dspic33* cpu) {
+    uint8_t port;
+    for (port = 0u; port < DSPIC33_GPIO_PORT_COUNT; port++) {
+        uint16_t mask = open_drain_masks[port];
+        reset_port(cpu, port, 0u);
+        dspic33_write_word(cpu, open_drain_addresses[port], 0xffffu);
+        expect(state, dspic33_read_word(cpu, open_drain_addresses[port]) == mask,
+               "open-drain register follows the device pin mask");
+        if (mask == 0u) {
+            continue;
+        }
+        dspic33_write_word(cpu, tris_addresses[port], 0u);
+        dspic33_write_word(cpu, latch_addresses[port], mask);
+        expect(state, (dspic33_read_word(cpu, port_addresses[port]) & mask) == 0u,
+               "released open-drain output follows driven-low external state");
+        dspic33_gpio_drive(cpu, port, mask, mask);
+        expect(state, (dspic33_read_word(cpu, port_addresses[port]) & mask) == mask,
+               "released open-drain output follows driven-high external state");
+        dspic33_write_word(cpu, latch_addresses[port], 0u);
+        expect(state, (dspic33_read_word(cpu, port_addresses[port]) & mask) == 0u,
+               "open-drain zero overrides external high state");
+        dspic33_write_word(cpu, open_drain_addresses[port], 0u);
+        dspic33_write_word(cpu, latch_addresses[port], mask);
+        dspic33_gpio_drive(cpu, port, 0u, mask);
+        expect(state, (dspic33_read_word(cpu, port_addresses[port]) & mask) == mask,
+               "push-pull output ignores external low state");
+        dspic33_gpio_release(cpu, port, mask);
+        dspic33_write_word(cpu, pull_up_addresses[port], mask);
+        dspic33_write_word(cpu, open_drain_addresses[port], mask);
+        expect(state, (dspic33_read_word(cpu, port_addresses[port]) & mask) == mask,
+               "released open-drain output resolves through enabled pull-up");
+    }
+}
+
+static void change_notification_port_cases(GpioConformance* state, Dspic33* cpu) {
+    uint8_t port;
+    for (port = 0u; port < DSPIC33_GPIO_PORT_COUNT; port++) {
+        uint8_t bit_index;
+        for (bit_index = 0u; bit_index < 16u; bit_index++) {
+            uint16_t bit = (uint16_t)(1u << bit_index);
+            if ((port_masks[port] & bit) == 0u) {
+                continue;
+            }
+            configure_change_notification_pin(cpu, port, bit);
+            expect(state, !change_notification_flag(cpu),
+                   "enabled change-notification pin starts matched");
+            dspic33_gpio_drive(cpu, port, bit, bit);
+            expect(state, change_notification_flag(cpu),
+                   "enabled input transition raises CNIF");
+            expect(state,
+                   (dspic33_read_word(cpu, port_addresses[port]) & bit) == bit &&
+                       change_notification_flag(cpu),
+                   "PORT read acknowledges mismatch without clearing CNIF");
+            clear_change_notification_flag(cpu);
+            expect(state, !change_notification_flag(cpu),
+                   "CNIF clears after PORT acknowledgement");
+            dspic33_gpio_drive(cpu, port, 0u, bit);
+            expect(state, change_notification_flag(cpu),
+                   "opposite input transition raises a new CNIF");
+            expect(state,
+                   (cpu->io.gpio_cn_reference[port] & bit) == bit &&
+                       (cpu->io.gpio_cn_values[port] & bit) == 0u &&
+                       (cpu->io.gpio_cn_qualified[port] & bit) != 0u,
+                   "change-notification state retains the last PORT sample");
+        }
+    }
+}
+
+static void change_notification_sequence_cases(GpioConformance* state, Dspic33* cpu) {
+    configure_change_notification_pin(cpu, 1u, 0x0101u);
+    dspic33_gpio_drive(cpu, 1u, 0x0001u, 0x0001u);
+    clear_change_notification_flag(cpu);
+    dspic33_gpio_drive(cpu, 1u, 0x0100u, 0x0100u);
+    expect(state, change_notification_flag(cpu),
+           "second pin change reasserts CNIF during an existing mismatch");
+
+    configure_change_notification_pin(cpu, 1u, 0x0001u);
+    dspic33_gpio_drive(cpu, 1u, 0x0001u, 0x0001u);
+    clear_change_notification_flag(cpu);
+    dspic33_gpio_drive(cpu, 1u, 0u, 0x0001u);
+    expect(state, !change_notification_flag(cpu),
+           "return to the unread reference clears the pin mismatch");
+    dspic33_gpio_drive(cpu, 1u, 0x0001u, 0x0001u);
+    expect(state, change_notification_flag(cpu),
+           "same pin reasserts CNIF after returning to its reference");
+
+    configure_change_notification_pin(cpu, 1u, 0x0101u);
+    dspic33_gpio_drive(cpu, 1u, 0x0101u, 0x0101u);
+    expect(state, change_notification_flag(cpu), "multi-lane input change raises CNIF");
+    clear_change_notification_flag(cpu);
+    expect(state, !change_notification_flag(cpu),
+           "clear-before-read does not immediately reassert CNIF");
+    expect(state, dspic33_read_byte(cpu, port_addresses[1]) == 0x01u,
+           "low PORT byte read returns the selected lane");
+    dspic33_gpio_drive(cpu, 1u, 0u, 0x0100u);
+    expect(state, change_notification_flag(cpu),
+           "low PORT byte read acknowledges the entire port");
+
+    configure_change_notification_pin(cpu, 1u, 0x0101u);
+    dspic33_gpio_drive(cpu, 1u, 0x0101u, 0x0101u);
+    clear_change_notification_flag(cpu);
+    expect(state, dspic33_read_byte(cpu, (uint16_t)(port_addresses[1] + 1u)) == 0x01u,
+           "high PORT byte read returns the selected lane");
+    dspic33_gpio_drive(cpu, 1u, 0u, 0x0001u);
+    expect(state, change_notification_flag(cpu),
+           "high PORT byte read acknowledges the entire port");
+
+    reset_released_port(cpu, 1u);
+    dspic33_write_word(cpu, tris_addresses[1], 0x0001u);
+    dspic33_gpio_drive(cpu, 1u, 0x0001u, 0x0001u);
+    dspic33_write_word(cpu, change_notification_addresses[1], 0x0001u);
+    expect(state, !change_notification_flag(cpu),
+           "enabling CN on a changed pin baselines its current state");
+    dspic33_gpio_drive(cpu, 1u, 0u, 0x0001u);
+    expect(state, change_notification_flag(cpu),
+           "transition after CN enable raises CNIF");
+    dspic33_write_word(cpu, change_notification_addresses[1], 0u);
+    clear_change_notification_flag(cpu);
+    dspic33_gpio_drive(cpu, 1u, 0x0001u, 0x0001u);
+    expect(state, !change_notification_flag(cpu),
+           "disabled CN pin does not raise CNIF");
+    dspic33_write_word(cpu, change_notification_addresses[1], 0x0001u);
+    expect(state, !change_notification_flag(cpu),
+           "re-enabled CN pin baselines after disabled transitions");
+}
+
+static void change_notification_qualification_cases(GpioConformance* state,
+                                                    Dspic33* cpu) {
+    reset_released_port(cpu, 1u);
+    dspic33_write_word(cpu, tris_addresses[1], 0u);
+    dspic33_write_word(cpu, change_notification_addresses[1], 0x0001u);
+    dspic33_gpio_drive(cpu, 1u, 0x0001u, 0x0001u);
+    expect(state, !change_notification_flag(cpu),
+           "output-configured pin suppresses change notification");
+    dspic33_write_word(cpu, tris_addresses[1], 0x0001u);
+    expect(state, !change_notification_flag(cpu),
+           "input qualification baselines the current pin state");
+    dspic33_gpio_drive(cpu, 1u, 0u, 0x0001u);
+    expect(state, change_notification_flag(cpu),
+           "qualified digital input detects the next transition");
+
+    reset_released_port(cpu, 1u);
+    dspic33_write_word(cpu, analog_addresses[1], 0x0001u);
+    dspic33_write_word(cpu, tris_addresses[1], 0x0001u);
+    dspic33_write_word(cpu, change_notification_addresses[1], 0x0001u);
+    dspic33_gpio_drive(cpu, 1u, 0x0001u, 0x0001u);
+    expect(state, !change_notification_flag(cpu),
+           "analog input suppresses change notification");
+    dspic33_write_word(cpu, analog_addresses[1], 0u);
+    expect(state, !change_notification_flag(cpu),
+           "digital qualification after ANSEL clear baselines the input");
+    dspic33_gpio_drive(cpu, 1u, 0u, 0x0001u);
+    expect(state, change_notification_flag(cpu),
+           "digital input detects transition after ANSEL clear");
+
+    reset_released_port(cpu, 6u);
+    dspic33_write_word(cpu, change_notification_addresses[6], 0x0004u);
+    dspic33_write_word(cpu, 0x04cau, 0x0001u);
+    dspic33_gpio_drive(cpu, 6u, 0x0004u, 0x0004u);
+    expect(state, !change_notification_flag(cpu),
+           "USB ownership suppresses RG2 change notification");
+    dspic33_write_word(cpu, 0x04cau, 0u);
+    expect(state, !change_notification_flag(cpu),
+           "released USB ownership baselines RG2 input");
+    dspic33_gpio_drive(cpu, 6u, 0u, 0x0004u);
+    expect(state, change_notification_flag(cpu),
+           "RG2 detects transitions after USB release");
+
+    configure_change_notification_pin(cpu, 1u, 0x0001u);
+    dspic33_write_word(cpu, pull_up_addresses[1], 0x0001u);
+    expect(state, change_notification_flag(cpu), "weak pull-up transition raises CNIF");
+    dspic33_read_word(cpu, port_addresses[1]);
+    clear_change_notification_flag(cpu);
+    dspic33_write_word(cpu, pull_up_addresses[1], 0u);
+    dspic33_write_word(cpu, pull_down_addresses[1], 0x0001u);
+    expect(state, change_notification_flag(cpu),
+           "weak pull-down transition raises CNIF");
+
+    configure_change_notification_pin(cpu, 1u, 0x0001u);
+    dspic33_gpio_drive(cpu, 1u, 0u, 0x0001u);
+    dspic33_write_word(cpu, pull_up_addresses[1], 0x0001u);
+    dspic33_gpio_release(cpu, 1u, 0x0001u);
+    expect(state,
+           change_notification_flag(cpu) &&
+               (dspic33_read_word(cpu, port_addresses[1]) & 0x0001u) != 0u,
+           "released external drive detects pull-resolved input change");
+}
+
+static void configure_change_notification_interrupt(Dspic33* cpu, uint8_t priority) {
+    dspic33_write_word(cpu, 0x0822u, CHANGE_NOTIFICATION_FLAG);
+    dspic33_write_word(cpu, 0x0848u, (uint16_t)((uint16_t)priority << 12u));
+    dspic33_load_program_word(cpu, 0x003au, CHANGE_NOTIFICATION_VECTOR);
+    dspic33_load_program_word(cpu, CHANGE_NOTIFICATION_VECTOR, 0u);
+    cpu->w[15] = 0x1800u;
+}
+
+static void change_notification_interrupt_cases(GpioConformance* state, Dspic33* cpu) {
+    configure_change_notification_pin(cpu, 1u, 0x0001u);
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    dspic33_gpio_drive(cpu, 1u, 0x0001u, 0x0001u);
+    expect(state, change_notification_flag(cpu) && !dspic33_device_wake(cpu),
+           "CNIF sets in Sleep without IEC wake eligibility");
+
+    configure_change_notification_pin(cpu, 1u, 0x0001u);
+    configure_change_notification_interrupt(cpu, 0u);
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    dspic33_gpio_drive(cpu, 1u, 0x0001u, 0x0001u);
+    expect(state, !dspic33_device_wake(cpu),
+           "priority-zero CN interrupt cannot wake the CPU");
+
+    configure_change_notification_pin(cpu, 1u, 0x0001u);
+    configure_change_notification_interrupt(cpu, 2u);
+    cpu->sr = 0x0040u;
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    dspic33_gpio_drive(cpu, 1u, 0x0001u, 0x0001u);
+    expect(state,
+           dspic33_device_wake(cpu) && cpu->interrupt_count == 0u &&
+               cpu->w[15] == 0x1800u && change_notification_flag(cpu),
+           "equal-priority CN event wakes without an interrupt frame");
+    cpu->sr = 0u;
+    expect(state,
+           dspic33_device_service_interrupt(cpu) &&
+               cpu->last_interrupt == CHANGE_NOTIFICATION_IRQ &&
+               cpu->pc == CHANGE_NOTIFICATION_VECTOR,
+           "retained CNIF vectors after lowering IPL");
+
+    configure_change_notification_pin(cpu, 1u, 0x0001u);
+    configure_change_notification_interrupt(cpu, 3u);
+    cpu->sr = 0x0040u;
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    dspic33_gpio_drive(cpu, 1u, 0x0001u, 0x0001u);
+    expect(state,
+           dspic33_device_wake(cpu) && cpu->last_interrupt == CHANGE_NOTIFICATION_IRQ &&
+               cpu->pc == CHANGE_NOTIFICATION_VECTOR && cpu->w[15] == 0x1804u,
+           "higher-priority CN event wakes through IRQ19 vector");
+    expect(state, dspic33_read_word(cpu, 0x08c8u) == 0x031bu,
+           "interrupt status identifies the CN vector and priority");
+
+    configure_change_notification_pin(cpu, 1u, 0x0001u);
+    configure_change_notification_interrupt(cpu, 3u);
+    cpu->power_state = DSPIC33_POWER_IDLE;
+    dspic33_gpio_drive(cpu, 1u, 0x0001u, 0x0001u);
+    expect(state,
+           dspic33_device_wake(cpu) && cpu->last_interrupt == CHANGE_NOTIFICATION_IRQ &&
+               cpu->pc == CHANGE_NOTIFICATION_VECTOR,
+           "CN continues in Idle and wakes through IRQ19 vector");
+}
+
+static void change_notification_dma_lifecycle_cases(GpioConformance* state,
+                                                    Dspic33* cpu) {
+    Dspic33 copy;
+    bool initialized;
+    configure_change_notification_pin(cpu, 1u, 0x0001u);
+    dspic33_write_word(cpu, 0x2200u, 0x5aa5u);
+    dspic33_write_word(cpu, 0x0b00u, 0u);
+    dspic33_write_word(cpu, 0x0b02u, CHANGE_NOTIFICATION_IRQ);
+    dspic33_write_word(cpu, 0x0b04u, 0x2200u);
+    dspic33_write_word(cpu, 0x0b06u, 0u);
+    dspic33_write_word(cpu, 0x0b0cu, port_addresses[1]);
+    dspic33_write_word(cpu, 0x0b0eu, 0u);
+    dspic33_write_word(cpu, 0x0b00u, 0xa001u);
+    dspic33_gpio_drive(cpu, 1u, 0x0001u, 0x0001u);
+    expect(state, change_notification_flag(cpu), "CN event raises interrupt flag");
+    expect(state,
+           dspic33_read_word(cpu, 0x2200u) == 0x5aa5u && cpu->io.dma_index[0] == 0u &&
+               cpu->io.dma_active == 0u &&
+               (dspic33_read_word(cpu, 0x0b00u) & 0x8000u) != 0u,
+           "CN interrupt produces no DMA request");
+
+    initialized = dspic33_initialize(&copy);
+    expect(state, initialized, "initialize change-notification copy");
+    if (!initialized) {
+        return;
+    }
+    expect(state,
+           dspic33_copy(&copy, cpu) &&
+               copy.io.gpio_cn_reference[1] == cpu->io.gpio_cn_reference[1] &&
+               copy.io.gpio_cn_values[1] == cpu->io.gpio_cn_values[1] &&
+               copy.io.gpio_cn_qualified[1] == cpu->io.gpio_cn_qualified[1] &&
+               change_notification_flag(&copy),
+           "copy preserves active change-notification state");
+    dspic33_read_word(cpu, port_addresses[1]);
+    clear_change_notification_flag(cpu);
+    expect(state,
+           !change_notification_flag(cpu) && change_notification_flag(&copy) &&
+               cpu->io.gpio_cn_reference[1] != copy.io.gpio_cn_reference[1],
+           "copied change-notification references diverge independently");
+    dspic33_destroy(&copy);
+
+    dspic33_load_program_word(cpu, 0u, 0xfe0000u);
+    cpu->pc = 0u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_read_word(cpu, change_notification_addresses[1]) == 0u &&
+               !change_notification_flag(cpu) &&
+               cpu->io.gpio_cn_reference[1] == cpu->io.gpio_cn_values[1],
+           "warm reset clears CN controls and resynchronizes retained pins");
+    dspic33_write_word(cpu, analog_addresses[1], 0u);
+    dspic33_write_word(cpu, change_notification_addresses[1], 0x0001u);
+    expect(state, !change_notification_flag(cpu),
+           "CN enable after warm reset baselines retained pin state");
+    dspic33_gpio_drive(cpu, 1u, 0u, 0x0001u);
+    expect(state, change_notification_flag(cpu),
+           "retained pin detects transition after warm reset");
+
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_read_word(cpu, change_notification_addresses[1]) == 0u &&
+               !change_notification_flag(cpu) &&
+               cpu->io.gpio_cn_reference[1] == cpu->io.gpio_cn_values[1],
+           "cold reset clears CN state and synchronizes retained pins");
+}
+
 static uint8_t mode_select_value(Dspic33* cpu) {
     uint16_t port_d = dspic33_read_word(cpu, port_addresses[3]);
     uint16_t port_e = dspic33_read_word(cpu, port_addresses[4]);
@@ -462,11 +806,6 @@ static void lifecycle_cases(GpioConformance* state, Dspic33* cpu) {
         expect(state, cpu->io.gpio[DSPIC33_GPIO_PORT_COUNT - 1u] == retained,
                "invalid GPIO port input is ignored");
     }
-
-    dspic33_reset(cpu, 0u);
-    dspic33_gpio_input(cpu, 0u, 0xffffu);
-    expect(state, (dspic33_read_word(cpu, 0x0802u) & 0x0008u) == 0u,
-           "GPIO input change does not emulate incomplete CN state");
 }
 
 int main(void) {
@@ -479,10 +818,16 @@ int main(void) {
         analog_cases(&state, &cpu);
         input_only_usb_cases(&state, &cpu);
         pull_cases(&state, &cpu);
+        open_drain_cases(&state, &cpu);
         firmware_pull_cases(&state, &cpu);
         read_modify_write_cases(&state, &cpu);
         lifecycle_cases(&state, &cpu);
-        expect(&state, state.cases == 185u, "GPIO assertion accounting");
+        change_notification_port_cases(&state, &cpu);
+        change_notification_sequence_cases(&state, &cpu);
+        change_notification_qualification_cases(&state, &cpu);
+        change_notification_interrupt_cases(&state, &cpu);
+        change_notification_dma_lifecycle_cases(&state, &cpu);
+        expect(&state, state.cases == 750u, "GPIO assertion accounting");
         dspic33_destroy(&cpu);
     }
     printf("[gpio-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",

@@ -479,6 +479,9 @@ typedef struct {
     uint8_t adc_mux_b;
     uint16_t gpio[DSPIC33_GPIO_PORT_COUNT];
     uint16_t gpio_driven[DSPIC33_GPIO_PORT_COUNT];
+    uint16_t gpio_cn_reference[DSPIC33_GPIO_PORT_COUNT];
+    uint16_t gpio_cn_values[DSPIC33_GPIO_PORT_COUNT];
+    uint16_t gpio_cn_qualified[DSPIC33_GPIO_PORT_COUNT];
     uint16_t pwm[DSPIC33_PWM_OUTPUT_COUNT];
     uint16_t pwm_master_counter[2];
     uint16_t pwm_counter[DSPIC33_PWM_COUNT][2];
