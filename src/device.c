@@ -1444,9 +1444,10 @@ static void update_crc_pmd(Dspic33* cpu, uint16_t previous) {
         return;
     }
     cpu->io.crc.pmd_generation++;
-    if (!dspic33_schedule(
-            cpu, DSPIC33_EVENT_CRC, CRC_EVENT_PMD_SOURCE,
-            ((uint32_t)cpu->io.crc.pmd_generation << 1u) | (disabled ? 1u : 0u), 1u)) {
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CRC, CRC_EVENT_PMD_SOURCE,
+                          ((uint32_t)cpu->io.crc.pmd_generation << 1u) |
+                              (disabled ? 1u : 0u),
+                          dspic33_device_instruction_cycles(cpu, 1u))) {
         raw_write_word(cpu, CRC_PMD_ADDRESS, previous);
         cpu->io.crc.pmd_generation++;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
@@ -1851,9 +1852,10 @@ static void update_pmp_pmd(Dspic33* cpu, uint16_t previous) {
         return;
     }
     cpu->io.pmp.pmd_generation++;
-    if (!dspic33_schedule(
-            cpu, DSPIC33_EVENT_PMP, PMP_EVENT_PMD,
-            ((uint32_t)cpu->io.pmp.pmd_generation << 1u) | (disabled ? 1u : 0u), 1u)) {
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_PMP, PMP_EVENT_PMD,
+                          ((uint32_t)cpu->io.pmp.pmd_generation << 1u) |
+                              (disabled ? 1u : 0u),
+                          dspic33_device_instruction_cycles(cpu, 1u))) {
         raw_write_word(cpu, PMP_PMD_ADDRESS, previous);
         cpu->io.pmp.pmd_generation++;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
@@ -2642,7 +2644,7 @@ static void update_input_capture_pmd(Dspic33* cpu, uint16_t address,
                                                      : 0u) |
                     ((uint32_t)cpu->io.input_capture.pmd_generation[channel]
                      << INPUT_CAPTURE_EVENT_GENERATION_SHIFT),
-                1u)) {
+                dspic33_device_instruction_cycles(cpu, 1u))) {
             uint8_t invalidate;
             raw_write_word(cpu, address, previous);
             for (invalidate = first_channel; invalidate < first_channel + 8u;
@@ -3176,7 +3178,7 @@ static void update_comparator_pmd(Dspic33* cpu, uint16_t previous) {
     if (!dspic33_schedule(cpu, DSPIC33_EVENT_COMPARATOR, COMPARATOR_EVENT_PMD_SOURCE,
                           ((uint32_t)cpu->io.comparator.pmd_generation << 1u) |
                               (disabled ? 1u : 0u),
-                          1u)) {
+                          dspic33_device_instruction_cycles(cpu, 1u))) {
         raw_write_word(cpu, COMPARATOR_PMD_ADDRESS, previous);
         cpu->io.comparator.pmd_generation++;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
@@ -3552,9 +3554,10 @@ static void update_rtcc_pmd(Dspic33* cpu, uint16_t previous) {
         return;
     }
     cpu->io.rtcc.pmd_generation++;
-    if (!dspic33_schedule(
-            cpu, DSPIC33_EVENT_RTCC, RTCC_EVENT_PMD_SOURCE,
-            ((uint32_t)cpu->io.rtcc.pmd_generation << 1u) | (disabled ? 1u : 0u), 1u)) {
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_RTCC, RTCC_EVENT_PMD_SOURCE,
+                          ((uint32_t)cpu->io.rtcc.pmd_generation << 1u) |
+                              (disabled ? 1u : 0u),
+                          dspic33_device_instruction_cycles(cpu, 1u))) {
         raw_write_word(cpu, RTCC_PMD_ADDRESS, previous);
         cpu->io.rtcc.pmd_generation++;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
@@ -4157,7 +4160,7 @@ static void qei_update_pmd(Dspic33* cpu, uint16_t address, uint16_t previous) {
                               (uint16_t)(QEI_PMD_EVENT_BASE + channel),
                               ((uint32_t)cpu->io.qei.pmd_generation[channel] << 1u) |
                                   (disabled ? 1u : 0u),
-                              1u)) {
+                              dspic33_device_instruction_cycles(cpu, 1u))) {
             raw_write_word(cpu, address, previous);
             cpu->io.qei.pmd_generation[channel]++;
             cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
@@ -4703,7 +4706,7 @@ static void dci_update_pmd(Dspic33* cpu, uint16_t previous) {
             cpu, DSPIC33_EVENT_DCI, DCI_EVENT_PMD,
             ((uint32_t)dci->pmd_generation << DCI_EVENT_GENERATION_SHIFT) |
                 (disabled ? DCI_EVENT_DISABLED : 0u),
-            1u)) {
+            dspic33_device_instruction_cycles(cpu, 1u))) {
         raw_write_word(cpu, DCI_PMD_ADDRESS, previous);
         dci->pmd_generation++;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
@@ -5016,6 +5019,13 @@ static bool select_interrupt(const Dspic33* cpu, uint16_t* selected_irq,
     return true;
 }
 
+static void recover_from_doze(Dspic33* cpu) {
+    if ((raw_word(cpu, MAIN_CLOCK_DIVISOR) & 0x8000u) != 0u) {
+        raw_write_word(cpu, MAIN_CLOCK_DIVISOR,
+                       (uint16_t)(raw_word(cpu, MAIN_CLOCK_DIVISOR) & ~0x0800u));
+    }
+}
+
 static bool service_interrupt(Dspic33* cpu) {
     uint8_t best_priority;
     uint16_t best_irq;
@@ -5025,6 +5035,7 @@ static bool service_interrupt(Dspic33* cpu) {
     if (!select_interrupt(cpu, &best_irq, &best_priority)) {
         return false;
     }
+    recover_from_doze(cpu);
     dspic33_check_stack_address(cpu, cpu->w[15], cpu->w[15] > 0xfffdu, 2u);
     dspic33_write_word(cpu, cpu->w[15],
                        (uint16_t)((cpu->pc & 0xfffeu) | ((cpu->corcon >> 2u) & 1u)));
@@ -5075,6 +5086,7 @@ bool dspic33_device_wake(Dspic33* cpu) {
         if (interrupt_enabled(cpu, irq) && !interrupt_deferred(cpu, irq) &&
             interrupt_priority(cpu, irq) != 0u) {
             service_interrupt(cpu);
+            recover_from_doze(cpu);
             return true;
         }
     }
@@ -8621,7 +8633,6 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
         run_dci(cpu, event->source, event->value);
         break;
     case DSPIC33_EVENT_NVM:
-        complete_nvm_event(cpu);
         break;
     case DSPIC33_EVENT_AUX_PLL:
         complete_auxiliary_pll(cpu, event->value);
@@ -8716,27 +8727,37 @@ static void advance_device_cycles(Dspic33* cpu, uint64_t cycles) {
     comparator_evaluate_all(cpu);
 }
 
-bool dspic33_device_advance(Dspic33* cpu, uint64_t cycles) {
+uint64_t dspic33_device_instruction_cycles(const Dspic33* cpu, uint64_t cycles) {
+    uint16_t divisor = raw_word(cpu, MAIN_CLOCK_DIVISOR);
+    uint64_t ratio = (divisor & 0x0800u) != 0u
+                         ? UINT64_C(1) << ((divisor >> 12u) & 0x07u)
+                         : UINT64_C(1);
+    return cycles > UINT64_MAX / ratio ? UINT64_MAX : cycles * ratio;
+}
+
+bool dspic33_device_advance_instruction(Dspic33* cpu, uint64_t cpu_cycles,
+                                        uint64_t device_cycles) {
     uint64_t target;
     size_t group;
     if (!pps_shadow_matches(cpu)) {
         dspic33_configuration_mismatch_reset(cpu);
     }
-    if (cycles > UINT64_MAX - cpu->cycles ||
-        (cpu->async_events_enabled && cycles > UINT64_MAX - cpu->device_cycles)) {
+    if (cpu_cycles > UINT64_MAX - cpu->cycles ||
+        (cpu->async_events_enabled &&
+         device_cycles > UINT64_MAX - cpu->device_cycles)) {
         return false;
     }
-    cpu->cycles += cycles;
-    if (cycles != 0u) {
+    cpu->cycles += cpu_cycles;
+    if (cpu_cycles != 0u) {
         raise_pending_timer_interrupts(cpu);
     }
-    if (cpu->disicnt > cycles) {
-        cpu->disicnt = (uint16_t)(cpu->disicnt - cycles);
+    if (cpu->disicnt > cpu_cycles) {
+        cpu->disicnt = (uint16_t)(cpu->disicnt - cpu_cycles);
     } else {
         cpu->disicnt = 0u;
     }
     if (cpu->async_events_enabled) {
-        target = cpu->device_cycles + cycles;
+        target = cpu->device_cycles + device_cycles;
         for (;;) {
             uint64_t next_cycle = target;
             uint64_t timer_boundary;
@@ -8780,8 +8801,13 @@ bool dspic33_device_advance(Dspic33* cpu, uint64_t cycles) {
     return true;
 }
 
+bool dspic33_device_advance(Dspic33* cpu, uint64_t cycles) {
+    return dspic33_device_advance_instruction(cpu, cycles, cycles);
+}
+
 bool dspic33_device_advance_nvm(Dspic33* cpu) {
-    return dspic33_device_advance(cpu, 1u);
+    return dspic33_device_advance_instruction(
+        cpu, 1u, dspic33_device_instruction_cycles(cpu, 1u));
 }
 
 static void update_timer_register(Dspic33* cpu, uint16_t address) {
@@ -9317,6 +9343,15 @@ static void update_main_clock_configuration(Dspic33* cpu, uint16_t address,
     if (oscillator_configuration_locked(cpu, control)) {
         raw_write_word(cpu, address, previous);
         return;
+    }
+    if (address == MAIN_CLOCK_DIVISOR) {
+        if ((previous & 0x0800u) != 0u) {
+            current = (uint16_t)((current & ~0x7000u) | (previous & 0x7000u));
+        }
+        if ((current & 0x7000u) == 0u) {
+            current &= (uint16_t)~0x0800u;
+        }
+        raw_write_word(cpu, address, current);
     }
     if (main_pll_relock_required(cpu, address, previous, current)) {
         restart_main_pll_lock(cpu);
@@ -10210,7 +10245,8 @@ static void update_nvm_control(Dspic33* cpu, uint16_t requested) {
     cpu->nvm.active = true;
     cpu->nvm.completion_cycle = cpu->cycles + completion_delay;
     raw_write_word(cpu, NVM_CONTROL, (uint16_t)(control | NVM_WRITE | NVM_WRITE_ERROR));
-    if (!dspic33_schedule(cpu, DSPIC33_EVENT_NVM, 0u, 0u, completion_delay)) {
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_NVM, 0u, 0u,
+                          dspic33_device_instruction_cycles(cpu, completion_delay))) {
         fail_nvm_write(cpu);
     }
 }

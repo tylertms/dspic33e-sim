@@ -232,6 +232,16 @@ static void power_cases(WatchdogConformance* state, Dspic33* cpu) {
                (rcon(cpu) & (WDTO | IDLE)) == (WDTO | IDLE),
            "Idle timeout wakes after PWRSAV without reset");
 
+    configure(cpu, (uint8_t)(FWDTEN | WINDIS));
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0744u, 0x9800u);
+    execute(cpu, OPCODE_IDLE);
+    dspic33_watchdog_advance_lprc(cpu, 32u);
+    expect(state,
+           cpu->power_state == DSPIC33_POWER_ACTIVE &&
+               dspic33_read_word(cpu, 0x0744u) == 0x9800u,
+           "watchdog wake preserves DOZE and ROI state");
+
     dspic33_reset(cpu, 0u);
     execute(cpu, OPCODE_IDLE);
     dspic33_watchdog_advance_lprc(cpu, 10u);
@@ -304,6 +314,7 @@ static void nvm_cases(WatchdogConformance* state, Dspic33* cpu) {
     cpu->data[0x1000u] = 0xa5u;
     cpu->nvm.active = true;
     cpu->nvm.control = 0x000fu;
+    cpu->nvm.completion_cycle = cpu->cycles + 2u;
     expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_NVM, 0u, 0u, 2u),
            "NVM completion event schedules");
     dspic33_watchdog_advance_lprc(cpu, 32u);
@@ -341,7 +352,7 @@ int main(void) {
     power_cases(&state, &source);
     lifecycle_cases(&state, &source, &copy);
     nvm_cases(&state, &source);
-    expect(&state, state.cases == 207u, "watchdog assertion arithmetic");
+    expect(&state, state.cases == 208u, "watchdog assertion arithmetic");
     printf("[watchdog-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32
            "\n",
            state.cases, state.passed, state.failed);

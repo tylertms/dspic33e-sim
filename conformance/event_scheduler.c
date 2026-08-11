@@ -146,6 +146,35 @@ static void paused_device_clock_cases(EventConformance* state, Dspic33* cpu) {
     expect(state, interrupt_flag(cpu, 6u), "retained event dispatched");
 }
 
+static void split_clock_domain_cases(EventConformance* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 8u, 0u, 8u) &&
+               dspic33_device_advance_instruction(cpu, 1u, 8u) && cpu->cycles == 1u &&
+               cpu->device_cycles == 8u && interrupt_flag(cpu, 8u),
+           "split advance applies independent CPU and device deltas");
+
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_device_advance(cpu, 3u) && cpu->cycles == 3u &&
+               cpu->device_cycles == 3u,
+           "public advance retains equal clock domains");
+
+    dspic33_reset(cpu, 0u);
+    cpu->cycles = UINT64_MAX;
+    expect(state,
+           !dspic33_device_advance_instruction(cpu, 1u, 8u) &&
+               cpu->cycles == UINT64_MAX && cpu->device_cycles == 0u,
+           "split advance rejects CPU overflow atomically");
+
+    dspic33_reset(cpu, 0u);
+    cpu->device_cycles = UINT64_MAX - 4u;
+    expect(state,
+           !dspic33_device_advance_instruction(cpu, 1u, 8u) && cpu->cycles == 0u &&
+               cpu->device_cycles == UINT64_MAX - 4u,
+           "split advance rejects device overflow atomically");
+}
+
 static void copy_and_reset_cases(EventConformance* state, Dspic33* cpu, Dspic33* copy) {
     dspic33_reset(cpu, 0u);
     dspic33_reset(copy, 0u);
@@ -180,6 +209,7 @@ int main(void) {
         ordering_cases(&state, &cpu);
         growth_and_overflow_cases(&state, &cpu);
         paused_device_clock_cases(&state, &cpu);
+        split_clock_domain_cases(&state, &cpu);
         copy_and_reset_cases(&state, &cpu, &copy);
     }
     if (copy_initialized) {

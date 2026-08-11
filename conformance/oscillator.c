@@ -21,14 +21,24 @@ enum {
     REFERENCE_CLOCK_SOURCE = 0x1000u,
     REFERENCE_CLOCK_DIVISOR = 0x0f00u,
     MAIN_CLOCK_DIVISOR = 0x0744u,
+    MAIN_CLOCK_RECOVER_INTERRUPT = 0x8000u,
+    MAIN_CLOCK_DOZE_MASK = 0x7000u,
+    MAIN_CLOCK_DOZE_ENABLE = 0x0800u,
     MAIN_PLL_FEEDBACK = 0x0746u,
     MAIN_OSCILLATOR_TUNING = 0x0748u,
+    TIMER1_COUNTER = 0x0100u,
+    TIMER1_PERIOD = 0x0102u,
+    TIMER1_CONTROL = 0x0104u,
+    CRC_PMD_ADDRESS = 0x0764u,
+    CRC_PMD = 0x0080u,
     CONFIGURATION_FOSCSEL = 0xf80006u,
     CONFIGURATION_FOSC = 0xf80008u,
     CONFIGURATION_FWDT = 0xf8000au,
     OPCODE_NOP = 0x000000u,
     OPCODE_SLEEP = 0xfe4000u,
     OPCODE_RESET = 0xfe0000u,
+    OPCODE_GOTO_W0 = 0x010400u,
+    OPCODE_MOV_IFS0_W2 = 0x804002u,
     OPCODE_MOV_W0_W1 = 0x780880u,
     OPCODE_MOV_BYTE_W0_W1 = 0x784880u,
     OPCODE_MOV_BYTE_W2_W1 = 0x784882u,
@@ -1105,6 +1115,340 @@ static void main_pll_configuration_cases(OscillatorConformance* state, Dspic33* 
     dspic33_load_configuration_word(source, CONFIGURATION_FWDT, 0x00ffu);
 }
 
+static void configure_doze_interrupt(Dspic33* cpu, uint8_t priority) {
+    dspic33_write_word(cpu, 0x0820u, 1u);
+    dspic33_write_word(cpu, 0x0840u, priority);
+    dspic33_load_program_word(cpu, 0x0014u, 0x0100u);
+    dspic33_load_program_word(cpu, 0x0100u, OPCODE_NOP);
+    dspic33_set_working_register(cpu, 15u, 0x1800u);
+    dspic33_raise_interrupt(cpu, 0u);
+}
+
+static void doze_cases(OscillatorConformance* state, Dspic33* source, Dspic33* copy) {
+    uint64_t cpu_cycles;
+    uint64_t device_cycles;
+    uint8_t divisor;
+    Dspic33StopReason trap_result;
+
+    dspic33_reset(source, 0u);
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR, 0x7800u);
+    expect(state, dspic33_read_word(source, MAIN_CLOCK_DIVISOR) == 0x7800u,
+           "disabled DOZE field and DOZEN set together");
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR, 0x1800u);
+    expect(state, dspic33_read_word(source, MAIN_CLOCK_DIVISOR) == 0x7800u,
+           "enabled DOZE field ignores writes");
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR, 0x1000u);
+    expect(state, dspic33_read_word(source, MAIN_CLOCK_DIVISOR) == 0x7000u,
+           "combined disable and divisor write preserves enabled divisor");
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR, 0x1000u);
+    expect(state, dspic33_read_word(source, MAIN_CLOCK_DIVISOR) == 0x1000u,
+           "disabled DOZE field accepts a subsequent write");
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR, MAIN_CLOCK_DOZE_ENABLE);
+    expect(state, dspic33_read_word(source, MAIN_CLOCK_DIVISOR) == 0u,
+           "DOZEN cannot set at the one-to-one ratio");
+    dspic33_write_byte(source, MAIN_CLOCK_DIVISOR + 1u, 0x38u);
+    expect(state, dspic33_read_word(source, MAIN_CLOCK_DIVISOR) == 0x3800u,
+           "high-byte write sets a disabled DOZE ratio");
+    dspic33_write_byte(source, MAIN_CLOCK_DIVISOR + 1u, 0x18u);
+    expect(state, dspic33_read_word(source, MAIN_CLOCK_DIVISOR) == 0x3800u,
+           "high-byte write preserves an enabled DOZE field");
+
+    for (divisor = 1u; divisor <= 7u; divisor++) {
+        uint64_t ratio = UINT64_C(1) << divisor;
+        dspic33_reset(source, 0u);
+        dspic33_write_word(source, MAIN_CLOCK_DIVISOR,
+                           (uint16_t)((uint16_t)divisor << 12u) |
+                               MAIN_CLOCK_DOZE_ENABLE);
+        dspic33_load_program_word(source, 0u, OPCODE_NOP);
+        source->pc = 0u;
+        cpu_cycles = source->cycles;
+        device_cycles = source->device_cycles;
+        expect(state,
+               dspic33_step(source) == DSPIC33_RUNNING &&
+                   source->cycles - cpu_cycles == 1u &&
+                   source->device_cycles - device_cycles == ratio,
+               "DOZE ratio scales stepped peripheral cycles");
+    }
+
+    dspic33_reset(source, 0u);
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR, 0x2800u);
+    dspic33_load_program_word(source, 0u, OPCODE_GOTO_W0);
+    dspic33_load_program_word(source, 0x0100u, OPCODE_NOP);
+    dspic33_set_working_register(source, 0u, 0x0100u);
+    dspic33_schedule(source, DSPIC33_EVENT_INTERRUPT, 0u, 0u, 15u);
+    source->pc = 0u;
+    cpu_cycles = source->cycles;
+    device_cycles = source->device_cycles;
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING && source->pc == 0x0100u &&
+               source->cycles - cpu_cycles == 4u &&
+               source->device_cycles - device_cycles == 16u &&
+               (dspic33_read_word(source, 0x0800u) & 1u) != 0u &&
+               source->events.count == 0u,
+           "DOZE scales multi-cycle instructions across device events");
+
+    dspic33_reset(source, 0u);
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR, 0x2800u);
+    dspic33_load_program_word(source, 0u, OPCODE_MOV_IFS0_W2);
+    dspic33_write_word(source, 0x0800u, 0x1234u);
+    source->pc = 0u;
+    cpu_cycles = source->cycles;
+    device_cycles = source->device_cycles;
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING && source->w[2] == 0x1234u &&
+               source->cycles - cpu_cycles == 2u &&
+               source->device_cycles - device_cycles == 8u,
+           "DOZE scales the separated non-CPU SFR wait cycle");
+
+    dspic33_reset(source, 0u);
+    dspic33_load_program_word(source, 0u, OPCODE_MOV_W0_W1);
+    dspic33_load_program_word(source, 2u, OPCODE_NOP);
+    dspic33_set_working_register(source, 0u, 0x1800u);
+    dspic33_set_working_register(source, 1u, MAIN_CLOCK_DIVISOR);
+    cpu_cycles = source->cycles;
+    device_cycles = source->device_cycles;
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING &&
+               dspic33_read_word(source, MAIN_CLOCK_DIVISOR) == 0x1800u &&
+               source->cycles - cpu_cycles == 1u &&
+               source->device_cycles - device_cycles == 1u,
+           "DOZEN setting instruction uses the previous ratio");
+    device_cycles = source->device_cycles;
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING &&
+               source->device_cycles - device_cycles == 2u,
+           "instruction after DOZEN setting uses the new ratio");
+    source->pc = 0u;
+    dspic33_set_working_register(source, 0u, 0x1000u);
+    device_cycles = source->device_cycles;
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING &&
+               dspic33_read_word(source, MAIN_CLOCK_DIVISOR) == 0x1000u &&
+               source->device_cycles - device_cycles == 2u,
+           "DOZEN clearing instruction uses the previous ratio");
+    device_cycles = source->device_cycles;
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING &&
+               source->device_cycles - device_cycles == 1u,
+           "instruction after DOZEN clearing returns to one-to-one");
+
+    dspic33_reset(source, 0u);
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR, 0x3800u);
+    dspic33_write_word(source, TIMER1_COUNTER, 0u);
+    dspic33_write_word(source, TIMER1_PERIOD, 0xffffu);
+    dspic33_write_word(source, TIMER1_CONTROL, 0x8000u);
+    dspic33_load_program_word(source, 0u, OPCODE_NOP);
+    source->pc = 0u;
+    source->disicnt = 5u;
+    cpu_cycles = source->cycles;
+    device_cycles = source->device_cycles;
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING &&
+               source->cycles - cpu_cycles == 1u &&
+               source->device_cycles - device_cycles == 8u && source->disicnt == 4u &&
+               dspic33_read_word(source, TIMER1_COUNTER) == 8u,
+           "DOZE keeps CPU state slow while peripherals run at full speed");
+    cpu_cycles = source->cycles;
+    device_cycles = source->device_cycles;
+    expect(state,
+           dspic33_device_advance(source, 1u) && source->cycles - cpu_cycles == 1u &&
+               source->device_cycles - device_cycles == 1u &&
+               dspic33_read_word(source, TIMER1_COUNTER) == 9u,
+           "public device advance remains an equal-domain stimulus");
+
+    dspic33_reset(source, 0u);
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR, 0x3800u);
+    dspic33_write_word(source, CRC_PMD_ADDRESS, CRC_PMD);
+    expect(state,
+           source->events.count == 1u &&
+               source->events.items[0].cycle - source->device_cycles == 8u &&
+               !source->io.crc.pmd_disabled,
+           "DOZE scales one-instruction PMD transitions");
+    expect(state, dspic33_device_advance(source, 7u) && !source->io.crc.pmd_disabled,
+           "scaled PMD transition remains pending before its deadline");
+    expect(state, dspic33_device_advance(source, 1u) && source->io.crc.pmd_disabled,
+           "scaled PMD transition completes at one divided instruction");
+
+    dspic33_reset(source, 0u);
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR, 0x3800u);
+    dspic33_load_program_word(source, 0u, OPCODE_MOV_W0_W1);
+    dspic33_set_working_register(source, 0u, CRC_PMD);
+    dspic33_set_working_register(source, 1u, CRC_PMD_ADDRESS);
+    source->pc = 0u;
+    device_cycles = source->device_cycles;
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING && source->io.crc.pmd_disabled &&
+               source->device_cycles - device_cycles == 8u &&
+               source->events.count == 0u,
+           "stepped PMD write completes after one divided instruction");
+
+    dspic33_reset(source, 0u);
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR, 0x1800u);
+    configure_doze_interrupt(source, 1u);
+    source->pc = 0u;
+    device_cycles = source->device_cycles;
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING && source->last_interrupt == 0u &&
+               source->pc == 0x0102u &&
+               (dspic33_read_word(source, MAIN_CLOCK_DIVISOR) &
+                MAIN_CLOCK_DOZE_ENABLE) != 0u &&
+               source->device_cycles - device_cycles == 2u,
+           "interrupt preserves DOZE when ROI is clear");
+
+    dspic33_reset(source, 0u);
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR,
+                       MAIN_CLOCK_RECOVER_INTERRUPT | 0x1800u);
+    configure_doze_interrupt(source, 1u);
+    source->pc = 0u;
+    device_cycles = source->device_cycles;
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING && source->last_interrupt == 0u &&
+               source->pc == 0x0102u &&
+               (dspic33_read_word(source, MAIN_CLOCK_DIVISOR) &
+                MAIN_CLOCK_DOZE_ENABLE) == 0u &&
+               source->device_cycles - device_cycles == 1u,
+           "ROI clears DOZEN before the first handler instruction");
+
+    dspic33_reset(source, 0u);
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR,
+                       MAIN_CLOCK_RECOVER_INTERRUPT | 0x1800u);
+    configure_doze_interrupt(source, 1u);
+    source->sr = 0x0020u;
+    source->power_state = DSPIC33_POWER_IDLE;
+    expect(state,
+           dspic33_device_wake(source) && source->interrupt_count == 0u &&
+               (dspic33_read_word(source, MAIN_CLOCK_DIVISOR) &
+                MAIN_CLOCK_DOZE_ENABLE) == 0u &&
+               (dspic33_read_word(source, 0x0800u) & 1u) != 0u,
+           "ROI clears DOZEN on a wake-only interrupt");
+
+    dspic33_reset(source, 0u);
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR,
+                       MAIN_CLOCK_RECOVER_INTERRUPT | 0x1800u);
+    configure_doze_interrupt(source, 1u);
+    source->sr = 0x0020u;
+    source->power_state = DSPIC33_POWER_IDLE;
+    source->pc = 0u;
+    dspic33_load_program_word(source, 0u, OPCODE_NOP);
+    device_cycles = source->device_cycles;
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING &&
+               source->power_state == DSPIC33_POWER_ACTIVE &&
+               source->interrupt_count == 0u && source->pc == 2u &&
+               (dspic33_read_word(source, MAIN_CLOCK_DIVISOR) &
+                MAIN_CLOCK_DOZE_ENABLE) == 0u &&
+               source->device_cycles - device_cycles == 1u,
+           "wake-only ROI resumes stepped execution at one-to-one");
+
+    dspic33_reset(source, 0u);
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR,
+                       MAIN_CLOCK_RECOVER_INTERRUPT | 0x1800u);
+    dspic33_load_program_word(source, 0u, OPCODE_NOP);
+    source->pc = 0u;
+    dspic33_raise_interrupt(source, 0u);
+    device_cycles = source->device_cycles;
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING && source->interrupt_count == 0u &&
+               (dspic33_read_word(source, MAIN_CLOCK_DIVISOR) &
+                MAIN_CLOCK_DOZE_ENABLE) != 0u &&
+               source->device_cycles - device_cycles == 2u,
+           "masked interrupt does not recover from DOZE");
+
+    dspic33_reset(source, 0u);
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR,
+                       MAIN_CLOCK_RECOVER_INTERRUPT | 0x1800u);
+    configure_doze_interrupt(source, 0u);
+    source->pc = 0u;
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING && source->interrupt_count == 0u &&
+               (dspic33_read_word(source, MAIN_CLOCK_DIVISOR) &
+                MAIN_CLOCK_DOZE_ENABLE) != 0u,
+           "priority-zero interrupt does not recover from DOZE");
+
+    dspic33_reset(source, 0u);
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR,
+                       MAIN_CLOCK_RECOVER_INTERRUPT | 0x1800u);
+    configure_doze_interrupt(source, 1u);
+    source->pc = 0u;
+    source->sr = 0x0020u;
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING && source->interrupt_count == 0u &&
+               (dspic33_read_word(source, MAIN_CLOCK_DIVISOR) &
+                MAIN_CLOCK_DOZE_ENABLE) != 0u,
+           "IPL-blocked interrupt does not recover from DOZE");
+
+    dspic33_reset(source, 0u);
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR,
+                       MAIN_CLOCK_RECOVER_INTERRUPT | 0x1800u);
+    configure_doze_interrupt(source, 1u);
+    source->pc = 0u;
+    source->interrupt_deferred[0] = 1u;
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING && source->interrupt_count == 0u &&
+               (dspic33_read_word(source, MAIN_CLOCK_DIVISOR) &
+                MAIN_CLOCK_DOZE_ENABLE) != 0u,
+           "deferred interrupt does not recover from DOZE");
+
+    dspic33_reset(source, 0u);
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR,
+                       MAIN_CLOCK_RECOVER_INTERRUPT | 0x1800u);
+    configure_doze_interrupt(source, 1u);
+    dspic33_write_word(source, 0x08c2u, 0u);
+    source->pc = 0u;
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING && source->interrupt_count == 0u &&
+               (dspic33_read_word(source, MAIN_CLOCK_DIVISOR) &
+                MAIN_CLOCK_DOZE_ENABLE) != 0u,
+           "GIE-disabled interrupt does not recover from DOZE");
+
+    dspic33_reset(source, 0u);
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR,
+                       MAIN_CLOCK_RECOVER_INTERRUPT | 0x1800u);
+    dspic33_load_program_word(source, 0x0008u, 0x0100u);
+    dspic33_load_program_word(source, 0x0100u, OPCODE_NOP);
+    dspic33_set_working_register(source, 15u, 0x1800u);
+    dspic33_write_word(source, 0x08c6u, 1u);
+    source->pc = 0u;
+    device_cycles = source->device_cycles;
+    trap_result = dspic33_step(source);
+    expect(state,
+           trap_result == DSPIC33_TRAPPED && source->last_trap == 2u &&
+               source->pc == 0x0102u &&
+               (dspic33_read_word(source, MAIN_CLOCK_DIVISOR) &
+                MAIN_CLOCK_DOZE_ENABLE) != 0u &&
+               source->device_cycles - device_cycles == 2u,
+           "trap entry does not recover from DOZE");
+
+    dspic33_reset(source, 0u);
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR, 0x3800u);
+    expect(state, dspic33_copy(copy, source), "copy preserves DOZE state");
+    expect(state, dspic33_read_word(copy, MAIN_CLOCK_DIVISOR) == 0x3800u,
+           "copy retains the selected DOZE ratio");
+    dspic33_load_program_word(source, 0u, OPCODE_RESET);
+    source->pc = 0u;
+    device_cycles = source->device_cycles;
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING &&
+               dspic33_read_word(source, MAIN_CLOCK_DIVISOR) == 0x3800u &&
+               source->device_cycles - device_cycles == 8u,
+           "warm reset preserves DOZE and finishes at the old ratio");
+    dspic33_reset(copy, 0u);
+    expect(state, dspic33_read_word(copy, MAIN_CLOCK_DIVISOR) == 0x3040u,
+           "POR restores the configured clock divisor");
+
+    dspic33_reset(source, 0u);
+    dspic33_write_word(source, MAIN_CLOCK_DIVISOR, 0x7800u);
+    dspic33_load_program_word(source, 0u, OPCODE_NOP);
+    source->pc = 0u;
+    source->device_cycles = UINT64_MAX - 100u;
+    cpu_cycles = source->cycles;
+    device_cycles = source->device_cycles;
+    expect(state,
+           dspic33_step(source) == DSPIC33_EVENT_QUEUE_ERROR &&
+               source->cycles == cpu_cycles && source->device_cycles == device_cycles,
+           "DOZE device-cycle overflow reports an event error without clock advance");
+}
+
 static void lifecycle_cases(OscillatorConformance* state, Dspic33* source,
                             Dspic33* copy) {
     dspic33_reset(source, 0u);
@@ -1154,9 +1498,18 @@ static void lifecycle_cases(OscillatorConformance* state, Dspic33* source,
            "POR prevents stale oscillator completion");
 
     dspic33_reset(source, 0u);
-    source->device_cycles = UINT64_MAX;
     write_protected_byte(source, OSCILLATOR_CONTROL + 1u, 0x03u);
-    write_protected_byte(source, OSCILLATOR_CONTROL, OSCILLATOR_SWITCH_ENABLE);
+    load_sequence(source, OPCODE_MOV_BYTE_W2_W1, OPCODE_MOV_BYTE_W3_W1,
+                  OPCODE_MOV_BYTE_W0_W1);
+    source->pc = 0x0020u;
+    dspic33_set_working_register(source, 0u, OSCILLATOR_SWITCH_ENABLE);
+    dspic33_set_working_register(source, 1u, OSCILLATOR_CONTROL);
+    dspic33_set_working_register(source, 2u, 0x46u);
+    dspic33_set_working_register(source, 3u, 0x57u);
+    dspic33_step(source);
+    dspic33_step(source);
+    source->device_cycles = UINT64_MAX;
+    dspic33_step(source);
     expect(state, source->stop_reason == DSPIC33_EVENT_QUEUE_ERROR,
            "switch schedule overflow reports event error");
     expect(state, control(source) == 0x0301u && source->events.count == 0u,
@@ -1202,8 +1555,9 @@ int main(void) {
     two_speed_startup_cases(&state, &source, &copy);
     reference_clock_cases(&state, &source, &copy);
     main_pll_configuration_cases(&state, &source, &copy);
+    doze_cases(&state, &source, &copy);
     lifecycle_cases(&state, &source, &copy);
-    expect(&state, state.cases == 276u, "oscillator assertion arithmetic");
+    expect(&state, state.cases == 317u, "oscillator assertion arithmetic");
     printf("[oscillator-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32
            "\n",
            state.cases, state.passed, state.failed);

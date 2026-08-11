@@ -2662,17 +2662,27 @@ static bool exception_pending(const Dspic33* cpu) {
     return soft_exception_pending(cpu) || dspic33_device_interrupt_pending(cpu);
 }
 
-static void advance_instruction(Dspic33* cpu, uint64_t cycles,
-                                bool separate_wait_cycle) {
+static bool advance_instruction_cycles(Dspic33* cpu, uint64_t cycles,
+                                       uint64_t device_ratio) {
+    if (cycles > UINT64_MAX / device_ratio ||
+        !dspic33_device_advance_instruction(cpu, cycles, cycles * device_ratio)) {
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+        return false;
+    }
+    return true;
+}
+
+static void advance_instruction(Dspic33* cpu, uint64_t cycles, bool separate_wait_cycle,
+                                uint64_t device_ratio) {
     size_t index;
     if (separate_wait_cycle && cycles > 1u) {
         uint16_t nested_interrupt_deferred[DSPIC33_IRQ_GROUP_COUNT];
-        if (!dspic33_device_advance(cpu, cycles - 1u)) {
+        if (!advance_instruction_cycles(cpu, cycles - 1u, device_ratio)) {
             return;
         }
         memcpy(nested_interrupt_deferred, cpu->interrupt_deferred,
                sizeof(nested_interrupt_deferred));
-        if (!dspic33_device_advance(cpu, 1u)) {
+        if (!advance_instruction_cycles(cpu, 1u, device_ratio)) {
             return;
         }
         if (cpu->interrupt_depth != 0u) {
@@ -2681,7 +2691,7 @@ static void advance_instruction(Dspic33* cpu, uint64_t cycles,
             }
         }
     } else {
-        dspic33_device_advance(cpu, cycles);
+        advance_instruction_cycles(cpu, cycles, device_ratio);
     }
     for (index = 0u; index < 4u; index++) {
         Dspic33PendingSoftTrap* pending = &cpu->pending_soft_traps[index];
@@ -4144,6 +4154,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     bool psv_repeat_access;
     bool psv_repeat_exit_latency;
     uint64_t base_cycles;
+    uint64_t device_ratio;
     cpu->illegal_reset = false;
     if (cpu->nvm.active && nvm_stalls_cpu(cpu)) {
         if (!dspic33_device_advance_nvm(cpu)) {
@@ -4185,6 +4196,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         return cpu->stop_reason;
     }
     instruction_pc = cpu->pc;
+    device_ratio = dspic33_device_instruction_cycles(cpu, 1u);
     opcode = sequential_hole_fetch ? 0u : dspic33_read_program_word(cpu, cpu->pc);
     cpu->sequential_program_hole_pc = 0u;
     if (opcode == 0x064000u) {
@@ -4202,7 +4214,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         cycles += dependency_stall ? 1u : 0u;
         cpu->previous_working_register_writes = 0u;
         cpu->instructions++;
-        advance_instruction(cpu, cycles, false);
+        advance_instruction(cpu, cycles, false, device_ratio);
         return cpu->stop_reason;
     }
     if (opcode == 0x060000u) {
@@ -4224,7 +4236,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         cycles += dependency_stall ? 1u : 0u;
         cpu->previous_working_register_writes = 0u;
         cpu->instructions++;
-        advance_instruction(cpu, cycles, false);
+        advance_instruction(cpu, cycles, false, device_ratio);
         return cpu->stop_reason;
     }
     memcpy(working_registers, cpu->w, sizeof(working_registers));
@@ -4320,7 +4332,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
             enter_trap(cpu, 1u, 0x000006u, 14u, 0x0008u, return_pc,
                        auxiliary_program_address(instruction_pc));
         }
-        advance_instruction(cpu, cycles, non_cpu_sfr_wait);
+        advance_instruction(cpu, cycles, non_cpu_sfr_wait, device_ratio);
         return cpu->stop_reason;
     }
     cpu->previous_working_register_writes = cpu->instruction_working_register_writes;
@@ -4370,10 +4382,10 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
                 program_target_requires_address_error(cpu->pc)
             ? cpu->pc
             : 0u;
-    advance_instruction(cpu, cycles, non_cpu_sfr_wait);
+    advance_instruction(cpu, cycles, non_cpu_sfr_wait, device_ratio);
     if (psv_repeat_exit_latency && cpu->repeat_active != 0u &&
         dspic33_device_interrupt_pending(cpu)) {
-        advance_instruction(cpu, 4u, false);
+        advance_instruction(cpu, 4u, false, device_ratio);
     }
     if (cpu->power_state != DSPIC33_POWER_ACTIVE && dspic33_device_wake(cpu)) {
         cpu->power_state = DSPIC33_POWER_ACTIVE;

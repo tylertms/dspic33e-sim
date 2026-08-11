@@ -8,6 +8,9 @@ void dspic33_device_power_on_reset(Dspic33* cpu);
 void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous);
 uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value);
 bool dspic33_device_advance(Dspic33* cpu, uint64_t cycles);
+bool dspic33_device_advance_instruction(Dspic33* cpu, uint64_t cpu_cycles,
+                                        uint64_t device_cycles);
+uint64_t dspic33_device_instruction_cycles(const Dspic33* cpu, uint64_t cycles);
 bool dspic33_device_advance_nvm(Dspic33* cpu);
 bool dspic33_device_service_interrupt(Dspic33* cpu);
 bool dspic33_device_interrupt_pending(const Dspic33* cpu);

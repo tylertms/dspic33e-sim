@@ -20,6 +20,7 @@ enum {
     NVM_ADDRESS = 0x072au,
     NVM_ADDRESS_HIGH = 0x072cu,
     NVM_KEY = 0x072eu,
+    MAIN_CLOCK_DIVISOR = 0x0744u,
     NVM_WRITE = 0x8000u,
     NVM_WRITE_ENABLE = 0x4000u,
     NVM_WRITE_ERROR = 0x2000u,
@@ -1163,6 +1164,34 @@ static void reset_copy_and_failure_cases(NvmConformance* state, Dspic33* cpu) {
            "warm reset preserves NVMCON POR-only fields");
 }
 
+static void doze_stall_cases(NvmConformance* state, Dspic33* cpu) {
+    uint64_t cpu_cycles;
+    uint64_t device_cycles;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, MAIN_CLOCK_DIVISOR, 0x3800u);
+    dspic33_load_program_word(cpu, 0x3a00u, 0x00ffffffu);
+    dspic33_load_program_word(cpu, 0x3a02u, 0x00ffffffu);
+    cpu->write_latches[0] = 0x00123456u;
+    cpu->write_latches[1] = 0x00654321u;
+    expect(state, start_operation(cpu, 1u, 0x3a00u),
+           "DOZE NVM operation remains active after WR instruction");
+    expect(state,
+           cpu->nvm.completion_cycle == cpu->cycles + 1u && cpu->events.count == 1u &&
+               cpu->events.items[0].cycle - cpu->device_cycles == 8u &&
+               program_word(cpu, 0x3a00u) == 0x00ffffffu && !interrupt_flag(cpu),
+           "DOZE NVM event cannot complete before the CPU deadline");
+    cpu_cycles = cpu->cycles;
+    device_cycles = cpu->device_cycles;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && !cpu->nvm.active &&
+               cpu->cycles - cpu_cycles == 1u &&
+               cpu->device_cycles - device_cycles == 8u &&
+               program_word(cpu, 0x3a00u) == 0x00123456u &&
+               program_word(cpu, 0x3a02u) == 0x00654321u && interrupt_flag(cpu),
+           "DOZE NVM stall advances both domains and completes at the CPU deadline");
+}
+
 int main(void) {
     Dspic33 cpu;
     NvmConformance state = {0u, 0u, 0u};
@@ -1184,6 +1213,7 @@ int main(void) {
         auxiliary_access_and_execution_cases(&state, &cpu);
         auxiliary_nvm_cases(&state, &cpu);
         stall_and_interrupt_cases(&state, &cpu);
+        doze_stall_cases(&state, &cpu);
         async_suppression_cases(&state, &cpu);
         reset_copy_and_failure_cases(&state, &cpu);
         dspic33_destroy(&cpu);

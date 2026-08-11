@@ -163,7 +163,7 @@ void dspic33_i2c_update_pmd(Dspic33* cpu, uint16_t address, uint16_t previous) {
                                   ((uint32_t)cpu->io.i2c_pmd_generation[channel]
                                    << I2C_EVENT_GENERATION_SHIFT) |
                                   (disabled ? 1u : 0u),
-                              1u)) {
+                              dspic33_device_instruction_cycles(cpu, 1u))) {
             raw_write_word(cpu, address, previous);
             cpu->io.i2c_pmd_generation[channel]++;
             cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
