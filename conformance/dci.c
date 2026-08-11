@@ -28,6 +28,11 @@ enum {
     DCI_EXTERNAL_FRAME = 0x0100u,
     DCI_UNDERFLOW_LAST = 0x0080u,
     DCI_TRISTATE = 0x0040u,
+    DCI_DATA_JUSTIFY = 0x0020u,
+    DCI_SAMPLE_RISING = 0x0200u,
+    DCI_MODE_I2S = 0x0001u,
+    DCI_MODE_AC_LINK_16 = 0x0002u,
+    DCI_MODE_AC_LINK_20 = 0x0003u,
     DCI_RECEIVE_OVERFLOW = 0x0008u,
     DCI_RECEIVE_FULL = 0x0004u,
     DCI_TRANSMIT_UNDERFLOW = 0x0002u,
@@ -37,7 +42,9 @@ enum {
     DCI_ERROR_IRQ = 59u,
     DCI_TRANSFER_IRQ = 60u,
     DCI_DMA_REQUEST = 0x3cu,
-    DCI_VECTOR = 0x0200u
+    DCI_VECTOR = 0x0200u,
+    OPCODE_SLEEP = 0xfe4000u,
+    OPCODE_IDLE = 0xfe4001u
 };
 
 static void expect(DciConformance* state, bool condition, const char* name) {
@@ -266,17 +273,16 @@ static void slot_buffer_status_cases(DciConformance* state, Dspic33* cpu) {
 }
 
 static void admission_and_clock_cases(DciConformance* state, Dspic33* cpu) {
-    static const uint16_t unsupported[] = {0x0001u, 0x0002u, 0x0003u, 0x0200u, 0x0020u};
-    uint8_t index;
-    for (index = 0u; index < sizeof(unsupported) / sizeof(unsupported[0]); index++) {
+    uint8_t width;
+    for (width = 1u; width < 4u; width++) {
         Dspic33DciTransfer transfer;
         dspic33_reset(cpu, 0u);
-        configure_external(cpu, unsupported[index], 16u, 1u, 1u, 1u, 1u);
-        expect(state, clock_word(cpu, 0x1234u, true), "clock unsupported tuple");
+        configure_external(cpu, 0u, width, 1u, 1u, 1u, 1u);
+        expect(state, clock_word(cpu, 0x1234u, true), "clock invalid word width");
         expect(state,
                !dspic33_dci_transmit(cpu, &transfer) &&
                    dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0u,
-               "unsupported tuple produces no DCI behavior");
+               "invalid word width produces no DCI behavior");
     }
 
     dspic33_reset(cpu, 0u);
@@ -394,6 +400,209 @@ static void admission_and_clock_cases(DciConformance* state, Dspic33* cpu) {
            dspic33_device_advance(cpu, 16u) &&
                dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0x6000u,
            "internal DCI clock resumes after Sleep");
+}
+
+static void protocol_geometry_cases(DciConformance* state, Dspic33* cpu) {
+    uint8_t mode;
+    for (mode = 0u; mode < 4u; mode++) {
+        uint8_t width;
+        for (width = 4u; width <= 16u; width++) {
+            uint8_t frames;
+            for (frames = 1u; frames <= 16u; frames++) {
+                uint8_t options;
+                for (options = 0u; options < 4u; options++) {
+                    Dspic33DciTransfer transfer;
+                    uint16_t control = mode;
+                    uint16_t expected_mask = UINT16_MAX;
+                    uint8_t expected_frames = frames;
+                    uint16_t transmit = (uint16_t)(0xa55au + frames + width);
+                    uint16_t receive = (uint16_t)(0x5aa5u + frames + width);
+                    if ((options & 1u) != 0u) {
+                        control |= DCI_DATA_JUSTIFY;
+                    }
+                    if ((options & 2u) != 0u) {
+                        control |= DCI_SAMPLE_RISING;
+                    }
+                    if (mode < DCI_MODE_AC_LINK_16 && width < 16u) {
+                        expected_mask = (uint16_t)(UINT16_MAX << (16u - width));
+                    }
+                    if (mode == DCI_MODE_AC_LINK_16) {
+                        expected_frames = 13u;
+                    } else if (mode == DCI_MODE_AC_LINK_20) {
+                        expected_frames = 16u;
+                    }
+                    dspic33_reset(cpu, 0u);
+                    configure_external(cpu, control, width, frames, 1u, 1u, 1u);
+                    dspic33_write_word(cpu, DCI_TRANSMIT_BASE, transmit);
+                    expect(state, clock_word(cpu, receive, false),
+                           "clock protocol geometry word");
+                    expect(state,
+                           dspic33_dci_transmit(cpu, &transfer) &&
+                               transfer.slot == 0u &&
+                               transfer.value == (transmit & expected_mask) &&
+                               transfer.driven,
+                           "protocol selects effective transmit geometry");
+                    expect(state,
+                           dspic33_read_word(cpu, DCI_RECEIVE_BASE) ==
+                               (receive & expected_mask),
+                           "protocol selects effective receive geometry");
+                    expect(state, cpu->io.dci.slot == (expected_frames == 1u ? 0u : 1u),
+                           "protocol selects effective frame geometry");
+                }
+            }
+        }
+    }
+}
+
+static void protocol_frame_cases(DciConformance* state, Dspic33* cpu) {
+    uint8_t justification;
+    for (justification = 0u; justification < 2u; justification++) {
+        uint16_t control = (uint16_t)(DCI_MODE_I2S | DCI_EXTERNAL_FRAME |
+                                      (justification != 0u ? DCI_DATA_JUSTIFY : 0u));
+        dspic33_reset(cpu, 0u);
+        configure_external(cpu, control, 8u, 2u, 2u, 0u, 3u);
+        expect(state, clock_word(cpu, 0x1100u, false),
+               "I2S slave waits for frame edge");
+        expect(state, cpu->io.dci.receive_buffered == 0u && !cpu->io.dci.started,
+               "I2S absent frame edge leaves transfer idle");
+        expect(state, clock_word(cpu, 0x2200u, true),
+               "I2S frame edge starts half-frame");
+        expect(state, cpu->io.dci.receive_buffered == 1u && cpu->io.dci.slot == 1u,
+               "I2S frame edge transfers first logical word");
+        expect(state, clock_word(cpu, 0x3300u, false),
+               "I2S half-frame transfers remaining logical word");
+        expect(state,
+               dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0x2200u &&
+                   dspic33_read_word(cpu, DCI_RECEIVE_BASE + 2u) == 0x3300u &&
+                   !cpu->io.dci.started,
+               "I2S half-frame completes at programmed boundary");
+        expect(state, clock_word(cpu, 0x4400u, false),
+               "I2S waits for next frame edge after boundary");
+        expect(state, cpu->io.dci.receive_buffered == 0u,
+               "I2S idle edge gap transfers no word");
+    }
+}
+
+static void ac_link_cases(DciConformance* state, Dspic33* cpu) {
+    Dspic33DciTransfer transfer;
+    uint8_t slot;
+    dspic33_reset(cpu, 0u);
+    configure_external(cpu, DCI_MODE_AC_LINK_16, 4u, 1u, 2u, 0x3001u, 0x3001u);
+    dspic33_write_word(cpu, DCI_TRANSMIT_BASE, 0x1111u);
+    dspic33_write_word(cpu, DCI_TRANSMIT_BASE + 2u, 0xccccu);
+    for (slot = 0u; slot < 13u; slot++) {
+        expect(state, clock_word(cpu, (uint16_t)(0x2000u + slot), false),
+               "clock 16-bit AC-Link slot");
+        expect(state,
+               dspic33_dci_transmit(cpu, &transfer) && transfer.slot == slot &&
+                   transfer.driven,
+               "16-bit AC-Link reports fixed slot position");
+    }
+    expect(state,
+           dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0x2000u &&
+               dspic33_read_word(cpu, DCI_RECEIVE_BASE + 2u) == 0x200cu,
+           "16-bit AC-Link buffers tag and slot twelve");
+    expect(state, cpu->io.dci.slot == 0u, "16-bit AC-Link wraps after thirteen slots");
+    expect(state, (cpu->io.dci.receive_buffered | cpu->io.dci.transmit_buffered) == 0u,
+           "16-bit AC-Link ignores slot thirteen enables");
+
+    dspic33_reset(cpu, 0u);
+    configure_external(cpu, DCI_MODE_AC_LINK_20, 4u, 1u, 2u, 0x8001u, 0x8001u);
+    dspic33_write_word(cpu, DCI_TRANSMIT_BASE, 0x1234u);
+    dspic33_write_word(cpu, DCI_TRANSMIT_BASE + 2u, 0xabcdu);
+    for (slot = 0u; slot < 16u; slot++) {
+        expect(state, clock_word(cpu, (uint16_t)(0x4000u + slot), false),
+               "clock 20-bit AC-Link packed slot");
+        expect(state, dspic33_dci_transmit(cpu, &transfer) && transfer.slot == slot,
+               "20-bit AC-Link reports packed slot position");
+    }
+    expect(state,
+           dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0x4000u &&
+               dspic33_read_word(cpu, DCI_RECEIVE_BASE + 2u) == 0x400fu,
+           "20-bit AC-Link buffers first and final packed slots");
+    expect(state, cpu->io.dci.slot == 0u,
+           "20-bit AC-Link wraps after sixteen packed slots");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, DCI_CONTROL2, configuration(4u, 1u, 2u));
+    dspic33_write_word(cpu, DCI_CONTROL3, 1u);
+    dspic33_write_word(cpu, DCI_TRANSMIT_SLOTS, 3u);
+    dspic33_write_word(cpu, DCI_RECEIVE_SLOTS, 3u);
+    dspic33_write_word(cpu, DCI_TRANSMIT_BASE, 0x1111u);
+    dspic33_write_word(cpu, DCI_TRANSMIT_BASE + 2u, 0x2222u);
+    dspic33_write_word(cpu, DCI_CONTROL1, DCI_ENABLE | DCI_MODE_AC_LINK_16);
+    expect(state, dspic33_device_advance(cpu, 75u) && cpu->io.dci.output.count == 0u,
+           "16-bit AC-Link waits through tag-slot boundary");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && dspic33_dci_transmit(cpu, &transfer) &&
+               transfer.slot == 0u,
+           "16-bit AC-Link completes sixteen-clock tag slot");
+    expect(state, dspic33_device_advance(cpu, 79u) && cpu->io.dci.output.count == 0u,
+           "16-bit AC-Link waits through data-slot boundary");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && dspic33_dci_transmit(cpu, &transfer) &&
+               transfer.slot == 1u,
+           "16-bit AC-Link completes twenty-clock data slot");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, DCI_CONTROL2, configuration(4u, 1u, 2u));
+    dspic33_write_word(cpu, DCI_CONTROL3, 1u);
+    dspic33_write_word(cpu, DCI_TRANSMIT_SLOTS, 3u);
+    dspic33_write_word(cpu, DCI_CONTROL1, DCI_ENABLE | DCI_MODE_AC_LINK_20);
+    expect(state, dspic33_device_advance(cpu, 75u) && cpu->io.dci.output.count == 0u,
+           "20-bit AC-Link waits through first packed-slot boundary");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && dspic33_dci_transmit(cpu, &transfer) &&
+               transfer.slot == 0u,
+           "20-bit AC-Link completes first sixteen-clock packed slot");
+    expect(state, dspic33_device_advance(cpu, 63u) && cpu->io.dci.output.count == 0u,
+           "20-bit AC-Link waits through second packed-slot boundary");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && dspic33_dci_transmit(cpu, &transfer) &&
+               transfer.slot == 1u,
+           "20-bit AC-Link keeps sixteen-clock packed-slot timing");
+}
+
+static void protocol_integration_cases(DciConformance* state, Dspic33* cpu) {
+    uint8_t mode;
+    for (mode = 0u; mode < 4u; mode++) {
+        uint16_t expected = mode >= DCI_MODE_AC_LINK_16 ? 0x5aa5u : 0x5a00u;
+        dspic33_reset(cpu, 0u);
+        configure_external(cpu, (uint16_t)(mode | DCI_EXTERNAL_FRAME), 8u, 2u, 1u, 0u,
+                           1u);
+        expect(state, clock_word(cpu, 0x1100u, false),
+               "protocol slave clocks without frame indication");
+        expect(state, dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0u,
+               "protocol slave remains idle before frame indication");
+        expect(state, clock_word(cpu, 0x2200u, true),
+               "protocol slave accepts frame indication");
+        expect(state, dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0x2200u,
+               "protocol slave captures synchronized word");
+
+        dspic33_reset(cpu, 0u);
+        configure_dma(cpu, 0u, 0x0001u, (uint32_t)(0x4400u + mode * 2u),
+                      DCI_RECEIVE_BASE, 0u, DCI_DMA_REQUEST);
+        configure_external(cpu, mode, 8u, 1u, 1u, 0u, 1u);
+        expect(state, clock_word(cpu, 0x5aa5u, false),
+               "protocol raises receive DMA request");
+        expect(state, dspic33_device_advance(cpu, 2u),
+               "protocol completes receive DMA transfer");
+        expect(state,
+               dspic33_read_word(cpu, (uint16_t)(0x4400u + mode * 2u)) == expected,
+               "protocol DMA observes effective word geometry");
+    }
+
+    for (mode = DCI_MODE_AC_LINK_16; mode <= DCI_MODE_AC_LINK_20; mode++) {
+        uint8_t width;
+        for (width = 1u; width < 4u; width++) {
+            dspic33_reset(cpu, 0u);
+            configure_external(cpu, mode, width, 1u, 1u, 0u, 1u);
+            expect(state,
+                   clock_word(cpu, 0xa55au, false) &&
+                       dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0xa55au,
+                   "AC-Link ignores programmed word-size field");
+        }
+    }
 }
 
 static void mode_and_status_cases(DciConformance* state, Dspic33* cpu) {
@@ -618,6 +827,246 @@ static void generation_and_frame_cases(DciConformance* state, Dspic33* cpu) {
            "rapid PMD toggle rejects stale disabled generation");
 }
 
+static void disable_timing_cases(DciConformance* state, Dspic33* cpu) {
+    Dspic33DciTransfer transfer;
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, DCI_CONTROL2, configuration(16u, 1u, 1u));
+    dspic33_write_word(cpu, DCI_CONTROL3, 1u);
+    dspic33_write_word(cpu, DCI_TRANSMIT_SLOTS, 1u);
+    dspic33_write_word(cpu, DCI_RECEIVE_SLOTS, 1u);
+    dspic33_write_word(cpu, DCI_TRANSMIT_BASE, 0x1111u);
+    dspic33_write_word(cpu, DCI_CONTROL1, DCI_ENABLE);
+    expect(state, dspic33_device_advance(cpu, 12u) && cpu->io.dci.initialized,
+           "initialize one-slot DCI frame");
+    expect(state, dspic33_device_advance(cpu, 32u),
+           "advance within active DCI slot zero");
+    dspic33_dci_input(cpu, 0x2222u);
+    dspic33_write_word(cpu, DCI_CONTROL1, 0u);
+    expect(state,
+           cpu->io.dci.started && cpu->io.dci.disable_pending &&
+               cpu->io.dci.disable_frames == 1u && cpu->events.count == 1u,
+           "slot-zero disable retains current one-slot frame");
+    expect(state, dspic33_device_advance(cpu, 31u) && cpu->io.dci.started,
+           "slot-zero disable waits through active word");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && !cpu->io.dci.started &&
+               !cpu->io.dci.disable_pending &&
+               dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0x2222u &&
+               dspic33_dci_transmit(cpu, &transfer) && transfer.value == 0x1111u,
+           "slot-zero disable completes current frame before stopping");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, DCI_CONTROL2, configuration(16u, 1u, 1u));
+    dspic33_write_word(cpu, DCI_CONTROL3, 1u);
+    dspic33_write_word(cpu, DCI_RECEIVE_SLOTS, 1u);
+    dspic33_write_word(cpu, DCI_CONTROL1, DCI_ENABLE);
+    expect(state, dspic33_device_advance(cpu, 64u),
+           "advance to three-clock DCI disable boundary");
+    dspic33_write_word(cpu, DCI_CONTROL1, 0u);
+    expect(state, cpu->io.dci.disable_pending && cpu->io.dci.disable_frames == 1u,
+           "three-clock DCI disable selects current frame");
+    expect(state,
+           dspic33_device_advance(cpu, 12u) && !cpu->io.dci.started &&
+               !cpu->io.dci.disable_pending,
+           "three-clock DCI disable stops at current frame end");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, DCI_CONTROL2, configuration(16u, 1u, 1u));
+    dspic33_write_word(cpu, DCI_CONTROL3, 1u);
+    dspic33_write_word(cpu, DCI_TRANSMIT_SLOTS, 1u);
+    dspic33_write_word(cpu, DCI_TRANSMIT_BASE, 0x3333u);
+    dspic33_write_word(cpu, DCI_CONTROL1, DCI_ENABLE);
+    expect(state, dspic33_device_advance(cpu, 65u),
+           "advance inside final three DCI clocks");
+    dspic33_write_word(cpu, DCI_CONTROL1, 0u);
+    expect(state, cpu->io.dci.disable_pending && cpu->io.dci.disable_frames == 2u,
+           "late DCI disable selects following frame");
+    expect(state,
+           dspic33_device_advance(cpu, 11u) && cpu->io.dci.started &&
+               cpu->io.dci.disable_pending && cpu->io.dci.disable_frames == 1u &&
+               dspic33_dci_transmit(cpu, &transfer) && transfer.slot == 0u,
+           "late DCI disable completes current frame and continues");
+    expect(state, dspic33_device_advance(cpu, 63u) && cpu->io.dci.started,
+           "late DCI disable waits through following frame");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && !cpu->io.dci.started &&
+               !cpu->io.dci.disable_pending && dspic33_dci_transmit(cpu, &transfer) &&
+               transfer.slot == 0u,
+           "late DCI disable stops after following frame");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, DCI_CONTROL2, configuration(4u, 2u, 1u));
+    dspic33_write_word(cpu, DCI_CONTROL3, 1u);
+    dspic33_write_word(cpu, DCI_RECEIVE_SLOTS, 3u);
+    dspic33_write_word(cpu, DCI_CONTROL1, DCI_ENABLE);
+    expect(state, dspic33_device_advance(cpu, 12u), "initialize two-slot DCI frame");
+    dspic33_write_word(cpu, DCI_CONTROL1, 0u);
+    expect(state, cpu->io.dci.disable_pending && cpu->io.dci.disable_frames == 1u,
+           "early slot-zero disable retains multi-slot frame");
+    expect(state,
+           dspic33_device_advance(cpu, 16u) && cpu->io.dci.started &&
+               cpu->io.dci.slot == 1u,
+           "multi-slot disable continues after slot zero");
+    expect(state,
+           dspic33_device_advance(cpu, 16u) && !cpu->io.dci.started &&
+               !cpu->io.dci.disable_pending,
+           "multi-slot disable stops at frame end");
+}
+
+static void internal_clock_lifecycle_cases(DciConformance* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, DCI_CONTROL2, configuration(4u, 1u, 1u));
+    dspic33_write_word(cpu, DCI_CONTROL3, 1u);
+    dspic33_write_word(cpu, DCI_RECEIVE_SLOTS, 1u);
+    dspic33_write_word(cpu, DCI_CONTROL1, DCI_ENABLE);
+    expect(state, dspic33_device_advance(cpu, 5u), "advance DCI startup before PMD");
+    dspic33_write_word(cpu, DCI_PMD, DCI_PMD_MASK);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && cpu->io.dci.pmd_disabled &&
+               cpu->events.count == 1u && cpu->events.items[0].paused &&
+               cpu->events.items[0].paused_remaining == 6u,
+           "PMD retains remaining DCI startup phase");
+    expect(state, dspic33_device_advance(cpu, 40u) && !cpu->io.dci.initialized,
+           "PMD holds DCI startup indefinitely");
+    dspic33_write_word(cpu, DCI_PMD, 0u);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && !cpu->io.dci.pmd_disabled &&
+               !cpu->events.items[0].paused,
+           "PMD enable resumes retained DCI startup phase");
+    expect(state, dspic33_device_advance(cpu, 5u) && !cpu->io.dci.initialized,
+           "resumed DCI startup waits to retained boundary");
+    expect(state, dspic33_device_advance(cpu, 1u) && cpu->io.dci.initialized,
+           "resumed DCI startup completes at retained boundary");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, DCI_CONTROL2, configuration(4u, 1u, 1u));
+    dspic33_write_word(cpu, DCI_CONTROL3, 1u);
+    dspic33_write_word(cpu, DCI_RECEIVE_SLOTS, 1u);
+    dspic33_write_word(cpu, DCI_CONTROL1, DCI_ENABLE);
+    expect(state, dspic33_device_advance(cpu, 17u), "advance DCI into internal word");
+    dspic33_dci_input(cpu, 0xa000u);
+    dspic33_write_word(cpu, DCI_CONTROL3, 0u);
+    expect(state,
+           cpu->events.count == 1u && cpu->events.items[0].paused &&
+               cpu->events.items[0].paused_remaining == 11u,
+           "BCG zero retains remaining DCI word phase");
+    expect(state,
+           dspic33_device_advance(cpu, 50u) &&
+               dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0u,
+           "BCG zero holds DCI word indefinitely");
+    dspic33_write_word(cpu, DCI_CONTROL3, 1u);
+    expect(state,
+           dspic33_device_advance(cpu, 10u) &&
+               dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0u,
+           "restored BCG waits to retained word boundary");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) &&
+               dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0xa000u,
+           "restored BCG completes at retained word boundary");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, DCI_CONTROL2, configuration(4u, 1u, 1u));
+    dspic33_write_word(cpu, DCI_CONTROL3, 1u);
+    dspic33_write_word(cpu, DCI_RECEIVE_SLOTS, 1u);
+    dspic33_write_word(cpu, DCI_CONTROL1, DCI_ENABLE);
+    expect(state, dspic33_device_advance(cpu, 17u), "advance DCI before stepped Sleep");
+    dspic33_dci_input(cpu, 0xb000u);
+    expect(state, dspic33_load_program_word(cpu, 0x0200u, OPCODE_SLEEP),
+           "load DCI Sleep instruction");
+    cpu->pc = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_SLEEPING && cpu->events.items[0].paused &&
+               cpu->events.items[0].paused_remaining == 11u,
+           "PWRSAV Sleep retains remaining DCI word phase");
+    expect(state,
+           dspic33_device_advance(cpu, 50u) &&
+               dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0u,
+           "Sleep holds internal DCI word indefinitely");
+    cpu->power_state = DSPIC33_POWER_ACTIVE;
+    dspic33_device_power_state_changed(cpu);
+    expect(state,
+           dspic33_device_advance(cpu, 10u) &&
+               dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0u,
+           "DCI Sleep wake waits to retained word boundary");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) &&
+               dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0xb000u,
+           "DCI Sleep wake completes at retained word boundary");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, DCI_CONTROL2, configuration(4u, 1u, 1u));
+    dspic33_write_word(cpu, DCI_CONTROL3, 1u);
+    dspic33_write_word(cpu, DCI_RECEIVE_SLOTS, 1u);
+    dspic33_write_word(cpu, DCI_CONTROL1, DCI_ENABLE | DCI_STOP_IDLE);
+    expect(state, dspic33_device_advance(cpu, 17u),
+           "advance DCI before stepped stopped Idle");
+    dspic33_dci_input(cpu, 0xc000u);
+    expect(state, dspic33_load_program_word(cpu, 0x0200u, OPCODE_IDLE),
+           "load stopped DCI Idle instruction");
+    cpu->pc = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_IDLING && cpu->events.items[0].paused &&
+               cpu->events.items[0].paused_remaining == 11u,
+           "DCISIDL retains remaining DCI word phase");
+    cpu->power_state = DSPIC33_POWER_ACTIVE;
+    dspic33_device_power_state_changed(cpu);
+    expect(state,
+           dspic33_device_advance(cpu, 11u) &&
+               dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0xc000u,
+           "DCISIDL wake completes retained DCI word");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, DCI_CONTROL2, configuration(4u, 1u, 1u));
+    dspic33_write_word(cpu, DCI_CONTROL3, 1u);
+    dspic33_write_word(cpu, DCI_RECEIVE_SLOTS, 1u);
+    dspic33_write_word(cpu, DCI_CONTROL1, DCI_ENABLE);
+    expect(state, dspic33_device_advance(cpu, 17u),
+           "advance DCI before continuing Idle");
+    dspic33_dci_input(cpu, 0xd000u);
+    expect(state, dspic33_load_program_word(cpu, 0x0200u, OPCODE_IDLE),
+           "load continuing DCI Idle instruction");
+    cpu->pc = 0x0200u;
+    expect(state, dspic33_step(cpu) == DSPIC33_IDLING && !cpu->events.items[0].paused,
+           "DCISIDL clear keeps internal DCI clock running in Idle");
+    expect(state,
+           dspic33_device_advance(cpu, 10u) &&
+               dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0xd000u,
+           "continuing Idle reaches original DCI word boundary");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, DCI_CONTROL2, configuration(4u, 1u, 1u));
+    dspic33_write_word(cpu, DCI_CONTROL3, 1u);
+    dspic33_write_word(cpu, DCI_RECEIVE_SLOTS, 1u);
+    dspic33_write_word(cpu, DCI_CONTROL1, DCI_ENABLE);
+    expect(state, dspic33_device_advance(cpu, 17u),
+           "advance DCI before paused disable");
+    dspic33_write_word(cpu, DCI_CONTROL3, 0u);
+    dspic33_write_word(cpu, DCI_CONTROL1, 0u);
+    expect(state,
+           cpu->events.count == 1u && cpu->events.items[0].paused &&
+               cpu->io.dci.disable_pending && cpu->io.dci.started,
+           "DCI disable retains paused active frame");
+    dspic33_write_word(cpu, DCI_CONTROL3, 1u);
+    expect(state,
+           dspic33_device_advance(cpu, 11u) && !cpu->io.dci.started &&
+               !cpu->io.dci.disable_pending && cpu->events.count == 0u,
+           "restored DCI clock completes pending disabled frame");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, DCI_CONTROL2, configuration(4u, 1u, 1u));
+    dspic33_write_word(cpu, DCI_CONTROL3, 1u);
+    dspic33_write_word(cpu, DCI_CONTROL1, DCI_ENABLE);
+    expect(state, dspic33_device_advance(cpu, 5u),
+           "advance DCI before resume overflow");
+    dspic33_write_word(cpu, DCI_CONTROL3, 0u);
+    cpu->device_cycles = UINT64_MAX - 5u;
+    dspic33_write_word(cpu, DCI_CONTROL3, 1u);
+    expect(state,
+           cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR && cpu->events.items[0].paused,
+           "DCI resume overflow leaves retained event paused");
+    cpu->stop_reason = DSPIC33_RUNNING;
+}
+
 static void lifecycle_cases(DciConformance* state, Dspic33* cpu) {
     Dspic33 copy;
     Dspic33DciTransfer transfer;
@@ -737,11 +1186,17 @@ int main(void) {
         width_and_lane_cases(&state, &cpu);
         slot_buffer_status_cases(&state, &cpu);
         admission_and_clock_cases(&state, &cpu);
+        protocol_geometry_cases(&state, &cpu);
+        protocol_frame_cases(&state, &cpu);
+        ac_link_cases(&state, &cpu);
+        protocol_integration_cases(&state, &cpu);
         mode_and_status_cases(&state, &cpu);
         interrupt_dma_cases(&state, &cpu);
         generation_and_frame_cases(&state, &cpu);
+        disable_timing_cases(&state, &cpu);
+        internal_clock_lifecycle_cases(&state, &cpu);
         lifecycle_cases(&state, &cpu);
-        expect(&state, state.cases == 230u, "DCI assertion accounting");
+        expect(&state, state.cases == 13706u, "DCI assertion accounting");
         dspic33_destroy(&cpu);
     }
     printf("[dci-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",

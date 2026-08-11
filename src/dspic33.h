@@ -334,6 +334,7 @@ typedef struct {
     uint8_t transmit_buffered;
     uint8_t buffer;
     uint8_t slot;
+    uint8_t disable_frames;
     bool started;
     bool initialized;
     bool disable_pending;
