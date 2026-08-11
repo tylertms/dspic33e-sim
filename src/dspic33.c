@@ -3670,6 +3670,8 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
     uint16_t timer_gate = cpu->io.timer_gate;
     uint8_t pwm_dead_time_inputs = cpu->io.pwm_dead_time_inputs;
     uint8_t pwm_sync_inputs = cpu->io.pwm_sync_inputs;
+    uint8_t output_compare_fault_inputs = cpu->io.output_compare.fault_inputs;
+    uint8_t output_compare_fault_direct_mask = cpu->io.output_compare.fault_direct_mask;
     uint32_t pwm_fault_inputs = cpu->io.pwm_fault_inputs;
     uint32_t pwm_current_limit_inputs = cpu->io.pwm_current_limit_inputs;
     bool usb_host_attached = cpu->io.usb_host_attached;
@@ -3752,6 +3754,9 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
     cpu->io.timer_gate = timer_gate;
     cpu->io.pwm_dead_time_inputs = pwm_dead_time_inputs;
     cpu->io.pwm_sync_inputs = pwm_sync_inputs;
+    cpu->io.output_compare.fault_direct_mask = output_compare_fault_direct_mask;
+    cpu->io.output_compare.fault_inputs =
+        (uint8_t)(output_compare_fault_inputs & output_compare_fault_direct_mask);
     cpu->io.pwm_fault_inputs = pwm_fault_inputs;
     cpu->io.pwm_current_limit_inputs = pwm_current_limit_inputs;
     cpu->io.usb_host_attached = usb_host_attached;

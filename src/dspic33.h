@@ -47,6 +47,7 @@
 #define DSPIC33_INPUT_CAPTURE_COUNT 16u
 #define DSPIC33_INPUT_CAPTURE_FIFO_SIZE 4u
 #define DSPIC33_OUTPUT_COMPARE_COUNT 16u
+#define DSPIC33_OUTPUT_COMPARE_FAULT_COUNT 3u
 #define DSPIC33_COMPARATOR_COUNT 3u
 #define DSPIC33_COMPARATOR_INPUT_COUNT 4u
 #define DSPIC33_QEI_COUNT 2u
@@ -74,6 +75,7 @@ typedef enum {
     DSPIC33_EVENT_PMP,
     DSPIC33_EVENT_INPUT_CAPTURE,
     DSPIC33_EVENT_OUTPUT_COMPARE,
+    DSPIC33_EVENT_OUTPUT_COMPARE_FAULT,
     DSPIC33_EVENT_COMPARATOR,
     DSPIC33_EVENT_RTCC,
     DSPIC33_EVENT_QEI,
@@ -238,7 +240,11 @@ typedef struct {
     uint16_t sync_reset_pending;
     uint16_t deferred_sync_pulses;
     uint16_t activation_pending;
+    uint16_t fault_held;
+    uint16_t fault_interrupt_pending;
     uint8_t phase[DSPIC33_OUTPUT_COMPARE_COUNT];
+    uint8_t fault_inputs;
+    uint8_t fault_direct_mask;
     bool clock_advancing;
     bool sync_emitted[DSPIC33_OUTPUT_COMPARE_COUNT];
     uint64_t activation_cycle[DSPIC33_OUTPUT_COMPARE_COUNT];
@@ -783,6 +789,10 @@ bool dspic33_input_capture_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t de
 void dspic33_configuration_mismatch_reset(Dspic33* cpu);
 bool dspic33_output_compare_output(const Dspic33* cpu, uint8_t channel, bool* high);
 bool dspic33_output_compare_pin(const Dspic33* cpu, uint8_t pin, bool* high);
+bool dspic33_output_compare_fault(Dspic33* cpu, uint8_t source, bool high,
+                                  uint64_t delay);
+bool dspic33_output_compare_fault_pin(Dspic33* cpu, uint8_t pin, bool high,
+                                      uint64_t delay);
 bool dspic33_comparator_input(Dspic33* cpu, uint8_t comparator,
                               Dspic33ComparatorInput input, uint16_t level,
                               uint64_t delay);
