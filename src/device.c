@@ -11962,10 +11962,7 @@ static void apply_oscillator_low(Dspic33* cpu, uint16_t previous, uint16_t reque
         cpu->io.pps.one_way_committed = true;
     }
     control |= (uint16_t)(requested & OSCILLATOR_CLOCK_LOCK);
-    if ((requested & OSCILLATOR_CLOCK_FAIL) != 0u) {
-        control |= OSCILLATOR_CLOCK_FAIL;
-        dspic33_raise_oscillator_fail_trap(cpu);
-    } else {
+    if ((requested & OSCILLATOR_CLOCK_FAIL) == 0u) {
         control &= (uint16_t)~OSCILLATOR_CLOCK_FAIL;
     }
     if ((requested & OSCILLATOR_SWITCH_ENABLE) == 0u) {

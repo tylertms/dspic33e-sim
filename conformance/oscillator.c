@@ -296,31 +296,92 @@ static void switch_cases(OscillatorConformance* state, Dspic33* cpu) {
 
 static void failure_trap_cases(OscillatorConformance* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
-    dspic33_load_program_word(cpu, 0x0004u, 0x000300u);
-    dspic33_set_working_register(cpu, 15u, 0x2000u);
-    cpu->stop_on_trap = true;
     expect(state,
            write_protected_byte(cpu, OSCILLATOR_CONTROL, OSCILLATOR_CLOCK_FAIL) ==
-               DSPIC33_TRAPPED,
-           "CF write one dispatches oscillator-fail trap");
-    expect(state, (control(cpu) & OSCILLATOR_CLOCK_FAIL) != 0u,
-           "oscillator-fail trap leaves CF set");
-    expect(state, (dspic33_read_word(cpu, 0x08c0u) & 0x0002u) != 0u,
-           "oscillator-fail trap sets OSCFAIL status");
-    expect(state, cpu->last_trap == 0u && cpu->last_trap_return == 0x0206u,
-           "oscillator-fail trap records source and return PC");
-    expect(state,
-           dspic33_read_word(cpu, 0x2000u) == 0x0206u &&
-               (dspic33_read_word(cpu, 0x2002u) & 0x007fu) == 0u,
-           "oscillator-fail trap stacks return address");
-    expect(state, cpu->pc == 0x000300u && cpu->w[15] == 0x2004u,
-           "oscillator-fail trap enters vector four");
-    dspic33_reset(cpu, 0u);
+               DSPIC33_RUNNING,
+           "CF write one executes without a software-generated failure");
+    expect(state, (control(cpu) & OSCILLATOR_CLOCK_FAIL) == 0u && cpu->trap_count == 0u,
+           "CF write one cannot set hardware status or dispatch a trap");
     cpu->data[OSCILLATOR_CONTROL] = OSCILLATOR_CLOCK_FAIL;
+    expect(state,
+           write_protected_byte(cpu, OSCILLATOR_CONTROL, OSCILLATOR_CLOCK_FAIL) ==
+               DSPIC33_RUNNING,
+           "CF write one executes while hardware status is set");
+    expect(state, (control(cpu) & OSCILLATOR_CLOCK_FAIL) != 0u,
+           "CF write one preserves hardware-set status");
     expect(state, write_protected_byte(cpu, OSCILLATOR_CONTROL, 0u) == DSPIC33_RUNNING,
            "CF clear sequence executes");
     expect(state, (control(cpu) & OSCILLATOR_CLOCK_FAIL) == 0u,
            "CF write zero clears failure flag");
+}
+
+static void source_admission_matrix_cases(OscillatorConformance* state, Dspic33* cpu) {
+    uint8_t fcksm;
+    uint8_t source;
+    for (fcksm = 0u; fcksm < 4u; fcksm++) {
+        for (source = 0u; source < 8u; source++) {
+            uint16_t expected;
+            bool switching_enabled = (fcksm & 2u) == 0u;
+            dspic33_load_configuration_word(cpu, CONFIGURATION_FOSCSEL, 0x0078u);
+            dspic33_load_configuration_word(
+                cpu, CONFIGURATION_FOSC, (uint8_t)(0x001eu | (uint8_t)(fcksm << 6u)));
+            dspic33_load_configuration_word(cpu, CONFIGURATION_FWDT, 0x00ffu);
+            dspic33_reset(cpu, 0u);
+            write_protected_byte(cpu, OSCILLATOR_CONTROL + 1u, source);
+            write_protected_byte(cpu, OSCILLATOR_CONTROL, OSCILLATOR_SWITCH_ENABLE);
+            if (switching_enabled && source != 0u) {
+                expected = (uint16_t)(source * 0x1100u);
+                if (source == 1u || source == 3u) {
+                    expected |= OSCILLATOR_PLL_LOCK;
+                }
+                expect(state,
+                       cpu->oscillator.active && cpu->events.count == 1u &&
+                           (control(cpu) & OSCILLATOR_SWITCH_ENABLE) != 0u,
+                       "enabled source request starts one switch lifecycle");
+                expect(state,
+                       dspic33_device_advance(cpu, OSCILLATOR_SWITCH_DELAY) &&
+                           control(cpu) == expected && !cpu->oscillator.active &&
+                           cpu->events.count == 0u,
+                       "enabled source request completes with exact status");
+            } else {
+                expected = (uint16_t)(source << 8u);
+                expect(state,
+                       control(cpu) == expected && !cpu->oscillator.active &&
+                           cpu->events.count == 0u,
+                       "disabled or redundant source request schedules no lifecycle");
+                expect(state,
+                       dspic33_device_advance(cpu, OSCILLATOR_SWITCH_DELAY) &&
+                           control(cpu) == expected,
+                       "disabled or redundant source request remains stable");
+            }
+        }
+    }
+}
+
+static void fail_safe_matrix_cases(OscillatorConformance* state, Dspic33* cpu) {
+    uint8_t fcksm;
+    uint8_t source;
+    for (fcksm = 0u; fcksm < 4u; fcksm++) {
+        for (source = 0u; source < 8u; source++) {
+            bool expected = fcksm == 0u && source >= 2u && source <= 4u;
+            uint16_t previous;
+            dspic33_load_configuration_word(cpu, CONFIGURATION_FOSCSEL,
+                                            (uint8_t)(0x0078u | source));
+            dspic33_load_configuration_word(
+                cpu, CONFIGURATION_FOSC, (uint8_t)(0x001eu | (uint8_t)(fcksm << 6u)));
+            dspic33_reset(cpu, 0u);
+            previous = control(cpu);
+            expect(state, dspic33_oscillator_failure_detected(cpu) == expected,
+                   "FSCM admission follows source and FCKSM configuration");
+            expect(state,
+                   expected ? control(cpu) == (uint16_t)((uint16_t)source << 8u |
+                                                         OSCILLATOR_CLOCK_FAIL)
+                            : control(cpu) == previous,
+                   "FSCM matrix preserves or replaces oscillator status exactly");
+        }
+    }
+    dspic33_load_configuration_word(cpu, CONFIGURATION_FOSCSEL, 0x0078u);
+    dspic33_load_configuration_word(cpu, CONFIGURATION_FOSC, 0x005eu);
 }
 
 static void configuration_admission_cases(OscillatorConformance* state, Dspic33* cpu) {
@@ -1549,6 +1610,8 @@ int main(void) {
     protection_cases(&state, &source);
     switch_cases(&state, &source);
     failure_trap_cases(&state, &source);
+    source_admission_matrix_cases(&state, &source);
+    fail_safe_matrix_cases(&state, &source);
     configuration_admission_cases(&state, &source);
     hardware_failure_cases(&state, &source);
     pll_lock_sequence_cases(&state, &source, &copy);
@@ -1557,7 +1620,7 @@ int main(void) {
     main_pll_configuration_cases(&state, &source, &copy);
     doze_cases(&state, &source, &copy);
     lifecycle_cases(&state, &source, &copy);
-    expect(&state, state.cases == 317u, "oscillator assertion arithmetic");
+    expect(&state, state.cases == 443u, "oscillator assertion arithmetic");
     printf("[oscillator-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32
            "\n",
            state.cases, state.passed, state.failed);
