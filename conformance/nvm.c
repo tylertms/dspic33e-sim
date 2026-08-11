@@ -26,6 +26,9 @@ enum {
     NVM_WRITE_ERROR = 0x2000u,
     NVM_IRQ = 15u,
     NVM_SEQUENCE_BASE = 0x0400u,
+    PERSISTENT_PROGRAM_TAG = 0x01000000u,
+    PERSISTENT_PROGRAM_BASE = 0x2000u,
+    PERSISTENT_PROGRAM_LIMIT = 0x5000u,
     MOVE_KEY_55 = 0x200550u,
     MOVE_KEY_AA = 0x200aa0u,
     WRITE_NVM_KEY = 0x883970u,
@@ -1192,6 +1195,168 @@ static void doze_stall_cases(NvmConformance* state, Dspic33* cpu) {
            "DOZE NVM stall advances both domains and completes at the CPU deadline");
 }
 
+static void persistent_program_alias_cases(NvmConformance* state, Dspic33* cpu) {
+    Dspic33 copy;
+    uint32_t index;
+    bool copy_initialized;
+
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           program_word(cpu, PERSISTENT_PROGRAM_BASE) == 0x00ffffffu &&
+               program_word(cpu, PERSISTENT_PROGRAM_TAG + PERSISTENT_PROGRAM_BASE) ==
+                   0x00ffffffu,
+           "persistent physical and tagged views reset erased");
+    expect(state,
+           dspic33_load_program_word(cpu, PERSISTENT_PROGRAM_BASE, 0x00112233u) &&
+               program_word(cpu, PERSISTENT_PROGRAM_TAG + PERSISTENT_PROGRAM_BASE) ==
+                   0x00112233u &&
+               dspic33_load_program_word(
+                   cpu, PERSISTENT_PROGRAM_TAG + PERSISTENT_PROGRAM_BASE + 2u,
+                   0x00445566u) &&
+               program_word(cpu, PERSISTENT_PROGRAM_BASE + 2u) == 0x00445566u,
+           "persistent loader keeps physical and tagged views coherent");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_load_program_word(cpu, PERSISTENT_PROGRAM_BASE - 2u, 0x00010203u);
+    dspic33_load_program_word(
+        cpu, PERSISTENT_PROGRAM_TAG + PERSISTENT_PROGRAM_BASE - 2u, 0x00654321u);
+    dspic33_load_program_word(cpu, PERSISTENT_PROGRAM_BASE, 0x00ffffffu);
+    dspic33_load_program_word(cpu, PERSISTENT_PROGRAM_BASE + 2u, 0x00ffffffu);
+    dspic33_load_program_word(cpu, PERSISTENT_PROGRAM_BASE + 4u, 0x00040506u);
+    cpu->write_latches[0] = 0x00123456u;
+    cpu->write_latches[1] = 0x00654321u;
+    expect(state,
+           start_operation(cpu, 1u, PERSISTENT_PROGRAM_TAG + PERSISTENT_PROGRAM_BASE),
+           "persistent pair operation starts");
+    expect(state, cpu->nvm.address == PERSISTENT_PROGRAM_BASE,
+           "persistent pair request normalizes through NVMADRU");
+    expect(state, finish_operation(cpu), "persistent pair operation completes");
+    expect(state,
+           program_word(cpu, PERSISTENT_PROGRAM_TAG + PERSISTENT_PROGRAM_BASE) ==
+                   0x00123456u &&
+               program_word(cpu, PERSISTENT_PROGRAM_TAG + PERSISTENT_PROGRAM_BASE +
+                                     2u) == 0x00654321u,
+           "persistent pair updates tagged firmware view");
+    expect(state,
+           program_word(cpu, PERSISTENT_PROGRAM_BASE - 2u) == 0x00010203u &&
+               program_word(cpu, PERSISTENT_PROGRAM_BASE + 4u) == 0x00040506u,
+           "persistent pair preserves adjacent physical words");
+    expect(state,
+           program_word(cpu, PERSISTENT_PROGRAM_TAG + PERSISTENT_PROGRAM_BASE - 2u) ==
+               0x00654321u,
+           "persistent lower boundary keeps physical and tagged storage separate");
+
+    dspic33_reset(cpu, 0u);
+    for (index = 0u; index < DSPIC33_WRITE_LATCH_WORDS; index++) {
+        cpu->write_latches[index] = 0x00330000u | index;
+    }
+    dspic33_load_program_word(cpu, 0x22feu, 0x00010203u);
+    dspic33_load_program_word(cpu, 0x2300u, 0x00ffffffu);
+    dspic33_load_program_word(cpu, 0x23feu, 0x00ffffffu);
+    dspic33_load_program_word(cpu, 0x2400u, 0x00040506u);
+    expect(state, start_operation(cpu, 2u, PERSISTENT_PROGRAM_TAG + 0x23feu),
+           "persistent row operation starts");
+    expect(state, cpu->nvm.address == 0x23feu,
+           "persistent row request normalizes through NVMADRU");
+    expect(state, finish_operation(cpu), "persistent row operation completes");
+    expect(state,
+           program_word(cpu, PERSISTENT_PROGRAM_TAG + 0x2300u) == 0x00330000u &&
+               program_word(cpu, PERSISTENT_PROGRAM_TAG + 0x23feu) == 0x0033007fu,
+           "persistent row updates exact tagged range");
+    expect(state,
+           program_word(cpu, 0x22feu) == 0x00010203u &&
+               program_word(cpu, 0x2400u) == 0x00040506u,
+           "persistent row preserves adjacent words");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_load_program_word(cpu, 0x27feu, 0x00010203u);
+    dspic33_load_program_word(cpu, 0x2800u, 0u);
+    dspic33_load_program_word(cpu, 0x2ffeu, 0u);
+    dspic33_load_program_word(cpu, 0x3000u, 0x00040506u);
+    expect(state, start_operation(cpu, 3u, PERSISTENT_PROGRAM_TAG + 0x2ffeu),
+           "persistent page operation starts");
+    expect(state, cpu->nvm.address == 0x2ffeu,
+           "persistent page request normalizes through NVMADRU");
+    expect(state, finish_operation(cpu), "persistent page operation completes");
+    expect(state,
+           program_word(cpu, PERSISTENT_PROGRAM_TAG + 0x2800u) == 0x00ffffffu &&
+               program_word(cpu, PERSISTENT_PROGRAM_TAG + 0x2ffeu) == 0x00ffffffu,
+           "persistent page erase updates tagged view");
+    expect(state,
+           program_word(cpu, 0x27feu) == 0x00010203u &&
+               program_word(cpu, 0x3000u) == 0x00040506u,
+           "persistent page erase preserves adjacent words");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_load_program_word(cpu, 0x4800u, 0u);
+    dspic33_load_program_word(cpu, PERSISTENT_PROGRAM_LIMIT - 2u, 0u);
+    dspic33_load_program_word(cpu, PERSISTENT_PROGRAM_LIMIT, 0x00010203u);
+    dspic33_load_program_word(cpu, PERSISTENT_PROGRAM_TAG + PERSISTENT_PROGRAM_LIMIT,
+                              0x00040506u);
+    expect(state,
+           start_operation(cpu, 3u,
+                           PERSISTENT_PROGRAM_TAG + PERSISTENT_PROGRAM_LIMIT - 2u),
+           "persistent upper page operation starts");
+    expect(state, cpu->nvm.address == PERSISTENT_PROGRAM_LIMIT - 2u,
+           "persistent upper page normalizes through NVMADRU");
+    expect(state, finish_operation(cpu), "persistent upper page operation completes");
+    expect(state,
+           program_word(cpu, PERSISTENT_PROGRAM_TAG + 0x4800u) == 0x00ffffffu &&
+               program_word(cpu, PERSISTENT_PROGRAM_TAG + PERSISTENT_PROGRAM_LIMIT -
+                                     2u) == 0x00ffffffu,
+           "persistent upper page erases through physical limit");
+    expect(state,
+           program_word(cpu, PERSISTENT_PROGRAM_LIMIT) == 0x00010203u &&
+               program_word(cpu, PERSISTENT_PROGRAM_TAG + PERSISTENT_PROGRAM_LIMIT) ==
+                   0x00040506u,
+           "program origin and tagged boundary remain independently routed");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_load_program_word(cpu, PERSISTENT_PROGRAM_BASE, 0u);
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE, 0x00010203u);
+    dspic33_load_configuration_word(cpu, DSPIC33_CONFIGURATION_BASE + 4u, 0xff30u);
+    expect(state, start_operation(cpu, 0x0du, 0u),
+           "general bulk erase with persistent data starts");
+    expect(state, finish_operation(cpu),
+           "general bulk erase with persistent data completes");
+    expect(state,
+           program_word(cpu, PERSISTENT_PROGRAM_BASE) == 0x00ffffffu &&
+               program_word(cpu, PERSISTENT_PROGRAM_TAG + PERSISTENT_PROGRAM_BASE) ==
+                   0x00ffffffu &&
+               dspic33_read_configuration_byte(cpu, DSPIC33_CONFIGURATION_BASE + 4u) ==
+                   0xcfu,
+           "general bulk erase clears persistent data and FGS");
+    expect(state, program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE) == 0x00010203u,
+           "general bulk erase preserves auxiliary program");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_load_program_word(cpu, PERSISTENT_PROGRAM_BASE + 0x200u, 0x00112233u);
+    copy_initialized = dspic33_initialize(&copy);
+    expect(state, copy_initialized, "initialize persistent alias copy");
+    if (copy_initialized) {
+        expect(state, dspic33_copy(&copy, cpu), "copy persistent alias state");
+        dspic33_load_program_word(
+            cpu, PERSISTENT_PROGRAM_TAG + PERSISTENT_PROGRAM_BASE + 0x200u,
+            0x00445566u);
+        expect(state,
+               program_word(cpu, PERSISTENT_PROGRAM_BASE + 0x200u) == 0x00445566u &&
+                   program_word(&copy, PERSISTENT_PROGRAM_BASE + 0x200u) == 0x00112233u,
+               "copied persistent aliases diverge independently");
+        dspic33_destroy(&copy);
+    }
+
+    dspic33_load_program_word(cpu, PERSISTENT_PROGRAM_BASE + 0x400u, 0x00123456u);
+    dspic33_load_program_word(cpu, 0u, OPCODE_RESET);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               program_word(cpu, PERSISTENT_PROGRAM_TAG + PERSISTENT_PROGRAM_BASE +
+                                     0x400u) == 0x00123456u,
+           "warm reset preserves persistent program");
+    dspic33_reset(cpu, 0u);
+    expect(state, program_word(cpu, PERSISTENT_PROGRAM_BASE + 0x400u) == 0x00123456u,
+           "cold processor reset preserves persistent program");
+}
+
 int main(void) {
     Dspic33 cpu;
     NvmConformance state = {0u, 0u, 0u};
@@ -1213,6 +1378,7 @@ int main(void) {
         auxiliary_access_and_execution_cases(&state, &cpu);
         auxiliary_nvm_cases(&state, &cpu);
         stall_and_interrupt_cases(&state, &cpu);
+        persistent_program_alias_cases(&state, &cpu);
         doze_stall_cases(&state, &cpu);
         async_suppression_cases(&state, &cpu);
         reset_copy_and_failure_cases(&state, &cpu);

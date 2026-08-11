@@ -18,6 +18,11 @@ static const uint8_t configuration_factory_defaults[] = {0xcfu, 0xffu, 0xffu, 0x
 static const uint8_t configuration_program_masks[] = {0x33u, 0x87u, 0xe7u, 0xffu,
                                                       0x3fu, 0xf7u, 0x33u, 0xffu};
 
+enum {
+    PERSISTENT_PROGRAM_PHYSICAL_BASE = 0x2000u,
+    PERSISTENT_PROGRAM_PHYSICAL_LIMIT = 0x5000u
+};
+
 static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory);
 typedef enum {
     DSPIC33_RESET_SOFTWARE,
@@ -52,6 +57,18 @@ static uint32_t program_address_add(uint32_t address, int32_t offset) {
 static bool auxiliary_program_address(uint32_t address) {
     return address >= DSPIC33_AUXILIARY_PROGRAM_BASE &&
            address < DSPIC33_AUXILIARY_PROGRAM_LIMIT;
+}
+
+static bool persistent_program_physical_address(uint32_t address) {
+    return address >= PERSISTENT_PROGRAM_PHYSICAL_BASE &&
+           address < PERSISTENT_PROGRAM_PHYSICAL_LIMIT;
+}
+
+static uint32_t persistent_program_index(uint32_t address) {
+    if (address >= DSPIC33_PERSISTENT_PROGRAM_BASE) {
+        address -= DSPIC33_PERSISTENT_PROGRAM_BASE;
+    }
+    return address / 2u;
 }
 
 static bool nvm_stalls_cpu(const Dspic33* cpu) {
@@ -316,6 +333,9 @@ static bool configuration_register_index(uint32_t address, uint8_t* index) {
 
 uint32_t dspic33_read_program_word(const Dspic33* cpu, uint32_t address) {
     uint8_t configuration_index;
+    if (persistent_program_physical_address(address)) {
+        return cpu->persistent_program[persistent_program_index(address)] & 0x00ffffffu;
+    }
     if (address < DSPIC33_PROGRAM_LIMIT) {
         return cpu->program[address / 2u] & 0x00ffffffu;
     }
@@ -339,9 +359,7 @@ uint32_t dspic33_read_program_word(const Dspic33* cpu, uint32_t address) {
     }
     if (address >= DSPIC33_PERSISTENT_PROGRAM_BASE &&
         address < DSPIC33_PERSISTENT_PROGRAM_LIMIT) {
-        return cpu->persistent_program[(address - DSPIC33_PERSISTENT_PROGRAM_BASE) /
-                                       2u] &
-               0x00ffffffu;
+        return cpu->persistent_program[persistent_program_index(address)] & 0x00ffffffu;
     }
     if (address >= DSPIC33_WRITE_LATCH_BASE && address < DSPIC33_WRITE_LATCH_LIMIT) {
         return cpu->write_latches[(address - DSPIC33_WRITE_LATCH_BASE) / 2u] &
@@ -351,6 +369,9 @@ uint32_t dspic33_read_program_word(const Dspic33* cpu, uint32_t address) {
 }
 
 static uint32_t* writable_program_word(Dspic33* cpu, uint32_t address) {
+    if (persistent_program_physical_address(address)) {
+        return &cpu->persistent_program[persistent_program_index(address)];
+    }
     if (address < DSPIC33_PROGRAM_LIMIT) {
         return &cpu->program[address / 2u];
     }
@@ -360,8 +381,7 @@ static uint32_t* writable_program_word(Dspic33* cpu, uint32_t address) {
     }
     if (address >= DSPIC33_PERSISTENT_PROGRAM_BASE &&
         address < DSPIC33_PERSISTENT_PROGRAM_LIMIT) {
-        return &cpu->persistent_program[(address - DSPIC33_PERSISTENT_PROGRAM_BASE) /
-                                        2u];
+        return &cpu->persistent_program[persistent_program_index(address)];
     }
     return NULL;
 }
@@ -3781,6 +3801,10 @@ void dspic33_complete_nvm(Dspic33* cpu) {
     }
     if (operation == 0x0du) {
         erase_program_words(cpu->program, DSPIC33_PROGRAM_WORDS);
+        erase_program_words(
+            cpu->persistent_program + PERSISTENT_PROGRAM_PHYSICAL_BASE / 2u,
+            (PERSISTENT_PROGRAM_PHYSICAL_LIMIT - PERSISTENT_PROGRAM_PHYSICAL_BASE) /
+                2u);
         cpu->configuration[4u] = configuration_factory_defaults[0u];
         cpu->configuration[5u] = 0xffu;
         return;
