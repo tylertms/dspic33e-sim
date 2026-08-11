@@ -18,6 +18,7 @@ static void output_compare_raise(Dspic33* cpu, uint8_t channel);
 static void output_compare_refresh_fault_pps_inputs(Dspic33* cpu);
 static void dci_discard_internal_events(Dspic33* cpu);
 static void dci_update_power_state(Dspic33* cpu);
+static void dci_refresh_pps_inputs(Dspic33* cpu);
 static uint16_t gpio_pin_values(const Dspic33* cpu, uint8_t port);
 
 static const uint16_t timer_registers[DSPIC33_TIMER_COUNT] = {
@@ -681,6 +682,7 @@ enum {
     DCI_CONTROL_STOP_IDLE = 0x2000u,
     DCI_CONTROL_LOOPBACK = 0x0800u,
     DCI_CONTROL_EXTERNAL_CLOCK = 0x0400u,
+    DCI_CONTROL_SAMPLE_RISING = 0x0200u,
     DCI_CONTROL_EXTERNAL_FRAME = 0x0100u,
     DCI_CONTROL_UNDERFLOW_LAST = 0x0080u,
     DCI_CONTROL_TRISTATE = 0x0040u,
@@ -700,6 +702,11 @@ enum {
     DCI_TRANSFER_IRQ = 60u,
     DCI_ERROR_IRQ = 59u,
     DCI_DMA_REQUEST = 0x3cu,
+    DCI_PPS_INPUTS = 0x06d0u,
+    DCI_PPS_FRAME = 0x06d2u,
+    DCI_PPS_DATA_OUTPUT = 11u,
+    DCI_PPS_CLOCK_OUTPUT = 12u,
+    DCI_PPS_FRAME_OUTPUT = 13u,
     DCI_EVENT_START = 0u,
     DCI_EVENT_INTERNAL = 1u,
     DCI_EVENT_EXTERNAL = 2u,
@@ -5756,6 +5763,12 @@ static void dci_abort(Dspic33* cpu) {
     dci->disable_frames = 0u;
     dci->buffer = 0u;
     dci->slot = 0u;
+    dci->serial_input = 0u;
+    dci->serial_bits = 0u;
+    dci->serial_output_high = false;
+    dci->serial_output_driven = false;
+    dci->serial_delay = false;
+    dci->pps_frame_pending = false;
     dci->receive_buffered = 0u;
     dci->transmit_buffered = 0u;
     raw_write_word(cpu, DCI_CONTROL1,
@@ -5924,6 +5937,10 @@ static bool dci_startup_transfer(Dspic33* cpu) {
     dci->initialized = true;
     dci->buffer = 0u;
     dci->slot = 0u;
+    dci->serial_input = 0u;
+    dci->serial_bits = 0u;
+    dci->serial_delay = false;
+    dci->output_frame_high = true;
     dci->transmit_buffered = active_transmit;
     return active_transmit == 0u || dci_transfer_buffers(cpu, false, true);
 }
@@ -5995,6 +6012,9 @@ static bool dci_process_word(Dspic33* cpu, uint16_t input) {
     dci->slot++;
     if (dci->slot == dci_frame_count(cpu)) {
         dci->slot = 0u;
+        if (dci_mode(cpu) == 1u && (control & DCI_CONTROL_EXTERNAL_FRAME) == 0u) {
+            dci->output_frame_high = !dci->output_frame_high;
+        }
         if (!dci_finish_frame(cpu)) {
             return false;
         }
@@ -6003,6 +6023,221 @@ static bool dci_process_word(Dspic33* cpu, uint16_t input) {
         }
     }
     dci_refresh_status(cpu);
+    return true;
+}
+
+static uint8_t dci_pps_selection(const Dspic33* cpu, uint16_t address, uint8_t shift) {
+    return (uint8_t)((raw_word(cpu, address) >> shift) & 0x007fu);
+}
+
+static bool dci_pps_input_high(const Dspic33* cpu, uint8_t selection) {
+    const Dspic33PpsPin* mapping;
+    uint16_t bit;
+    if (selection == 0u) {
+        return false;
+    }
+    mapping = pps_pin(selection);
+    if (mapping == NULL || !pps_physical_input_enabled(cpu, selection)) {
+        return false;
+    }
+    bit = (uint16_t)(1u << mapping->bit);
+    return (gpio_pin_values(cpu, mapping->port) & bit) != 0u;
+}
+
+static void dci_refresh_serial_output(Dspic33* cpu) {
+    Dspic33Dci* dci = &cpu->io.dci;
+    uint16_t control = raw_word(cpu, DCI_CONTROL1);
+    uint16_t slot_bit = (uint16_t)(1u << dci->slot);
+    bool transmit = (raw_word(cpu, DCI_TRANSMIT_SLOTS) & slot_bit) != 0u;
+    uint16_t output = transmit ? dci->transmit[dci->buffer] : 0u;
+    dci->serial_output_driven = transmit || (control & DCI_CONTROL_TRISTATE) == 0u;
+    dci->serial_output_high = dci->initialized && dci->started && !dci->serial_delay &&
+                              dci->serial_bits < 16u &&
+                              (output & (uint16_t)(0x8000u >> dci->serial_bits)) != 0u;
+}
+
+static void dci_begin_serial_frame(Dspic33* cpu) {
+    Dspic33Dci* dci = &cpu->io.dci;
+    if (!dci->initialized && !dci_startup_transfer(cpu)) {
+        return;
+    }
+    dci->slot = 0u;
+    dci->started = true;
+    dci->serial_input = 0u;
+    dci->serial_bits = 0u;
+    dci->serial_delay = (raw_word(cpu, DCI_CONTROL1) & DCI_CONTROL_DATA_JUSTIFY) == 0u;
+    dci_refresh_serial_output(cpu);
+    dci_refresh_status(cpu);
+}
+
+static void dci_sample_serial_input(Dspic33* cpu, bool high) {
+    Dspic33Dci* dci = &cpu->io.dci;
+    uint8_t width = dci_slot_width(cpu, dci->slot);
+    if (dci->serial_bits < 16u && high) {
+        dci->serial_input |= (uint16_t)(0x8000u >> dci->serial_bits);
+    }
+    dci->serial_bits++;
+    if (dci->serial_bits == width) {
+        uint16_t input = dci->serial_input;
+        dci->serial_input = 0u;
+        dci->serial_bits = 0u;
+        dci_process_word(cpu, input);
+    }
+}
+
+static void dci_refresh_pps_inputs(Dspic33* cpu) {
+    Dspic33Dci* dci = &cpu->io.dci;
+    uint16_t control = raw_word(cpu, DCI_CONTROL1);
+    bool operating = ((control & DCI_CONTROL_ENABLE) != 0u || dci->disable_pending) &&
+                     dci_configuration_supported(cpu) && !dci->pmd_disabled &&
+                     (cpu->power_state != DSPIC33_POWER_IDLE ||
+                      (control & DCI_CONTROL_STOP_IDLE) == 0u);
+    bool clock_high =
+        dci_pps_input_high(cpu, dci_pps_selection(cpu, DCI_PPS_INPUTS, 8u));
+    bool frame_high =
+        dci_pps_input_high(cpu, dci_pps_selection(cpu, DCI_PPS_FRAME, 0u));
+    bool clock_changed = clock_high != dci->pps_clock_high;
+    bool frame_changed = frame_high != dci->pps_frame_high;
+    bool sample_edge =
+        clock_changed && (((control & DCI_CONTROL_SAMPLE_RISING) != 0u) == clock_high);
+    dci->pps_clock_high = clock_high;
+    dci->pps_frame_high = frame_high;
+    if (operating && (control & DCI_CONTROL_EXTERNAL_FRAME) != 0u &&
+        ((dci_mode(cpu) == 1u && frame_changed) ||
+         (dci_mode(cpu) != 1u && frame_changed && frame_high))) {
+        dci->pps_frame_pending = true;
+    }
+    if (!clock_changed || (control & DCI_CONTROL_EXTERNAL_CLOCK) == 0u || !operating) {
+        return;
+    }
+    if (!sample_edge) {
+        dci_refresh_serial_output(cpu);
+        return;
+    }
+    if ((control & DCI_CONTROL_EXTERNAL_FRAME) != 0u) {
+        if (dci->pps_frame_pending) {
+            dci->pps_frame_pending = false;
+            if (!dci->started) {
+                dci_begin_serial_frame(cpu);
+            }
+        }
+        if (!dci->started) {
+            return;
+        }
+    } else if (!dci->initialized) {
+        if (!dci_startup_transfer(cpu)) {
+            return;
+        }
+        dci_refresh_serial_output(cpu);
+    }
+    if (dci->serial_delay) {
+        dci->serial_delay = false;
+        dci_refresh_serial_output(cpu);
+        return;
+    }
+    dci_sample_serial_input(
+        cpu, dci_pps_input_high(cpu, dci_pps_selection(cpu, DCI_PPS_INPUTS, 0u)));
+}
+
+static bool dci_internal_event_phase(const Dspic33* cpu, uint16_t* source,
+                                     uint64_t* elapsed) {
+    size_t index;
+    for (index = 0u; index < cpu->events.count; index++) {
+        const Dspic33Event* event = &cpu->events.items[index];
+        uint64_t total;
+        uint64_t remaining;
+        if (!dci_internal_event(event) ||
+            (uint16_t)event->value != cpu->io.dci.generation) {
+            continue;
+        }
+        total = event->source == DCI_EVENT_START ? dci_bit_cycles(cpu) * 3u
+                                                 : dci_word_cycles(cpu);
+        remaining =
+            event->paused ? event->paused_remaining : event->cycle - cpu->device_cycles;
+        if (remaining > total) {
+            return false;
+        }
+        *source = event->source;
+        *elapsed = total - remaining;
+        return true;
+    }
+    return false;
+}
+
+static bool dci_internal_clock_high(const Dspic33* cpu, bool* high) {
+    uint16_t source;
+    uint64_t elapsed;
+    uint64_t half_period = dci_bit_cycles(cpu) / 2u;
+    if (!dci_internal_event_phase(cpu, &source, &elapsed) ||
+        (source != DCI_EVENT_START && source != DCI_EVENT_INTERNAL) ||
+        half_period == 0u) {
+        return false;
+    }
+    *high = ((elapsed / half_period) & 1u) == 0u;
+    return true;
+}
+
+static bool dci_data_output(const Dspic33* cpu, bool* high) {
+    const Dspic33Dci* dci = &cpu->io.dci;
+    uint16_t control = raw_word(cpu, DCI_CONTROL1);
+    uint16_t slot_bit = (uint16_t)(1u << dci->slot);
+    bool transmit = (raw_word(cpu, DCI_TRANSMIT_SLOTS) & slot_bit) != 0u;
+    bool driven = transmit || (control & DCI_CONTROL_TRISTATE) == 0u;
+    uint8_t bit = dci->serial_bits;
+    uint16_t output = transmit ? dci->transmit[dci->buffer] : 0u;
+    if ((control & DCI_CONTROL_EXTERNAL_CLOCK) != 0u) {
+        *high = dci->serial_output_high;
+        return dci->serial_output_driven;
+    }
+    if (!driven) {
+        return false;
+    }
+    {
+        uint16_t source;
+        uint64_t elapsed;
+        if (dci_internal_event_phase(cpu, &source, &elapsed) &&
+            source == DCI_EVENT_INTERNAL) {
+            if ((control & DCI_CONTROL_SAMPLE_RISING) != 0u) {
+                elapsed += dci_bit_cycles(cpu) / 2u;
+            }
+            bit = (uint8_t)(elapsed / dci_bit_cycles(cpu));
+        }
+    }
+    *high = dci->initialized && dci->started && bit < 16u &&
+            (output & (uint16_t)(0x8000u >> bit)) != 0u;
+    return true;
+}
+
+static bool dci_frame_output(const Dspic33* cpu, bool* high) {
+    uint8_t mode = dci_mode(cpu);
+    uint16_t control = raw_word(cpu, DCI_CONTROL1);
+    uint16_t source;
+    uint64_t elapsed;
+    uint64_t bit_cycles = dci_bit_cycles(cpu);
+    bool immediate = (control & DCI_CONTROL_DATA_JUSTIFY) != 0u;
+    if (!dci_internal_event_phase(cpu, &source, &elapsed)) {
+        *high = false;
+        return true;
+    }
+    if (mode == 1u) {
+        *high = cpu->io.dci.output_frame_high;
+        if (!immediate && ((source == DCI_EVENT_START && elapsed >= bit_cycles * 2u) ||
+                           (source == DCI_EVENT_INTERNAL &&
+                            cpu->io.dci.slot + 1u == dci_frame_count(cpu) &&
+                            elapsed + bit_cycles >= dci_word_cycles(cpu)))) {
+            *high = !*high;
+        }
+        return true;
+    }
+    if (immediate) {
+        *high = source == DCI_EVENT_INTERNAL && cpu->io.dci.slot == 0u &&
+                elapsed < bit_cycles;
+    } else {
+        *high = (source == DCI_EVENT_START && elapsed >= bit_cycles * 2u) ||
+                (source == DCI_EVENT_INTERNAL &&
+                 cpu->io.dci.slot + 1u == dci_frame_count(cpu) &&
+                 elapsed + bit_cycles >= dci_word_cycles(cpu));
+    }
     return true;
 }
 
@@ -6075,7 +6310,9 @@ static void dci_run_external(Dspic33* cpu, uint16_t value, bool frame_sync) {
         dci->started = true;
     }
     if ((control & DCI_CONTROL_EXTERNAL_CLOCK) != 0u) {
-        dci_process_word(cpu, value);
+        if (dci_process_word(cpu, value)) {
+            dci_refresh_serial_output(cpu);
+        }
     } else if (frame_sync && !dci->internal_scheduled) {
         dci_schedule_internal(cpu, DCI_EVENT_INTERNAL, dci_word_cycles(cpu));
     }
@@ -6132,6 +6369,13 @@ static void dci_start(Dspic33* cpu) {
     dci->disable_frames = 0u;
     dci->buffer = 0u;
     dci->slot = 0u;
+    dci->serial_input = 0u;
+    dci->serial_bits = 0u;
+    dci->serial_output_high = false;
+    dci->serial_output_driven = false;
+    dci->serial_delay = false;
+    dci->pps_frame_pending = false;
+    dci->output_frame_high = true;
     dci->receive_buffered = 0u;
     dci->transmit_buffered = 0u;
     if (!dci_configuration_supported(cpu)) {
@@ -6168,9 +6412,8 @@ static bool dci_frame_remaining_cycles(const Dspic33* cpu, uint64_t* remaining) 
     return false;
 }
 
-static void dci_disable(Dspic33* cpu) {
+static void dci_disable(Dspic33* cpu, uint16_t control) {
     Dspic33Dci* dci = &cpu->io.dci;
-    uint16_t control = raw_word(cpu, DCI_CONTROL1);
     uint64_t remaining;
     if (!dci->initialized || !dci->started) {
         dci_abort(cpu);
@@ -6178,7 +6421,16 @@ static void dci_disable(Dspic33* cpu) {
     }
     dci->disable_pending = true;
     dci->disable_frames = 1u;
-    if ((control & DCI_CONTROL_EXTERNAL_CLOCK) == 0u) {
+    if ((control & DCI_CONTROL_EXTERNAL_CLOCK) != 0u) {
+        uint8_t slot;
+        remaining = dci_slot_width(cpu, dci->slot) - dci->serial_bits;
+        for (slot = (uint8_t)(dci->slot + 1u); slot < dci_frame_count(cpu); slot++) {
+            remaining += dci_slot_width(cpu, slot);
+        }
+        if (remaining < 3u) {
+            dci->disable_frames = 2u;
+        }
+    } else {
         if (!dci_frame_remaining_cycles(cpu, &remaining)) {
             dci_abort(cpu);
             return;
@@ -6228,7 +6480,7 @@ static void update_dci_register(Dspic33* cpu, uint16_t address, uint16_t previou
         if (!was_enabled && enabled) {
             dci_start(cpu);
         } else if (was_enabled && !enabled) {
-            dci_disable(cpu);
+            dci_disable(cpu, previous);
         }
         dci_update_power_state(cpu);
         return;
@@ -11969,6 +12221,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     }
     refresh_gpio_change_notification(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
+    dci_refresh_pps_inputs(cpu);
 }
 
 static uint16_t gpio_pin_values(const Dspic33* cpu, uint8_t port) {
@@ -12449,6 +12702,41 @@ bool dspic33_dci_transmit(Dspic33* cpu, Dspic33DciTransfer* transfer) {
     return transfer != NULL && dci_output_pop(&cpu->io.dci.output, transfer);
 }
 
+bool dspic33_dci_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
+    uint8_t function = 0u;
+    uint16_t control;
+    size_t index;
+    if (high == NULL) {
+        return false;
+    }
+    for (index = 0u; index < sizeof(pps_outputs) / sizeof(pps_outputs[0]); index++) {
+        if (pps_outputs[index].pin == pin) {
+            function = (uint8_t)((raw_word(cpu, pps_outputs[index].address) >>
+                                  pps_outputs[index].shift) &
+                                 0x003fu);
+            break;
+        }
+    }
+    control = raw_word(cpu, DCI_CONTROL1);
+    if (index == sizeof(pps_outputs) / sizeof(pps_outputs[0]) ||
+        cpu->io.dci.pmd_disabled || !dci_configuration_supported(cpu) ||
+        ((control & DCI_CONTROL_ENABLE) == 0u && !cpu->io.dci.disable_pending)) {
+        return false;
+    }
+    if (function == DCI_PPS_DATA_OUTPUT) {
+        return dci_data_output(cpu, high);
+    }
+    if (function == DCI_PPS_CLOCK_OUTPUT &&
+        (control & DCI_CONTROL_EXTERNAL_CLOCK) == 0u) {
+        return dci_internal_clock_high(cpu, high);
+    }
+    if (function == DCI_PPS_FRAME_OUTPUT &&
+        (control & DCI_CONTROL_EXTERNAL_FRAME) == 0u) {
+        return dci_frame_output(cpu, high);
+    }
+    return false;
+}
+
 bool dspic33_timer_pulse(Dspic33* cpu, uint8_t timer, uint32_t pulses, uint64_t delay) {
     return timer < DSPIC33_TIMER_COUNT && pulses != 0u &&
            dspic33_schedule(cpu, DSPIC33_EVENT_TIMER, timer, pulses, delay);
@@ -12667,6 +12955,7 @@ bool dspic33_gpio_drive(Dspic33* cpu, uint8_t port, uint16_t value, uint16_t mas
     cpu->io.gpio_driven[port] |= selected;
     refresh_gpio_change_notification(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
+    dci_refresh_pps_inputs(cpu);
     return true;
 }
 
@@ -12677,6 +12966,7 @@ bool dspic33_gpio_release(Dspic33* cpu, uint8_t port, uint16_t mask) {
     cpu->io.gpio_driven[port] &= (uint16_t)~(mask & gpio_port_masks[port]);
     refresh_gpio_change_notification(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
+    dci_refresh_pps_inputs(cpu);
     return true;
 }
 
@@ -12739,4 +13029,5 @@ void dspic33_device_reset(Dspic33* cpu) {
     raw_write_word(cpu, DMA_LCA, 0x000fu);
     pps_capture_shadow(cpu);
     refresh_gpio_change_notification(cpu);
+    dci_refresh_pps_inputs(cpu);
 }

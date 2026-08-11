@@ -324,6 +324,7 @@ typedef struct {
     uint16_t transmit[DSPIC33_DCI_BUFFER_COUNT];
     uint16_t last_transmit[DSPIC33_DCI_BUFFER_COUNT];
     uint16_t input;
+    uint16_t serial_input;
     uint16_t generation;
     uint16_t pmd_generation;
     uint8_t receive_unread;
@@ -334,7 +335,15 @@ typedef struct {
     uint8_t transmit_buffered;
     uint8_t buffer;
     uint8_t slot;
+    uint8_t serial_bits;
     uint8_t disable_frames;
+    bool pps_clock_high;
+    bool pps_frame_high;
+    bool pps_frame_pending;
+    bool serial_output_high;
+    bool serial_output_driven;
+    bool serial_delay;
+    bool output_frame_high;
     bool started;
     bool initialized;
     bool disable_pending;
@@ -807,6 +816,7 @@ bool dspic33_qei_compare_output(const Dspic33* cpu, uint8_t channel, bool* high)
 void dspic33_dci_input(Dspic33* cpu, uint16_t value);
 bool dspic33_dci_clock(Dspic33* cpu, uint16_t value, bool frame_sync, uint64_t delay);
 bool dspic33_dci_transmit(Dspic33* cpu, Dspic33DciTransfer* transfer);
+bool dspic33_dci_pin(const Dspic33* cpu, uint8_t pin, bool* high);
 bool dspic33_timer_pulse(Dspic33* cpu, uint8_t timer, uint32_t pulses, uint64_t delay);
 bool dspic33_timer_gate(Dspic33* cpu, uint8_t timer, bool high, uint64_t delay);
 bool dspic33_adc_trigger(Dspic33* cpu, uint8_t module, uint8_t source, uint64_t delay);
