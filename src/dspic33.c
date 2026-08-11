@@ -1944,7 +1944,7 @@ static bool computed_control_transfer_encoding(uint32_t opcode) {
     uint8_t source;
     bool call;
     return (opcode & 0xfffff0u) == 0x010000u || (opcode & 0xfffff0u) == 0x010200u ||
-           (opcode & 0xfffff0u) == 0x010400u ||
+           (opcode & 0xfffff0u) == 0x010400u || (opcode & 0xfffff0u) == 0x010600u ||
            long_control_transfer(opcode, &source, &call);
 }
 
@@ -1958,6 +1958,10 @@ static bool reserved_return_encoding(uint32_t opcode) {
 
 static bool literal_control_extension_valid(uint32_t extension) {
     return (extension & 0xffff80u) == 0u;
+}
+
+static bool literal_control_first_word_valid(uint32_t opcode) {
+    return (opcode & 1u) == 0u;
 }
 
 static void push_program_counter(Dspic33* cpu, uint32_t address) {
@@ -3183,6 +3187,10 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         uint32_t return_pc;
         uint32_t second;
         uint32_t target;
+        if (!literal_control_first_word_valid(opcode)) {
+            perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+            return true;
+        }
         if (cpu->pc >= DSPIC33_AUXILIARY_PROGRAM_LIMIT) {
             cpu->pc &= 0x007ffffeu;
         }
@@ -3234,6 +3242,16 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     }
     if ((opcode & 0xfffff0u) == 0x010400u) {
         uint32_t target = cpu->w[opcode & 0x0fu] & 0xfffeu;
+        if (program_target_requires_address_error(target)) {
+            raise_program_target_error(cpu, cpu->pc);
+            return true;
+        }
+        cpu->pc = target;
+        return true;
+    }
+    if ((opcode & 0xfffff0u) == 0x010600u) {
+        uint32_t target =
+            program_address_add(cpu->pc, (int16_t)cpu->w[opcode & 0x0fu] * 2);
         if (program_target_requires_address_error(target)) {
             raise_program_target_error(cpu, cpu->pc);
             return true;

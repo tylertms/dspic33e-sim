@@ -38,6 +38,7 @@ enum {
     OPCODE_CALL_LONG_W0 = 0x018800u,
     OPCODE_GOTO_LONG_W0 = 0x018c00u,
     OPCODE_RCALL_W0 = 0x010200u,
+    OPCODE_BRA_W0 = 0x010600u,
     OPCODE_RCALL_NEXT = 0x070000u,
     OPCODE_RCALL_0X55800 = 0x07000au,
     OPCODE_BRA_0X55800 = 0x370012u,
@@ -551,6 +552,19 @@ static void program_target_address_error_cases(ProcessorConformance* state,
     cpu->pc = 0x557eau;
     expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 4u,
            "unimplemented RCALL Wn target traps in four cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0x557eau, OPCODE_BRA_W0);
+    cpu->pc = 0x557eau;
+    cpu->w[0] = 0x000au;
+    prepare_address_trap(state, cpu);
+    cpu->pc = 0x557eau;
+    cpu->corcon |= 0x0004u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 4u &&
+               cpu->last_trap_return == 0x557ecu && cpu->w[15] == 0x5004u &&
+               (cpu->corcon & 0x0004u) != 0u,
+           "unimplemented BRA Wn target traps without call side effects");
 }
 
 static void program_read_address_error_cases(ProcessorConformance* state,
@@ -6885,6 +6899,7 @@ typedef enum {
     COMPUTED_CONTROL_CALL,
     COMPUTED_CONTROL_RCALL,
     COMPUTED_CONTROL_GOTO,
+    COMPUTED_CONTROL_BRA,
     COMPUTED_CONTROL_CALL_LONG,
     COMPUTED_CONTROL_GOTO_LONG,
 } ComputedControlKind;
@@ -6902,6 +6917,10 @@ static ComputedControlKind computed_control_reference_kind(uint32_t opcode,
     if ((opcode & 0xfffff0u) == 0x010400u) {
         *source = (uint8_t)opcode & 0x0fu;
         return COMPUTED_CONTROL_GOTO;
+    }
+    if ((opcode & 0xfffff0u) == 0x010600u) {
+        *source = (uint8_t)opcode & 0x0fu;
+        return COMPUTED_CONTROL_BRA;
     }
     *source = (uint8_t)opcode & 0x0fu;
     if ((*source & 1u) == 0u && *source <= 12u) {
@@ -6945,7 +6964,7 @@ static void run_computed_control_encoding_case(ProcessorConformance* state,
     cpu->splim_enabled = false;
     for (uint8_t reg = 0u; reg < 15u; reg++) {
         uint16_t value =
-            (kind == COMPUTED_CONTROL_RCALL)
+            (kind == COMPUTED_CONTROL_RCALL || kind == COMPUTED_CONTROL_BRA)
                 ? (reg < 8u ? (uint16_t)(0x0010u + reg) : (uint16_t)(0xffe0u + reg))
                 : (uint16_t)(0x3001u + (uint16_t)reg * 2u);
         dspic33_set_working_register(cpu, reg, value);
@@ -6961,8 +6980,10 @@ static void run_computed_control_encoding_case(ProcessorConformance* state,
     }
     dspic33_write_word(cpu, 0x5000u, 0xa5a5u);
     dspic33_write_word(cpu, 0x5002u, 0x5a5au);
-    if (kind == COMPUTED_CONTROL_RCALL) {
-        uint16_t displacement = source == 15u ? 0x5004u : initial_registers[source];
+    if (kind == COMPUTED_CONTROL_RCALL || kind == COMPUTED_CONTROL_BRA) {
+        uint16_t displacement = source == 15u && kind == COMPUTED_CONTROL_RCALL
+                                    ? 0x5004u
+                                    : initial_registers[source];
         target =
             (uint32_t)((0x002002 + (int32_t)(int16_t)displacement * 2) & 0x007ffffe);
     } else if (kind == COMPUTED_CONTROL_CALL_LONG ||
@@ -7014,8 +7035,8 @@ static void computed_control_encoding_matrix_cases(ProcessorConformance* state,
             valid++;
         }
     }
-    expect(state, valid == 62u, "computed control valid encoding matrix is exhaustive");
-    expect(state, invalid == 65474u,
+    expect(state, valid == 78u, "computed control valid encoding matrix is exhaustive");
+    expect(state, invalid == 65458u,
            "computed control reserved encoding matrix is exhaustive");
 }
 
@@ -7124,6 +7145,30 @@ static void run_reserved_literal_extension_case(ProcessorConformance* state,
                            "literal control reserved extension");
 }
 
+static void run_reserved_literal_first_word_case(ProcessorConformance* state,
+                                                 Dspic33* cpu, uint32_t opcode) {
+    uint64_t illegal_resets;
+    bool matches;
+
+    reset_processor_conformance(cpu, 0u);
+    cpu->corcon |= 0x0004u;
+    cpu->w[15] = 0x5000u;
+    dspic33_write_word(cpu, 0x5000u, 0xa5a5u);
+    dspic33_write_word(cpu, 0x5002u, 0x5a5au);
+    illegal_resets = cpu->illegal_reset_count;
+    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+              dspic33_load_program_word(cpu, 2u, 0u) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset &&
+              cpu->illegal_reset_count == illegal_resets + 1u && cpu->pc == 0u &&
+              cpu->w[15] == 0x1000u && cpu->initialized_working_registers == 0x8000u &&
+              cpu->last_trap == UINT16_MAX && cpu->call_depth == 0u &&
+              (dspic33_read_word(cpu, 0x0740u) & 0x4000u) != 0u &&
+              dspic33_read_word(cpu, 0x5000u) == 0xa5a5u &&
+              dspic33_read_word(cpu, 0x5002u) == 0x5a5au;
+    expect_dsp_matrix_case(state, matches, opcode,
+                           "literal control reserved first word");
+}
+
 static void run_literal_rcall_encoding_case(ProcessorConformance* state, Dspic33* cpu,
                                             uint16_t displacement) {
     uint32_t opcode = 0x070000u | displacement;
@@ -7150,6 +7195,7 @@ static void run_literal_rcall_encoding_case(ProcessorConformance* state, Dspic33
 static void literal_control_encoding_matrix_cases(ProcessorConformance* state,
                                                   Dspic33* cpu) {
     uint32_t direct_first_words = 0u;
+    uint32_t reserved_first_words = 0u;
     uint32_t extension_fields = 0u;
     uint32_t reserved_extensions = 0u;
     uint32_t relative_calls = 0u;
@@ -7158,9 +7204,15 @@ static void literal_control_encoding_matrix_cases(ProcessorConformance* state,
     dspic33_set_async_events(cpu, false);
     for (uint8_t call = 0u; call < 2u; call++) {
         for (uint32_t low = 0u; low <= UINT16_MAX; low++) {
-            run_literal_control_encoding_case(state, cpu, call != 0u, (uint16_t)low,
-                                              0u);
-            direct_first_words++;
+            uint32_t opcode = (call != 0u ? 0x020000u : 0x040000u) | low;
+            if ((low & 1u) == 0u) {
+                run_literal_control_encoding_case(state, cpu, call != 0u, (uint16_t)low,
+                                                  0u);
+                direct_first_words++;
+            } else {
+                run_reserved_literal_first_word_case(state, cpu, opcode);
+                reserved_first_words++;
+            }
         }
         for (uint16_t high = 0u; high < 128u; high++) {
             uint16_t low = high == 127u ? 0xc000u : 0x1234u;
@@ -7184,8 +7236,10 @@ static void literal_control_encoding_matrix_cases(ProcessorConformance* state,
         run_literal_rcall_encoding_case(state, cpu, (uint16_t)displacement);
         relative_calls++;
     }
-    expect(state, direct_first_words == 131072u,
+    expect(state, direct_first_words == 65536u,
            "literal CALL and GOTO first-word encodings are exhaustive");
+    expect(state, reserved_first_words == 65536u,
+           "literal CALL and GOTO reserved first words are exhaustive");
     expect(state, extension_fields == 256u,
            "literal CALL and GOTO target extension fields are exhaustive");
     expect(state, reserved_extensions == 262142u,

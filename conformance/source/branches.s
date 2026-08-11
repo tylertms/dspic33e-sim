@@ -2,7 +2,7 @@
 .include "conformance.inc"
 
 .global _branch_conformance_cases
-_branch_conformance_cases = 74
+_branch_conformance_cases = 81
 .global _branch_conformance_group_complete
 _branch_conformance_group_complete = 1
 
@@ -160,6 +160,51 @@ _run_branch_conformance:
     call branch_retlw_byte_target
     record_case 0x0249, w2, w2
 
+    mov #1, w3
+    clr w1
+    bra w3
+    mov #0xffff, w1
+    mov #0x369c, w1
+    record_case 0x024a, w1, w3
+
+    clr w1
+    mov #0x0400, w3
+    call w3
+    record_case 0x024b, w1, w3
+
+    clr w1
+    mov #0x0404, w3
+    goto w3
+branch_goto_computed_resume:
+    record_case 0x024c, w1, w3
+
+    mov #1, w3
+    clr w1
+    rcall w3
+    bra branch_rcall_computed_resume
+branch_rcall_computed_target:
+    mov #0x48ad, w1
+    return
+branch_rcall_computed_resume:
+    record_case 0x024d, w1, w3
+
+    mov #tbloffset(branch_call_long_target), w4
+    mov #tblpage(branch_call_long_target), w5
+    clr w1
+    call.l w4
+    record_case 0x024e, w1, w4
+
+    mov #tbloffset(branch_goto_long_target), w4
+    mov #tblpage(branch_goto_long_target), w5
+    clr w1
+    goto.l w4
+branch_goto_long_resume:
+    record_case 0x024f, w1, w4
+
+    mov #0xa500, w2
+    call branch_retlw_byte_alias_target
+    record_case 0x0250, w2, w2
+
     end_results
 
 branch_call_target:
@@ -175,3 +220,23 @@ branch_retlw_word_target:
 
 branch_retlw_byte_target:
     retlw.b #0xff, w2
+
+branch_call_long_target:
+    mov #0x59be, w1
+    return
+
+branch_goto_long_target:
+    mov #0x6acf, w1
+    goto branch_goto_long_resume
+
+branch_retlw_byte_alias_target:
+    .pword 0x057ff2
+
+.section .branch_computed_targets,code,address(0x400)
+branch_call_computed_target:
+    mov #0x7bd0, w1
+    return
+
+branch_goto_computed_target:
+    mov #0x8ce1, w1
+    goto branch_goto_computed_resume
