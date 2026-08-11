@@ -2079,6 +2079,14 @@ static bool compare_pins(Runner* runner, const StepParts* parts, size_t* failure
         }
         reference_driven = (runner->reference.io.gpio_driven[port] & (1u << bit)) != 0u;
         candidate_driven = (runner->candidate.io.gpio_driven[port] & (1u << bit)) != 0u;
+        if (reference_driven) {
+            reference_high =
+                (runner->reference.io.gpio[port] & (uint16_t)(1u << bit)) != 0u;
+        }
+        if (candidate_driven) {
+            candidate_high =
+                (runner->candidate.io.gpio[port] & (uint16_t)(1u << bit)) != 0u;
+        }
         matched = reference_high == candidate_high;
         if (expected != NULL) {
             PinLevel level = pin_level(expected);
@@ -3053,43 +3061,42 @@ static void print_usage(const char* program) {
             program);
 }
 
-int firmware_runner_main(int argc, char** argv) {
-    Runner runner = {0};
+static int run_firmware_runner(int argc, char** argv, Runner* runner) {
     const char* suite_path = NULL;
     char error[256];
     int index;
-    runner.shard_count = 1u;
+    runner->shard_count = 1u;
     for (index = 1; index < argc; index++) {
         if (strcmp(argv[index], "--suite") == 0 && index + 1 < argc) {
             suite_path = argv[++index];
         } else if (strcmp(argv[index], "--scenario") == 0 && index + 1 < argc) {
-            runner.scenario_filter = argv[++index];
+            runner->scenario_filter = argv[++index];
         } else if (strcmp(argv[index], "--step") == 0 && index + 1 < argc) {
-            runner.step_filter = argv[++index];
+            runner->step_filter = argv[++index];
         } else if (strcmp(argv[index], "--shard-index") == 0 && index + 1 < argc) {
             char* end;
-            runner.shard_index = strtoull(argv[++index], &end, 0);
+            runner->shard_index = strtoull(argv[++index], &end, 0);
             if (*end != '\0') {
                 print_usage(argv[0]);
                 return 2;
             }
         } else if (strcmp(argv[index], "--shard-count") == 0 && index + 1 < argc) {
             char* end;
-            runner.shard_count = strtoull(argv[++index], &end, 0);
-            if (*end != '\0' || runner.shard_count == 0u) {
+            runner->shard_count = strtoull(argv[++index], &end, 0);
+            if (*end != '\0' || runner->shard_count == 0u) {
                 print_usage(argv[0]);
                 return 2;
             }
         } else if (strcmp(argv[index], "--plan") == 0) {
-            runner.plan_only = true;
+            runner->plan_only = true;
         } else if (strcmp(argv[index], "--summary-only") == 0) {
-            runner.summary_only = true;
+            runner->summary_only = true;
         } else if (strcmp(argv[index], "--failures-only") == 0) {
-            runner.failures_only = true;
+            runner->failures_only = true;
         } else if (strcmp(argv[index], "--max-instructions") == 0 && index + 1 < argc) {
             char* end;
-            runner.instruction_limit = strtoull(argv[++index], &end, 0);
-            if (*end != '\0' || runner.instruction_limit == 0u) {
+            runner->instruction_limit = strtoull(argv[++index], &end, 0);
+            if (*end != '\0' || runner->instruction_limit == 0u) {
                 print_usage(argv[0]);
                 return 2;
             }
@@ -3098,69 +3105,81 @@ int firmware_runner_main(int argc, char** argv) {
             return 2;
         }
     }
-    if (suite_path == NULL || runner.shard_index >= runner.shard_count ||
-        !suite_directory(suite_path, runner.suite_directory,
-                         sizeof(runner.suite_directory))) {
+    if (suite_path == NULL || runner->shard_index >= runner->shard_count ||
+        !suite_directory(suite_path, runner->suite_directory,
+                         sizeof(runner->suite_directory))) {
         print_usage(argv[0]);
         return 2;
     }
-    runner.suite_path = suite_path;
+    runner->suite_path = suite_path;
     printf("[prepare] Loading firmware test specification\n");
     fflush(stdout);
-    runner.suite = json_read(suite_path, error, sizeof(error));
-    if (runner.suite == NULL) {
+    runner->suite = json_read(suite_path, error, sizeof(error));
+    if (runner->suite == NULL) {
         fprintf(stderr, "[error] %s\n", error);
         return 1;
     }
     printf("[prepare] Counting streamed scenarios\n");
     fflush(stdout);
-    if (!stream_patterns(&runner, count_scenario, error, sizeof(error)) ||
-        runner.scenarios == 0u) {
-        if (runner.scenarios == 0u) {
+    if (!stream_patterns(runner, count_scenario, error, sizeof(error)) ||
+        runner->scenarios == 0u) {
+        if (runner->scenarios == 0u) {
             snprintf(error, sizeof(error),
                      "no scenarios matched the requested filters");
         }
         fprintf(stderr, "[error] %s\n", error);
-        json_free((JsonValue*)runner.suite);
+        json_free((JsonValue*)runner->suite);
         return 1;
     }
-    printf("[prepare] Loaded %zu scenarios with %zu test steps\n", runner.scenarios,
-           runner.steps);
+    printf("[prepare] Loaded %zu scenarios with %zu test steps\n", runner->scenarios,
+           runner->steps);
     fflush(stdout);
-    if (runner.plan_only) {
-        json_free((JsonValue*)runner.suite);
+    if (runner->plan_only) {
+        json_free((JsonValue*)runner->suite);
         return 0;
     }
-    if (!open_images(&runner, error, sizeof(error))) {
+    if (!open_images(runner, error, sizeof(error))) {
         fprintf(stderr, "[error] %s\n", error);
-        close_images(&runner);
-        json_free((JsonValue*)runner.suite);
+        close_images(runner);
+        json_free((JsonValue*)runner->suite);
         return 1;
     }
-    if (!start_run_tasks(&runner)) {
+    if (!start_run_tasks(runner)) {
         fprintf(stderr, "[error] cannot start native simulator workers\n");
-        close_images(&runner);
-        json_free((JsonValue*)runner.suite);
+        close_images(runner);
+        json_free((JsonValue*)runner->suite);
         return 1;
     }
     printf("[ready] Starting native differential execution\n");
     fflush(stdout);
-    if (!stream_patterns(&runner, execute_scenario, error, sizeof(error))) {
+    if (!stream_patterns(runner, execute_scenario, error, sizeof(error))) {
         fprintf(stderr, "[error] %s\n", error);
-        stop_run_tasks(&runner);
-        close_images(&runner);
-        json_free((JsonValue*)runner.suite);
+        stop_run_tasks(runner);
+        close_images(runner);
+        json_free((JsonValue*)runner->suite);
         return 1;
     }
     printf("[summary] scenarios=%zu steps=%zu passed=%zu failed=%zu comparisons=%zu\n",
-           runner.current_scenario, runner.current_step, runner.passed, runner.failed,
-           runner.comparisons);
+           runner->current_scenario, runner->current_step, runner->passed,
+           runner->failed, runner->comparisons);
     printf("[work] reference-instructions=%" PRIu64 " candidate-instructions=%" PRIu64
            " reference-cycles=%" PRIu64 " candidate-cycles=%" PRIu64 "\n",
-           runner.reference_instructions, runner.candidate_instructions,
-           runner.reference_cycles, runner.candidate_cycles);
-    stop_run_tasks(&runner);
-    close_images(&runner);
-    json_free((JsonValue*)runner.suite);
-    return runner.failed == 0u ? 0 : 1;
+           runner->reference_instructions, runner->candidate_instructions,
+           runner->reference_cycles, runner->candidate_cycles);
+    stop_run_tasks(runner);
+    close_images(runner);
+    json_free((JsonValue*)runner->suite);
+    return runner->failed == 0u ? 0 : 1;
+}
+
+int firmware_runner_main(int argc, char** argv) {
+    Runner* runner = calloc(1u, sizeof(*runner));
+    int result;
+    if (runner == NULL) {
+        fprintf(stderr, "[error] cannot allocate firmware runner state\n");
+        return 1;
+    }
+    result = run_firmware_runner(argc, argv, runner);
+    free(runner);
+    return result;
 }
