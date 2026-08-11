@@ -1532,12 +1532,17 @@ static bool execute_file_binary(Dspic33* cpu, uint32_t opcode) {
     bool byte_mode = (opcode & 0x004000u) != 0u;
     bool file_destination = (opcode & 0x002000u) != 0u;
     uint16_t address = (uint16_t)(opcode & 0x1fffu);
-    uint16_t left =
-        byte_mode ? read_data_byte(cpu, address) : read_file_word(cpu, address);
-    uint16_t right = byte_mode ? (uint8_t)cpu->w[0] : cpu->w[0];
+    uint16_t left;
+    uint16_t right;
     uint16_t carry = (cpu->sr & 1u) != 0u ? 1u : 0u;
     uint16_t value;
     uint32_t result;
+    if (family == 3u && alternate) {
+        perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+        return true;
+    }
+    left = byte_mode ? read_data_byte(cpu, address) : read_file_word(cpu, address);
+    right = byte_mode ? (uint8_t)cpu->w[0] : cpu->w[0];
     if (family == 0u) {
         result = (uint32_t)left + right + (alternate ? carry : 0u);
         value = (uint16_t)result;
@@ -1762,7 +1767,7 @@ static bool execute_file_unary(Dspic33* cpu, uint32_t opcode) {
     uint16_t value;
     if (family != 0xefu) {
         source =
-            byte_mode ? read_data_byte(cpu, address) : read_data_word(cpu, address);
+            byte_mode ? read_data_byte(cpu, address) : read_file_word(cpu, address);
     }
     if (family == 0xecu) {
         value = (uint16_t)(source + (alternate ? 2u : 1u));

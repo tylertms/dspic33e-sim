@@ -4976,6 +4976,26 @@ typedef enum {
     ARITHMETIC_MATRIX_SUBB
 } ArithmeticMatrixOperation;
 
+typedef enum {
+    DIRECT_FILE_SUBR,
+    DIRECT_FILE_SUBBR,
+    DIRECT_FILE_ADD,
+    DIRECT_FILE_ADDC,
+    DIRECT_FILE_SUB,
+    DIRECT_FILE_SUBB,
+    DIRECT_FILE_AND,
+    DIRECT_FILE_XOR,
+    DIRECT_FILE_IOR,
+    DIRECT_FILE_INC,
+    DIRECT_FILE_INC2,
+    DIRECT_FILE_DEC,
+    DIRECT_FILE_DEC2,
+    DIRECT_FILE_NEG,
+    DIRECT_FILE_COM,
+    DIRECT_FILE_CLR,
+    DIRECT_FILE_SETM
+} DirectFileOperation;
+
 typedef struct {
     uint16_t address;
     bool direct;
@@ -5465,15 +5485,114 @@ static bool direct_file_address_implemented(uint16_t address) {
            dspic33_sfr_access_expectations[low].address == target;
 }
 
-static void prepare_direct_file_arithmetic_case(Dspic33* cpu, uint16_t address,
-                                                uint8_t operation, bool byte_mode,
-                                                bool file_destination) {
+static bool direct_file_reads_source(DirectFileOperation operation) {
+    return operation != DIRECT_FILE_CLR && operation != DIRECT_FILE_SETM;
+}
+
+static uint16_t direct_file_result(DirectFileOperation operation, uint16_t left,
+                                   uint16_t right, uint16_t initial_status,
+                                   bool byte_mode) {
+    uint16_t mask = byte_mode ? 0x00ffu : 0xffffu;
+
+    if (operation <= DIRECT_FILE_SUBB) {
+        return arithmetic_matrix_result((ArithmeticMatrixOperation)operation, left,
+                                        right, initial_status, byte_mode);
+    }
+    if (operation == DIRECT_FILE_AND) {
+        return (uint16_t)((left & right) & mask);
+    }
+    if (operation == DIRECT_FILE_XOR) {
+        return (uint16_t)((left ^ right) & mask);
+    }
+    if (operation == DIRECT_FILE_IOR) {
+        return (uint16_t)((left | right) & mask);
+    }
+    if (operation == DIRECT_FILE_INC || operation == DIRECT_FILE_INC2) {
+        return arithmetic_matrix_result(ARITHMETIC_MATRIX_ADD, left,
+                                        operation == DIRECT_FILE_INC2 ? 2u : 1u,
+                                        initial_status, byte_mode);
+    }
+    if (operation == DIRECT_FILE_DEC || operation == DIRECT_FILE_DEC2) {
+        return arithmetic_matrix_result(ARITHMETIC_MATRIX_SUB, left,
+                                        operation == DIRECT_FILE_DEC2 ? 2u : 1u,
+                                        initial_status, byte_mode);
+    }
+    if (operation == DIRECT_FILE_NEG) {
+        return arithmetic_matrix_result(ARITHMETIC_MATRIX_SUB, 0u, left, initial_status,
+                                        byte_mode);
+    }
+    if (operation == DIRECT_FILE_COM) {
+        return (uint16_t)(~left & mask);
+    }
+    return operation == DIRECT_FILE_SETM ? mask : 0u;
+}
+
+static uint16_t direct_file_logic_status(uint16_t initial_status, uint16_t value,
+                                         bool byte_mode) {
+    uint16_t mask = byte_mode ? 0x00ffu : 0xffffu;
+    uint16_t sign = byte_mode ? 0x0080u : 0x8000u;
+    uint16_t status = (uint16_t)(initial_status & ~0x000au);
+
+    value &= mask;
+    if (value == 0u) {
+        status |= 0x0002u;
+    }
+    if ((value & sign) != 0u) {
+        status |= 0x0008u;
+    }
+    return status;
+}
+
+static uint16_t direct_file_status(DirectFileOperation operation, uint16_t left,
+                                   uint16_t right, uint16_t initial_status,
+                                   bool byte_mode) {
+    uint16_t value =
+        direct_file_result(operation, left, right, initial_status, byte_mode);
+
+    if (operation <= DIRECT_FILE_SUBB) {
+        return arithmetic_matrix_status((ArithmeticMatrixOperation)operation, left,
+                                        right, initial_status, byte_mode);
+    }
+    if (operation <= DIRECT_FILE_IOR || operation == DIRECT_FILE_COM) {
+        return direct_file_logic_status(initial_status, value, byte_mode);
+    }
+    if (operation == DIRECT_FILE_INC || operation == DIRECT_FILE_INC2) {
+        return arithmetic_matrix_status(ARITHMETIC_MATRIX_ADD, left,
+                                        operation == DIRECT_FILE_INC2 ? 2u : 1u,
+                                        initial_status, byte_mode);
+    }
+    if (operation == DIRECT_FILE_DEC || operation == DIRECT_FILE_DEC2) {
+        return arithmetic_matrix_status(ARITHMETIC_MATRIX_SUB, left,
+                                        operation == DIRECT_FILE_DEC2 ? 2u : 1u,
+                                        initial_status, byte_mode);
+    }
+    if (operation == DIRECT_FILE_NEG) {
+        return arithmetic_matrix_status(ARITHMETIC_MATRIX_SUB, 0u, left, initial_status,
+                                        byte_mode);
+    }
+    return initial_status;
+}
+
+static uint16_t direct_file_boundary_value(uint8_t index, bool byte_mode) {
+    static const uint16_t byte_values[32] = {
+        0x00u, 0x01u, 0x02u, 0x0eu, 0x0fu, 0x10u, 0x7du, 0x7eu, 0x7fu, 0x80u, 0x81u,
+        0xfdu, 0xfeu, 0xffu, 0x55u, 0xaau, 0x8eu, 0x8fu, 0x90u, 0x91u, 0xf0u, 0x11u,
+        0x22u, 0x33u, 0x44u, 0x66u, 0x77u, 0x88u, 0x99u, 0xbbu, 0xccu, 0xddu};
+    static const uint16_t word_values[32] = {
+        0x0000u, 0x0001u, 0x0002u, 0x00feu, 0x00ffu, 0x0100u, 0x7ffdu, 0x7ffeu,
+        0x7fffu, 0x8000u, 0x8001u, 0xfffdu, 0xfffeu, 0xffffu, 0x5555u, 0xaaaau,
+        0x80feu, 0x80ffu, 0x8100u, 0x8101u, 0xff00u, 0x1111u, 0x2222u, 0x3333u,
+        0x4444u, 0x6666u, 0x7777u, 0x8888u, 0x9999u, 0xbbbbu, 0xccccu, 0xddddu};
+
+    return byte_mode ? byte_values[index & 0x1fu] : word_values[index & 0x1fu];
+}
+
+static void prepare_direct_file_case(Dspic33* cpu, uint16_t address, bool byte_mode) {
     uint8_t reg;
     uint16_t initial_status =
-        (uint16_t)(((address >> 1u) & 1u) | (((address >> 2u) & 1u) << 1u));
-    uint16_t operand =
-        (uint16_t)(0x3101u + address * 17u + operation * 0x1111u +
-                   (byte_mode ? 0x0080u : 0u) + (file_destination ? 0x0100u : 0u));
+        (uint16_t)(((address >> 10u) & 1u) | (((address >> 11u) & 1u) << 1u));
+    uint16_t operand = direct_file_boundary_value((uint8_t)(address >> 5u), byte_mode);
+    uint16_t source = direct_file_boundary_value((uint8_t)address, byte_mode);
 
     dspic33_reset(cpu, 0u);
     dspic33_set_async_events(cpu, false);
@@ -5489,14 +5608,18 @@ static void prepare_direct_file_arithmetic_case(Dspic33* cpu, uint16_t address,
         dspic33_set_working_register(
             cpu, reg, (uint16_t)(0x4200u + (uint16_t)reg * 0x0101u + address));
     }
-    dspic33_set_working_register(cpu, 0u, operand);
+    dspic33_set_working_register(cpu, 0u,
+                                 byte_mode ? (uint16_t)(0xa500u | operand) : operand);
     dspic33_set_working_register(cpu, 15u, 0x5000u);
     cpu->sr = initial_status;
     cpu->corcon = 0x0020u;
     if (address >= 0x1000u) {
-        dspic33_write_word(cpu, address & 0xfffeu,
-                           (uint16_t)(0x5a00u ^ address ^ ((uint16_t)operation << 9u) ^
-                                      (byte_mode ? 0x00c3u : 0u)));
+        if (byte_mode) {
+            dspic33_write_word(cpu, address & 0xfffeu, 0x5aa5u);
+            dspic33_write_byte(cpu, address, (uint8_t)source);
+        } else {
+            dspic33_write_word(cpu, address & 0xfffeu, source);
+        }
     }
 }
 
@@ -5561,16 +5684,17 @@ static bool direct_file_states_match(const Dspic33* actual, const Dspic33* expec
            direct_file_event_queues_match(actual, expected);
 }
 
-static uint16_t run_direct_file_reference(Dspic33* cpu,
-                                          ArithmeticMatrixOperation operation,
+static uint16_t run_direct_file_reference(Dspic33* cpu, DirectFileOperation operation,
                                           uint16_t address, bool byte_mode,
                                           bool file_destination) {
     uint64_t device_ratio = dspic33_device_instruction_cycles(cpu, 1u);
-    bool non_cpu_sfr = (address & (byte_mode ? 0xffffu : 0xfffeu)) >= 0x005au &&
+    bool reads_source = direct_file_reads_source(operation);
+    bool non_cpu_sfr = reads_source &&
+                       (address & (byte_mode ? 0xffffu : 0xfffeu)) >= 0x005au &&
                        address < 0x1000u && direct_file_address_implemented(address);
     uint16_t initial_status = cpu->sr;
     uint16_t right = byte_mode ? (uint8_t)cpu->w[0] : cpu->w[0];
-    uint16_t left;
+    uint16_t left = 0u;
     uint16_t value;
     uint16_t status;
     uint8_t instruction_cycles = non_cpu_sfr ? 2u : 1u;
@@ -5586,11 +5710,12 @@ static uint16_t run_direct_file_reference(Dspic33* cpu,
     cpu->current_instruction_cycles = 1u;
     cpu->current_instruction_pc = 0u;
     cpu->instruction_active = true;
-    left =
-        byte_mode ? dspic33_read_byte(cpu, address) : dspic33_read_word(cpu, address);
-    value = arithmetic_matrix_result(operation, left, right, initial_status, byte_mode);
-    status =
-        arithmetic_matrix_status(operation, left, right, initial_status, byte_mode);
+    if (reads_source) {
+        left = byte_mode ? dspic33_read_byte(cpu, address)
+                         : dspic33_read_word(cpu, address);
+    }
+    value = direct_file_result(operation, left, right, initial_status, byte_mode);
+    status = direct_file_status(operation, left, right, initial_status, byte_mode);
     cpu->sr = status;
     if (file_destination) {
         if (byte_mode) {
@@ -5683,18 +5808,20 @@ static bool direct_file_trap_register_state_matches(const Dspic33* actual,
 
 static bool run_direct_file_odd_word_case(Dspic33* cpu, Dspic33* reference,
                                           uint32_t opcode,
-                                          ArithmeticMatrixOperation operation,
+                                          DirectFileOperation operation,
                                           uint16_t address, bool file_destination) {
     uint16_t initial_status = reference->sr;
     uint16_t right = reference->w[0];
-    uint16_t left;
+    bool reads_source = direct_file_reads_source(operation);
+    uint16_t left = 0u;
     uint16_t value;
     uint16_t status;
     bool matches;
     uint64_t device_ratio = dspic33_device_instruction_cycles(reference, 1u);
-    bool non_cpu_sfr = address >= 0x005bu && address < 0x1000u &&
+    bool non_cpu_sfr = reads_source && address >= 0x005bu && address < 0x1000u &&
                        direct_file_address_implemented(address);
-    uint64_t expected_cycles = address >= 0x005bu && address < 0x1000u &&
+    uint64_t expected_cycles = reads_source && address >= 0x005bu &&
+                                       address < 0x1000u &&
                                        direct_file_address_implemented(address)
                                    ? 2u
                                    : 1u;
@@ -5708,9 +5835,11 @@ static bool run_direct_file_odd_word_case(Dspic33* cpu, Dspic33* reference,
     reference->current_instruction_cycles = 1u;
     reference->current_instruction_pc = 0u;
     reference->instruction_active = true;
-    left = dspic33_read_word(reference, address & 0xfffeu);
-    value = arithmetic_matrix_result(operation, left, right, initial_status, false);
-    status = arithmetic_matrix_status(operation, left, right, initial_status, false);
+    if (reads_source) {
+        left = dspic33_read_word(reference, address & 0xfffeu);
+    }
+    value = direct_file_result(operation, left, right, initial_status, false);
+    status = direct_file_status(operation, left, right, initial_status, false);
     reference->sr = status;
     if (!file_destination) {
         write_direct_file_reference_result(reference, value, false);
@@ -5760,6 +5889,69 @@ static bool run_direct_file_odd_word_case(Dspic33* cpu, Dspic33* reference,
     return matches;
 }
 
+static bool load_direct_file_trap_vectors(Dspic33* cpu) {
+    static const uint32_t vectors[] = {0x000004u, 0x000006u, 0x000008u,
+                                       0x00000au, 0x00000eu, 0x000010u};
+    size_t index;
+
+    for (index = 0u; index < sizeof(vectors) / sizeof(*vectors); index++) {
+        if (!dspic33_load_program_word(cpu, vectors[index], 0x000340u)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool direct_file_flag_outcomes_complete(const bool observed[512],
+                                               DirectFileOperation operation,
+                                               bool byte_mode) {
+    bool expected[512] = {false};
+    uint32_t maximum = byte_mode ? UINT8_MAX : UINT16_MAX;
+    uint32_t value;
+    uint16_t status;
+
+    for (value = 0u; value <= maximum; value++) {
+        uint8_t initial;
+        for (initial = 0u; initial < 4u; initial++) {
+            if (operation >= DIRECT_FILE_AND && operation <= DIRECT_FILE_IOR) {
+                status = direct_file_logic_status(initial, (uint16_t)value, byte_mode);
+            } else {
+                status = direct_file_status(operation, (uint16_t)value, 0u, initial,
+                                            byte_mode);
+            }
+            expected[status & 0x01ffu] = true;
+        }
+    }
+    for (status = 0u; status < 512u; status++) {
+        if (expected[status] != observed[status]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool run_direct_file_case(Dspic33* actual, Dspic33* reference, uint32_t opcode,
+                                 DirectFileOperation operation, uint16_t address,
+                                 bool byte_mode, bool file_destination) {
+    bool matches;
+
+    prepare_direct_file_case(actual, address, byte_mode);
+    prepare_direct_file_case(reference, address, byte_mode);
+    if (!byte_mode && (address & 1u) != 0u &&
+        (direct_file_reads_source(operation) || file_destination)) {
+        return run_direct_file_odd_word_case(actual, reference, opcode, operation,
+                                             address, file_destination);
+    }
+    matches = dspic33_load_program_word(actual, 0u, opcode) &&
+              dspic33_load_program_word(reference, 0u, opcode);
+    dspic33_step(actual);
+    run_direct_file_reference(reference, operation, address, byte_mode,
+                              file_destination);
+    return matches && (file_destination && address >= 0x08c0u && address <= 0x08c7u
+                           ? direct_file_trap_register_state_matches(actual, reference)
+                           : direct_file_states_match(actual, reference));
+}
+
 static void direct_file_arithmetic_encoding_matrix_cases(ProcessorConformance* state) {
     static const uint32_t bases[6] = {0xbd0000u, 0xbd8000u, 0xb40000u,
                                       0xb48000u, 0xb50000u, 0xb58000u};
@@ -5782,18 +5974,8 @@ static void direct_file_arithmetic_encoding_matrix_cases(ProcessorConformance* s
         return;
     }
     expect(state,
-           dspic33_load_program_word(&actual, 0x000004u, 0x000340u) &&
-               dspic33_load_program_word(&actual, 0x000006u, 0x000340u) &&
-               dspic33_load_program_word(&actual, 0x000008u, 0x000340u) &&
-               dspic33_load_program_word(&actual, 0x00000au, 0x000340u) &&
-               dspic33_load_program_word(&actual, 0x00000eu, 0x000340u) &&
-               dspic33_load_program_word(&actual, 0x000010u, 0x000340u) &&
-               dspic33_load_program_word(&reference, 0x000004u, 0x000340u) &&
-               dspic33_load_program_word(&reference, 0x000006u, 0x000340u) &&
-               dspic33_load_program_word(&reference, 0x000008u, 0x000340u) &&
-               dspic33_load_program_word(&reference, 0x00000au, 0x000340u) &&
-               dspic33_load_program_word(&reference, 0x00000eu, 0x000340u) &&
-               dspic33_load_program_word(&reference, 0x000010u, 0x000340u),
+           load_direct_file_trap_vectors(&actual) &&
+               load_direct_file_trap_vectors(&reference),
            "load direct-file arithmetic address-error vectors");
     for (operation = 0u; operation < 6u; operation++) {
         uint8_t byte_mode;
@@ -5804,33 +5986,9 @@ static void direct_file_arithmetic_encoding_matrix_cases(ProcessorConformance* s
                 for (address = 0u; address < 0x2000u; address++) {
                     uint32_t opcode = bases[operation] | ((uint32_t)byte_mode << 14u) |
                                       ((uint32_t)file_destination << 13u) | address;
-                    bool matches;
-
-                    prepare_direct_file_arithmetic_case(&actual, address, operation,
-                                                        byte_mode != 0u,
-                                                        file_destination != 0u);
-                    prepare_direct_file_arithmetic_case(&reference, address, operation,
-                                                        byte_mode != 0u,
-                                                        file_destination != 0u);
-                    if (byte_mode == 0u && (address & 1u) != 0u) {
-                        matches = run_direct_file_odd_word_case(
-                            &actual, &reference, opcode,
-                            (ArithmeticMatrixOperation)operation, address,
-                            file_destination != 0u);
-                    } else {
-                        matches = dspic33_load_program_word(&actual, 0u, opcode) &&
-                                  dspic33_load_program_word(&reference, 0u, opcode);
-                        dspic33_step(&actual);
-                        run_direct_file_reference(
-                            &reference, (ArithmeticMatrixOperation)operation, address,
-                            byte_mode != 0u, file_destination != 0u);
-                        matches = matches &&
-                                  (file_destination != 0u && address >= 0x08c0u &&
-                                           address <= 0x08c7u
-                                       ? direct_file_trap_register_state_matches(
-                                             &actual, &reference)
-                                       : direct_file_states_match(&actual, &reference));
-                    }
+                    bool matches = run_direct_file_case(
+                        &actual, &reference, opcode, (DirectFileOperation)operation,
+                        address, byte_mode != 0u, file_destination != 0u);
                     expect_dsp_matrix_case(state, matches, opcode,
                                            "direct-file arithmetic encoding");
                     cases++;
@@ -5840,6 +5998,152 @@ static void direct_file_arithmetic_encoding_matrix_cases(ProcessorConformance* s
     }
     expect(state, cases == 196608u,
            "direct-file arithmetic encoding matrix is exhaustive");
+    dspic33_destroy(&actual);
+    dspic33_destroy(&reference);
+}
+
+static void direct_file_logical_encoding_matrix_cases(ProcessorConformance* state,
+                                                      Dspic33* invalid_cpu) {
+    static const uint32_t bases[3] = {0xb60000u, 0xb68000u, 0xb70000u};
+    static const DirectFileOperation operations[3] = {DIRECT_FILE_AND, DIRECT_FILE_XOR,
+                                                      DIRECT_FILE_IOR};
+    static Dspic33 actual;
+    static Dspic33 reference;
+    bool flag_outcomes[3][2][512] = {{{false}}};
+    uint32_t valid = 0u;
+    uint32_t invalid = 0u;
+    bool actual_initialized = dspic33_initialize(&actual);
+    bool reference_initialized = dspic33_initialize(&reference);
+    uint8_t operation;
+
+    expect(state, actual_initialized && reference_initialized,
+           "initialize direct-file logical processors");
+    if (!actual_initialized || !reference_initialized) {
+        if (actual_initialized) {
+            dspic33_destroy(&actual);
+        }
+        if (reference_initialized) {
+            dspic33_destroy(&reference);
+        }
+        return;
+    }
+    expect(state,
+           load_direct_file_trap_vectors(&actual) &&
+               load_direct_file_trap_vectors(&reference),
+           "load direct-file logical address-error vectors");
+    for (operation = 0u; operation < 3u; operation++) {
+        uint8_t byte_mode;
+        for (byte_mode = 0u; byte_mode < 2u; byte_mode++) {
+            uint8_t file_destination;
+            for (file_destination = 0u; file_destination < 2u; file_destination++) {
+                uint16_t address;
+                for (address = 0u; address < 0x2000u; address++) {
+                    uint32_t opcode = bases[operation] | ((uint32_t)byte_mode << 14u) |
+                                      ((uint32_t)file_destination << 13u) | address;
+                    bool matches = run_direct_file_case(
+                        &actual, &reference, opcode, operations[operation], address,
+                        byte_mode != 0u, file_destination != 0u);
+
+                    if (address >= 0x1000u) {
+                        flag_outcomes[operation][byte_mode][reference.sr & 0x01ffu] =
+                            true;
+                    }
+                    expect_dsp_matrix_case(state, matches, opcode,
+                                           "direct-file logical encoding");
+                    valid++;
+                }
+            }
+        }
+    }
+    for (uint8_t byte_mode = 0u; byte_mode < 2u; byte_mode++) {
+        for (uint16_t address = 0u; address < 0x2000u; address++) {
+            run_invalid_arithmetic_matrix_case(
+                state, invalid_cpu, 0xb78000u | ((uint32_t)byte_mode << 14u) | address);
+            invalid++;
+        }
+    }
+    expect(state, valid == 98304u,
+           "direct-file logical valid encoding matrix is exhaustive");
+    expect(state, invalid == 16384u,
+           "direct-file logical illegal encoding matrix is exhaustive");
+    for (operation = 0u; operation < 3u; operation++) {
+        uint8_t byte_mode;
+        for (byte_mode = 0u; byte_mode < 2u; byte_mode++) {
+            expect(state,
+                   direct_file_flag_outcomes_complete(
+                       flag_outcomes[operation][byte_mode], operations[operation],
+                       byte_mode != 0u),
+                   "direct-file logical flag outcomes are exhaustive");
+        }
+    }
+    dspic33_destroy(&actual);
+    dspic33_destroy(&reference);
+}
+
+static void direct_file_unary_encoding_matrix_cases(ProcessorConformance* state) {
+    static const uint32_t bases[8] = {0xec0000u, 0xec8000u, 0xed0000u, 0xed8000u,
+                                      0xee0000u, 0xee8000u, 0xef0000u, 0xef8000u};
+    static const DirectFileOperation operations[8] = {
+        DIRECT_FILE_INC, DIRECT_FILE_INC2, DIRECT_FILE_DEC, DIRECT_FILE_DEC2,
+        DIRECT_FILE_NEG, DIRECT_FILE_COM,  DIRECT_FILE_CLR, DIRECT_FILE_SETM};
+    static Dspic33 actual;
+    static Dspic33 reference;
+    bool flag_outcomes[8][2][512] = {{{false}}};
+    uint32_t cases = 0u;
+    bool actual_initialized = dspic33_initialize(&actual);
+    bool reference_initialized = dspic33_initialize(&reference);
+    uint8_t operation;
+
+    expect(state, actual_initialized && reference_initialized,
+           "initialize direct-file unary processors");
+    if (!actual_initialized || !reference_initialized) {
+        if (actual_initialized) {
+            dspic33_destroy(&actual);
+        }
+        if (reference_initialized) {
+            dspic33_destroy(&reference);
+        }
+        return;
+    }
+    expect(state,
+           load_direct_file_trap_vectors(&actual) &&
+               load_direct_file_trap_vectors(&reference),
+           "load direct-file unary address-error vectors");
+    for (operation = 0u; operation < 8u; operation++) {
+        uint8_t byte_mode;
+        for (byte_mode = 0u; byte_mode < 2u; byte_mode++) {
+            uint8_t file_destination;
+            for (file_destination = 0u; file_destination < 2u; file_destination++) {
+                uint16_t address;
+                for (address = 0u; address < 0x2000u; address++) {
+                    uint32_t opcode = bases[operation] | ((uint32_t)byte_mode << 14u) |
+                                      ((uint32_t)file_destination << 13u) | address;
+                    bool matches = run_direct_file_case(
+                        &actual, &reference, opcode, operations[operation], address,
+                        byte_mode != 0u, file_destination != 0u);
+
+                    if (address >= 0x1000u) {
+                        flag_outcomes[operation][byte_mode][reference.sr & 0x01ffu] =
+                            true;
+                    }
+                    expect_dsp_matrix_case(state, matches, opcode,
+                                           "direct-file unary encoding");
+                    cases++;
+                }
+            }
+        }
+    }
+    expect(state, cases == 262144u, "direct-file unary encoding matrix is exhaustive");
+    for (operation = 0u; operation < 8u; operation++) {
+        uint8_t byte_mode;
+        for (byte_mode = 0u; byte_mode < 2u; byte_mode++) {
+            expect(state,
+                   direct_file_flag_outcomes_complete(
+                       flag_outcomes[operation][byte_mode], operations[operation],
+                       byte_mode != 0u),
+                   "direct-file unary flag outcomes are exhaustive");
+        }
+    }
     dspic33_destroy(&actual);
     dspic33_destroy(&reference);
 }
@@ -7542,6 +7846,8 @@ int main(void) {
         dsp_prefetch_destination_collision_cases(&state, &cpu);
         arithmetic_encoding_matrix_cases(&state, &cpu);
         direct_file_arithmetic_encoding_matrix_cases(&state);
+        direct_file_logical_encoding_matrix_cases(&state, &cpu);
+        direct_file_unary_encoding_matrix_cases(&state);
         dsp_encoding_matrix_cases(&state, &cpu);
         generic_multiply_encoding_matrix_cases(&state, &cpu);
         file_multiply_encoding_matrix_cases(&state, &cpu);
