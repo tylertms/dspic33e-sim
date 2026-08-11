@@ -13,6 +13,7 @@ static void oscillator_pll_configuration_changed(Dspic33* cpu, uint8_t previous)
 static void start_automatic_oscillator_switch(Dspic33* cpu, uint8_t source);
 static void refresh_gpio_change_notification(Dspic33* cpu);
 static void output_compare_pulse_source(Dspic33* cpu, uint8_t source);
+static void output_compare_update_power_state(Dspic33* cpu);
 
 static const uint16_t timer_registers[DSPIC33_TIMER_COUNT] = {
     0x0100u, 0x0106u, 0x010au, 0x0114u, 0x0118u, 0x0122u, 0x0126u, 0x0130u, 0x0134u};
@@ -298,7 +299,8 @@ enum {
     OUTPUT_COMPARE_TIMER_SOURCE_TIMER5 = 0x0c00u,
     OUTPUT_COMPARE_TIMER_SOURCE_TIMER1 = 0x1000u,
     OUTPUT_COMPARE_TIMER_SOURCE_FP = 0x1c00u,
-    OUTPUT_COMPARE_CON1_UNSUPPORTED = 0x23f0u,
+    OUTPUT_COMPARE_STOP_IDLE = 0x2000u,
+    OUTPUT_COMPARE_CON1_UNSUPPORTED = 0x03f0u,
     OUTPUT_COMPARE_MODE_MASK = 0x0007u,
     OUTPUT_COMPARE_MODE_SINGLE_HIGH = 0x0001u,
     OUTPUT_COMPARE_MODE_SINGLE_LOW = 0x0002u,
@@ -336,6 +338,9 @@ enum {
     OUTPUT_COMPARE_EVENT_SYNC_BOUNDARY = 7u,
     OUTPUT_COMPARE_EVENT_SYNC_PRIMARY = 8u,
     OUTPUT_COMPARE_EVENT_EXTERNAL_SYNC = 9u,
+    OUTPUT_COMPARE_EVENT_PMD = 10u,
+    OUTPUT_COMPARE_EVENT_PMD_DISABLED = 0x00000010u,
+    OUTPUT_COMPARE_EVENT_PMD_GENERATION_SHIFT = 5u,
     OUTPUT_COMPARE_EVENT_GENERATION_SHIFT = 4u,
     COMPARATOR_STATUS = 0x0a80u,
     COMPARATOR_REFERENCE = 0x0a82u,
@@ -1618,6 +1623,7 @@ void dspic33_device_power_state_changed(Dspic33* cpu) {
     } else {
         pmp_pause_master_events(cpu);
     }
+    output_compare_update_power_state(cpu);
 }
 
 static void pmp_update_address(Dspic33* cpu, uint16_t control, uint16_t mode) {
@@ -2877,6 +2883,77 @@ static bool output_compare_supported(const Dspic33* cpu, uint8_t channel) {
                                                   raw_word(cpu, (uint16_t)(base + 2u)));
 }
 
+static bool output_compare_pmd_disabled(const Dspic33* cpu, uint8_t channel) {
+    return (cpu->io.output_compare.pmd_disabled & (uint16_t)(1u << channel)) != 0u;
+}
+
+static bool output_compare_operating(const Dspic33* cpu, uint8_t channel) {
+    uint16_t control1 = raw_word(cpu, output_compare_base(channel));
+    return output_compare_supported(cpu, channel) &&
+           !output_compare_pmd_disabled(cpu, channel) &&
+           cpu->power_state != DSPIC33_POWER_SLEEP &&
+           (cpu->power_state != DSPIC33_POWER_IDLE ||
+            (control1 & OUTPUT_COMPARE_STOP_IDLE) == 0u);
+}
+
+static bool output_compare_internal_event(const Dspic33Event* event, uint8_t channel) {
+    return event->type == DSPIC33_EVENT_OUTPUT_COMPARE && event->source == channel &&
+           (event->value & OUTPUT_COMPARE_EVENT_KIND_MASK) != OUTPUT_COMPARE_EVENT_PMD;
+}
+
+static void output_compare_pause_events(Dspic33* cpu, uint8_t channel) {
+    size_t index;
+    bool changed = false;
+    for (index = 0u; index < cpu->events.count; index++) {
+        Dspic33Event* event = &cpu->events.items[index];
+        if (!output_compare_internal_event(event, channel) || event->paused) {
+            continue;
+        }
+        event->paused_remaining = event->cycle - cpu->device_cycles;
+        event->paused = true;
+        changed = true;
+    }
+    if (changed) {
+        dspic33_reorder_events(cpu);
+    }
+}
+
+static void output_compare_resume_events(Dspic33* cpu, uint8_t channel) {
+    size_t index;
+    bool changed = false;
+    if (!output_compare_operating(cpu, channel)) {
+        return;
+    }
+    for (index = 0u; index < cpu->events.count; index++) {
+        Dspic33Event* event = &cpu->events.items[index];
+        if (!output_compare_internal_event(event, channel) || !event->paused) {
+            continue;
+        }
+        if (event->paused_remaining > UINT64_MAX - cpu->device_cycles) {
+            cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+            continue;
+        }
+        event->cycle = cpu->device_cycles + event->paused_remaining;
+        event->paused_remaining = 0u;
+        event->paused = false;
+        changed = true;
+    }
+    if (changed) {
+        dspic33_reorder_events(cpu);
+    }
+}
+
+static void output_compare_update_power_state(Dspic33* cpu) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_OUTPUT_COMPARE_COUNT; channel++) {
+        if (output_compare_operating(cpu, channel)) {
+            output_compare_resume_events(cpu, channel);
+        } else {
+            output_compare_pause_events(cpu, channel);
+        }
+    }
+}
+
 static bool output_compare_fp_clocked(const Dspic33* cpu, uint8_t channel) {
     return (raw_word(cpu, output_compare_base(channel)) &
             OUTPUT_COMPARE_TIMER_SOURCE_MASK) == OUTPUT_COMPARE_TIMER_SOURCE_FP;
@@ -3100,7 +3177,7 @@ static void output_compare_pulse_source(Dspic33* cpu, uint8_t source) {
         uint16_t base = output_compare_base(channel);
         uint16_t control2 = raw_word(cpu, (uint16_t)(base + 2u));
         uint16_t bit = (uint16_t)(1u << channel);
-        if (!output_compare_supported(cpu, channel) ||
+        if (!output_compare_operating(cpu, channel) ||
             (control2 & OUTPUT_COMPARE_SYNC_MASK) != source ||
             output_compare_self_synchronized(cpu, channel)) {
             continue;
@@ -3127,7 +3204,7 @@ static bool output_compare_source_awaited(const Dspic33* cpu, uint8_t source) {
     for (channel = 0u; channel < DSPIC33_OUTPUT_COMPARE_COUNT; channel++) {
         uint16_t control2 =
             raw_word(cpu, (uint16_t)(output_compare_base(channel) + 2u));
-        if (output_compare_supported(cpu, channel) &&
+        if (output_compare_operating(cpu, channel) &&
             (control2 & OUTPUT_COMPARE_SYNC_MASK) == source &&
             ((control2 & OUTPUT_COMPARE_TRIGGER) == 0u ||
              (control2 & OUTPUT_COMPARE_TRIGGER_STATUS) == 0u)) {
@@ -3249,6 +3326,22 @@ static void run_output_compare(Dspic33* cpu, uint16_t source, uint32_t value) {
     }
     channel = (uint8_t)source;
     kind = value & OUTPUT_COMPARE_EVENT_KIND_MASK;
+    if (kind == OUTPUT_COMPARE_EVENT_PMD) {
+        uint16_t generation = (uint16_t)((value & ~OUTPUT_COMPARE_EVENT_PMD_DISABLED) >>
+                                         OUTPUT_COMPARE_EVENT_PMD_GENERATION_SHIFT);
+        uint16_t bit = (uint16_t)(1u << channel);
+        if (generation != cpu->io.output_compare.pmd_generation[channel]) {
+            return;
+        }
+        if ((value & OUTPUT_COMPARE_EVENT_PMD_DISABLED) != 0u) {
+            cpu->io.output_compare.pmd_disabled |= bit;
+            output_compare_pause_events(cpu, channel);
+        } else {
+            cpu->io.output_compare.pmd_disabled &= (uint16_t)~bit;
+            output_compare_resume_events(cpu, channel);
+        }
+        return;
+    }
     timer_event = kind == OUTPUT_COMPARE_EVENT_PRIMARY ||
                   kind == OUTPUT_COMPARE_EVENT_SECONDARY ||
                   kind == OUTPUT_COMPARE_EVENT_BOUNDARY ||
@@ -3259,7 +3352,7 @@ static void run_output_compare(Dspic33* cpu, uint16_t source, uint32_t value) {
     generation = (uint16_t)(value >> OUTPUT_COMPARE_EVENT_GENERATION_SHIFT);
     if (generation != (timer_event ? cpu->io.output_compare.timer_generation[channel]
                                    : cpu->io.output_compare.generation[channel]) ||
-        !output_compare_supported(cpu, channel)) {
+        !output_compare_operating(cpu, channel)) {
         return;
     }
     {
@@ -3336,6 +3429,10 @@ static void update_output_compare_register(Dspic33* cpu, uint16_t address,
     channel = (uint8_t)((address - OUTPUT_COMPARE_BASE) / OUTPUT_COMPARE_STRIDE);
     base = output_compare_base(channel);
     offset = (uint16_t)(address - base);
+    if (output_compare_pmd_disabled(cpu, channel) && offset <= 8u) {
+        raw_write_word(cpu, (uint16_t)(base + offset), previous);
+        return;
+    }
     if (offset != 0u && offset != 2u && offset != 4u && offset != 6u) {
         return;
     }
@@ -3424,12 +3521,59 @@ static void update_output_compare_register(Dspic33* cpu, uint16_t address,
             output_compare_schedule_next(cpu, channel, 0u);
         }
     }
+    if (offset == 0u && ((previous1 ^ control1) & OUTPUT_COMPARE_STOP_IDLE) != 0u &&
+        cpu->power_state == DSPIC33_POWER_IDLE) {
+        output_compare_update_power_state(cpu);
+    }
+}
+
+static void update_output_compare_pmd(Dspic33* cpu, uint16_t address,
+                                      uint16_t previous) {
+    uint8_t first_channel;
+    uint8_t channel;
+    uint16_t changed;
+    uint16_t current;
+    if (address == 0x0762u) {
+        first_channel = 0u;
+    } else if (address == 0x0768u) {
+        first_channel = 8u;
+    } else {
+        return;
+    }
+    current = raw_word(cpu, address);
+    changed = (uint16_t)((previous ^ current) & 0x00ffu);
+    for (channel = first_channel; channel < first_channel + 8u; channel++) {
+        uint16_t register_mask = (uint16_t)(1u << (channel - first_channel));
+        if ((changed & register_mask) == 0u) {
+            continue;
+        }
+        cpu->io.output_compare.pmd_generation[channel]++;
+        if (!dspic33_schedule(
+                cpu, DSPIC33_EVENT_OUTPUT_COMPARE, channel,
+                OUTPUT_COMPARE_EVENT_PMD |
+                    ((current & register_mask) != 0u ? OUTPUT_COMPARE_EVENT_PMD_DISABLED
+                                                     : 0u) |
+                    ((uint32_t)cpu->io.output_compare.pmd_generation[channel]
+                     << OUTPUT_COMPARE_EVENT_PMD_GENERATION_SHIFT),
+                dspic33_device_instruction_cycles(cpu, 1u))) {
+            uint8_t invalidate;
+            raw_write_word(cpu, address, previous);
+            for (invalidate = first_channel; invalidate < first_channel + 8u;
+                 invalidate++) {
+                if ((changed & (uint16_t)(1u << (invalidate - first_channel))) != 0u) {
+                    cpu->io.output_compare.pmd_generation[invalidate]++;
+                }
+            }
+            cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+            return;
+        }
+    }
 }
 
 static void advance_output_compare(Dspic33* cpu, uint64_t cycles) {
     uint8_t channel;
     for (channel = 0u; channel < DSPIC33_OUTPUT_COMPARE_COUNT; channel++) {
-        if (output_compare_supported(cpu, channel) &&
+        if (output_compare_operating(cpu, channel) &&
             output_compare_fp_clocked(cpu, channel)) {
             uint16_t address = (uint16_t)(output_compare_base(channel) + 8u);
             uint16_t control2 =
@@ -3452,7 +3596,7 @@ static void advance_output_compare(Dspic33* cpu, uint64_t cycles) {
 
 static bool output_compare_uses_timer(const Dspic33* cpu, uint8_t channel,
                                       uint8_t timer) {
-    return output_compare_supported(cpu, channel) &&
+    return output_compare_operating(cpu, channel) &&
            !output_compare_fp_clocked(cpu, channel) &&
            output_compare_timer_source(cpu, channel) == timer &&
            (timer != 0u || (raw_word(cpu, timer_controls[0]) &
@@ -10905,6 +11049,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
         update_pmp_pmd(cpu, previous);
     }
     update_input_capture_pmd(cpu, base, previous);
+    update_output_compare_pmd(cpu, base, previous);
     if (base == 0x0740u && (cpu->configuration[10u] & 0x80u) == 0u &&
         (previous & 0x0020u) == 0u && (raw_word(cpu, base) & 0x0020u) != 0u) {
         cpu->watchdog.ticks = 0u;
@@ -11067,6 +11212,14 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
             INPUT_CAPTURE_BASE + DSPIC33_INPUT_CAPTURE_COUNT * INPUT_CAPTURE_STRIDE) {
         channel = (uint8_t)((address - INPUT_CAPTURE_BASE) / INPUT_CAPTURE_STRIDE);
         if (input_capture_pmd_disabled(cpu, channel)) {
+            return 0u;
+        }
+    }
+    if (address >= OUTPUT_COMPARE_BASE &&
+        address < OUTPUT_COMPARE_BASE +
+                      DSPIC33_OUTPUT_COMPARE_COUNT * OUTPUT_COMPARE_STRIDE) {
+        channel = (uint8_t)((address - OUTPUT_COMPARE_BASE) / OUTPUT_COMPARE_STRIDE);
+        if (output_compare_pmd_disabled(cpu, channel)) {
             return 0u;
         }
     }
@@ -11314,7 +11467,8 @@ bool dspic33_input_capture_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t de
 bool dspic33_output_compare_output(const Dspic33* cpu, uint8_t channel, bool* high) {
     uint16_t control2;
     if (channel >= DSPIC33_OUTPUT_COMPARE_COUNT || high == NULL ||
-        !output_compare_supported(cpu, channel)) {
+        !output_compare_supported(cpu, channel) ||
+        output_compare_pmd_disabled(cpu, channel)) {
         return false;
     }
     control2 = raw_word(cpu, (uint16_t)(output_compare_base(channel) + 2u));
