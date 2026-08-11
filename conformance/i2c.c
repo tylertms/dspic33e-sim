@@ -2327,6 +2327,7 @@ static void slave_pin_rejection_and_transmit_cases(I2cConformance* state,
     drive_pin(route, cpu, true, false);
     dspic33_write_word(cpu, (uint16_t)(base + 2u), 0x005au);
     dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9000u);
+    clear_interrupt(cpu, slave_irqs[1]);
     expect(state, pin_levels(cpu, route->port, route->clock, route->data, false, false),
            "physical slave-transmit data starts after ninth-clock service");
     for (bit = 0u; bit < 8u; bit++) {
@@ -2341,8 +2342,11 @@ static void slave_pin_rejection_and_transmit_cases(I2cConformance* state,
         drive_pin(route, cpu, true, false);
     }
     drive_pin(route, cpu, false, false);
-    expect(state, pin_levels(cpu, route->port, route->clock, route->data, false, false),
-           "physical slave releases data for master ACK");
+    expect(state,
+           pin_levels(cpu, route->port, route->clock, route->data, false, false) &&
+               (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 1u) == 0u &&
+               !interrupt_flag(cpu, slave_irqs[1]),
+           "physical slave clears TBF after eight bits before master ACK");
     drive_pin(route, cpu, true, true);
     expect(state, pin_levels(cpu, route->port, route->clock, route->data, true, false),
            "physical slave samples master ACK on ninth rising edge");
@@ -2650,6 +2654,28 @@ static void master_pin_collision_cases(I2cConformance* state, Dspic33* cpu) {
            (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0400u) != 0u &&
                interrupt_flag(cpu, master_irqs[1]) && cpu->io.i2c_pin_active == 0u,
            "released NACK collision aborts on dominant data");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, route->port, pins, pins);
+    cpu->device_cycles = UINT64_MAX;
+    enable(cpu, 1u, 1u, 2u);
+    expect(state,
+           cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR && cpu->events.count == 0u &&
+               (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 1u) == 0u &&
+               cpu->io.i2c_pin_active == 0u,
+           "failed physical condition scheduling rolls back control and pin state");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, route->port, pins, pins);
+    enable(cpu, 1u, 0u, 2u);
+    cpu->device_cycles = UINT64_MAX;
+    dspic33_write_word(cpu, (uint16_t)(base + 2u), 0x005au);
+    expect(state,
+           cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR && cpu->events.count == 0u &&
+               (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x4001u) == 0u &&
+               stored_word(cpu, (uint16_t)(base + 2u)) == 0x00ffu &&
+               (cpu->io.i2c_master_active & 2u) == 0u,
+           "failed physical transmit scheduling rolls back register and runtime state");
 }
 
 static void slave_pin_address_policy_cases(I2cConformance* state, Dspic33* cpu) {
@@ -2750,7 +2776,7 @@ int main(void) {
     slave_pin_lifecycle_cases(&state, &cpu);
     master_pin_collision_cases(&state, &cpu);
     slave_pin_address_policy_cases(&state, &cpu);
-    expect(&state, state.cases == 1182u, "I2C assertion arithmetic");
+    expect(&state, state.cases == 1184u, "I2C assertion arithmetic");
     dspic33_destroy(&cpu);
     printf("[i2c-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);
