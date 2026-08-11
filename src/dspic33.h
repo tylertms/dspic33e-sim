@@ -758,6 +758,7 @@ typedef struct {
     bool address_error_control_state_completed;
     uint32_t sequential_program_hole_pc;
     bool illegal_reset;
+    bool reset_locked;
     bool stop_on_trap;
     bool async_events_enabled;
     uint16_t interrupt_log_irq[16];

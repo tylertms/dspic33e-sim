@@ -3625,6 +3625,7 @@ static void reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
     cpu->address_error_control_state_completed = false;
     cpu->sequential_program_hole_pc = 0u;
     cpu->illegal_reset = false;
+    cpu->reset_locked = false;
     cpu->async_events_enabled = true;
     memset(cpu->interrupt_log_irq, 0xff, sizeof(cpu->interrupt_log_irq));
     memset(cpu->interrupt_log_entry, 0, sizeof(cpu->interrupt_log_entry));
@@ -3661,10 +3662,14 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
     uint64_t interrupt_count = cpu->interrupt_count;
     uint64_t software_reset_count =
         cpu->software_reset_count + (kind == DSPIC33_RESET_SOFTWARE ? 1u : 0u);
-    uint64_t illegal_reset_count =
-        cpu->illegal_reset_count + (kind == DSPIC33_RESET_ILLEGAL ? 1u : 0u);
     uint64_t trap_count = cpu->trap_count;
     uint32_t reset_entry = (cpu->configuration[0x0eu] & 0x04u) != 0u ? 0u : 0x007ffffcu;
+    bool auxiliary_security_reset =
+        reset_entry == 0x007ffffcu &&
+        codeguard_high_security(codeguard_configuration(cpu, true));
+    uint64_t illegal_reset_count =
+        cpu->illegal_reset_count +
+        (kind == DSPIC33_RESET_ILLEGAL || auxiliary_security_reset ? 1u : 0u);
     uint64_t auxiliary_pll_remaining = 0u;
     uint64_t oscillator_remaining = 0u;
     uint16_t oscillator_phase = 0u;
@@ -3736,7 +3741,7 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
         dci_receive[index] =
             (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[address + 1u] << 8u));
     }
-    reset_processor(cpu, reset_entry, false);
+    reset_processor(cpu, auxiliary_security_reset ? 0u : reset_entry, false);
     for (index = 0u;
          index < sizeof(preserved_addresses) / sizeof(preserved_addresses[0]);
          index++) {
@@ -3792,8 +3797,10 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
     cpu->reset_interrupt = reset_interrupt;
     cpu->async_events_enabled = async_events_enabled;
     cpu->stop_on_trap = stop_on_trap;
-    cpu->illegal_reset = kind == DSPIC33_RESET_ILLEGAL;
-    rcon = (uint16_t)((rcon | cause) & 0xcadfu);
+    cpu->illegal_reset = kind == DSPIC33_RESET_ILLEGAL || auxiliary_security_reset;
+    cpu->reset_locked = auxiliary_security_reset;
+    rcon = (uint16_t)((rcon | cause | (auxiliary_security_reset ? 0x4000u : 0u)) &
+                      0xcadfu);
     cpu->data[0x0740u] = (uint8_t)rcon;
     cpu->data[0x0741u] = (uint8_t)(rcon >> 8u);
 }
@@ -4344,6 +4351,10 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     bool psv_repeat_exit_latency;
     uint64_t base_cycles;
     uint64_t device_ratio;
+    if (cpu->reset_locked) {
+        cpu->illegal_reset = true;
+        return cpu->stop_reason;
+    }
     cpu->illegal_reset = false;
     if (cpu->nvm.active && cpu->nvm.reset_pending) {
         advance_pending_nvm_reset(cpu);

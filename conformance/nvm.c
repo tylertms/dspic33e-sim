@@ -871,6 +871,7 @@ static void auxiliary_loader_cases(NvmConformance* state, Dspic33* cpu) {
 
 static void auxiliary_access_and_execution_cases(NvmConformance* state, Dspic33* cpu) {
     Dspic33 copy;
+    uint64_t instructions;
     uint16_t value;
     bool initialized;
 
@@ -979,6 +980,73 @@ static void auxiliary_access_and_execution_cases(NvmConformance* state, Dspic33*
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0100u,
            "auxiliary reset GOTO uses final two words");
     dspic33_load_configuration_word(cpu, 0xf8000eu, 0xffdfu);
+
+    for (uint8_t index = 0u; index < 16u; index++) {
+        uint8_t configuration = codeguard_configuration_value(index);
+        bool protected = codeguard_configuration_high(configuration);
+        uint64_t illegal_resets;
+        uint64_t software_resets;
+        dspic33_reset(cpu, 0u);
+        cpu->stop_on_trap = false;
+        expect(state, load_codeguard_configuration(cpu, 0x03u, configuration),
+               "load B1 auxiliary reset protection");
+        dspic33_load_configuration_word(cpu, 0xf8000eu, 0xffdbu);
+        dspic33_load_program_word(cpu, 0u, OPCODE_RESET);
+        dspic33_load_program_word(cpu, 0x007ffffcu, OPCODE_GOTO_0X100);
+        dspic33_load_program_word(cpu, 0x007ffffeu, 0u);
+        dspic33_load_program_word(cpu, 0x000100u, OPCODE_NOP);
+        illegal_resets = cpu->illegal_reset_count;
+        software_resets = cpu->software_reset_count;
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+                   (protected
+                        ? cpu->illegal_reset && cpu->pc == 0u &&
+                              cpu->illegal_reset_count == illegal_resets + 1u &&
+                              cpu->software_reset_count == software_resets + 1u &&
+                              (dspic33_read_word(cpu, 0x0740u) & 0x4040u) == 0x4040u
+                        : !cpu->illegal_reset && cpu->pc == 0x007ffffcu &&
+                              cpu->illegal_reset_count == illegal_resets &&
+                              cpu->software_reset_count == software_resets + 1u),
+               "B1 auxiliary reset protection matrix");
+        instructions = cpu->instructions;
+        bool next_valid = dspic33_step(cpu) == DSPIC33_RUNNING &&
+                          (protected ? cpu->illegal_reset && cpu->pc == 0u &&
+                                           cpu->instructions == instructions
+                                     : cpu->pc == 0x000100u &&
+                                           cpu->instructions == instructions + 1u);
+        expect(state, next_valid, "B1 auxiliary reset execution matrix");
+    }
+    dspic33_load_configuration_word(cpu, 0xf8000eu, 0xffdfu);
+    load_codeguard_configuration(cpu, 0x03u, 0x03u);
+
+    dspic33_reset(cpu, 0u);
+    expect(state, load_codeguard_configuration(cpu, 0x03u, 0x31u),
+           "load B1 protected auxiliary hardware reset");
+    dspic33_load_configuration_word(cpu, 0xf8000eu, 0xffdbu);
+    instructions = cpu->instructions;
+    dspic33_configuration_mismatch_reset(cpu);
+    expect(state,
+           cpu->reset_locked && cpu->illegal_reset && cpu->pc == 0u &&
+               (dspic33_read_word(cpu, 0x0740u) & 0x4200u) == 0x4200u,
+           "B1 protected auxiliary hardware reset locks execution");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->instructions == instructions,
+           "B1 protected hardware reset cannot fetch application code");
+    initialized = dspic33_initialize(&copy);
+    expect(state, initialized, "initialize B1 protected reset copy");
+    if (initialized) {
+        expect(state, dspic33_copy(&copy, cpu), "copy B1 protected reset lock");
+        expect(state,
+               dspic33_step(&copy) == DSPIC33_RUNNING && copy.reset_locked &&
+                   copy.instructions == instructions,
+               "copied B1 protected reset remains locked");
+        dspic33_destroy(&copy);
+    }
+    dspic33_reset(cpu, 0u);
+    expect(state, !cpu->reset_locked && !cpu->illegal_reset,
+           "power-on reset clears B1 protected reset lock");
+    dspic33_load_configuration_word(cpu, 0xf8000eu, 0xffdfu);
+    load_codeguard_configuration(cpu, 0x03u, 0x03u);
 
     dspic33_reset(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE);
     dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE, OPCODE_NOP);
