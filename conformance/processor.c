@@ -4973,8 +4973,11 @@ typedef enum {
     ARITHMETIC_MATRIX_ADD,
     ARITHMETIC_MATRIX_ADDC,
     ARITHMETIC_MATRIX_SUB,
-    ARITHMETIC_MATRIX_SUBB
-} ArithmeticMatrixOperation;
+    ARITHMETIC_MATRIX_SUBB,
+    ARITHMETIC_MATRIX_AND,
+    ARITHMETIC_MATRIX_XOR,
+    ARITHMETIC_MATRIX_IOR
+} BinaryMatrixOperation;
 
 typedef enum {
     DIRECT_FILE_SUBR,
@@ -4999,35 +5002,45 @@ typedef enum {
 typedef struct {
     uint16_t address;
     bool direct;
-} ArithmeticMatrixOperand;
+} BinaryMatrixOperand;
 
-static bool arithmetic_matrix_with_carry(ArithmeticMatrixOperation operation) {
+static bool binary_matrix_with_carry(BinaryMatrixOperation operation) {
     return operation == ARITHMETIC_MATRIX_SUBBR ||
            operation == ARITHMETIC_MATRIX_ADDC || operation == ARITHMETIC_MATRIX_SUBB;
 }
 
-static bool arithmetic_matrix_reverse(ArithmeticMatrixOperation operation) {
+static bool binary_matrix_reverse(BinaryMatrixOperation operation) {
     return operation == ARITHMETIC_MATRIX_SUBR || operation == ARITHMETIC_MATRIX_SUBBR;
 }
 
-static bool arithmetic_matrix_addition(ArithmeticMatrixOperation operation) {
+static bool binary_matrix_addition(BinaryMatrixOperation operation) {
     return operation == ARITHMETIC_MATRIX_ADD || operation == ARITHMETIC_MATRIX_ADDC;
 }
 
-static uint16_t arithmetic_matrix_result(ArithmeticMatrixOperation operation,
-                                         uint16_t left, uint16_t right,
-                                         uint16_t initial_status, bool byte_mode) {
+static bool binary_matrix_logical(BinaryMatrixOperation operation) {
+    return operation >= ARITHMETIC_MATRIX_AND;
+}
+
+static uint16_t binary_matrix_result(BinaryMatrixOperation operation, uint16_t left,
+                                     uint16_t right, uint16_t initial_status,
+                                     bool byte_mode) {
     uint32_t mask = byte_mode ? 0x00ffu : 0xffffu;
     uint16_t carry = (initial_status & 0x0001u) != 0u ? 1u : 0u;
-    uint16_t borrow = arithmetic_matrix_with_carry(operation) && carry == 0u ? 1u : 0u;
+    uint16_t borrow = binary_matrix_with_carry(operation) && carry == 0u ? 1u : 0u;
     uint32_t result;
 
     left = (uint16_t)(left & mask);
     right = (uint16_t)(right & mask);
-    if (arithmetic_matrix_addition(operation)) {
-        result = (uint32_t)left + right +
-                 (arithmetic_matrix_with_carry(operation) ? carry : 0u);
-    } else if (arithmetic_matrix_reverse(operation)) {
+    if (operation == ARITHMETIC_MATRIX_AND) {
+        result = left & right;
+    } else if (operation == ARITHMETIC_MATRIX_XOR) {
+        result = left ^ right;
+    } else if (operation == ARITHMETIC_MATRIX_IOR) {
+        result = left | right;
+    } else if (binary_matrix_addition(operation)) {
+        result =
+            (uint32_t)left + right + (binary_matrix_with_carry(operation) ? carry : 0u);
+    } else if (binary_matrix_reverse(operation)) {
         result = (uint16_t)(right - left - borrow);
     } else {
         result = (uint16_t)(left - right - borrow);
@@ -5035,32 +5048,41 @@ static uint16_t arithmetic_matrix_result(ArithmeticMatrixOperation operation,
     return (uint16_t)(result & mask);
 }
 
-static uint16_t arithmetic_matrix_status(ArithmeticMatrixOperation operation,
-                                         uint16_t left, uint16_t right,
-                                         uint16_t initial_status, bool byte_mode) {
+static uint16_t binary_matrix_status(BinaryMatrixOperation operation, uint16_t left,
+                                     uint16_t right, uint16_t initial_status,
+                                     bool byte_mode) {
     uint32_t mask = byte_mode ? 0x00ffu : 0xffffu;
     uint16_t sign = byte_mode ? 0x0080u : 0x8000u;
     uint16_t digit_mask = byte_mode ? 0x000fu : 0x00ffu;
     uint16_t carry = (initial_status & 0x0001u) != 0u ? 1u : 0u;
-    uint16_t borrow = arithmetic_matrix_with_carry(operation) && carry == 0u ? 1u : 0u;
+    uint16_t borrow = binary_matrix_with_carry(operation) && carry == 0u ? 1u : 0u;
     uint16_t add_carry =
-        arithmetic_matrix_addition(operation) && arithmetic_matrix_with_carry(operation)
-            ? carry
-            : 0u;
-    bool sticky_zero = arithmetic_matrix_with_carry(operation);
+        binary_matrix_addition(operation) && binary_matrix_with_carry(operation) ? carry
+                                                                                 : 0u;
+    bool sticky_zero = binary_matrix_with_carry(operation);
     uint16_t status = (uint16_t)(initial_status & ~0x010fu);
     uint16_t value;
 
     left = (uint16_t)(left & mask);
     right = (uint16_t)(right & mask);
-    value = arithmetic_matrix_result(operation, left, right, initial_status, byte_mode);
+    value = binary_matrix_result(operation, left, right, initial_status, byte_mode);
+    if (binary_matrix_logical(operation)) {
+        status = (uint16_t)(initial_status & ~0x000au);
+        if (value == 0u) {
+            status |= 0x0002u;
+        }
+        if ((value & sign) != 0u) {
+            status |= 0x0008u;
+        }
+        return status;
+    }
     if (value == 0u && (!sticky_zero || (initial_status & 0x0002u) != 0u)) {
         status |= 0x0002u;
     }
     if ((value & sign) != 0u) {
         status |= 0x0008u;
     }
-    if (arithmetic_matrix_addition(operation)) {
+    if (binary_matrix_addition(operation)) {
         uint32_t result = (uint32_t)left + right + add_carry;
         int32_t signed_left = byte_mode ? (int8_t)left : (int16_t)left;
         int32_t signed_right = byte_mode ? (int8_t)right : (int16_t)right;
@@ -5077,8 +5099,8 @@ static uint16_t arithmetic_matrix_status(ArithmeticMatrixOperation operation,
             status |= 0x0004u;
         }
     } else {
-        uint16_t minuend = arithmetic_matrix_reverse(operation) ? right : left;
-        uint16_t subtrahend = arithmetic_matrix_reverse(operation) ? left : right;
+        uint16_t minuend = binary_matrix_reverse(operation) ? right : left;
+        uint16_t subtrahend = binary_matrix_reverse(operation) ? left : right;
         uint32_t subtraction = (uint32_t)subtrahend + borrow;
         uint16_t operand = (uint16_t)(subtraction & mask);
         if (minuend >= subtraction) {
@@ -5094,15 +5116,14 @@ static uint16_t arithmetic_matrix_status(ArithmeticMatrixOperation operation,
     return status;
 }
 
-static void arithmetic_matrix_write_register(uint16_t registers[16], uint8_t reg,
-                                             uint16_t value) {
+static void binary_matrix_write_register(uint16_t registers[16], uint8_t reg,
+                                         uint16_t value) {
     registers[reg] = reg == 15u ? (uint16_t)(value & 0xfffeu) : value;
 }
 
-static ArithmeticMatrixOperand arithmetic_matrix_operand(uint16_t registers[16],
-                                                         uint8_t mode, uint8_t reg,
-                                                         uint8_t width) {
-    ArithmeticMatrixOperand operand = {0u, mode == 0u};
+static BinaryMatrixOperand binary_matrix_operand(uint16_t registers[16], uint8_t mode,
+                                                 uint8_t reg, uint8_t width) {
+    BinaryMatrixOperand operand = {0u, mode == 0u};
     int32_t adjusted;
 
     if (mode == 0u) {
@@ -5116,13 +5137,13 @@ static ArithmeticMatrixOperand arithmetic_matrix_operand(uint16_t registers[16],
         operand.address = registers[reg];
         adjusted =
             (int32_t)registers[reg] + (mode == 3u ? (int32_t)width : -(int32_t)width);
-        arithmetic_matrix_write_register(registers, reg, (uint16_t)adjusted);
+        binary_matrix_write_register(registers, reg, (uint16_t)adjusted);
         return operand;
     }
     adjusted =
         (int32_t)registers[reg] + (mode == 5u ? (int32_t)width : -(int32_t)width);
     operand.address = (uint16_t)adjusted;
-    arithmetic_matrix_write_register(registers, reg, (uint16_t)adjusted);
+    binary_matrix_write_register(registers, reg, (uint16_t)adjusted);
     return operand;
 }
 
@@ -5152,8 +5173,8 @@ static void prepare_arithmetic_matrix_case(Dspic33* cpu, uint16_t registers[16],
     }
 }
 
-static bool arithmetic_matrix_registers_match(const Dspic33* cpu,
-                                              const uint16_t registers[16]) {
+static bool binary_matrix_registers_match(const Dspic33* cpu,
+                                          const uint16_t registers[16]) {
     uint8_t reg;
 
     for (reg = 0u; reg < 16u; reg++) {
@@ -5164,9 +5185,9 @@ static bool arithmetic_matrix_registers_match(const Dspic33* cpu,
     return true;
 }
 
-static void run_legal_arithmetic_matrix_case(ProcessorConformance* state, Dspic33* cpu,
-                                             uint32_t opcode,
-                                             ArithmeticMatrixOperation operation) {
+static void run_legal_binary_matrix_case(ProcessorConformance* state, Dspic33* cpu,
+                                         uint32_t opcode,
+                                         BinaryMatrixOperation operation) {
     uint8_t left_register = (uint8_t)((opcode >> 15u) & 0x0fu);
     uint8_t destination_register = (uint8_t)((opcode >> 7u) & 0x0fu);
     uint8_t destination_mode = (uint8_t)((opcode >> 11u) & 0x07u);
@@ -5174,10 +5195,15 @@ static void run_legal_arithmetic_matrix_case(ProcessorConformance* state, Dspic3
     uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
     bool byte_mode = (opcode & 0x004000u) != 0u;
     uint8_t width = byte_mode ? 1u : 2u;
-    uint16_t initial_status = (uint16_t)((opcode & 1u) | (((opcode >> 7u) & 1u) << 1u));
+    uint16_t initial_status =
+        binary_matrix_logical(operation)
+            ? (uint16_t)((opcode & 1u) | (((opcode >> 7u) & 1u) << 1u) |
+                         (((opcode >> 8u) & 1u) << 2u) | (((opcode >> 9u) & 1u) << 3u) |
+                         (((opcode >> 10u) & 1u) << 8u))
+            : (uint16_t)((opcode & 1u) | (((opcode >> 7u) & 1u) << 1u));
     uint16_t registers[16];
-    ArithmeticMatrixOperand source;
-    ArithmeticMatrixOperand destination;
+    BinaryMatrixOperand source;
+    BinaryMatrixOperand destination;
     uint16_t left;
     uint16_t right;
     uint16_t value;
@@ -5194,14 +5220,13 @@ static void run_legal_arithmetic_matrix_case(ProcessorConformance* state, Dspic3
         source.address = 0u;
         right = (uint16_t)(opcode & 0x001fu);
     } else {
-        source =
-            arithmetic_matrix_operand(registers, source_mode, source_register, width);
+        source = binary_matrix_operand(registers, source_mode, source_register, width);
         right = source.direct ? (byte_mode ? (uint8_t)registers[source_register]
                                            : registers[source_register])
                               : source_value;
     }
-    destination = arithmetic_matrix_operand(registers, destination_mode,
-                                            destination_register, width);
+    destination =
+        binary_matrix_operand(registers, destination_mode, destination_register, width);
     if (!destination.direct) {
         if (byte_mode) {
             dspic33_write_byte(cpu, destination.address, 0x5au);
@@ -5216,15 +5241,15 @@ static void run_legal_arithmetic_matrix_case(ProcessorConformance* state, Dspic3
             dspic33_write_word(cpu, source.address, source_value);
         }
     }
-    value = arithmetic_matrix_result(operation, left, right, initial_status, byte_mode);
+    value = binary_matrix_result(operation, left, right, initial_status, byte_mode);
     expected_status =
-        arithmetic_matrix_status(operation, left, right, initial_status, byte_mode);
+        binary_matrix_status(operation, left, right, initial_status, byte_mode);
     if (destination.direct) {
         if (byte_mode) {
             value = (uint16_t)((registers[destination_register] & 0xff00u) |
                                (value & 0x00ffu));
         }
-        arithmetic_matrix_write_register(registers, destination_register, value);
+        binary_matrix_write_register(registers, destination_register, value);
     }
     cycles = cpu->cycles;
     matches = dspic33_load_program_word(cpu, 0u, opcode) &&
@@ -5233,18 +5258,25 @@ static void run_legal_arithmetic_matrix_case(ProcessorConformance* state, Dspic3
               cpu->corcon == 0x0020u && cpu->unsupported_opcode == 0u &&
               !cpu->address_error && !cpu->illegal_reset &&
               cpu->last_trap == UINT16_MAX &&
-              arithmetic_matrix_registers_match(cpu, registers);
+              binary_matrix_registers_match(cpu, registers);
     if (!destination.direct) {
         matches =
             matches &&
             (byte_mode ? dspic33_read_byte(cpu, destination.address) == (uint8_t)value
                        : dspic33_read_word(cpu, destination.address) == value);
     }
-    expect_dsp_matrix_case(state, matches, opcode, "legal arithmetic encoding");
+    if (source_mode < 6u && !source.direct &&
+        (destination.direct || destination.address != source.address)) {
+        matches =
+            matches &&
+            (byte_mode ? dspic33_read_byte(cpu, source.address) == (uint8_t)source_value
+                       : dspic33_read_word(cpu, source.address) == source_value);
+    }
+    expect_dsp_matrix_case(state, matches, opcode, "legal binary encoding");
 }
 
-static void run_invalid_arithmetic_matrix_case(ProcessorConformance* state,
-                                               Dspic33* cpu, uint32_t opcode) {
+static void run_invalid_binary_matrix_case(ProcessorConformance* state, Dspic33* cpu,
+                                           uint32_t opcode) {
     uint64_t illegal_resets;
     bool matches;
     uint8_t reg;
@@ -5272,7 +5304,7 @@ static void run_invalid_arithmetic_matrix_case(ProcessorConformance* state,
     for (reg = 0u; reg < 15u; reg++) {
         matches = matches && cpu->w[reg] == 0u;
     }
-    expect_dsp_matrix_case(state, matches, opcode, "illegal arithmetic encoding");
+    expect_dsp_matrix_case(state, matches, opcode, "illegal binary encoding");
 }
 
 static void general_arithmetic_encoding_matrix_cases(ProcessorConformance* state,
@@ -5291,11 +5323,11 @@ static void general_arithmetic_encoding_matrix_cases(ProcessorConformance* state
             uint32_t opcode = bases[operation] | fields;
             uint8_t destination_mode = (uint8_t)((opcode >> 11u) & 0x07u);
             if (destination_mode >= 6u) {
-                run_invalid_arithmetic_matrix_case(state, cpu, opcode);
+                run_invalid_binary_matrix_case(state, cpu, opcode);
                 invalid++;
             } else {
-                run_legal_arithmetic_matrix_case(state, cpu, opcode,
-                                                 (ArithmeticMatrixOperation)operation);
+                run_legal_binary_matrix_case(state, cpu, opcode,
+                                             (BinaryMatrixOperation)operation);
                 legal++;
             }
         }
@@ -5306,9 +5338,40 @@ static void general_arithmetic_encoding_matrix_cases(ProcessorConformance* state
            "general arithmetic illegal encoding matrix is exhaustive");
 }
 
+static void general_logical_encoding_matrix_cases(ProcessorConformance* state,
+                                                  Dspic33* cpu) {
+    static const uint32_t bases[3] = {0x600000u, 0x680000u, 0x700000u};
+    static const BinaryMatrixOperation operations[3] = {
+        ARITHMETIC_MATRIX_AND, ARITHMETIC_MATRIX_XOR, ARITHMETIC_MATRIX_IOR};
+    uint32_t legal = 0u;
+    uint32_t invalid = 0u;
+    uint8_t operation;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    for (operation = 0u; operation < 3u; operation++) {
+        uint32_t fields;
+        for (fields = 0u; fields < 0x080000u; fields++) {
+            uint32_t opcode = bases[operation] | fields;
+            uint8_t destination_mode = (uint8_t)((opcode >> 11u) & 0x07u);
+            if (destination_mode >= 6u) {
+                run_invalid_binary_matrix_case(state, cpu, opcode);
+                invalid++;
+            } else {
+                run_legal_binary_matrix_case(state, cpu, opcode, operations[operation]);
+                legal++;
+            }
+        }
+    }
+    expect(state, legal == 1179648u,
+           "general logical legal encoding matrix is exhaustive");
+    expect(state, invalid == 393216u,
+           "general logical illegal encoding matrix is exhaustive");
+}
+
 static void run_literal_arithmetic_matrix_case(ProcessorConformance* state,
                                                Dspic33* cpu, uint32_t opcode,
-                                               ArithmeticMatrixOperation operation,
+                                               BinaryMatrixOperation operation,
                                                uint16_t literal, bool byte_mode) {
     uint8_t destination = (uint8_t)(opcode & 0x0fu);
     uint16_t initial_status =
@@ -5333,9 +5396,9 @@ static void run_literal_arithmetic_matrix_case(ProcessorConformance* state,
                                  byte_mode ? (uint16_t)(0xa500u | left) : left);
     left = byte_mode ? (uint8_t)cpu->w[destination] : cpu->w[destination];
     expected =
-        arithmetic_matrix_result(operation, left, literal, initial_status, byte_mode);
+        binary_matrix_result(operation, left, literal, initial_status, byte_mode);
     expected_status =
-        arithmetic_matrix_status(operation, left, literal, initial_status, byte_mode);
+        binary_matrix_status(operation, left, literal, initial_status, byte_mode);
     if (byte_mode) {
         expected = (uint16_t)((cpu->w[destination] & 0xff00u) | expected);
     }
@@ -5355,7 +5418,7 @@ static void run_literal_arithmetic_matrix_case(ProcessorConformance* state,
 static void literal_arithmetic_encoding_matrix_cases(ProcessorConformance* state,
                                                      Dspic33* cpu) {
     static const uint32_t bases[4] = {0xb00000u, 0xb08000u, 0xb10000u, 0xb18000u};
-    static const ArithmeticMatrixOperation operations[4] = {
+    static const BinaryMatrixOperation operations[4] = {
         ARITHMETIC_MATRIX_ADD, ARITHMETIC_MATRIX_ADDC, ARITHMETIC_MATRIX_SUB,
         ARITHMETIC_MATRIX_SUBB};
     uint32_t cases = 0u;
@@ -5414,14 +5477,12 @@ static void arithmetic_flag_boundary_cases(ProcessorConformance* state, Dspic33*
                             uint32_t opcode = bases[operation] | ((uint32_t)2u << 15u) |
                                               ((uint32_t)byte_mode << 14u) |
                                               ((uint32_t)4u << 7u) | 3u;
-                            uint16_t expected = arithmetic_matrix_result(
-                                (ArithmeticMatrixOperation)operation,
-                                values[left_index], values[right_index], initial_status,
-                                byte_mode != 0u);
-                            uint16_t expected_status = arithmetic_matrix_status(
-                                (ArithmeticMatrixOperation)operation,
-                                values[left_index], values[right_index], initial_status,
-                                byte_mode != 0u);
+                            uint16_t expected = binary_matrix_result(
+                                (BinaryMatrixOperation)operation, values[left_index],
+                                values[right_index], initial_status, byte_mode != 0u);
+                            uint16_t expected_status = binary_matrix_status(
+                                (BinaryMatrixOperation)operation, values[left_index],
+                                values[right_index], initial_status, byte_mode != 0u);
                             bool matches;
 
                             cpu->pc = 0u;
@@ -5460,6 +5521,7 @@ static void arithmetic_flag_boundary_cases(ProcessorConformance* state, Dspic33*
 static void arithmetic_encoding_matrix_cases(ProcessorConformance* state,
                                              Dspic33* cpu) {
     general_arithmetic_encoding_matrix_cases(state, cpu);
+    general_logical_encoding_matrix_cases(state, cpu);
     literal_arithmetic_encoding_matrix_cases(state, cpu);
     arithmetic_flag_boundary_cases(state, cpu);
 }
@@ -5495,8 +5557,8 @@ static uint16_t direct_file_result(DirectFileOperation operation, uint16_t left,
     uint16_t mask = byte_mode ? 0x00ffu : 0xffffu;
 
     if (operation <= DIRECT_FILE_SUBB) {
-        return arithmetic_matrix_result((ArithmeticMatrixOperation)operation, left,
-                                        right, initial_status, byte_mode);
+        return binary_matrix_result((BinaryMatrixOperation)operation, left, right,
+                                    initial_status, byte_mode);
     }
     if (operation == DIRECT_FILE_AND) {
         return (uint16_t)((left & right) & mask);
@@ -5508,18 +5570,18 @@ static uint16_t direct_file_result(DirectFileOperation operation, uint16_t left,
         return (uint16_t)((left | right) & mask);
     }
     if (operation == DIRECT_FILE_INC || operation == DIRECT_FILE_INC2) {
-        return arithmetic_matrix_result(ARITHMETIC_MATRIX_ADD, left,
-                                        operation == DIRECT_FILE_INC2 ? 2u : 1u,
-                                        initial_status, byte_mode);
+        return binary_matrix_result(ARITHMETIC_MATRIX_ADD, left,
+                                    operation == DIRECT_FILE_INC2 ? 2u : 1u,
+                                    initial_status, byte_mode);
     }
     if (operation == DIRECT_FILE_DEC || operation == DIRECT_FILE_DEC2) {
-        return arithmetic_matrix_result(ARITHMETIC_MATRIX_SUB, left,
-                                        operation == DIRECT_FILE_DEC2 ? 2u : 1u,
-                                        initial_status, byte_mode);
+        return binary_matrix_result(ARITHMETIC_MATRIX_SUB, left,
+                                    operation == DIRECT_FILE_DEC2 ? 2u : 1u,
+                                    initial_status, byte_mode);
     }
     if (operation == DIRECT_FILE_NEG) {
-        return arithmetic_matrix_result(ARITHMETIC_MATRIX_SUB, 0u, left, initial_status,
-                                        byte_mode);
+        return binary_matrix_result(ARITHMETIC_MATRIX_SUB, 0u, left, initial_status,
+                                    byte_mode);
     }
     if (operation == DIRECT_FILE_COM) {
         return (uint16_t)(~left & mask);
@@ -5550,27 +5612,149 @@ static uint16_t direct_file_status(DirectFileOperation operation, uint16_t left,
         direct_file_result(operation, left, right, initial_status, byte_mode);
 
     if (operation <= DIRECT_FILE_SUBB) {
-        return arithmetic_matrix_status((ArithmeticMatrixOperation)operation, left,
-                                        right, initial_status, byte_mode);
+        return binary_matrix_status((BinaryMatrixOperation)operation, left, right,
+                                    initial_status, byte_mode);
     }
     if (operation <= DIRECT_FILE_IOR || operation == DIRECT_FILE_COM) {
         return direct_file_logic_status(initial_status, value, byte_mode);
     }
     if (operation == DIRECT_FILE_INC || operation == DIRECT_FILE_INC2) {
-        return arithmetic_matrix_status(ARITHMETIC_MATRIX_ADD, left,
-                                        operation == DIRECT_FILE_INC2 ? 2u : 1u,
-                                        initial_status, byte_mode);
+        return binary_matrix_status(ARITHMETIC_MATRIX_ADD, left,
+                                    operation == DIRECT_FILE_INC2 ? 2u : 1u,
+                                    initial_status, byte_mode);
     }
     if (operation == DIRECT_FILE_DEC || operation == DIRECT_FILE_DEC2) {
-        return arithmetic_matrix_status(ARITHMETIC_MATRIX_SUB, left,
-                                        operation == DIRECT_FILE_DEC2 ? 2u : 1u,
-                                        initial_status, byte_mode);
+        return binary_matrix_status(ARITHMETIC_MATRIX_SUB, left,
+                                    operation == DIRECT_FILE_DEC2 ? 2u : 1u,
+                                    initial_status, byte_mode);
     }
     if (operation == DIRECT_FILE_NEG) {
-        return arithmetic_matrix_status(ARITHMETIC_MATRIX_SUB, 0u, left, initial_status,
-                                        byte_mode);
+        return binary_matrix_status(ARITHMETIC_MATRIX_SUB, 0u, left, initial_status,
+                                    byte_mode);
     }
     return initial_status;
+}
+
+static void run_legal_unary_matrix_case(ProcessorConformance* state, Dspic33* cpu,
+                                        uint32_t opcode,
+                                        DirectFileOperation operation) {
+    uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
+    uint8_t source_register = (uint8_t)(opcode & 0x0fu);
+    uint8_t destination_mode = (uint8_t)((opcode >> 11u) & 0x07u);
+    uint8_t destination_register = (uint8_t)((opcode >> 7u) & 0x0fu);
+    bool byte_mode = (opcode & 0x004000u) != 0u;
+    uint8_t width = byte_mode ? 1u : 2u;
+    bool reads_source = direct_file_reads_source(operation);
+    uint16_t initial_status =
+        (uint16_t)((opcode & 1u) | (((opcode >> 7u) & 1u) << 1u) |
+                   (((opcode >> 8u) & 1u) << 2u) | (((opcode >> 9u) & 1u) << 3u) |
+                   (((opcode >> 10u) & 1u) << 8u));
+    uint16_t registers[16];
+    BinaryMatrixOperand source = {0u, true};
+    BinaryMatrixOperand destination;
+    uint16_t source_value = byte_mode ? (uint16_t)(0x0040u | (opcode & 0x003fu))
+                                      : (uint16_t)(0x2100u | (opcode & 0x00ffu));
+    uint16_t source_operand = 0u;
+    uint16_t value;
+    uint16_t expected_status;
+    uint64_t cycles;
+    bool matches;
+
+    prepare_arithmetic_matrix_case(cpu, registers, initial_status);
+    if (reads_source) {
+        source = binary_matrix_operand(registers, source_mode, source_register, width);
+        source_operand = source.direct
+                             ? (byte_mode ? (uint8_t)registers[source_register]
+                                          : registers[source_register])
+                             : source_value;
+    }
+    destination =
+        binary_matrix_operand(registers, destination_mode, destination_register, width);
+    if (!destination.direct) {
+        if (byte_mode) {
+            dspic33_write_byte(cpu, destination.address, 0x5au);
+        } else {
+            dspic33_write_word(cpu, destination.address, 0x5a5au);
+        }
+    }
+    if (reads_source && !source.direct) {
+        if (byte_mode) {
+            dspic33_write_byte(cpu, source.address, (uint8_t)source_value);
+        } else {
+            dspic33_write_word(cpu, source.address, source_value);
+        }
+    }
+    value =
+        direct_file_result(operation, source_operand, 0u, initial_status, byte_mode);
+    expected_status =
+        direct_file_status(operation, source_operand, 0u, initial_status, byte_mode);
+    if (destination.direct) {
+        if (byte_mode) {
+            value = (uint16_t)((registers[destination_register] & 0xff00u) |
+                               (value & 0x00ffu));
+        }
+        binary_matrix_write_register(registers, destination_register, value);
+    }
+    cycles = cpu->cycles;
+    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+              cpu->cycles - cycles == 1u && cpu->sr == expected_status &&
+              cpu->corcon == 0x0020u && cpu->unsupported_opcode == 0u &&
+              !cpu->address_error && !cpu->illegal_reset &&
+              cpu->last_trap == UINT16_MAX &&
+              binary_matrix_registers_match(cpu, registers);
+    if (!destination.direct) {
+        matches =
+            matches &&
+            (byte_mode ? dspic33_read_byte(cpu, destination.address) == (uint8_t)value
+                       : dspic33_read_word(cpu, destination.address) == value);
+    }
+    if (reads_source && !source.direct &&
+        (destination.direct || destination.address != source.address)) {
+        matches =
+            matches &&
+            (byte_mode ? dspic33_read_byte(cpu, source.address) == (uint8_t)source_value
+                       : dspic33_read_word(cpu, source.address) == source_value);
+    }
+    expect_dsp_matrix_case(state, matches, opcode, "legal unary encoding");
+}
+
+static void general_unary_encoding_matrix_cases(ProcessorConformance* state,
+                                                Dspic33* cpu) {
+    static const DirectFileOperation operations[4][2] = {
+        {DIRECT_FILE_INC, DIRECT_FILE_INC2},
+        {DIRECT_FILE_DEC, DIRECT_FILE_DEC2},
+        {DIRECT_FILE_NEG, DIRECT_FILE_COM},
+        {DIRECT_FILE_CLR, DIRECT_FILE_SETM}};
+    uint32_t legal = 0u;
+    uint32_t invalid = 0u;
+    uint32_t fields;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    for (fields = 0u; fields < 0x040000u; fields++) {
+        uint32_t opcode = 0xe80000u | fields;
+        uint8_t family = (uint8_t)((opcode >> 16u) - 0xe8u);
+        uint8_t alternate = (uint8_t)((opcode >> 15u) & 1u);
+        uint8_t destination_mode = (uint8_t)((opcode >> 11u) & 0x07u);
+        uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
+        bool nullary = family == 3u;
+        bool valid = destination_mode < 6u &&
+                     (nullary ? (opcode & 0x00007fu) == 0u : source_mode < 6u);
+
+        if (valid) {
+            run_legal_unary_matrix_case(state, cpu, opcode,
+                                        operations[family][alternate]);
+            legal++;
+        } else {
+            run_invalid_binary_matrix_case(state, cpu, opcode);
+            invalid++;
+        }
+    }
+    expect(state, legal == 110976u,
+           "general unary legal encoding matrix is exhaustive");
+    expect(state, invalid == 151168u,
+           "general unary illegal encoding matrix is exhaustive");
 }
 
 static uint16_t direct_file_boundary_value(uint8_t index, bool byte_mode) {
@@ -6057,7 +6241,7 @@ static void direct_file_logical_encoding_matrix_cases(ProcessorConformance* stat
     }
     for (uint8_t byte_mode = 0u; byte_mode < 2u; byte_mode++) {
         for (uint16_t address = 0u; address < 0x2000u; address++) {
-            run_invalid_arithmetic_matrix_case(
+            run_invalid_binary_matrix_case(
                 state, invalid_cpu, 0xb78000u | ((uint32_t)byte_mode << 14u) | address);
             invalid++;
         }
@@ -7845,6 +8029,7 @@ int main(void) {
         valid_dsp_register_pair_cases(&state, &cpu);
         dsp_prefetch_destination_collision_cases(&state, &cpu);
         arithmetic_encoding_matrix_cases(&state, &cpu);
+        general_unary_encoding_matrix_cases(&state, &cpu);
         direct_file_arithmetic_encoding_matrix_cases(&state);
         direct_file_logical_encoding_matrix_cases(&state, &cpu);
         direct_file_unary_encoding_matrix_cases(&state);

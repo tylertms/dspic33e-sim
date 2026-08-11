@@ -1301,11 +1301,20 @@ static bool execute_unary(Dspic33* cpu, uint32_t opcode) {
     uint8_t source_register = (uint8_t)(opcode & 0x0fu);
     uint8_t destination_mode = (uint8_t)((opcode >> 11u) & 0x07u);
     uint8_t destination_register = (uint8_t)((opcode >> 7u) & 0x0fu);
-    uint16_t source = byte_mode
-                          ? read_operand_byte(cpu, source_mode, source_register, 0u)
-                          : read_operand_word(cpu, source_mode, source_register, 0u);
+    bool reads_source = family != 0xebu;
+    uint16_t source;
     uint16_t value;
     bool arithmetic = true;
+    if (destination_mode >= 6u || (reads_source && source_mode >= 6u) ||
+        (!reads_source && (opcode & 0x00007fu) != 0u)) {
+        perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+        return true;
+    }
+    source =
+        reads_source
+            ? (byte_mode ? read_operand_byte(cpu, source_mode, source_register, 0u)
+                         : read_operand_word(cpu, source_mode, source_register, 0u))
+            : 0u;
     if (cpu->illegal_reset) {
         return true;
     }
