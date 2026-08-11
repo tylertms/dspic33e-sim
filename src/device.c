@@ -159,6 +159,7 @@ enum {
     OSCILLATOR_CURRENT_MASK = 0x7000u,
     OSCILLATOR_REQUEST_MASK = 0x0700u,
     OSCILLATOR_CLOCK_LOCK = 0x0080u,
+    OSCILLATOR_CONFIGURATION_CLOCK_LOCK = 0x0040u,
     OSCILLATOR_IO_LOCK = 0x0040u,
     OSCILLATOR_PLL_LOCK = 0x0020u,
     OSCILLATOR_CLOCK_FAIL = 0x0008u,
@@ -641,9 +642,15 @@ enum {
     DCI_EVENT_DISABLED = 0x00000001u,
     DCI_EVENT_GENERATION_SHIFT = 1u,
     AUXILIARY_CLOCK_CONTROL = 0x0758u,
+    AUXILIARY_CLOCK_DIVISOR = 0x075au,
     AUXILIARY_PLL_ENABLE = 0x8000u,
     AUXILIARY_PLL_LOCK = 0x4000u,
     AUXILIARY_CLOCK_WRITABLE = 0xbee7u,
+    AUXILIARY_CLOCK_DIVISOR_WRITABLE = 0x0007u,
+    AUXILIARY_CLOCK_SOURCE_PRIMARY = 0x0400u,
+    AUXILIARY_CLOCK_SOURCE_FRC = 0x0200u,
+    AUXILIARY_CLOCK_OSCILLATOR_MODE = 0x1800u,
+    AUXILIARY_PLL_PRESCALER = 0x0007u,
     AUXILIARY_PLL_LOCK_DELAY = 32u
 };
 
@@ -680,7 +687,7 @@ static const Dspic33RegisterMask register_masks[] = {
     {0x06f0u, 0x7f7fu}, {0x06f2u, 0x007fu}, {0x06f4u, 0x7f7fu}, {0x06f6u, 0x007fu},
     {0x0728u, 0x700fu}, {0x072cu, 0x00ffu}, {0x072eu, 0x00ffu}, {0x0740u, 0xcbffu},
     {0x0744u, 0xffdfu}, {0x0746u, 0x01ffu}, {0x0748u, 0x003fu}, {0x074eu, 0xbf00u},
-    {0x075au, 0x183fu}, {0x0760u, 0xffffu}, {0x0762u, 0xffffu}, {0x0764u, 0xf7abu},
+    {0x075au, 0x0007u}, {0x0760u, 0xffffu}, {0x0762u, 0xffffu}, {0x0764u, 0xf7abu},
     {0x0766u, 0x0021u}, {0x0768u, 0xffffu}, {0x076au, 0x3f03u}, {0x076cu, 0x00f0u},
     {0x0800u, 0xffffu}, {0x0802u, 0xffffu}, {0x0804u, 0xffffu}, {0x0806u, 0x7fffu},
     {0x0808u, 0x0afeu}, {0x080au, 0xdfeeu}, {0x080cu, 0xc3efu}, {0x080eu, 0xffc0u},
@@ -8419,12 +8426,68 @@ static void complete_nvm_event(Dspic33* cpu) {
     dspic33_raise_interrupt(cpu, 15u);
 }
 
+static uint8_t auxiliary_pll_input(uint16_t control) {
+    if ((control & AUXILIARY_CLOCK_SOURCE_FRC) != 0u) {
+        return 1u;
+    }
+    if ((control & AUXILIARY_CLOCK_SOURCE_PRIMARY) != 0u) {
+        return 2u;
+    }
+    return (uint8_t)(4u | ((control & AUXILIARY_CLOCK_OSCILLATOR_MODE) >> 11u));
+}
+
+static bool auxiliary_pll_input_available(const Dspic33* cpu, uint16_t control) {
+    uint8_t input = auxiliary_pll_input(control);
+    if (input == 1u) {
+        return true;
+    }
+    if (input == 2u) {
+        return (cpu->configuration[8u] & 0x03u) != 0x03u;
+    }
+    return input != 4u;
+}
+
+static bool auxiliary_pll_reconfiguration(uint16_t previous, uint16_t control) {
+    return ((previous ^ control) & (AUXILIARY_PLL_ENABLE | AUXILIARY_PLL_PRESCALER)) !=
+               0u ||
+           auxiliary_pll_input(previous) != auxiliary_pll_input(control);
+}
+
+static bool auxiliary_clock_configuration_locked(const Dspic33* cpu) {
+    return (raw_word(cpu, OSCILLATOR_CONTROL) & OSCILLATOR_CLOCK_LOCK) != 0u &&
+           (cpu->configuration[8u] & OSCILLATOR_CONFIGURATION_CLOCK_LOCK) != 0u;
+}
+
 static void complete_auxiliary_pll(Dspic33* cpu, uint32_t generation) {
     uint16_t control = raw_word(cpu, AUXILIARY_CLOCK_CONTROL);
     if (generation == cpu->io.auxiliary_pll_generation &&
-        (control & AUXILIARY_PLL_ENABLE) != 0u) {
+        (control & AUXILIARY_PLL_ENABLE) != 0u &&
+        auxiliary_pll_input_available(cpu, control)) {
         raw_write_word(cpu, AUXILIARY_CLOCK_CONTROL,
                        (uint16_t)(control | AUXILIARY_PLL_LOCK));
+    }
+}
+
+static void reconfigure_auxiliary_pll(Dspic33* cpu) {
+    uint16_t control =
+        (uint16_t)(raw_word(cpu, AUXILIARY_CLOCK_CONTROL) & ~AUXILIARY_PLL_LOCK);
+    cpu->io.auxiliary_pll_generation++;
+    raw_write_word(cpu, AUXILIARY_CLOCK_CONTROL, control);
+    if ((control & AUXILIARY_PLL_ENABLE) != 0u &&
+        auxiliary_pll_input_available(cpu, control) &&
+        !dspic33_schedule(cpu, DSPIC33_EVENT_AUX_PLL, 0u,
+                          cpu->io.auxiliary_pll_generation, AUXILIARY_PLL_LOCK_DELAY)) {
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    }
+}
+
+void dspic33_device_configuration_changed(Dspic33* cpu, uint32_t address,
+                                          uint8_t previous) {
+    uint16_t control = raw_word(cpu, AUXILIARY_CLOCK_CONTROL);
+    if (address == DSPIC33_CONFIGURATION_BASE + 8u &&
+        auxiliary_pll_input(control) == 2u &&
+        ((previous ^ cpu->configuration[8u]) & 0x03u) != 0u) {
+        reconfigure_auxiliary_pll(cpu);
     }
 }
 
@@ -9913,20 +9976,32 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     }
     interrupt_control_write(cpu, base, previous, requested);
     if (base == AUXILIARY_CLOCK_CONTROL) {
-        uint16_t control = (uint16_t)((previous & ~AUXILIARY_CLOCK_WRITABLE) |
-                                      (requested & AUXILIARY_CLOCK_WRITABLE));
-        raw_write_word(cpu, base, control);
-        if (((previous ^ control) & AUXILIARY_CLOCK_WRITABLE) != 0u) {
-            control &= (uint16_t)~AUXILIARY_PLL_LOCK;
-            cpu->io.auxiliary_pll_generation++;
+        if (auxiliary_clock_configuration_locked(cpu)) {
+            raw_write_word(cpu, base, previous);
+        } else {
+            uint16_t control = (uint16_t)((previous & ~AUXILIARY_CLOCK_WRITABLE) |
+                                          (requested & AUXILIARY_CLOCK_WRITABLE));
             raw_write_word(cpu, base, control);
-            if ((control & AUXILIARY_PLL_ENABLE) != 0u &&
-                !dspic33_schedule(cpu, DSPIC33_EVENT_AUX_PLL, 0u,
-                                  cpu->io.auxiliary_pll_generation,
-                                  AUXILIARY_PLL_LOCK_DELAY)) {
-                cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+            if (auxiliary_pll_reconfiguration(previous, control)) {
+                reconfigure_auxiliary_pll(cpu);
             }
         }
+    }
+    if (base == AUXILIARY_CLOCK_DIVISOR) {
+        if (auxiliary_clock_configuration_locked(cpu)) {
+            raw_write_word(cpu, base, previous);
+        } else {
+            uint16_t divisor = requested & AUXILIARY_CLOCK_DIVISOR_WRITABLE;
+            raw_write_word(cpu, base, divisor);
+            if (((previous ^ divisor) & AUXILIARY_CLOCK_DIVISOR_WRITABLE) != 0u) {
+                reconfigure_auxiliary_pll(cpu);
+            }
+        }
+    }
+    if (base == 0x0748u &&
+        auxiliary_pll_input(raw_word(cpu, AUXILIARY_CLOCK_CONTROL)) == 1u &&
+        ((previous ^ raw_word(cpu, base)) & 0x003fu) != 0u) {
+        reconfigure_auxiliary_pll(cpu);
     }
     update_timer_register(cpu, base);
     update_adc_register(cpu, base, previous, requested);

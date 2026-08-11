@@ -3755,6 +3755,7 @@ void dspic33_complete_nvm(Dspic33* cpu) {
             cpu->configuration[offset] =
                 (uint8_t)((current & (uint8_t)~mask) | (latch & mask));
         }
+        dspic33_device_configuration_changed(cpu, target, current);
         return;
     }
     if (operation == 0x0au) {
