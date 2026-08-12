@@ -5367,6 +5367,13 @@ typedef enum {
     DIRECT_FILE_COM,
     DIRECT_FILE_CLR,
     DIRECT_FILE_SETM,
+    DIRECT_FILE_SL,
+    DIRECT_FILE_LSR,
+    DIRECT_FILE_ASR,
+    DIRECT_FILE_RLNC,
+    DIRECT_FILE_RLC,
+    DIRECT_FILE_RRNC,
+    DIRECT_FILE_RRC,
     DIRECT_FILE_CP,
     DIRECT_FILE_CPB,
     DIRECT_FILE_CP0
@@ -5977,6 +5984,59 @@ static bool direct_file_writes_result(DirectFileOperation operation) {
     return operation < DIRECT_FILE_CP;
 }
 
+static bool direct_file_shift_operation(DirectFileOperation operation) {
+    return operation >= DIRECT_FILE_SL && operation <= DIRECT_FILE_RRC;
+}
+
+static uint16_t shift_matrix_result(DirectFileOperation operation, uint16_t source,
+                                    uint16_t initial_status, bool byte_mode) {
+    uint16_t mask = byte_mode ? 0x00ffu : 0xffffu;
+    uint16_t sign = byte_mode ? 0x0080u : 0x8000u;
+    uint16_t carry = initial_status & 1u;
+
+    source &= mask;
+    if (operation == DIRECT_FILE_SL) {
+        return (uint16_t)((source << 1u) & mask);
+    }
+    if (operation == DIRECT_FILE_LSR) {
+        return (uint16_t)(source >> 1u);
+    }
+    if (operation == DIRECT_FILE_ASR) {
+        return (uint16_t)((source >> 1u) | (source & sign));
+    }
+    if (operation == DIRECT_FILE_RLNC) {
+        return (uint16_t)(((source << 1u) & mask) | ((source & sign) != 0u ? 1u : 0u));
+    }
+    if (operation == DIRECT_FILE_RLC) {
+        return (uint16_t)(((source << 1u) & mask) | carry);
+    }
+    if (operation == DIRECT_FILE_RRNC) {
+        return (uint16_t)((source >> 1u) | ((source & 1u) != 0u ? sign : 0u));
+    }
+    return (uint16_t)((source >> 1u) | (carry != 0u ? sign : 0u));
+}
+
+static uint16_t shift_matrix_status(DirectFileOperation operation, uint16_t source,
+                                    uint16_t initial_status, bool byte_mode) {
+    uint16_t sign = byte_mode ? 0x0080u : 0x8000u;
+    uint16_t value = shift_matrix_result(operation, source, initial_status, byte_mode);
+    uint16_t status = (uint16_t)(initial_status & ~0x000au);
+
+    if (value == 0u) {
+        status |= 0x0002u;
+    }
+    if ((value & sign) != 0u) {
+        status |= 0x0008u;
+    }
+    if (operation == DIRECT_FILE_SL || operation == DIRECT_FILE_RLC) {
+        status = (uint16_t)((status & ~1u) | ((source & sign) != 0u ? 1u : 0u));
+    } else if (operation == DIRECT_FILE_LSR || operation == DIRECT_FILE_ASR ||
+               operation == DIRECT_FILE_RRC) {
+        status = (uint16_t)((status & ~1u) | (source & 1u));
+    }
+    return status;
+}
+
 static uint16_t direct_file_result(DirectFileOperation operation, uint16_t left,
                                    uint16_t right, uint16_t initial_status,
                                    bool byte_mode) {
@@ -6011,6 +6071,9 @@ static uint16_t direct_file_result(DirectFileOperation operation, uint16_t left,
     }
     if (operation == DIRECT_FILE_COM) {
         return (uint16_t)(~left & mask);
+    }
+    if (direct_file_shift_operation(operation)) {
+        return shift_matrix_result(operation, left, initial_status, byte_mode);
     }
     if (operation == DIRECT_FILE_CP) {
         return binary_matrix_result(ARITHMETIC_MATRIX_SUB, left, right, initial_status,
@@ -6055,6 +6118,9 @@ static uint16_t direct_file_status(DirectFileOperation operation, uint16_t left,
     }
     if (operation <= DIRECT_FILE_IOR || operation == DIRECT_FILE_COM) {
         return direct_file_logic_status(initial_status, value, byte_mode);
+    }
+    if (direct_file_shift_operation(operation)) {
+        return shift_matrix_status(operation, left, initial_status, byte_mode);
     }
     if (operation == DIRECT_FILE_INC || operation == DIRECT_FILE_INC2) {
         return binary_matrix_status(ARITHMETIC_MATRIX_ADD, left,
@@ -6784,6 +6850,644 @@ static void direct_file_unary_encoding_matrix_cases(ProcessorConformance* state)
     }
     dspic33_destroy(&actual);
     dspic33_destroy(&reference);
+}
+
+static DirectFileOperation shift_matrix_operation(uint8_t family, bool alternate) {
+    if (family == 0u) {
+        return DIRECT_FILE_SL;
+    }
+    if (family == 1u) {
+        return alternate ? DIRECT_FILE_ASR : DIRECT_FILE_LSR;
+    }
+    if (family == 2u) {
+        return alternate ? DIRECT_FILE_RLC : DIRECT_FILE_RLNC;
+    }
+    return alternate ? DIRECT_FILE_RRC : DIRECT_FILE_RRNC;
+}
+
+static void single_shift_encoding_matrix_cases(ProcessorConformance* state,
+                                               Dspic33* cpu) {
+    uint32_t legal = 0u;
+    uint32_t invalid = 0u;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    for (uint32_t fields = 0u; fields < 0x040000u; fields++) {
+        uint32_t opcode = 0xd00000u | fields;
+        uint8_t family = (uint8_t)((opcode >> 16u) & 0x03u);
+        bool alternate = (opcode & 0x008000u) != 0u;
+        uint8_t destination_mode = (uint8_t)((opcode >> 11u) & 0x07u);
+        uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
+        bool valid =
+            (family != 0u || !alternate) && destination_mode < 6u && source_mode < 6u;
+
+        if (valid) {
+            run_legal_unary_matrix_case(state, cpu, opcode,
+                                        shift_matrix_operation(family, alternate));
+            legal++;
+        } else {
+            run_invalid_binary_matrix_case(state, cpu, opcode);
+            invalid++;
+        }
+    }
+    expect(state, legal == 129024u, "single-shift legal encoding matrix is exhaustive");
+    expect(state, invalid == 133120u,
+           "single-shift illegal encoding matrix is exhaustive");
+}
+
+static void direct_file_shift_encoding_matrix_cases(ProcessorConformance* state,
+                                                    Dspic33* invalid_cpu) {
+    static const uint32_t bases[7] = {0xd40000u, 0xd50000u, 0xd58000u, 0xd60000u,
+                                      0xd68000u, 0xd70000u, 0xd78000u};
+    static const DirectFileOperation operations[7] = {
+        DIRECT_FILE_SL,  DIRECT_FILE_LSR,  DIRECT_FILE_ASR, DIRECT_FILE_RLNC,
+        DIRECT_FILE_RLC, DIRECT_FILE_RRNC, DIRECT_FILE_RRC};
+    static Dspic33 actual;
+    static Dspic33 reference;
+    uint32_t legal = 0u;
+    uint32_t invalid = 0u;
+    bool actual_initialized = dspic33_initialize(&actual);
+    bool reference_initialized = dspic33_initialize(&reference);
+
+    expect(state, actual_initialized && reference_initialized,
+           "initialize direct-file shift processors");
+    if (!actual_initialized || !reference_initialized) {
+        if (actual_initialized) {
+            dspic33_destroy(&actual);
+        }
+        if (reference_initialized) {
+            dspic33_destroy(&reference);
+        }
+        return;
+    }
+    expect(state,
+           load_direct_file_trap_vectors(&actual) &&
+               load_direct_file_trap_vectors(&reference),
+           "load direct-file shift address-error vectors");
+    for (uint8_t operation = 0u; operation < 7u; operation++) {
+        for (uint8_t byte_mode = 0u; byte_mode < 2u; byte_mode++) {
+            for (uint8_t file_destination = 0u; file_destination < 2u;
+                 file_destination++) {
+                for (uint16_t address = 0u; address < 0x2000u; address++) {
+                    uint32_t opcode = bases[operation] | ((uint32_t)byte_mode << 14u) |
+                                      ((uint32_t)file_destination << 13u) | address;
+                    bool matches = run_direct_file_case(
+                        &actual, &reference, opcode, operations[operation], address,
+                        byte_mode != 0u, file_destination != 0u);
+                    expect_dsp_matrix_case(state, matches, opcode,
+                                           "direct-file shift encoding");
+                    legal++;
+                }
+            }
+        }
+    }
+    for (uint32_t opcode = 0xd48000u; opcode < 0xd50000u; opcode++) {
+        run_invalid_binary_matrix_case(state, invalid_cpu, opcode);
+        invalid++;
+    }
+    expect(state, legal == 229376u,
+           "direct-file shift legal encoding matrix is exhaustive");
+    expect(state, invalid == 32768u,
+           "direct-file shift illegal encoding matrix is exhaustive");
+    dspic33_destroy(&actual);
+    dspic33_destroy(&reference);
+}
+
+static uint16_t multiple_shift_result(DirectFileOperation operation, uint16_t source,
+                                      uint16_t amount) {
+    if (amount >= 16u) {
+        return operation == DIRECT_FILE_ASR && (source & 0x8000u) != 0u ? 0xffffu : 0u;
+    }
+    if (operation == DIRECT_FILE_SL) {
+        return (uint16_t)(source << amount);
+    }
+    if (operation == DIRECT_FILE_ASR) {
+        return (uint16_t)((int16_t)source >> amount);
+    }
+    return (uint16_t)(source >> amount);
+}
+
+static void run_multiple_shift_matrix_case(ProcessorConformance* state, Dspic33* cpu,
+                                           uint32_t opcode,
+                                           DirectFileOperation operation) {
+    uint8_t source = (uint8_t)((opcode >> 11u) & 0x0fu);
+    uint8_t destination = (uint8_t)((opcode >> 7u) & 0x0fu);
+    bool literal = (opcode & 0x0040u) != 0u;
+    uint16_t source_value = (uint16_t)(0x8001u ^ (opcode * 0x45d9u));
+    uint16_t count = literal ? (uint16_t)(opcode & 0x0fu)
+                             : (uint16_t)(0xa500u | ((opcode >> 7u) & 0x001fu));
+    uint16_t amount = literal ? count : (uint16_t)(count & 0x001fu);
+    uint16_t initial_status =
+        (uint16_t)(0x0105u | ((opcode & 1u) << 1u) | (((opcode >> 7u) & 1u) << 3u));
+    uint16_t expected;
+    uint16_t expected_status;
+    uint64_t cycles;
+    bool matches;
+
+    prepare_arithmetic_matrix_case(cpu, cpu->w, initial_status);
+    dspic33_set_working_register(cpu, source, source_value);
+    if (!literal) {
+        cpu->w[opcode & 0x0fu] = count;
+    }
+    source_value = cpu->w[source];
+    expected = multiple_shift_result(operation, source_value, amount);
+    expected_status = (uint16_t)(initial_status & ~0x000au);
+    if (expected == 0u) {
+        expected_status |= 0x0002u;
+    }
+    if ((expected & 0x8000u) != 0u) {
+        expected_status |= 0x0008u;
+    }
+    cycles = cpu->cycles;
+    matches =
+        dspic33_load_program_word(cpu, 0u, opcode) &&
+        dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+        cpu->cycles - cycles == 1u &&
+        cpu->w[destination] == (destination == 15u ? (expected & 0xfffeu) : expected) &&
+        cpu->sr == expected_status && !cpu->illegal_reset &&
+        cpu->unsupported_opcode == 0u;
+    expect_dsp_matrix_case(state, matches, opcode, "multiple-shift encoding");
+}
+
+static void multiple_shift_encoding_matrix_cases(ProcessorConformance* state,
+                                                 Dspic33* cpu) {
+    uint32_t legal = 0u;
+    uint32_t invalid = 0u;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    for (uint32_t opcode = 0xdd0000u; opcode < 0xdf0000u; opcode++) {
+        bool left = (opcode & 0xff0000u) == 0xdd0000u;
+        bool valid = (opcode & 0x0030u) == 0u && (!left || (opcode & 0x008000u) == 0u);
+        if (valid) {
+            DirectFileOperation operation = left                 ? DIRECT_FILE_SL
+                                            : (opcode & 0x8000u) ? DIRECT_FILE_ASR
+                                                                 : DIRECT_FILE_LSR;
+            run_multiple_shift_matrix_case(state, cpu, opcode, operation);
+            legal++;
+        } else {
+            run_invalid_binary_matrix_case(state, cpu, opcode);
+            invalid++;
+        }
+    }
+    expect(state, legal == 24576u,
+           "multiple-shift legal encoding matrix is exhaustive");
+    expect(state, invalid == 106496u,
+           "multiple-shift illegal encoding matrix is exhaustive");
+}
+
+static uint16_t find_first_result(uint16_t source, bool left, bool sign_change) {
+    if (sign_change) {
+        bool sign = (source & 0x8000u) != 0u;
+        uint16_t shifted = (uint16_t)(source << 1u);
+        uint8_t count = 0u;
+        while (count < 15u && ((shifted & 0x8000u) != 0u) == sign) {
+            shifted <<= 1u;
+            count++;
+        }
+        return (uint16_t)(-(int16_t)count);
+    }
+    for (uint8_t bit = 0u; bit < 16u; bit++) {
+        uint16_t mask = left ? (uint16_t)(0x8000u >> bit) : (uint16_t)(1u << bit);
+        if ((source & mask) != 0u) {
+            return (uint16_t)(bit + 1u);
+        }
+    }
+    return 0u;
+}
+
+static void run_find_first_matrix_case(ProcessorConformance* state, Dspic33* cpu,
+                                       uint32_t opcode, bool sign_change) {
+    bool left = (opcode & 0x008000u) != 0u;
+    uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
+    uint8_t source_register = (uint8_t)(opcode & 0x0fu);
+    uint8_t destination = (uint8_t)((opcode >> 7u) & 0x0fu);
+    uint16_t registers[16];
+    BinaryMatrixOperand source;
+    uint16_t source_value = (uint16_t)(opcode * 0x45d9u);
+    uint16_t operand;
+    uint16_t expected;
+    uint16_t initial_status = (uint16_t)(0x010eu | (opcode & 1u));
+    uint16_t expected_status;
+    uint64_t cycles;
+    bool matches;
+
+    prepare_arithmetic_matrix_case(cpu, registers, initial_status);
+    source = binary_matrix_operand(registers, source_mode, source_register, 2u);
+    operand = source.direct ? registers[source_register] : source_value;
+    if (!source.direct) {
+        dspic33_write_word(cpu, source.address, source_value);
+    }
+    expected = find_first_result(operand, left, sign_change);
+    expected_status = (uint16_t)((initial_status & ~1u) |
+                                 (sign_change ? expected == 0xfff1u : expected == 0u));
+    binary_matrix_write_register(registers, destination, expected);
+    cycles = cpu->cycles;
+    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+              cpu->cycles - cycles == 1u && cpu->sr == expected_status &&
+              binary_matrix_registers_match(cpu, registers) && !cpu->illegal_reset &&
+              cpu->unsupported_opcode == 0u;
+    if (!source.direct && destination != source_register) {
+        matches = matches && dspic33_read_word(cpu, source.address) == source_value;
+    }
+    expect_dsp_matrix_case(state, matches, opcode, "find-first encoding");
+}
+
+static void find_first_encoding_matrix_cases(ProcessorConformance* state,
+                                             Dspic33* cpu) {
+    uint32_t legal = 0u;
+    uint32_t invalid = 0u;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    for (uint32_t opcode = 0xcf0000u; opcode < 0xd00000u; opcode++) {
+        bool valid = (opcode & 0x007800u) == 0u && ((opcode >> 4u) & 0x07u) < 6u;
+        if (valid) {
+            run_find_first_matrix_case(state, cpu, opcode, false);
+            legal++;
+        } else {
+            run_invalid_binary_matrix_case(state, cpu, opcode);
+            invalid++;
+        }
+    }
+    for (uint32_t opcode = 0xdf0000u; opcode < 0xe00000u; opcode++) {
+        bool valid = (opcode & 0x00f800u) == 0u && ((opcode >> 4u) & 0x07u) < 6u;
+        if (valid) {
+            run_find_first_matrix_case(state, cpu, opcode, true);
+            legal++;
+        } else {
+            run_invalid_binary_matrix_case(state, cpu, opcode);
+            invalid++;
+        }
+    }
+    expect(state, legal == 4608u, "find-first legal encoding matrix is exhaustive");
+    expect(state, invalid == 126464u,
+           "find-first illegal encoding matrix is exhaustive");
+}
+
+static int64_t accumulator_shift_matrix_result(int64_t value, int16_t amount) {
+    if (amount < 0) {
+        return value * ((int64_t)1 << -amount);
+    }
+    if (amount == 0 || value >= 0) {
+        return value >> amount;
+    }
+    return -((-value + ((int64_t)1 << amount) - 1) >> amount);
+}
+
+static void run_accumulator_shift_matrix_case(ProcessorConformance* state, Dspic33* cpu,
+                                              uint32_t opcode) {
+    uint8_t accumulator = (uint8_t)((opcode >> 15u) & 1u);
+    bool literal = (opcode & 0x0040u) != 0u;
+    uint8_t encoded =
+        literal ? (uint8_t)(opcode & 0x003fu) : (uint8_t)((opcode * 13u) & 0x003fu);
+    int16_t amount = (int16_t)(encoded >= 32u ? encoded - 64u : encoded);
+    int64_t initial = accumulator == 0u ? 0x0000012345 : -0x0000012345;
+    int64_t expected = initial;
+    uint64_t cycles;
+    bool matches;
+
+    cpu->pc = 0u;
+    cpu->sr = 0u;
+    cpu->corcon = 0x0020u;
+    cpu->accumulator[0] = accumulator == 0u ? initial : 0x5555;
+    cpu->accumulator[1] = accumulator == 1u ? initial : -0x5555;
+    cpu->unsupported_opcode = 0u;
+    cpu->illegal_reset = false;
+    cpu->stop_reason = DSPIC33_RUNNING;
+    cpu->events.count = 0u;
+    memset(cpu->pending_soft_traps, 0, sizeof(cpu->pending_soft_traps));
+    if (!literal) {
+        cpu->w[opcode & 0x0fu] = (uint16_t)(0xa5c0u | encoded);
+    }
+    if (amount >= -16 && amount <= 16) {
+        expected = accumulator_shift_matrix_result(initial, amount);
+    }
+    cycles = cpu->cycles;
+    matches =
+        dspic33_load_program_word(cpu, 0u, opcode) &&
+        dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+        cpu->cycles - cycles == 1u && cpu->accumulator[accumulator] == expected &&
+        cpu->accumulator[accumulator ^ 1u] == (accumulator == 0u ? -0x5555 : 0x5555) &&
+        !cpu->illegal_reset && cpu->unsupported_opcode == 0u;
+    if (amount < -16 || amount > 16) {
+        matches =
+            matches && active_pending_traps(cpu) == 1u && pending_trap(cpu, 4u) != NULL;
+    } else {
+        matches = matches && active_pending_traps(cpu) == 0u;
+    }
+    expect_dsp_matrix_case(state, matches, opcode, "accumulator-shift encoding");
+}
+
+static void accumulator_shift_encoding_matrix_cases(ProcessorConformance* state,
+                                                    Dspic33* cpu) {
+    uint32_t legal = 0u;
+    uint32_t invalid = 0u;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    for (uint32_t opcode = 0xc80000u; opcode < 0xc90000u; opcode++) {
+        bool literal = (opcode & 0x0040u) != 0u;
+        bool valid = (opcode & 0x7f00u) == 0u && (opcode & 0x0080u) == 0u &&
+                     (literal || (opcode & 0x0030u) == 0u);
+        if (valid) {
+            run_accumulator_shift_matrix_case(state, cpu, opcode);
+            legal++;
+        } else {
+            run_invalid_binary_matrix_case(state, cpu, opcode);
+            invalid++;
+        }
+    }
+    expect(state, legal == 160u,
+           "accumulator-shift legal encoding matrix is exhaustive");
+    expect(state, invalid == 65376u,
+           "accumulator-shift illegal encoding matrix is exhaustive");
+}
+
+static void single_shift_value_matrix_cases(ProcessorConformance* state, Dspic33* cpu) {
+    static const uint32_t bases[7] = {0xd00000u, 0xd10000u, 0xd18000u, 0xd20000u,
+                                      0xd28000u, 0xd30000u, 0xd38000u};
+    static const DirectFileOperation operations[7] = {
+        DIRECT_FILE_SL,  DIRECT_FILE_LSR,  DIRECT_FILE_ASR, DIRECT_FILE_RLNC,
+        DIRECT_FILE_RLC, DIRECT_FILE_RRNC, DIRECT_FILE_RRC};
+    uint32_t cases = 0u;
+
+    for (uint8_t operation = 0u; operation < 7u; operation++) {
+        for (uint8_t byte_mode = 0u; byte_mode < 2u; byte_mode++) {
+            uint32_t maximum = byte_mode != 0u ? UINT8_MAX : UINT16_MAX;
+            for (uint32_t source = 0u; source <= maximum; source++) {
+                for (uint8_t carry = 0u; carry < 2u; carry++) {
+                    uint32_t opcode =
+                        bases[operation] | ((uint32_t)byte_mode << 14u) | 0x000182u;
+                    uint16_t initial_status = (uint16_t)(0x0104u | carry);
+                    uint16_t expected =
+                        shift_matrix_result(operations[operation], (uint16_t)source,
+                                            initial_status, byte_mode != 0u);
+                    uint16_t expected_status =
+                        shift_matrix_status(operations[operation], (uint16_t)source,
+                                            initial_status, byte_mode != 0u);
+                    bool matches;
+
+                    cpu->pc = 0u;
+                    cpu->sr = initial_status;
+                    cpu->corcon = 0x0020u;
+                    cpu->unsupported_opcode = 0u;
+                    cpu->illegal_reset = false;
+                    cpu->stop_reason = DSPIC33_RUNNING;
+                    cpu->events.count = 0u;
+                    cpu->w[2] = byte_mode != 0u ? (uint16_t)(0xa500u | (uint8_t)source)
+                                                : (uint16_t)source;
+                    cpu->w[3] = 0x5a5au;
+                    if (byte_mode != 0u) {
+                        expected |= 0x5a00u;
+                    }
+                    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+                              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+                              cpu->w[3] == expected && cpu->sr == expected_status &&
+                              !cpu->illegal_reset && cpu->unsupported_opcode == 0u;
+                    expect_dsp_matrix_case(state, matches, opcode,
+                                           "single-shift value boundary");
+                    cases++;
+                }
+            }
+        }
+    }
+    expect(state, cases == 921088u,
+           "single-shift value and carry matrix is exhaustive");
+}
+
+static void multiple_shift_value_matrix_cases(ProcessorConformance* state,
+                                              Dspic33* cpu) {
+    static const uint32_t opcodes[3] = {0xdd1184u, 0xde1184u, 0xde9184u};
+    static const DirectFileOperation operations[3] = {DIRECT_FILE_SL, DIRECT_FILE_LSR,
+                                                      DIRECT_FILE_ASR};
+    uint32_t cases = 0u;
+
+    for (uint8_t operation = 0u; operation < 3u; operation++) {
+        for (uint32_t source = 0u; source <= UINT16_MAX; source++) {
+            for (uint16_t amount = 0u; amount < 32u; amount++) {
+                uint16_t expected = multiple_shift_result(operations[operation],
+                                                          (uint16_t)source, amount);
+                uint16_t initial_status = (uint16_t)(0x0105u | ((source & 1u) << 1u) |
+                                                     (((source >> 15u) & 1u) << 3u));
+                uint16_t expected_status = (uint16_t)(initial_status & ~0x000au);
+                bool matches;
+
+                if (expected == 0u) {
+                    expected_status |= 0x0002u;
+                }
+                if ((expected & 0x8000u) != 0u) {
+                    expected_status |= 0x0008u;
+                }
+                cpu->pc = 0u;
+                cpu->sr = initial_status;
+                cpu->corcon = 0x0020u;
+                cpu->unsupported_opcode = 0u;
+                cpu->illegal_reset = false;
+                cpu->stop_reason = DSPIC33_RUNNING;
+                cpu->events.count = 0u;
+                cpu->w[2] = (uint16_t)source;
+                cpu->w[3] = 0x5a5au;
+                cpu->w[4] = (uint16_t)(0xa5c0u | amount);
+                matches = dspic33_load_program_word(cpu, 0u, opcodes[operation]) &&
+                          dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+                          cpu->w[3] == expected && cpu->sr == expected_status &&
+                          !cpu->illegal_reset && cpu->unsupported_opcode == 0u;
+                expect_dsp_matrix_case(state, matches, opcodes[operation],
+                                       "multiple-shift value boundary");
+                cases++;
+            }
+        }
+    }
+    expect(state, cases == 6291456u,
+           "multiple-shift value and count matrix is exhaustive");
+}
+
+static void find_first_value_matrix_cases(ProcessorConformance* state, Dspic33* cpu) {
+    static const uint32_t opcodes[3] = {0xcf0182u, 0xcf8182u, 0xdf0182u};
+    uint32_t cases = 0u;
+
+    for (uint8_t operation = 0u; operation < 3u; operation++) {
+        bool left = operation == 1u;
+        bool sign_change = operation == 2u;
+        for (uint32_t source = 0u; source <= UINT16_MAX; source++) {
+            uint16_t expected = find_first_result((uint16_t)source, left, sign_change);
+            uint16_t initial_status = (uint16_t)(0x010eu | (source & 1u));
+            uint16_t expected_status =
+                (uint16_t)((initial_status & ~1u) |
+                           (sign_change ? expected == 0xfff1u : expected == 0u));
+            bool matches;
+
+            cpu->pc = 0u;
+            cpu->sr = initial_status;
+            cpu->corcon = 0x0020u;
+            cpu->unsupported_opcode = 0u;
+            cpu->illegal_reset = false;
+            cpu->stop_reason = DSPIC33_RUNNING;
+            cpu->events.count = 0u;
+            cpu->w[2] = (uint16_t)source;
+            cpu->w[3] = 0x5a5au;
+            matches = dspic33_load_program_word(cpu, 0u, opcodes[operation]) &&
+                      dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+                      cpu->w[3] == expected && cpu->sr == expected_status &&
+                      !cpu->illegal_reset && cpu->unsupported_opcode == 0u;
+            expect_dsp_matrix_case(state, matches, opcodes[operation],
+                                   "find-first value boundary");
+            cases++;
+        }
+    }
+    expect(state, cases == 196608u, "find-first value matrix is exhaustive");
+}
+
+static int64_t accumulator_matrix_value(int64_t value) {
+    uint64_t bits = (uint64_t)value & 0xffffffffffu;
+    return (int64_t)bits - ((bits & 0x8000000000u) != 0u ? 0x10000000000ll : 0ll);
+}
+
+static void accumulator_shift_boundary_cases(ProcessorConformance* state,
+                                             Dspic33* cpu) {
+    static const int64_t values[] = {0,
+                                     1,
+                                     -1,
+                                     INT32_MAX,
+                                     INT32_MIN,
+                                     (int64_t)INT32_MAX + 1,
+                                     (int64_t)INT32_MIN - 1,
+                                     0x7fffffffffll,
+                                     -0x8000000000ll};
+    static const int8_t amounts[] = {-16, -1, 0, 1, 16};
+    uint32_t cases = 0u;
+
+    for (uint8_t accumulator = 0u; accumulator < 2u; accumulator++) {
+        for (uint8_t saturation = 0u; saturation < 2u; saturation++) {
+            for (uint8_t accumulator_saturation = 0u; accumulator_saturation < 2u;
+                 accumulator_saturation++) {
+                for (size_t value_index = 0u;
+                     value_index < sizeof(values) / sizeof(*values); value_index++) {
+                    for (size_t amount_index = 0u;
+                         amount_index < sizeof(amounts) / sizeof(*amounts);
+                         amount_index++) {
+                        int64_t result = accumulator_shift_matrix_result(
+                            values[value_index], amounts[amount_index]);
+                        int64_t minimum =
+                            accumulator_saturation != 0u ? -0x8000000000ll : INT32_MIN;
+                        int64_t maximum =
+                            accumulator_saturation != 0u ? 0x7fffffffffll : INT32_MAX;
+                        bool saturation_status =
+                            result < -0x8000000000ll || result > 0x7fffffffffll;
+                        uint16_t overflow_flag = accumulator == 0u ? 0x8000u : 0x4000u;
+                        uint16_t saturation_flag =
+                            accumulator == 0u ? 0x2000u : 0x1000u;
+                        uint16_t expected_status = 0u;
+                        uint16_t corcon =
+                            (uint16_t)(0x0020u |
+                                       (accumulator_saturation != 0u ? 0x0010u : 0u) |
+                                       (saturation != 0u
+                                            ? (accumulator == 0u ? 0x0080u : 0x0040u)
+                                            : 0u));
+                        uint8_t encoded = (uint8_t)(amounts[amount_index] & 0x3f);
+                        uint32_t opcode =
+                            0xc80040u | ((uint32_t)accumulator << 15u) | encoded;
+                        bool matches;
+
+                        if (saturation != 0u) {
+                            if (result < minimum) {
+                                result = minimum;
+                                saturation_status = true;
+                            } else if (result > maximum) {
+                                result = maximum;
+                                saturation_status = true;
+                            }
+                        }
+                        result = accumulator_matrix_value(result);
+                        if (result < INT32_MIN || result > INT32_MAX) {
+                            expected_status |= overflow_flag | 0x0800u;
+                        }
+                        if (saturation_status) {
+                            expected_status |= saturation_flag | 0x0400u;
+                        }
+                        cpu->pc = 0u;
+                        cpu->sr = 0u;
+                        cpu->corcon = corcon;
+                        cpu->accumulator[accumulator] = values[value_index];
+                        cpu->accumulator[accumulator ^ 1u] = 0x12345;
+                        cpu->unsupported_opcode = 0u;
+                        cpu->illegal_reset = false;
+                        cpu->stop_reason = DSPIC33_RUNNING;
+                        cpu->events.count = 0u;
+                        matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+                                  dspic33_step(cpu) == DSPIC33_RUNNING &&
+                                  cpu->pc == 2u &&
+                                  cpu->accumulator[accumulator] == result &&
+                                  cpu->accumulator[accumulator ^ 1u] == 0x12345 &&
+                                  cpu->sr == expected_status && !cpu->illegal_reset &&
+                                  cpu->unsupported_opcode == 0u;
+                        expect_dsp_matrix_case(state, matches, opcode,
+                                               "accumulator-shift boundary");
+                        cases++;
+                    }
+                }
+            }
+        }
+    }
+    expect(state, cases == 360u, "accumulator-shift saturation matrix is exhaustive");
+}
+
+static void accumulator_shift_register_count_cases(ProcessorConformance* state,
+                                                   Dspic33* cpu) {
+    uint32_t cases = 0u;
+
+    for (uint8_t accumulator = 0u; accumulator < 2u; accumulator++) {
+        for (uint8_t encoded = 0u; encoded < 64u; encoded++) {
+            int16_t amount = (int16_t)(encoded >= 32u ? encoded - 64u : encoded);
+            int64_t initial = accumulator == 0u ? 0x12345 : -0x12345;
+            int64_t expected = initial;
+            uint32_t opcode = 0xc80002u | ((uint32_t)accumulator << 15u);
+            bool matches;
+
+            reset_processor_conformance(cpu, 0u);
+            dspic33_set_async_events(cpu, false);
+            cpu->accumulator[accumulator] = initial;
+            cpu->accumulator[accumulator ^ 1u] = 0x5a5a;
+            cpu->w[2] = (uint16_t)(0xa5c0u | encoded);
+            if (amount >= -16 && amount <= 16) {
+                expected = accumulator_shift_matrix_result(initial, amount);
+            }
+            matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+                      dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+                      cpu->accumulator[accumulator] == expected &&
+                      cpu->accumulator[accumulator ^ 1u] == 0x5a5a &&
+                      !cpu->illegal_reset && cpu->unsupported_opcode == 0u;
+            if (amount < -16 || amount > 16) {
+                matches =
+                    matches && (dspic33_read_word(cpu, 0x08c0u) & 0x0080u) != 0u &&
+                    active_pending_traps(cpu) == 1u && pending_trap(cpu, 4u) != NULL;
+            } else {
+                matches = matches &&
+                          (dspic33_read_word(cpu, 0x08c0u) & 0x0080u) == 0u &&
+                          active_pending_traps(cpu) == 0u;
+            }
+            expect_dsp_matrix_case(state, matches, opcode,
+                                   "accumulator-shift register count");
+            cases++;
+        }
+    }
+    expect(state, cases == 128u,
+           "accumulator-shift register counts cover every low-six-bit value");
+}
+
+static void shift_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu) {
+    single_shift_encoding_matrix_cases(state, cpu);
+    direct_file_shift_encoding_matrix_cases(state, cpu);
+    multiple_shift_encoding_matrix_cases(state, cpu);
+    find_first_encoding_matrix_cases(state, cpu);
+    accumulator_shift_encoding_matrix_cases(state, cpu);
+    single_shift_value_matrix_cases(state, cpu);
+    multiple_shift_value_matrix_cases(state, cpu);
+    find_first_value_matrix_cases(state, cpu);
+    accumulator_shift_boundary_cases(state, cpu);
+    accumulator_shift_register_count_cases(state, cpu);
 }
 
 static void run_legal_compare_register_case(ProcessorConformance* state, Dspic33* cpu,
@@ -9396,6 +10100,7 @@ int main(void) {
         dsp_prefetch_destination_collision_cases(&state, &cpu);
         loop_encoding_matrix_cases(&state, &cpu);
         arithmetic_encoding_matrix_cases(&state, &cpu);
+        shift_encoding_matrix_cases(&state, &cpu);
         general_unary_encoding_matrix_cases(&state, &cpu);
         compare_encoding_matrix_cases(&state, &cpu);
         conditional_branch_encoding_matrix_cases(&state, &cpu);

@@ -1992,6 +1992,30 @@ static uint32_t pop_program_counter(Dspic33* cpu) {
     return (high << 16u) | (low & 0xfffeu);
 }
 
+static bool single_shift_encoding_valid(uint32_t opcode) {
+    uint8_t family = (uint8_t)((opcode >> 16u) & 0x03u);
+    return (family != 0u || (opcode & 0x008000u) == 0u) &&
+           ((opcode >> 4u) & 0x07u) < 6u && ((opcode >> 11u) & 0x07u) < 6u;
+}
+
+static bool file_shift_encoding_valid(uint32_t opcode) {
+    return ((opcode >> 16u) & 0x03u) != 0u || (opcode & 0x008000u) == 0u;
+}
+
+static bool multiple_shift_encoding_valid(uint32_t opcode, bool left) {
+    return (opcode & 0x0030u) == 0u && (!left || (opcode & 0x008000u) == 0u);
+}
+
+static bool find_first_encoding_valid(uint32_t opcode, bool sign_change) {
+    uint32_t fixed_mask = sign_change ? 0x00f800u : 0x007800u;
+    return (opcode & fixed_mask) == 0u && ((opcode >> 4u) & 0x07u) < 6u;
+}
+
+static bool accumulator_shift_encoding_valid(uint32_t opcode) {
+    return (opcode & 0x0080u) == 0u &&
+           ((opcode & 0x0040u) != 0u || (opcode & 0x0030u) == 0u);
+}
+
 static bool execute_shift(Dspic33* cpu, uint32_t opcode, bool left) {
     uint8_t source = (uint8_t)((opcode >> 11u) & 0x0fu);
     uint8_t destination = (uint8_t)((opcode >> 7u) & 0x0fu);
@@ -1999,8 +2023,8 @@ static bool execute_shift(Dspic33* cpu, uint32_t opcode, bool left) {
     uint16_t amount;
     uint16_t value;
 
-    amount =
-        (opcode & 0x0040u) != 0u ? (uint16_t)(opcode & 0x0fu) : cpu->w[opcode & 0x0fu];
+    amount = (opcode & 0x0040u) != 0u ? (uint16_t)(opcode & 0x0fu)
+                                      : (uint16_t)(cpu->w[opcode & 0x0fu] & 0x001fu);
     if (amount >= 16u) {
         value = arithmetic && (cpu->w[source] & 0x8000u) != 0u ? 0xffffu : 0u;
     } else if (left) {
@@ -2107,7 +2131,7 @@ static bool execute_file_shift(Dspic33* cpu, uint32_t opcode) {
     bool file_destination = (opcode & 0x002000u) != 0u;
     uint16_t address = (uint16_t)(opcode & 0x1fffu);
     uint16_t source =
-        byte_mode ? read_data_byte(cpu, address) : read_data_word(cpu, address);
+        byte_mode ? read_data_byte(cpu, address) : read_file_word(cpu, address);
     uint16_t next_carry;
     bool carry_affected;
     uint16_t value = shift_single_bit(cpu, source, family, alternate, byte_mode,
@@ -2208,10 +2232,11 @@ static int64_t shift_accumulator_value(int64_t value, int8_t amount) {
 static bool execute_accumulator_shift(Dspic33* cpu, uint32_t opcode) {
     uint8_t accumulator = (uint8_t)((opcode >> 15u) & 1u);
     uint8_t encoded_amount = (uint8_t)(opcode & 0x003fu);
-    int16_t amount =
-        (opcode & 0x0040u) != 0u
-            ? (int16_t)(encoded_amount >= 32u ? encoded_amount - 64u : encoded_amount)
-            : (int16_t)cpu->w[opcode & 0x0fu];
+    int16_t amount;
+    if ((opcode & 0x0040u) == 0u) {
+        encoded_amount = (uint8_t)(cpu->w[opcode & 0x0fu] & 0x003fu);
+    }
+    amount = (int16_t)(encoded_amount >= 32u ? encoded_amount - 64u : encoded_amount);
     if (amount < -16 || amount > 16) {
         dspic33_device_latch_math_error(cpu, 0x0080u);
         return true;
@@ -3463,9 +3488,17 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         return true;
     }
     if ((opcode & 0xfc0000u) == 0xd40000u) {
+        if (!file_shift_encoding_valid(opcode)) {
+            perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+            return true;
+        }
         return execute_file_shift(cpu, opcode);
     }
     if ((opcode & 0xfc0000u) == 0xd00000u) {
+        if (!single_shift_encoding_valid(opcode)) {
+            perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+            return true;
+        }
         return execute_single_shift(cpu, opcode);
     }
     if ((opcode & 0xfe0000u) == 0xb80000u && !multiply_encoding_valid(opcode)) {
@@ -3493,7 +3526,12 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
     if ((opcode & 0xf80000u) == 0xc00000u || (opcode & 0xfc0000u) == 0xf00000u) {
         return execute_dsp_multiply(cpu, opcode);
     }
-    if ((opcode & 0xff7f00u) == 0xc80000u) {
+    if ((opcode & 0xff0000u) == 0xc80000u) {
+        if ((opcode & 0xff7f00u) != 0xc80000u ||
+            !accumulator_shift_encoding_valid(opcode)) {
+            perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+            return true;
+        }
         return execute_accumulator_shift(cpu, opcode);
     }
     if ((opcode & 0xff0000u) == 0xc90000u || (opcode & 0xff0000u) == 0xca0000u) {
@@ -3515,6 +3553,10 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         return true;
     }
     if ((opcode & 0xff0000u) == 0xcf0000u) {
+        if (!find_first_encoding_valid(opcode, false)) {
+            perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+            return true;
+        }
         return execute_find_first(cpu, opcode);
     }
     if (compare_control_kind(opcode) != COMPARE_CONTROL_NONE) {
@@ -3527,12 +3569,24 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         return execute_fractional_divide(cpu, opcode);
     }
     if ((opcode & 0xff0000u) == 0xdd0000u) {
+        if (!multiple_shift_encoding_valid(opcode, true)) {
+            perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+            return true;
+        }
         return execute_shift(cpu, opcode, true);
     }
     if ((opcode & 0xff0000u) == 0xde0000u) {
+        if (!multiple_shift_encoding_valid(opcode, false)) {
+            perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+            return true;
+        }
         return execute_shift(cpu, opcode, false);
     }
     if ((opcode & 0xff0000u) == 0xdf0000u) {
+        if (!find_first_encoding_valid(opcode, true)) {
+            perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+            return true;
+        }
         return execute_find_first_sign_change(cpu, opcode);
     }
     if ((opcode & 0xf80000u) == 0x100000u || (opcode & 0xf80000u) == 0x180000u ||
