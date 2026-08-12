@@ -623,6 +623,7 @@ typedef struct {
     uint8_t spi_busy;
     uint8_t spi_selected;
     uint8_t spi_frame_active;
+    uint8_t spi_frame_output_pending;
     uint8_t spi_pin_bits[DSPIC33_SPI_COUNT];
     uint8_t spi_pin_clock_high;
     uint8_t spi_pin_data_high;
