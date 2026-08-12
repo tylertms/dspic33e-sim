@@ -63,6 +63,7 @@ typedef enum {
     DSPIC33_EVENT_TIMER_PMD,
     DSPIC33_EVENT_DMA,
     DSPIC33_EVENT_ADC,
+    DSPIC33_EVENT_ADC_PMD,
     DSPIC33_EVENT_PWM_FAULT,
     DSPIC33_EVENT_PWM_CURRENT_LIMIT,
     DSPIC33_EVENT_PWM_DEAD_TIME,
@@ -535,13 +536,18 @@ typedef struct {
     uint16_t adc[DSPIC33_ADC_CHANNEL_COUNT];
     uint16_t adc_latched[DSPIC33_ADC_COUNT][4];
     uint16_t adc_generation[DSPIC33_ADC_COUNT];
+    uint16_t adc_pmd_generation[DSPIC33_ADC_COUNT];
     uint8_t adc_latched_channel[DSPIC33_ADC_COUNT][4];
+    uint8_t adc_latched_negative[DSPIC33_ADC_COUNT][4];
     uint8_t adc_latched_count[DSPIC33_ADC_COUNT];
+    uint8_t adc_conversion_index[DSPIC33_ADC_COUNT];
     uint8_t adc_buffer_index[DSPIC33_ADC_COUNT];
     uint8_t adc_sample_count[DSPIC33_ADC_COUNT];
     uint8_t adc_scan_index[DSPIC33_ADC_COUNT];
     uint8_t adc_dma_sample[DSPIC33_ADC_COUNT][DSPIC33_ADC_CHANNEL_COUNT];
     uint8_t adc_mux_b;
+    uint8_t adc_pmd_disabled;
+    uint8_t adc_sleep_disabled;
     uint16_t gpio[DSPIC33_GPIO_PORT_COUNT];
     uint16_t gpio_driven[DSPIC33_GPIO_PORT_COUNT];
     uint16_t gpio_cn_reference[DSPIC33_GPIO_PORT_COUNT];

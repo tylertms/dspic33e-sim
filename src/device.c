@@ -16,6 +16,10 @@ static void refresh_gpio_change_notification(Dspic33* cpu);
 static void refresh_external_interrupts(Dspic33* cpu);
 static void refresh_timer_inputs(Dspic33* cpu);
 static void run_timer_pmd(Dspic33* cpu, uint16_t timer, uint32_t value);
+static void run_adc_pmd(Dspic33* cpu, uint16_t module, uint32_t value);
+static void adc_update_power_state(Dspic33* cpu);
+static void adc_begin_sampling(Dspic33* cpu, uint8_t module);
+static bool interrupt_enabled(const Dspic33* cpu, uint16_t irq);
 static void output_compare_fault_pin_input(Dspic33* cpu, uint8_t pin, bool high);
 static void output_compare_pulse_source(Dspic33* cpu, uint8_t source);
 static void output_compare_update_power_state(Dspic33* cpu);
@@ -614,6 +618,8 @@ enum {
     ADC_EVENT_COMPLETE = 0x00000100u,
     ADC_EVENT_SOURCE_MASK = 0x000000ffu,
     ADC_EVENT_GENERATION_SHIFT = 16u,
+    ADC_PMD_EVENT_DISABLED = 0x00000001u,
+    ADC_PMD_EVENT_GENERATION_SHIFT = 1u,
     PWM_GLOBAL_BASE = 0x0c00u,
     PWM_GENERATOR_BASE = 0x0c20u,
     PWM_GENERATOR_STRIDE = 0x0020u,
@@ -1684,6 +1690,7 @@ void dspic33_device_power_state_changed(Dspic33* cpu) {
     dma_update_power_state(cpu);
     comparator_update_filter_power(cpu);
     comparator_evaluate_all(cpu);
+    adc_update_power_state(cpu);
     dspic33_i2c_refresh_pins(cpu);
 }
 
@@ -8629,6 +8636,11 @@ static bool adc_12_bit(const Dspic33* cpu, uint8_t module) {
 
 static bool adc_power_enabled(const Dspic33* cpu, uint8_t module) {
     uint16_t control = adc_register(cpu, module, 0u);
+    uint8_t bit = (uint8_t)(1u << module);
+    if ((cpu->io.adc_pmd_disabled & bit) != 0u ||
+        (cpu->io.adc_sleep_disabled & bit) != 0u) {
+        return false;
+    }
     if (cpu->power_state == DSPIC33_POWER_ACTIVE) {
         return true;
     }
@@ -8700,10 +8712,58 @@ static uint8_t adc_negative_channel(const Dspic33* cpu, uint8_t module, uint8_t 
     return (uint8_t)((negative == 2u ? 6u : 9u) + lane - 1u);
 }
 
+static bool adc_channel_pin(uint8_t channel, uint8_t* port, uint8_t* bit) {
+    if (channel < 16u) {
+        *port = 1u;
+        *bit = channel;
+        return true;
+    }
+    if (channel < 20u) {
+        *port = 2u;
+        *bit = (uint8_t)(channel - 15u);
+        return true;
+    }
+    if (channel < 22u) {
+        *port = 4u;
+        *bit = (uint8_t)(channel - 12u);
+        return true;
+    }
+    if (channel < 24u) {
+        *port = 0u;
+        *bit = (uint8_t)(channel - 16u);
+        return true;
+    }
+    if (channel < 32u) {
+        *port = 4u;
+        *bit = (uint8_t)(channel - 24u);
+        return true;
+    }
+    return false;
+}
+
+static uint16_t adc_pin_input(const Dspic33* cpu, uint8_t channel) {
+    uint8_t port;
+    uint8_t bit;
+    uint16_t mask;
+    if (!adc_channel_pin(channel, &port, &bit)) {
+        return 0u;
+    }
+    mask = (uint16_t)(1u << bit);
+    if ((raw_word(cpu, gpio_analog_addresses[port]) & mask) == 0u ||
+        (cpu->io.adc_pmd_disabled & 1u) != 0u ||
+        (channel < 16u && (cpu->io.adc_pmd_disabled & 2u) != 0u)) {
+        return 0u;
+    }
+    if ((raw_word(cpu, gpio_tris_addresses[port]) & mask) == 0u) {
+        return (raw_word(cpu, gpio_latch_addresses[port]) & mask) != 0u ? 0x0fffu : 0u;
+    }
+    return cpu->io.adc[channel];
+}
+
 static uint16_t adc_input_code(const Dspic33* cpu, uint8_t module, uint8_t positive,
                                uint8_t negative) {
-    uint16_t high = positive < DSPIC33_ADC_CHANNEL_COUNT ? cpu->io.adc[positive] : 0u;
-    uint16_t low = negative < DSPIC33_ADC_CHANNEL_COUNT ? cpu->io.adc[negative] : 0u;
+    uint16_t high = adc_pin_input(cpu, positive);
+    uint16_t low = adc_pin_input(cpu, negative);
     uint16_t difference = high > low ? (uint16_t)(high - low) : 0u;
     return adc_12_bit(cpu, module) ? (uint16_t)(difference & 0x0fffu)
                                    : (uint16_t)((difference >> 2u) & 0x03ffu);
@@ -8734,9 +8794,8 @@ static uint64_t adc_clock_cycles(const Dspic33* cpu, uint8_t module) {
 }
 
 static uint64_t adc_sample_cycles(const Dspic33* cpu, uint8_t module) {
-    uint64_t cycles = ((adc_register(cpu, module, 4u) >> 8u) & 0x001fu) *
-                      adc_clock_cycles(cpu, module);
-    return cycles == 0u ? 1u : cycles;
+    return ((adc_register(cpu, module, 4u) >> 8u) & 0x001fu) *
+           adc_clock_cycles(cpu, module);
 }
 
 static uint64_t adc_conversion_cycles(const Dspic33* cpu, uint8_t module) {
@@ -8822,7 +8881,32 @@ static void adc_store_result(Dspic33* cpu, uint8_t module, uint8_t channel,
     }
 }
 
-static void adc_begin_sampling(Dspic33* cpu, uint8_t module);
+static void adc_abort(Dspic33* cpu, uint8_t module) {
+    uint16_t control = adc_register(cpu, module, 0u);
+    cpu->io.adc_generation[module]++;
+    cpu->io.adc_latched_count[module] = 0u;
+    cpu->io.adc_conversion_index[module] = 0u;
+    raw_write_word(cpu, adc_controls[module],
+                   (uint16_t)(control & ~(ADC_SAMPLE | ADC_DONE)));
+}
+
+static bool adc_schedule(Dspic33* cpu, uint8_t module, uint8_t source, bool complete,
+                         uint64_t delay) {
+    if (dspic33_schedule(cpu, DSPIC33_EVENT_ADC, module,
+                         adc_event_value(cpu, module, source, complete), delay)) {
+        return true;
+    }
+    adc_abort(cpu, module);
+    cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    return false;
+}
+
+static void adc_latch(Dspic33* cpu, uint8_t module, uint8_t index) {
+    uint8_t positive = cpu->io.adc_latched_channel[module][index];
+    uint8_t negative = cpu->io.adc_latched_negative[module][index];
+    cpu->io.adc_latched[module][index] =
+        adc_format_code(cpu, module, adc_input_code(cpu, module, positive, negative));
+}
 
 static void adc_complete_conversion(Dspic33* cpu, uint8_t module, uint8_t source) {
     uint16_t control;
@@ -8834,13 +8918,30 @@ static void adc_complete_conversion(Dspic33* cpu, uint8_t module, uint8_t source
     if ((control & ADC_ON) == 0u) {
         return;
     }
-    for (index = 0u; index < cpu->io.adc_latched_count[module]; index++) {
-        adc_store_result(cpu, module, cpu->io.adc_latched_channel[module][index],
-                         cpu->io.adc_latched[module][index]);
+    index = cpu->io.adc_conversion_index[module];
+    if (index >= cpu->io.adc_latched_count[module]) {
+        return;
     }
+    adc_store_result(cpu, module, cpu->io.adc_latched_channel[module][index],
+                     cpu->io.adc_latched[module][index]);
+    index++;
+    cpu->io.adc_conversion_index[module] = index;
+    if (index < cpu->io.adc_latched_count[module]) {
+        if ((control & ADC_SIMULTANEOUS) == 0u) {
+            adc_latch(cpu, module, index);
+        }
+        adc_schedule(cpu, module, source, true, adc_conversion_cycles(cpu, module));
+        return;
+    }
+    cpu->io.adc_latched_count[module] = 0u;
     raw_write_word(cpu, adc_controls[module],
                    source == 1u ? (uint16_t)(control & ~ADC_DONE)
                                 : (uint16_t)(control | ADC_DONE));
+    if (cpu->power_state == DSPIC33_POWER_SLEEP &&
+        !interrupt_enabled(cpu, adc_irqs[module])) {
+        cpu->io.adc_sleep_disabled |= (uint8_t)(1u << module);
+        return;
+    }
     if ((control & ADC_AUTO_SAMPLE) != 0u) {
         adc_begin_sampling(cpu, module);
     }
@@ -8862,10 +8963,13 @@ static void adc_start_conversion(Dspic33* cpu, uint8_t module) {
         uint8_t positive = adc_positive_channel(cpu, module, index, mux_b);
         uint8_t negative = adc_negative_channel(cpu, module, index, mux_b);
         cpu->io.adc_latched_channel[module][index] = positive;
-        cpu->io.adc_latched[module][index] = adc_format_code(
-            cpu, module, adc_input_code(cpu, module, positive, negative));
+        cpu->io.adc_latched_negative[module][index] = negative;
+        if ((control & ADC_SIMULTANEOUS) != 0u || index == 0u) {
+            adc_latch(cpu, module, index);
+        }
     }
     cpu->io.adc_latched_count[module] = count;
+    cpu->io.adc_conversion_index[module] = 0u;
     if ((control2 & ADC_ALTERNATE) != 0u) {
         cpu->io.adc_mux_b ^= (uint8_t)(1u << module);
     } else {
@@ -8876,11 +8980,8 @@ static void adc_start_conversion(Dspic33* cpu, uint8_t module) {
     if (module == 0u) {
         input_capture_pulse_source(cpu, INPUT_CAPTURE_SYNC_ADC1);
     }
-    dspic33_schedule(cpu, DSPIC33_EVENT_ADC, module,
-                     adc_event_value(cpu, module,
-                                     (uint8_t)((control & ADC_TRIGGER_MASK) >> 4u),
-                                     true),
-                     adc_conversion_cycles(cpu, module));
+    adc_schedule(cpu, module, (uint8_t)((control & ADC_TRIGGER_MASK) >> 4u), true,
+                 adc_conversion_cycles(cpu, module));
 }
 
 static void adc_begin_sampling(Dspic33* cpu, uint8_t module) {
@@ -8894,9 +8995,33 @@ static void adc_begin_sampling(Dspic33* cpu, uint8_t module) {
     raw_write_word(cpu, adc_controls[module], control);
     source = (uint8_t)((control & ADC_TRIGGER_MASK) >> 4u);
     if (source == 7u) {
-        dspic33_schedule(cpu, DSPIC33_EVENT_ADC, module,
-                         adc_event_value(cpu, module, source, false),
-                         adc_sample_cycles(cpu, module));
+        adc_schedule(cpu, module, source, false, adc_sample_cycles(cpu, module));
+    }
+}
+
+static void adc_update_power_state(Dspic33* cpu) {
+    uint8_t module;
+    for (module = 0u; module < DSPIC33_ADC_COUNT; module++) {
+        uint16_t control = adc_register(cpu, module, 0u);
+        uint8_t bit = (uint8_t)(1u << module);
+        if (cpu->power_state == DSPIC33_POWER_ACTIVE) {
+            cpu->io.adc_sleep_disabled &= (uint8_t)~bit;
+            if ((control & (ADC_ON | ADC_AUTO_SAMPLE | ADC_SAMPLE)) ==
+                    (ADC_ON | ADC_AUTO_SAMPLE) &&
+                cpu->io.adc_latched_count[module] == 0u) {
+                adc_begin_sampling(cpu, module);
+            }
+            continue;
+        }
+        if ((cpu->power_state == DSPIC33_POWER_IDLE &&
+             (control & ADC_STOP_IDLE) != 0u) ||
+            (cpu->power_state == DSPIC33_POWER_SLEEP &&
+             (adc_register(cpu, module, 4u) & 0x8000u) == 0u)) {
+            if ((control & ADC_SAMPLE) != 0u ||
+                cpu->io.adc_latched_count[module] != 0u) {
+                adc_abort(cpu, module);
+            }
+        }
     }
 }
 
@@ -11284,6 +11409,9 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
     case DSPIC33_EVENT_ADC:
         run_adc(cpu, (uint8_t)event->source, event->value);
         break;
+    case DSPIC33_EVENT_ADC_PMD:
+        run_adc_pmd(cpu, event->source, event->value);
+        break;
     case DSPIC33_EVENT_PWM_FAULT:
         pwm_input_event(cpu, (uint8_t)event->source,
                         (event->value & PWM_INPUT_HIGH) != 0u, false);
@@ -11633,6 +11761,91 @@ static void update_timer_pmd(Dspic33* cpu, uint16_t address, uint16_t previous) 
     }
 }
 
+static bool adc_module_address(uint16_t address, uint8_t module) {
+    if (address >= adc_buffers[module] && address < adc_buffers[module] + 0x20u) {
+        return true;
+    }
+    return address >= adc_controls[module] && address <= adc_controls[module] + 0x12u;
+}
+
+static bool adc_pmd_disabled(const Dspic33* cpu, uint8_t module) {
+    return (cpu->io.adc_pmd_disabled & (uint8_t)(1u << module)) != 0u;
+}
+
+static void adc_reset_module(Dspic33* cpu, uint8_t module) {
+    uint16_t control = adc_controls[module];
+    uint8_t bit = (uint8_t)(1u << module);
+    uint8_t index;
+    cpu->io.adc_generation[module]++;
+    cpu->io.adc_latched_count[module] = 0u;
+    cpu->io.adc_conversion_index[module] = 0u;
+    cpu->io.adc_buffer_index[module] = 0u;
+    cpu->io.adc_sample_count[module] = 0u;
+    cpu->io.adc_scan_index[module] = 0u;
+    cpu->io.adc_mux_b &= (uint8_t)~bit;
+    cpu->io.adc_sleep_disabled &= (uint8_t)~bit;
+    memset(cpu->io.adc_dma_sample[module], 0, sizeof(cpu->io.adc_dma_sample[module]));
+    for (index = 0u; index < 5u; index++) {
+        raw_write_word(cpu, (uint16_t)(control + index * 2u), 0u);
+    }
+    if (module == 0u) {
+        raw_write_word(cpu, 0x032eu, 0u);
+        raw_write_word(cpu, 0x0330u, 0u);
+        raw_write_word(cpu, 0x0332u, 0u);
+    } else {
+        raw_write_word(cpu, 0x0370u, 0u);
+        raw_write_word(cpu, 0x0372u, 0u);
+    }
+}
+
+static void run_adc_pmd(Dspic33* cpu, uint16_t module, uint32_t value) {
+    uint16_t generation;
+    uint8_t bit;
+    if (module >= DSPIC33_ADC_COUNT) {
+        return;
+    }
+    generation = (uint16_t)(value >> ADC_PMD_EVENT_GENERATION_SHIFT);
+    if (generation != cpu->io.adc_pmd_generation[module]) {
+        return;
+    }
+    bit = (uint8_t)(1u << module);
+    if ((value & ADC_PMD_EVENT_DISABLED) != 0u) {
+        cpu->io.adc_pmd_disabled |= bit;
+    } else {
+        cpu->io.adc_pmd_disabled &= (uint8_t)~bit;
+    }
+    adc_reset_module(cpu, (uint8_t)module);
+    refresh_gpio_change_notification(cpu);
+    refresh_external_interrupts(cpu);
+    refresh_timer_inputs(cpu);
+    output_compare_refresh_fault_pps_inputs(cpu);
+    dci_refresh_pps_inputs(cpu);
+    dspic33_i2c_refresh_pins(cpu);
+}
+
+static void update_adc_pmd(Dspic33* cpu, uint16_t address, uint16_t previous) {
+    uint8_t module;
+    uint16_t current;
+    if (address != 0x0760u && address != 0x0764u) {
+        return;
+    }
+    module = address == 0x0760u ? 0u : 1u;
+    current = raw_word(cpu, address);
+    if (((current ^ previous) & 1u) == 0u) {
+        return;
+    }
+    cpu->io.adc_pmd_generation[module]++;
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_ADC_PMD, module,
+                          ((uint32_t)cpu->io.adc_pmd_generation[module]
+                           << ADC_PMD_EVENT_GENERATION_SHIFT) |
+                              ((current & 1u) != 0u ? ADC_PMD_EVENT_DISABLED : 0u),
+                          dspic33_device_instruction_cycles(cpu, 1u))) {
+        raw_write_word(cpu, address, previous);
+        cpu->io.adc_pmd_generation[module]++;
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    }
+}
+
 static void update_adc_register(Dspic33* cpu, uint16_t address, uint16_t previous,
                                 uint16_t requested) {
     uint8_t module;
@@ -11668,10 +11881,7 @@ static void update_adc_register(Dspic33* cpu, uint16_t address, uint16_t previou
             sampling = (control & ADC_SAMPLE) != 0u;
             source = (uint8_t)((control & ADC_TRIGGER_MASK) >> 4u);
             if (!on) {
-                cpu->io.adc_generation[module]++;
-                cpu->io.adc_latched_count[module] = 0u;
-                raw_write_word(cpu, control_address,
-                               (uint16_t)(control & ~(ADC_SAMPLE | ADC_DONE)));
+                adc_abort(cpu, module);
                 return;
             }
             if (!was_on) {
@@ -13129,6 +13339,12 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     if (dspic33_i2c_write_register(cpu, address, previous, requested)) {
         return;
     }
+    for (channel = 0u; channel < DSPIC33_ADC_COUNT; channel++) {
+        if (adc_pmd_disabled(cpu, channel) && adc_module_address(base, channel)) {
+            raw_write_word(cpu, base, previous);
+            return;
+        }
+    }
     if (register_write_mask(base, &writable) ||
         input_capture_register_write_mask(base, &writable) ||
         output_compare_register_write_mask(base, &writable) ||
@@ -13150,6 +13366,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     update_input_capture_pmd(cpu, base, previous);
     update_output_compare_pmd(cpu, base, previous);
     update_timer_pmd(cpu, base, previous);
+    update_adc_pmd(cpu, base, previous);
     if (base == 0x0740u && (cpu->configuration[10u] & 0x80u) == 0u &&
         (previous & 0x0020u) == 0u && (raw_word(cpu, base) & 0x0020u) != 0u) {
         cpu->watchdog.ticks = 0u;
@@ -13249,6 +13466,11 @@ static uint16_t gpio_pin_values(const Dspic33* cpu, uint8_t port) {
     uint16_t analog = gpio_analog_addresses[port] != 0u
                           ? raw_word(cpu, gpio_analog_addresses[port])
                           : 0u;
+    if ((cpu->io.adc_pmd_disabled & 1u) != 0u) {
+        analog = 0u;
+    } else if (port == 1u && (cpu->io.adc_pmd_disabled & 2u) != 0u) {
+        analog = 0u;
+    }
     uint16_t external =
         (uint16_t)((cpu->io.gpio[port] & driven) | (pull_up & ~driven & ~pull_down));
     if (port == 2u && (cpu->configuration[8u] & 0x04u) == 0u) {
@@ -13275,6 +13497,11 @@ static uint16_t gpio_change_notification_qualified(const Dspic33* cpu, uint8_t p
     uint16_t analog = gpio_analog_addresses[port] != 0u
                           ? raw_word(cpu, gpio_analog_addresses[port])
                           : 0u;
+    if ((cpu->io.adc_pmd_disabled & 1u) != 0u) {
+        analog = 0u;
+    } else if (port == 1u && (cpu->io.adc_pmd_disabled & 2u) != 0u) {
+        analog = 0u;
+    }
     if (port == 6u && (raw_word(cpu, USB_CON) & USB_ENABLE) != 0u) {
         analog |= 0x000cu;
     }
@@ -13452,6 +13679,11 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
             (base == timer_controls[timer] || base == timer_registers[timer] ||
              base == timer_periods[timer] ||
              (timer_is_type_b(timer) && base == timer_holding_registers[timer / 2u]))) {
+            return 0u;
+        }
+    }
+    for (channel = 0u; channel < DSPIC33_ADC_COUNT; channel++) {
+        if (adc_pmd_disabled(cpu, channel) && adc_module_address(base, channel)) {
             return 0u;
         }
     }

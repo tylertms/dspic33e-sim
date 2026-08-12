@@ -23,6 +23,8 @@ static const uint16_t controls[DSPIC33_ADC_COUNT] = {0x0320u, 0x0360u};
 static const uint16_t dma_controls[DSPIC33_ADC_COUNT] = {0x0332u, 0x0372u};
 static const uint8_t irqs[DSPIC33_ADC_COUNT] = {13u, 21u};
 
+enum { RESET_OPCODE = 0xfe0000u };
+
 static void expect(AdcConformance* state, bool condition, const char* name) {
     state->cases++;
     if (condition) {
@@ -49,6 +51,10 @@ static void set_input(Dspic33* cpu, uint8_t channel, uint16_t value) {
     dspic33_adc_input(cpu, channel, value);
 }
 
+static uint16_t stored_word(const Dspic33* cpu, uint16_t address) {
+    return (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[address + 1u] << 8u));
+}
+
 static void start_manual(Dspic33* cpu, uint8_t module) {
     uint16_t control = dspic33_read_word(cpu, controls[module]);
     dspic33_write_word(cpu, controls[module], (uint16_t)(control | 0x0002u));
@@ -58,11 +64,17 @@ static void start_manual(Dspic33* cpu, uint8_t module) {
 
 static void finish_conversion(Dspic33* cpu, uint8_t module) {
     uint16_t timing = dspic33_read_word(cpu, (uint16_t)(controls[module] + 4u));
+    uint16_t control2 = dspic33_read_word(cpu, (uint16_t)(controls[module] + 2u));
     uint64_t clock = (timing & 0x8000u) != 0u ? 1u : (timing & 0x00ffu) + 1u;
+    uint64_t count = 1u;
+    if (!(module == 0u && (dspic33_read_word(cpu, controls[module]) & 0x0400u) != 0u)) {
+        uint16_t channels = control2 & 0x0300u;
+        count = channels == 0u ? 1u : channels == 0x0100u ? 2u : 4u;
+    }
     uint64_t cycles =
         (module == 0u && (dspic33_read_word(cpu, controls[module]) & 0x0400u) != 0u)
             ? 14u * clock
-            : 12u * clock;
+            : 12u * clock * count;
     dspic33_device_advance(cpu, cycles);
 }
 
@@ -364,6 +376,149 @@ static void sequence_cases(AdcConformance* state, Dspic33* cpu) {
            "split buffer second half result");
 }
 
+static void conversion_pipeline_cases(AdcConformance* state, Dspic33* cpu) {
+    static const uint8_t channels[4] = {5u, 0u, 1u, 2u};
+    static const uint16_t initial[4] = {2000u, 400u, 800u, 1200u};
+    static const uint16_t sequential[4] = {500u, 200u, 400u, 600u};
+    static const uint16_t simultaneous[4] = {500u, 100u, 200u, 300u};
+    uint8_t lane;
+    dspic33_reset(cpu, 0u);
+    for (lane = 0u; lane < 4u; lane++) {
+        set_input(cpu, channels[lane], initial[lane]);
+    }
+    dspic33_write_word(cpu, 0x0326u, 0x020cu);
+    configure_manual(cpu, 0u, 0u, 0x020cu, 5u);
+    start_manual(cpu, 0u);
+    for (lane = 0u; lane < 4u; lane++) {
+        expect(state, dspic33_device_advance(cpu, 11u),
+               "advance sequential adc before lane completion");
+        if (lane + 1u < 4u) {
+            set_input(cpu, channels[lane + 1u], (uint16_t)(initial[lane + 1u] * 2u));
+        }
+        expect(state,
+               dspic33_read_word(cpu, (uint16_t)(0x0300u + lane * 2u)) == 0u &&
+                   (dspic33_read_word(cpu, 0x0320u) & 1u) == 0u,
+               "sequential adc lane remains pending");
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "advance sequential adc lane completion");
+        expect(state,
+               dspic33_read_word(cpu, (uint16_t)(0x0300u + lane * 2u)) ==
+                   sequential[lane],
+               "sequential adc captures at each conversion boundary");
+    }
+    expect(state, (dspic33_read_word(cpu, 0x0320u) & 1u) != 0u,
+           "sequential adc completes after every lane");
+
+    dspic33_reset(cpu, 0u);
+    for (lane = 0u; lane < 4u; lane++) {
+        set_input(cpu, channels[lane], initial[lane]);
+    }
+    dspic33_write_word(cpu, 0x0326u, 0x020cu);
+    configure_manual(cpu, 0u, 0x0008u, 0x020cu, 5u);
+    start_manual(cpu, 0u);
+    for (lane = 0u; lane < 4u; lane++) {
+        set_input(cpu, channels[lane], 4000u);
+    }
+    expect(state, dspic33_device_advance(cpu, 47u),
+           "advance simultaneous adc before final completion");
+    expect(state,
+           dspic33_read_word(cpu, 0x0300u) == simultaneous[0] &&
+               dspic33_read_word(cpu, 0x0302u) == simultaneous[1] &&
+               dspic33_read_word(cpu, 0x0304u) == simultaneous[2] &&
+               dspic33_read_word(cpu, 0x0306u) == 0u &&
+               (dspic33_read_word(cpu, 0x0320u) & 1u) == 0u,
+           "simultaneous adc holds trigger-time samples through pipeline");
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "advance simultaneous adc final lane");
+    expect(state,
+           dspic33_read_word(cpu, 0x0306u) == simultaneous[3] &&
+               (dspic33_read_word(cpu, 0x0320u) & 1u) != 0u,
+           "simultaneous adc completes after all conversion periods");
+}
+
+static void pmd_cases(AdcConformance* state, Dspic33* cpu) {
+    static const uint16_t pmd_addresses[DSPIC33_ADC_COUNT] = {0x0760u, 0x0764u};
+    uint8_t module;
+    for (module = 0u; module < DSPIC33_ADC_COUNT; module++) {
+        dspic33_reset(cpu, 0u);
+        set_input(cpu, 0u, 400u);
+        configure_manual(cpu, module, 0u, 0u, 0u);
+        start_manual(cpu, module);
+        dspic33_gpio_input(cpu, 1u, 1u);
+        expect(state, (dspic33_read_word(cpu, 0x0e12u) & 1u) == 0u,
+               "analog shared pin suppresses digital input before PMD");
+        dspic33_write_word(cpu, pmd_addresses[module], 1u);
+        expect(state, cpu->io.adc_pmd_disabled == 0u,
+               "adc PMD waits one instruction cycle");
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "advance adc PMD disable boundary");
+        expect(state,
+               cpu->io.adc_pmd_disabled == (uint8_t)(1u << module) &&
+                   dspic33_read_word(cpu, controls[module]) == 0u &&
+                   cpu->io.adc_latched_count[module] == 0u,
+               "adc PMD disables access and aborts conversion");
+        expect(state, (dspic33_read_word(cpu, 0x0e12u) & 1u) != 0u,
+               "adc PMD changes shared analog pin to digital function");
+        dspic33_write_word(cpu, controls[module], 0xffffu);
+        dspic33_write_word(cpu, buffers[module], 0xffffu);
+        expect(state,
+               stored_word(cpu, controls[module]) == 0u &&
+                   dspic33_read_word(cpu, controls[module]) == 0u &&
+                   dspic33_read_word(cpu, buffers[module]) == 0u,
+               "adc PMD blocks register access");
+        dspic33_write_word(cpu, pmd_addresses[module], 0u);
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "advance adc PMD enable boundary");
+        expect(state,
+               cpu->io.adc_pmd_disabled == 0u &&
+                   dspic33_read_word(cpu, controls[module]) == 0u &&
+                   (dspic33_read_word(cpu, 0x0e12u) & 1u) == 0u,
+               "adc PMD enable leaves module reset");
+    }
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0744u, 0x3800u);
+    dspic33_write_word(cpu, 0x0760u, 1u);
+    expect(state, dspic33_device_advance(cpu, 7u) && cpu->io.adc_pmd_disabled == 0u,
+           "DOZE scales adc PMD instruction boundary");
+    expect(state, dspic33_device_advance(cpu, 1u) && cpu->io.adc_pmd_disabled == 1u,
+           "adc PMD completes at divided instruction boundary");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0760u, 1u);
+    dspic33_write_word(cpu, 0x0760u, 0u);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && cpu->io.adc_pmd_disabled == 0u &&
+               cpu->events.count == 0u,
+           "new adc PMD request invalidates stale transition");
+
+    dspic33_reset(cpu, 0u);
+    cpu->io.adc_pmd_generation[0] = 0x7fffu;
+    dspic33_write_word(cpu, 0x0760u, 1u);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) &&
+               cpu->io.adc_pmd_generation[0] == 0x8000u &&
+               cpu->io.adc_pmd_disabled == 1u && cpu->events.count == 0u,
+           "adc PMD transition crosses high generation bit");
+
+    dspic33_reset(cpu, 0u);
+    cpu->device_cycles = UINT64_MAX;
+    dspic33_write_word(cpu, 0x0760u, 1u);
+    expect(state,
+           cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR &&
+               dspic33_read_word(cpu, 0x0760u) == 0u &&
+               cpu->io.adc_pmd_disabled == 0u && cpu->events.count == 0u,
+           "adc PMD scheduling failure rolls back request");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0760u, 1u);
+    dspic33_write_word(cpu, 0x0764u, 1u);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && cpu->io.adc_pmd_disabled == 3u &&
+               cpu->events.count == 0u,
+           "adc PMD modules transition independently");
+}
+
 static void threshold_cases(AdcConformance* state, Dspic33* cpu) {
     uint8_t module;
     uint8_t threshold;
@@ -474,6 +629,16 @@ static void trigger_cases(AdcConformance* state, Dspic33* cpu) {
     expect(state, dspic33_device_advance(cpu, 1u), "next auto sample advance");
     expect(state, (dspic33_read_word(cpu, 0x0320u) & 0x0003u) == 0u,
            "next auto conversion clears state");
+
+    dspic33_reset(cpu, 0u);
+    set_input(cpu, 0u, 400u);
+    dspic33_write_word(cpu, 0x0324u, 0u);
+    dspic33_write_word(cpu, 0x0320u, 0x8074u);
+    expect(state, dspic33_device_advance(cpu, 0u),
+           "zero SAMC automatic sample boundary");
+    expect(state,
+           (dspic33_read_word(cpu, 0x0320u) & 0x0002u) == 0u && cpu->events.count == 1u,
+           "zero SAMC begins conversion without an extra clock");
 }
 
 static void timer_trigger_cases(AdcConformance* state, Dspic33* cpu) {
@@ -591,14 +756,19 @@ static void power_cases(AdcConformance* state, Dspic33* cpu) {
     configure_manual(cpu, 0u, 0x2000u, 0u, 0u);
     start_manual(cpu, 0u);
     cpu->power_state = DSPIC33_POWER_IDLE;
+    dspic33_device_power_state_changed(cpu);
     finish_conversion(cpu, 0u);
-    expect(state, (dspic33_read_word(cpu, 0x0320u) & 1u) == 0u, "adc stops in idle");
+    expect(state,
+           (dspic33_read_word(cpu, 0x0320u) & 3u) == 0u &&
+               cpu->io.adc_latched_count[0] == 0u && cpu->events.count == 0u,
+           "adc stops and aborts in idle");
 
     dspic33_reset(cpu, 0u);
     set_input(cpu, 0u, 400u);
     configure_manual(cpu, 0u, 0u, 0u, 0u);
     start_manual(cpu, 0u);
     cpu->power_state = DSPIC33_POWER_IDLE;
+    dspic33_device_power_state_changed(cpu);
     finish_conversion(cpu, 0u);
     expect(state, dspic33_read_word(cpu, 0x0300u) == 100u, "adc continues in idle");
 
@@ -608,9 +778,41 @@ static void power_cases(AdcConformance* state, Dspic33* cpu) {
     configure_manual(cpu, 0u, 0u, 0u, 0u);
     start_manual(cpu, 0u);
     cpu->power_state = DSPIC33_POWER_SLEEP;
+    dspic33_device_power_state_changed(cpu);
     finish_conversion(cpu, 0u);
-    expect(state, dspic33_read_word(cpu, 0x0300u) == 100u,
-           "internal adc clock in sleep");
+    expect(state,
+           dspic33_read_word(cpu, 0x0300u) == 100u && cpu->io.adc_sleep_disabled == 1u,
+           "internal adc clock completes then stops in sleep without interrupt");
+    cpu->power_state = DSPIC33_POWER_ACTIVE;
+    dspic33_device_power_state_changed(cpu);
+    expect(state, cpu->io.adc_sleep_disabled == 0u,
+           "adc sleep-only stop clears after wake");
+
+    dspic33_reset(cpu, 0u);
+    set_input(cpu, 0u, 400u);
+    dspic33_write_word(cpu, 0x0820u, 0x2000u);
+    dspic33_write_word(cpu, 0x0324u, 0x8000u);
+    configure_manual(cpu, 0u, 0u, 0u, 0u);
+    start_manual(cpu, 0u);
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    dspic33_device_power_state_changed(cpu);
+    finish_conversion(cpu, 0u);
+    expect(state,
+           dspic33_read_word(cpu, 0x0300u) == 100u &&
+               cpu->io.adc_sleep_disabled == 0u && interrupt_flag(cpu, 13u),
+           "enabled adc interrupt keeps RC converter active in sleep");
+
+    dspic33_reset(cpu, 0u);
+    set_input(cpu, 0u, 400u);
+    configure_manual(cpu, 0u, 0u, 0u, 0u);
+    start_manual(cpu, 0u);
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    dspic33_device_power_state_changed(cpu);
+    finish_conversion(cpu, 0u);
+    expect(state,
+           dspic33_read_word(cpu, 0x0300u) == 0u &&
+               (dspic33_read_word(cpu, 0x0320u) & 3u) == 0u && cpu->events.count == 0u,
+           "system-clock adc aborts in sleep");
 }
 
 static void boundary_cases(AdcConformance* state, Dspic33* cpu) {
@@ -659,6 +861,81 @@ static void boundary_cases(AdcConformance* state, Dspic33* cpu) {
     expect(state, dspic33_device_advance(cpu, 20u), "advance cancelled conversion");
     expect(state, dspic33_read_word(cpu, 0x0300u) == 0u,
            "disabled adc cancels conversion");
+
+    dspic33_reset(cpu, 0u);
+    set_input(cpu, 0u, 400u);
+    configure_manual(cpu, 0u, 0u, 0u, 0u);
+    cpu->device_cycles = UINT64_MAX;
+    start_manual(cpu, 0u);
+    expect(state,
+           cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR && cpu->events.count == 0u &&
+               cpu->io.adc_latched_count[0] == 0u &&
+               (dspic33_read_word(cpu, 0x0320u) & 3u) == 0u,
+           "adc conversion scheduling failure aborts deterministically");
+
+    dspic33_reset(cpu, 0u);
+    set_input(cpu, 0u, 400u);
+    set_input(cpu, 1u, 800u);
+    configure_manual(cpu, 0u, 0u, 0x0100u, 0u);
+    cpu->device_cycles = UINT64_MAX - 12u;
+    start_manual(cpu, 0u);
+    dspic33_device_advance(cpu, 12u);
+    expect(state,
+           cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR &&
+               dspic33_read_word(cpu, 0x0300u) == 100u &&
+               cpu->io.adc_latched_count[0] == 0u && cpu->events.count == 0u,
+           "adc lane rescheduling failure preserves completed result and aborts");
+}
+
+static void analog_pin_cases(AdcConformance* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    set_input(cpu, 0u, 2400u);
+    configure_manual(cpu, 0u, 0x0400u, 0u, 0u);
+    start_manual(cpu, 0u);
+    finish_conversion(cpu, 0u);
+    expect(state, dspic33_read_word(cpu, 0x0300u) == 2400u,
+           "analog input samples configured AN pin");
+
+    dspic33_write_word(cpu, 0x0e1eu, (uint16_t)(dspic33_read_word(cpu, 0x0e1eu) & ~1u));
+    start_manual(cpu, 0u);
+    finish_conversion(cpu, 0u);
+    expect(state, dspic33_read_word(cpu, 0x0300u) == 0u,
+           "digital AN pin connects adc multiplexer to AVSS");
+
+    dspic33_write_word(cpu, 0x0e1eu, (uint16_t)(dspic33_read_word(cpu, 0x0e1eu) | 1u));
+    dspic33_write_word(cpu, 0x0e10u, (uint16_t)(dspic33_read_word(cpu, 0x0e10u) & ~1u));
+    dspic33_write_word(cpu, 0x0e14u, (uint16_t)(dspic33_read_word(cpu, 0x0e14u) | 1u));
+    start_manual(cpu, 0u);
+    finish_conversion(cpu, 0u);
+    expect(state, dspic33_read_word(cpu, 0x0300u) == 0x0fffu,
+           "analog output pin converts driven high level");
+    dspic33_write_word(cpu, 0x0e14u, (uint16_t)(dspic33_read_word(cpu, 0x0e14u) & ~1u));
+    start_manual(cpu, 0u);
+    finish_conversion(cpu, 0u);
+    expect(state, dspic33_read_word(cpu, 0x0300u) == 0u,
+           "analog output pin converts driven low level");
+
+    dspic33_reset(cpu, 0u);
+    set_input(cpu, 16u, 1600u);
+    set_input(cpu, 22u, 2200u);
+    set_input(cpu, 31u, 3100u);
+    configure_manual(cpu, 0u, 0x0400u, 0u, 16u);
+    start_manual(cpu, 0u);
+    finish_conversion(cpu, 0u);
+    expect(state, dspic33_read_word(cpu, 0x0300u) == 1600u,
+           "channel sixteen uses RC1 analog selection");
+    dspic33_write_word(cpu, 0x0320u, 0u);
+    configure_manual(cpu, 0u, 0x0400u, 0u, 22u);
+    start_manual(cpu, 0u);
+    finish_conversion(cpu, 0u);
+    expect(state, dspic33_read_word(cpu, 0x0300u) == 2200u,
+           "channel twenty-two uses RA6 analog selection");
+    dspic33_write_word(cpu, 0x0320u, 0u);
+    configure_manual(cpu, 0u, 0x0400u, 0u, 31u);
+    start_manual(cpu, 0u);
+    finish_conversion(cpu, 0u);
+    expect(state, dspic33_read_word(cpu, 0x0300u) == 3100u,
+           "channel thirty-one uses RE7 analog selection");
 }
 
 static void copy_cases(AdcConformance* state, Dspic33* cpu) {
@@ -685,6 +962,36 @@ static void copy_cases(AdcConformance* state, Dspic33* cpu) {
            "copied adc conversion result");
     expect(state, dspic33_read_word(&copy, 0x0320u) == dspic33_read_word(cpu, 0x0320u),
            "copied adc control state");
+
+    dspic33_reset(cpu, 0u);
+    set_input(cpu, 0u, 2000u);
+    dspic33_load_program_word(cpu, 0u, RESET_OPCODE);
+    cpu->pc = 0u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->io.adc[0] == 2000u,
+           "warm reset preserves external analog level");
+    dspic33_reset(cpu, 0u);
+    expect(state, cpu->io.adc[0] == 0u, "power reset clears analog stimulus model");
+
+    dspic33_reset(cpu, 0u);
+    configure_manual(cpu, 0u, 0u, 0u, 0u);
+    dspic33_write_word(cpu, 0x0760u, 1u);
+    expect(state, dspic33_copy(&copy, cpu), "copy adc PMD deadline");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && dspic33_device_advance(&copy, 1u) &&
+               cpu->io.adc_pmd_disabled == 1u && copy.io.adc_pmd_disabled == 1u &&
+               cpu->events.count == 0u && copy.events.count == 0u,
+           "copied adc PMD transitions independently");
+
+    dspic33_reset(cpu, 0u);
+    configure_manual(cpu, 0u, 0u, 0u, 0u);
+    dspic33_write_word(cpu, 0x0760u, 1u);
+    dspic33_load_program_word(cpu, 0u, RESET_OPCODE);
+    cpu->pc = 0u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_read_word(cpu, 0x0760u) == 0u &&
+               cpu->io.adc_pmd_disabled == 0u && cpu->events.count == 0u,
+           "warm reset cancels adc PMD transition");
     dspic33_destroy(&copy);
 }
 
@@ -703,13 +1010,16 @@ int main(void) {
     done_active_conversion_cases(&state, &cpu);
     channel_cases(&state, &cpu);
     sequence_cases(&state, &cpu);
+    conversion_pipeline_cases(&state, &cpu);
     threshold_cases(&state, &cpu);
     dma_interrupt_rate_cases(&state, &cpu);
     trigger_cases(&state, &cpu);
     timer_trigger_cases(&state, &cpu);
     dma_cases(&state, &cpu);
     power_cases(&state, &cpu);
+    pmd_cases(&state, &cpu);
     boundary_cases(&state, &cpu);
+    analog_pin_cases(&state, &cpu);
     copy_cases(&state, &cpu);
     report_sfr_side_effect_coverage(
         "adc", adc_sfr_side_effect_coverage,
