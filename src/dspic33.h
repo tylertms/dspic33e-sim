@@ -983,6 +983,9 @@ void dspic33_adc_input(Dspic33* cpu, uint8_t channel, uint16_t value);
 bool dspic33_gpio_drive(Dspic33* cpu, uint8_t port, uint16_t value, uint16_t mask);
 bool dspic33_gpio_release(Dspic33* cpu, uint8_t port, uint16_t mask);
 bool dspic33_gpio_pin(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* high);
+bool dspic33_oscillator_pin(const Dspic33* cpu, bool* clock_output, uint64_t* edges);
+bool dspic33_reference_clock_pin(const Dspic33* cpu, uint8_t pin,
+                                 uint64_t primary_edges, uint64_t* edges);
 void dspic33_gpio_input(Dspic33* cpu, uint8_t port, uint16_t value);
 void dspic33_set_async_events(Dspic33* cpu, bool enabled);
 void dspic33_check_stack_address(Dspic33* cpu, int32_t address, bool wrapped,

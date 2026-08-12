@@ -134,6 +134,79 @@ static bool select_locked_main_pll(Dspic33* cpu, uint8_t source) {
     return control(cpu) == (uint16_t)(source * 0x1100u + OSCILLATOR_PLL_LOCK);
 }
 
+static void oscillator_pin_cases(OscillatorConformance* state, Dspic33* source,
+                                 Dspic33* copy) {
+    for (uint8_t primary_mode = 0u; primary_mode < 4u; primary_mode++) {
+        for (uint8_t clock_select = 0u; clock_select < 2u; clock_select++) {
+            bool gpio_high = false;
+            bool clock_output = false;
+            uint64_t edges = 0u;
+            bool owned = primary_mode == 1u || primary_mode == 2u || clock_select != 0u;
+            bool clock = owned && primary_mode != 1u && primary_mode != 2u;
+            dspic33_load_configuration_word(
+                source, CONFIGURATION_FOSC,
+                (uint16_t)(0x0058u | primary_mode | (clock_select << 2u)));
+            dspic33_reset(source, 0u);
+            dspic33_write_word(source, 0x0e20u, 0u);
+            dspic33_write_word(source, 0x0e24u, 0x8000u);
+            expect(
+                state,
+                (dspic33_gpio_pin(source, 2u, 15u, &gpio_high) == !owned) &&
+                    (dspic33_oscillator_pin(source, &clock_output, &edges) == owned) &&
+                    (!owned || (clock_output == clock &&
+                                edges == (clock ? source->device_cycles * 2u : 0u))) &&
+                    (owned || gpio_high),
+                "OSC2 ownership follows POSCMD and OSCIOFNC");
+        }
+    }
+
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSC, 0x005cu);
+    dspic33_reset(source, 0u);
+    bool clock_output = false;
+    uint64_t initial_edges = 0u;
+    uint64_t advanced_edges = 0u;
+    expect(state,
+           dspic33_oscillator_pin(source, &clock_output, &initial_edges) &&
+               clock_output && dspic33_device_advance(source, 7u) &&
+               dspic33_oscillator_pin(source, &clock_output, &advanced_edges) &&
+               advanced_edges - initial_edges == 14u,
+           "OSC2 clock output produces two FCY edges per device cycle");
+    expect(state,
+           dspic33_copy(copy, source) &&
+               dspic33_oscillator_pin(copy, &clock_output, &initial_edges) &&
+               initial_edges == advanced_edges && dspic33_device_advance(source, 3u) &&
+               dspic33_oscillator_pin(source, &clock_output, &advanced_edges) &&
+               dspic33_oscillator_pin(copy, &clock_output, &initial_edges) &&
+               advanced_edges - initial_edges == 6u,
+           "copied OSC2 clock output advances independently");
+    source->device_cycles = UINT64_MAX;
+    expect(state,
+           dspic33_oscillator_pin(source, &clock_output, &advanced_edges) &&
+               clock_output && advanced_edges == UINT64_MAX,
+           "OSC2 edge counter saturates without overflow");
+    expect(state,
+           !dspic33_oscillator_pin(source, NULL, &advanced_edges) &&
+               !dspic33_oscillator_pin(source, &clock_output, NULL),
+           "OSC2 observation rejects null outputs");
+
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSC, 0x005au);
+    dspic33_reset(source, 0u);
+    expect(state,
+           dspic33_oscillator_pin(source, &clock_output, &advanced_edges) &&
+               !clock_output && advanced_edges == 0u &&
+               !dspic33_gpio_pin(source, 2u, 15u, &clock_output),
+           "HS mode reserves OSC2 for the crystal oscillator");
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSC, 0x0059u);
+    dspic33_reset(source, 0u);
+    expect(state,
+           dspic33_oscillator_pin(source, &clock_output, &advanced_edges) &&
+               !clock_output && advanced_edges == 0u &&
+               !dspic33_gpio_pin(source, 2u, 15u, &clock_output),
+           "XT mode reserves OSC2 for the crystal oscillator");
+    dspic33_load_configuration_word(source, CONFIGURATION_FOSC, 0x005eu);
+    dspic33_reset(source, 0u);
+}
+
 static void reset_cases(OscillatorConformance* state, Dspic33* cpu) {
     expect(state, dspic33_load_configuration_word(cpu, 0xf80006u, 0x00ffu),
            "load nondefault FNOSC configuration");
@@ -928,6 +1001,61 @@ static void reference_clock_cases(OscillatorConformance* state, Dspic33* source,
            "reference clock writes create no oscillator lifecycle");
 }
 
+static void reference_clock_pin_cases(OscillatorConformance* state, Dspic33* source,
+                                      Dspic33* copy) {
+    uint64_t edges = 0u;
+    dspic33_reset(source, 0u);
+    dspic33_write_word(source, 0x0680u, 49u);
+    expect(state, !dspic33_reference_clock_pin(source, 64u, 0u, &edges),
+           "disabled reference clock releases its PPS output");
+    expect(state, dspic33_device_advance(source, 65536u),
+           "reference clock edge domain advances");
+    for (uint8_t divisor = 0u; divisor < 16u; divisor++) {
+        dspic33_write_word(source, REFERENCE_CLOCK_CONTROL, (uint16_t)(divisor << 8u));
+        dspic33_write_word(source, REFERENCE_CLOCK_CONTROL,
+                           (uint16_t)(REFERENCE_CLOCK_ENABLE | divisor << 8u));
+        expect(state,
+               dspic33_reference_clock_pin(source, 64u, 0u, &edges) &&
+                   edges == (source->device_cycles * 2u >> divisor),
+               "REFCLKO divides the system clock by RODIV");
+        dspic33_write_word(source, REFERENCE_CLOCK_CONTROL, 0u);
+    }
+
+    dspic33_write_word(source, REFERENCE_CLOCK_CONTROL,
+                       REFERENCE_CLOCK_ENABLE | REFERENCE_CLOCK_SOURCE);
+    expect(state,
+           dspic33_reference_clock_pin(source, 64u, 0x123456u, &edges) &&
+               edges == 0x123456u,
+           "REFCLKO selects supplied primary oscillator edges");
+
+    source->power_state = DSPIC33_POWER_SLEEP;
+    expect(state, !dspic33_reference_clock_pin(source, 64u, 0x123456u, &edges),
+           "REFCLKO stops in Sleep when ROSSLP is clear");
+    dspic33_write_word(source, REFERENCE_CLOCK_CONTROL,
+                       REFERENCE_CLOCK_ENABLE | REFERENCE_CLOCK_SLEEP |
+                           REFERENCE_CLOCK_SOURCE);
+    expect(state,
+           dspic33_reference_clock_pin(source, 64u, 0x123456u, &edges) &&
+               edges == 0x123456u,
+           "REFCLKO continues in Sleep when ROSSLP is set");
+    source->power_state = DSPIC33_POWER_ACTIVE;
+
+    dspic33_write_word(source, 0x0680u, (uint16_t)(49u << 8u));
+    expect(state,
+           !dspic33_reference_clock_pin(source, 64u, 0x123456u, &edges) &&
+               dspic33_reference_clock_pin(source, 65u, 0x123456u, &edges),
+           "REFCLKO follows PPS remapping");
+    expect(state,
+           dspic33_copy(copy, source) &&
+               dspic33_reference_clock_pin(copy, 65u, 0x654321u, &edges) &&
+               edges == 0x654321u,
+           "copy preserves REFCLKO source, divisor and mapping");
+    expect(state,
+           !dspic33_reference_clock_pin(source, 63u, 0u, &edges) &&
+               !dspic33_reference_clock_pin(source, 65u, 0u, NULL),
+           "REFCLKO observation rejects invalid outputs");
+}
+
 static void main_pll_configuration_cases(OscillatorConformance* state, Dspic33* source,
                                          Dspic33* copy) {
     uint32_t generation;
@@ -1624,10 +1752,12 @@ int main(void) {
     pll_lock_sequence_cases(&state, &source, &copy);
     two_speed_startup_cases(&state, &source, &copy);
     reference_clock_cases(&state, &source, &copy);
+    reference_clock_pin_cases(&state, &source, &copy);
     main_pll_configuration_cases(&state, &source, &copy);
     doze_cases(&state, &source, &copy);
+    oscillator_pin_cases(&state, &source, &copy);
     lifecycle_cases(&state, &source, &copy);
-    expect(&state, state.cases == 443u, "oscillator assertion arithmetic");
+    expect(&state, state.cases == 481u, "oscillator assertion arithmetic");
     report_sfr_side_effect_coverage(
         "oscillator", oscillator_sfr_side_effect_coverage,
         SFR_SIDE_EFFECT_COVERAGE_COUNT(oscillator_sfr_side_effect_coverage),

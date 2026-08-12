@@ -15341,6 +15341,18 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     dspic33_i2c_refresh_pins(cpu);
 }
 
+static bool oscillator_pin_owned(const Dspic33* cpu) {
+    uint8_t primary_mode = (uint8_t)(cpu->configuration[8u] & 0x03u);
+    return primary_mode == 1u || primary_mode == 2u ||
+           (cpu->configuration[8u] & 0x04u) != 0u;
+}
+
+static bool oscillator_pin_clock_output(const Dspic33* cpu) {
+    uint8_t primary_mode = (uint8_t)(cpu->configuration[8u] & 0x03u);
+    return primary_mode != 1u && primary_mode != 2u &&
+           (cpu->configuration[8u] & 0x04u) != 0u;
+}
+
 static uint16_t gpio_pin_values(const Dspic33* cpu, uint8_t port) {
     uint16_t tris = raw_word(cpu, gpio_tris_addresses[port]);
     uint16_t lat = raw_word(cpu, gpio_latch_addresses[port]);
@@ -15383,6 +15395,9 @@ static uint16_t gpio_pin_values(const Dspic33* cpu, uint8_t port) {
         if (pwm_pin_value(cpu, port, pin, &high)) {
             values = high ? (uint16_t)(values | bit) : (uint16_t)(values & ~bit);
         }
+    }
+    if (port == 2u && oscillator_pin_owned(cpu)) {
+        values &= 0x7fffu;
     }
     return values;
 }
@@ -16695,10 +16710,53 @@ bool dspic33_gpio_pin(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* high)
         return false;
     }
     mask = (uint16_t)(1u << bit);
-    if ((gpio_port_masks[port] & mask) == 0u) {
+    if ((gpio_port_masks[port] & mask) == 0u ||
+        (port == 2u && bit == 15u && oscillator_pin_owned(cpu))) {
         return false;
     }
     *high = (gpio_pin_values(cpu, port) & mask) != 0u;
+    return true;
+}
+
+bool dspic33_oscillator_pin(const Dspic33* cpu, bool* clock_output, uint64_t* edges) {
+    if (clock_output == NULL || edges == NULL || !oscillator_pin_owned(cpu)) {
+        return false;
+    }
+    *clock_output = oscillator_pin_clock_output(cpu);
+    *edges = !*clock_output                          ? 0u
+             : cpu->device_cycles <= UINT64_MAX / 2u ? cpu->device_cycles * 2u
+                                                     : UINT64_MAX;
+    return true;
+}
+
+bool dspic33_reference_clock_pin(const Dspic33* cpu, uint8_t pin,
+                                 uint64_t primary_edges, uint64_t* edges) {
+    uint8_t function = 0u;
+    size_t mapping;
+    if (edges == NULL) {
+        return false;
+    }
+    for (mapping = 0u; mapping < sizeof(pps_outputs) / sizeof(pps_outputs[0]);
+         mapping++) {
+        if (pps_outputs[mapping].pin == pin) {
+            function = (uint8_t)((raw_word(cpu, pps_outputs[mapping].address) >>
+                                  pps_outputs[mapping].shift) &
+                                 0x003fu);
+            break;
+        }
+    }
+    uint16_t control = raw_word(cpu, REFERENCE_CLOCK_CONTROL);
+    if (mapping == sizeof(pps_outputs) / sizeof(pps_outputs[0]) || function != 49u ||
+        (control & REFERENCE_CLOCK_ENABLE) == 0u ||
+        (cpu->power_state == DSPIC33_POWER_SLEEP && (control & 0x2000u) == 0u)) {
+        return false;
+    }
+    uint64_t source_edges =
+        (control & 0x1000u) != 0u
+            ? primary_edges
+            : (cpu->device_cycles <= UINT64_MAX / 2u ? cpu->device_cycles * 2u
+                                                     : UINT64_MAX);
+    *edges = source_edges >> ((control & REFERENCE_CLOCK_DIVISOR) >> 8u);
     return true;
 }
 

@@ -369,7 +369,7 @@ static void open_drain_cases(GpioConformance* state, Dspic33* cpu) {
     expect(state, (dspic33_read_word(cpu, port_addresses[2]) & 0x8000u) != 0u,
            "B1 ODCA3 does not affect OSC2 GPIO under LPRC");
     dspic33_load_configuration_word(cpu, 0xf80006u, 0x00ffu);
-    dspic33_load_configuration_word(cpu, 0xf80008u, 0x00ffu);
+    dspic33_load_configuration_word(cpu, 0xf80008u, 0x00fbu);
     dspic33_reset(cpu, 0u);
 }
 
@@ -843,6 +843,7 @@ int main(void) {
     bool initialized = dspic33_initialize(&cpu);
     expect(&state, initialized, "initialize GPIO processor");
     if (initialized) {
+        dspic33_load_configuration_word(&cpu, 0xf80008u, 0x00fbu);
         core_cases(&state, &cpu);
         analog_cases(&state, &cpu);
         input_only_usb_cases(&state, &cpu);
