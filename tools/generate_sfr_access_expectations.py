@@ -26,6 +26,9 @@ EXPECTED_CONDITIONAL_RESERVED_BITS = 64
 EXPECTED_IMPLEMENTED_WORDS = 977
 EXPECTED_ABSENT_WORDS = 1071
 EXPECTED_ABSENT_RANGES = 77
+EXPECTED_ABSENT_PERIPHERALS = {
+    "ptg": ("PTG",),
+}
 EXPECTED_MASTER_CLEAR_RESET_RECORDS = 49
 EXPECTED_MASTER_CLEAR_UNCHANGED_BITS = 729
 EXPECTED_MASTER_CLEAR_CHANGED_BITS = 2
@@ -458,6 +461,14 @@ def load_inventory(path):
         raise ValueError(
             f"manifest has {len(registers)} definitions, expected {EXPECTED_DEFINITIONS}"
         )
+    for peripheral, prefixes in EXPECTED_ABSENT_PERIPHERALS.items():
+        matches = sorted(
+            register["name"]
+            for register in registers
+            if register["name"].startswith(prefixes)
+        )
+        if matches:
+            raise ValueError(f"absent {peripheral} registers are present: {matches}")
     grouped = {}
     for register in registers:
         address = int(register["address"], 16)
@@ -970,6 +981,9 @@ def main():
             f"SFR access expectations and implementation map are current: "
             f"{arguments.output}, {arguments.map_output}"
         )
+        print(
+            "[target-absence] groups=" + ",".join(sorted(EXPECTED_ABSENT_PERIPHERALS))
+        )
         return 0
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_bytes(rendered)
@@ -979,6 +993,7 @@ def main():
         f"Generated SFR access expectations and implementation map: "
         f"{arguments.output}, {arguments.map_output}"
     )
+    print("[target-absence] groups=" + ",".join(sorted(EXPECTED_ABSENT_PERIPHERALS)))
     return 0
 
 
