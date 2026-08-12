@@ -779,6 +779,93 @@ static void interrupt_entry_overlap_cases(InterruptControlConformance* state,
            "POR clears fixed-latency overlap state");
 }
 
+static void priority_control_cases(InterruptControlConformance* state, Dspic33* cpu) {
+    uint64_t cycles;
+
+    dspic33_reset(cpu, 0x0200u);
+    enable_interrupt(cpu, 0u, 3u, 0x0300u);
+    enable_interrupt(cpu, 1u, 3u, 0x0320u);
+    dspic33_load_program_word(cpu, 0x0300u, OPCODE_RETFIE);
+    cpu->w[15] = 0x2800u;
+    cpu->sr = 0x0105u;
+    dspic33_raise_interrupt(cpu, 1u);
+    dspic33_raise_interrupt(cpu, 0u);
+    expect(state,
+           dspic33_device_service_interrupt(cpu) && cpu->last_interrupt == 0u &&
+               cpu->pc == 0x0300u && interrupt_flag(cpu, 1u),
+           "equal-priority requests select the lowest vector number");
+    clear_interrupt(cpu, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0200u &&
+               cpu->sr == 0x0105u && cpu->w[15] == 0x2800u,
+           "RETFIE restores priority and status before the pending peer interrupt");
+    expect(state,
+           dspic33_device_service_interrupt(cpu) && cpu->last_interrupt == 1u &&
+               cpu->pc == 0x0320u,
+           "pending equal-priority peer enters after RETFIE");
+
+    dspic33_reset(cpu, 0x0200u);
+    enable_interrupt(cpu, 0u, 2u, 0x0300u);
+    enable_interrupt(cpu, 1u, 7u, 0x0320u);
+    dspic33_load_program_word(cpu, 0x0300u, OPCODE_RETFIE);
+    dspic33_write_word(cpu, INTCON1, 0x8000u);
+    cpu->w[15] = 0x2900u;
+    dspic33_raise_interrupt(cpu, 0u);
+    expect(state,
+           dspic33_device_service_interrupt(cpu) && (cpu->sr & 0x00e0u) == 0x00e0u &&
+               cpu->last_interrupt == 0u,
+           "NSTDIS forces an entered interrupt to CPU priority seven");
+    clear_interrupt(cpu, 0u);
+    dspic33_raise_interrupt(cpu, 1u);
+    expect(state, !dspic33_device_service_interrupt(cpu) && interrupt_flag(cpu, 1u),
+           "NSTDIS masks every nested user interrupt");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && (cpu->sr & 0x00e0u) == 0u &&
+               dspic33_device_service_interrupt(cpu) && cpu->last_interrupt == 1u,
+           "RETFIE restores priority and permits a deferred interrupt after NSTDIS");
+
+    dspic33_reset(cpu, 0x0200u);
+    enable_interrupt(cpu, 0u, 6u, 0x0300u);
+    dspic33_raise_interrupt(cpu, 0u);
+    dspic33_write_word(cpu, INTCON2, 0u);
+    expect(state, !dspic33_device_service_interrupt(cpu) && interrupt_flag(cpu, 0u),
+           "GIE masks enabled user interrupts without clearing their flags");
+    dspic33_write_word(cpu, INTCON2, 0x8000u);
+    cpu->disicnt = 1u;
+    expect(state, !dspic33_device_service_interrupt(cpu),
+           "DISI masks priorities below seven");
+    dspic33_write_word(cpu, 0x0840u, 7u);
+    expect(state, dspic33_device_service_interrupt(cpu) && cpu->last_interrupt == 0u,
+           "DISI permits priority-seven interrupts");
+
+    dspic33_reset(cpu, 0x0200u);
+    dspic33_load_program_word(cpu, 0x0200u, OPCODE_NOP);
+    dspic33_load_program_word(cpu, 0x0202u, OPCODE_NOP);
+    enable_interrupt(cpu, 0u, 1u, 0x0300u);
+    cpu->w[15] = 0x2a00u;
+    cpu->disicnt = 1u;
+    cpu->corcon |= 0x8000u;
+    dspic33_raise_interrupt(cpu, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0202u &&
+               cpu->interrupt_entry_overlap == 1u,
+           "variable-latency mode records but does not consume fixed overlap");
+    cycles = cpu->cycles;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0302u &&
+               cpu->cycles - cycles == 9u && cpu->interrupt_entry_overlap == 0u,
+           "variable-latency mode includes the completed instruction in entry timing");
+
+    dspic33_reset(cpu, 0x0200u);
+    enable_interrupt(cpu, 142u, 4u, 0x0340u);
+    cpu->w[15] = 0x2b00u;
+    dspic33_raise_interrupt(cpu, 142u);
+    expect(state,
+           dspic33_device_service_interrupt(cpu) && cpu->last_interrupt == 142u &&
+               cpu->pc == 0x0340u && dspic33_read_word(cpu, INTTREG) == 0x0496u,
+           "highest implemented IRQ maps to vector one hundred fifty");
+}
+
 static void lifecycle_cases(InterruptControlConformance* state, Dspic33* source,
                             Dspic33* copy) {
     dspic33_reset(source, 0u);
@@ -821,8 +908,9 @@ int main(void) {
     interrupt_entry_latency_cases(&state, &source);
     interrupt_entry_overlap_cases(&state, &source, &copy);
     interrupt_entry_frame_timing_cases(&state, &source);
+    priority_control_cases(&state, &source);
     lifecycle_cases(&state, &source, &copy);
-    expect(&state, state.cases == 125u, "interrupt-control assertion accounting");
+    expect(&state, state.cases == 137u, "interrupt-control assertion accounting");
     report_sfr_side_effect_coverage(
         "interrupt-control", interrupt_control_sfr_side_effect_coverage,
         SFR_SIDE_EFFECT_COVERAGE_COUNT(interrupt_control_sfr_side_effect_coverage),
