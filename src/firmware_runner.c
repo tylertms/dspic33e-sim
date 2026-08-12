@@ -26,6 +26,9 @@ typedef struct RunTask RunTask;
 typedef struct {
     const JsonValue* suite;
     const char* suite_path;
+    const char* program_path;
+    const char* reference_path;
+    const char* candidate_path;
     char suite_directory[1024];
     const char* scenario_filter;
     const char* step_filter;
@@ -41,11 +44,19 @@ typedef struct {
     size_t passed;
     size_t failed;
     size_t comparisons;
+    size_t failed_comparisons;
     uint64_t reference_instructions;
     uint64_t candidate_instructions;
     uint64_t reference_cycles;
     uint64_t candidate_cycles;
     uint64_t instruction_limit;
+    const char* ledger_path;
+    const char* summary_path;
+    char ledger_partial_path[1024];
+    FILE* ledger;
+    const char* current_scenario_identifier;
+    const char* current_scenario_source;
+    const char* current_step_identifier;
     FirmwareImage reference_image;
     FirmwareImage candidate_image;
     Dspic33 reference;
@@ -61,6 +72,197 @@ typedef struct {
 } Runner;
 
 static const uint64_t DEFAULT_INSTRUCTION_LIMIT = 1000000u;
+
+static void write_json_string(FILE* stream, const char* value) {
+    const unsigned char* current = (const unsigned char*)(value == NULL ? "" : value);
+    fputc('"', stream);
+    while (*current != '\0') {
+        if (*current == '"' || *current == '\\') {
+            fputc('\\', stream);
+            fputc(*current, stream);
+        } else if (*current == '\n') {
+            fputs("\\n", stream);
+        } else if (*current == '\r') {
+            fputs("\\r", stream);
+        } else if (*current == '\t') {
+            fputs("\\t", stream);
+        } else if (*current < 0x20u) {
+            fprintf(stream, "\\u%04x", *current);
+        } else {
+            fputc(*current, stream);
+        }
+        current++;
+    }
+    fputc('"', stream);
+}
+
+static void write_json_path(FILE* stream, const char* value) {
+    const unsigned char* current = (const unsigned char*)(value == NULL ? "" : value);
+    fputc('"', stream);
+    while (*current != '\0') {
+        if (*current == '\\') {
+            fputc('/', stream);
+        } else if (*current == '"') {
+            fputs("\\\"", stream);
+        } else if (*current == '\n') {
+            fputs("\\n", stream);
+        } else if (*current == '\r') {
+            fputs("\\r", stream);
+        } else if (*current == '\t') {
+            fputs("\\t", stream);
+        } else if (*current < 0x20u) {
+            fprintf(stream, "\\u%04x", *current);
+        } else {
+            fputc(*current, stream);
+        }
+        current++;
+    }
+    fputc('"', stream);
+}
+
+static void record_comparison(Runner* runner, const char* category, const char* name,
+                              const char* evidence_class, bool matched) {
+    runner->comparisons++;
+    runner->failed_comparisons += matched ? 0u : 1u;
+    if (runner->ledger == NULL) {
+        return;
+    }
+    fputs("{\"comparison\":{\"category\":", runner->ledger);
+    write_json_string(runner->ledger, category);
+    fputs(",\"evidence_class\":", runner->ledger);
+    write_json_string(runner->ledger, evidence_class);
+    fprintf(runner->ledger, ",\"matched\":%s,\"name\":", matched ? "true" : "false");
+    write_json_string(runner->ledger, name);
+    fprintf(runner->ledger,
+            "},\"comparison_index\":%zu,\"evidence_class\":", runner->comparisons);
+    write_json_string(runner->ledger, evidence_class);
+    fprintf(runner->ledger,
+            ",\"outcome\":\"%s\",\"runner\":\"native\",\"scenario_id\":",
+            matched ? "pass" : "fail");
+    write_json_string(runner->ledger, runner->current_scenario_identifier);
+    fprintf(runner->ledger,
+            ",\"shard_count\":%zu,\"shard_index\":%zu,\"source\":", runner->shard_count,
+            runner->shard_index);
+    write_json_path(runner->ledger, runner->current_scenario_source);
+    fputs(",\"step_id\":", runner->ledger);
+    write_json_string(runner->ledger, runner->current_step_identifier);
+    fprintf(runner->ledger, ",\"step_index\":%zu}\n", runner->current_step);
+    fflush(runner->ledger);
+}
+
+static bool open_comparison_ledger(Runner* runner, char* error, size_t error_size) {
+    int written;
+    if (runner->ledger_path == NULL) {
+        return true;
+    }
+    written = snprintf(runner->ledger_partial_path, sizeof(runner->ledger_partial_path),
+                       "%s.partial", runner->ledger_path);
+    if (written < 0 || (size_t)written >= sizeof(runner->ledger_partial_path)) {
+        snprintf(error, error_size, "comparison ledger path is too long");
+        return false;
+    }
+    runner->ledger = fopen(runner->ledger_partial_path, "wb");
+    if (runner->ledger == NULL) {
+        snprintf(error, error_size, "cannot open comparison ledger");
+        return false;
+    }
+    return true;
+}
+
+static bool close_comparison_ledger(Runner* runner, bool complete, char* error,
+                                    size_t error_size) {
+    if (runner->ledger == NULL) {
+        return true;
+    }
+    if (fclose(runner->ledger) != 0) {
+        runner->ledger = NULL;
+        snprintf(error, error_size, "cannot close comparison ledger");
+        return false;
+    }
+    runner->ledger = NULL;
+    if (!complete || runner->ledger_path == NULL) {
+        return true;
+    }
+    remove(runner->ledger_path);
+    if (rename(runner->ledger_partial_path, runner->ledger_path) != 0) {
+        snprintf(error, error_size, "cannot finalize comparison ledger");
+        return false;
+    }
+    return true;
+}
+
+static bool write_summary_json(const Runner* runner, char* error, size_t error_size) {
+    FILE* stream;
+    char partial_path[1024];
+    int written;
+    if (runner->summary_path == NULL) {
+        return true;
+    }
+    written = snprintf(partial_path, sizeof(partial_path), "%s.partial",
+                       runner->summary_path);
+    if (written < 0 || (size_t)written >= sizeof(partial_path)) {
+        snprintf(error, error_size, "native summary path is too long");
+        return false;
+    }
+    stream = fopen(partial_path, "wb");
+    if (stream == NULL) {
+        snprintf(error, error_size, "cannot open native summary");
+        return false;
+    }
+    fputs("{\"candidate_cycles\":", stream);
+    fprintf(stream, "%" PRIu64 ",\"candidate_instructions\":%" PRIu64,
+            runner->candidate_cycles, runner->candidate_instructions);
+    fprintf(stream, ",\"comparisons\":%zu,\"failed_comparisons\":%zu",
+            runner->comparisons, runner->failed_comparisons);
+    fputs(",\"candidate_image\":", stream);
+    write_json_path(stream, runner->candidate_path);
+    fprintf(stream, ",\"failed_steps\":%zu,\"ledger\":", runner->failed);
+    if (runner->ledger_path == NULL) {
+        fputs("null", stream);
+    } else {
+        write_json_path(stream, runner->ledger_path);
+    }
+    fprintf(stream, ",\"max_instructions\":%" PRIu64 ",\"passed_steps\":%zu",
+            runner->instruction_limit, runner->passed);
+    fprintf(stream,
+            ",\"reference_cycles\":%" PRIu64 ",\"reference_instructions\":%" PRIu64,
+            runner->reference_cycles, runner->reference_instructions);
+    fputs(",\"reference_image\":", stream);
+    write_json_path(stream, runner->reference_path);
+    fputs(",\"runner\":\"native\",\"scenario_filter\":", stream);
+    if (runner->scenario_filter == NULL) {
+        fputs("null", stream);
+    } else {
+        write_json_string(stream, runner->scenario_filter);
+    }
+    fprintf(stream, ",\"scenarios\":%zu,\"schema_version\":1",
+            runner->current_scenario);
+    fprintf(stream, ",\"selected_scenarios\":%zu,\"selected_steps\":%zu",
+            runner->scenarios, runner->steps);
+    fputs(",\"simulator\":", stream);
+    write_json_path(stream, runner->program_path);
+    fprintf(stream, ",\"shard_count\":%zu,\"shard_index\":%zu", runner->shard_count,
+            runner->shard_index);
+    fputs(",\"step_filter\":", stream);
+    if (runner->step_filter == NULL) {
+        fputs("null", stream);
+    } else {
+        write_json_string(stream, runner->step_filter);
+    }
+    fprintf(stream, ",\"steps\":%zu,\"suite\":", runner->current_step);
+    write_json_path(stream, runner->suite_path);
+    fputs("}\n", stream);
+    if (fclose(stream) != 0) {
+        snprintf(error, error_size, "cannot close native summary");
+        return false;
+    }
+    remove(runner->summary_path);
+    if (rename(partial_path, runner->summary_path) != 0) {
+        snprintf(error, error_size, "cannot finalize native summary");
+        return false;
+    }
+    return true;
+}
 
 typedef struct {
     const JsonValue* items[MAX_STEP_PARTS];
@@ -579,6 +781,8 @@ static bool open_images(Runner* runner, char* error, size_t error_size) {
         snprintf(error, error_size, "suite image paths are invalid");
         return false;
     }
+    runner->reference_path = reference_path;
+    runner->candidate_path = candidate_path;
     printf("[prepare] Loading reference image\n");
     fflush(stdout);
     if (!firmware_image_open(&runner->reference_image, reference_path, error,
@@ -1633,7 +1837,12 @@ static bool compare_registers(Runner* runner, const StepParts* parts, size_t* fa
             matched = matched &&
                       (runner->reference.w[reg] & mask) == ((uint16_t)expected & mask);
         }
-        runner->comparisons++;
+        record_comparison(runner, "register", name,
+                          expected_location != NULL ? "mapped-absolute"
+                          : has_expected            ? "literal-exact"
+                          : mask != UINT16_MAX      ? "masked-defined"
+                                                    : "raw-differential",
+                          matched);
         if (!matched) {
             (*failures)++;
             if (!runner->summary_only) {
@@ -1769,6 +1978,36 @@ static const MappedField* mapped_field_at(const MappedFields* fields, size_t off
     return NULL;
 }
 
+static const char* memory_evidence_class(const char* required,
+                                         const MappedFields* fields, int64_t mask,
+                                         bool has_expected, const char* expected_text,
+                                         const JsonValue* expected_location) {
+    const MappedField* field;
+    if (required != NULL) {
+        return required;
+    }
+    if (expected_location != NULL) {
+        return "mapped-absolute";
+    }
+    if (has_expected || expected_text != NULL) {
+        return "literal-exact";
+    }
+    if (fields->count == 0u) {
+        return mask != -1 ? "masked-defined" : "raw-differential";
+    }
+    field = &fields->items[0];
+    if (field->target_count != 0u) {
+        return "mapped-alternative";
+    }
+    if (field->relative) {
+        return "mapped-relative";
+    }
+    if (field->nullable) {
+        return "nullable";
+    }
+    return "mapped-absolute";
+}
+
 static uint32_t read_memory_value(Dspic33* cpu, const char* space, uint32_t address,
                                   size_t size) {
     uint32_t value = 0u;
@@ -1780,7 +2019,9 @@ static uint32_t read_memory_value(Dspic33* cpu, const char* space, uint32_t addr
     return value;
 }
 
-static bool compare_memory_item(Runner* runner, const JsonValue* item, size_t* failures,
+static bool compare_memory_item(Runner* runner, const JsonValue* item,
+                                const char* required_category,
+                                const char* required_evidence_class, size_t* failures,
                                 char* error, size_t error_size) {
     uint32_t reference_address;
     uint32_t candidate_address;
@@ -1953,7 +2194,12 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item, size_t* f
                 ((uint32_t)expected & (uint32_t)mask) &&
             (candidate_value & (uint32_t)mask) == ((uint32_t)expected & (uint32_t)mask);
     }
-    runner->comparisons++;
+    record_comparison(runner, required_category == NULL ? "state" : required_category,
+                      name == NULL ? "state" : name,
+                      memory_evidence_class(required_evidence_class, &mapped_fields,
+                                            mask, has_expected, expected_text,
+                                            expected_location),
+                      matched);
     if (!matched) {
         size_t shown = size > 16u ? 16u : size;
         size_t start = first_difference > 4u ? first_difference - 4u : 0u;
@@ -2022,8 +2268,8 @@ static bool compare_memory(Runner* runner, const StepParts* parts, size_t* failu
             return false;
         }
         for (index = 0u; index < values->as.array.count; index++) {
-            if (!compare_memory_item(runner, values->as.array.items[index], failures,
-                                     error, error_size)) {
+            if (!compare_memory_item(runner, values->as.array.items[index], NULL, NULL,
+                                     failures, error, error_size)) {
                 return false;
             }
         }
@@ -2037,6 +2283,7 @@ static bool compare_memory(Runner* runner, const StepParts* parts, size_t* failu
             size_t index;
             for (index = 0u; index < values->as.array.count; index++) {
                 if (!compare_memory_item(runner, values->as.array.items[index],
+                                         "exact-program-data", "exact-program-data",
                                          failures, error, error_size)) {
                     return false;
                 }
@@ -2102,7 +2349,9 @@ static bool compare_pins(Runner* runner, const StepParts* parts, size_t* failure
                 matched = matched && reference_high == (level == PIN_LEVEL_HIGH);
             }
         }
-        runner->comparisons++;
+        record_comparison(runner, "pin", name,
+                          expected == NULL ? "raw-differential" : "literal-exact",
+                          matched);
         if (!matched) {
             (*failures)++;
             if (!runner->summary_only) {
@@ -2168,6 +2417,7 @@ static bool compare_uart_transmit(Runner* runner, const StepParts* parts,
     for (index = 0u; index < values->as.array.count; index++) {
         const JsonValue* item = values->as.array.items[index];
         uint64_t channel;
+        char comparison_name[64];
         size_t reference_count;
         size_t candidate_count;
         size_t frame_index = 0u;
@@ -2179,7 +2429,10 @@ static bool compare_uart_transmit(Runner* runner, const StepParts* parts,
         }
         reference_count = runner->reference.io.uart_tx[channel].count;
         candidate_count = runner->candidate.io.uart_tx[channel].count;
-        runner->comparisons++;
+        snprintf(comparison_name, sizeof(comparison_name),
+                 "UART%" PRIu64 " transmit count", channel + 1u);
+        record_comparison(runner, "uart_tx", comparison_name, "raw-differential",
+                          reference_count == candidate_count);
         if (reference_count != candidate_count) {
             (*failures)++;
             if (!runner->summary_only) {
@@ -2200,7 +2453,10 @@ static bool compare_uart_transmit(Runner* runner, const StepParts* parts,
             if (reference_present && candidate_present) {
                 matched = uart_frames_match(&reference_frame, &candidate_frame);
             }
-            runner->comparisons++;
+            snprintf(comparison_name, sizeof(comparison_name),
+                     "UART%" PRIu64 " transmit frame %zu", channel + 1u, frame_index);
+            record_comparison(runner, "uart_tx", comparison_name, "raw-differential",
+                              matched);
             if (!matched) {
                 (*failures)++;
                 if (!runner->summary_only) {
@@ -2245,6 +2501,7 @@ static bool compare_can_transmit(Runner* runner, const StepParts* parts,
     for (index = 0u; index < values->as.array.count; index++) {
         const JsonValue* item = values->as.array.items[index];
         uint64_t channel;
+        char comparison_name[64];
         size_t reference_count;
         size_t candidate_count;
         size_t frame_index = 0u;
@@ -2256,7 +2513,10 @@ static bool compare_can_transmit(Runner* runner, const StepParts* parts,
         }
         reference_count = runner->reference.io.can_tx[channel].count;
         candidate_count = runner->candidate.io.can_tx[channel].count;
-        runner->comparisons++;
+        snprintf(comparison_name, sizeof(comparison_name),
+                 "CAN%" PRIu64 " transmit count", channel + 1u);
+        record_comparison(runner, "can_tx", comparison_name, "raw-differential",
+                          reference_count == candidate_count);
         if (reference_count != candidate_count) {
             (*failures)++;
             if (!runner->summary_only) {
@@ -2276,7 +2536,10 @@ static bool compare_can_transmit(Runner* runner, const StepParts* parts,
             if (reference_present && candidate_present) {
                 matched = can_frames_match(&reference_frame, &candidate_frame);
             }
-            runner->comparisons++;
+            snprintf(comparison_name, sizeof(comparison_name),
+                     "CAN%" PRIu64 " transmit frame %zu", channel + 1u, frame_index);
+            record_comparison(runner, "can_tx", comparison_name, "raw-differential",
+                              matched);
             if (!matched) {
                 (*failures)++;
                 if (!runner->summary_only) {
@@ -2338,13 +2601,15 @@ static bool compare_usb_transmit(Runner* runner, const StepParts* parts,
         size_t reference_count;
         size_t candidate_count;
         size_t packet_index = 0u;
+        char comparison_name[64];
         if (item->type != JSON_OBJECT) {
             snprintf(error, error_size, "invalid USB transmit observation");
             return false;
         }
         reference_count = runner->reference.io.usb_tx.count;
         candidate_count = runner->candidate.io.usb_tx.count;
-        runner->comparisons++;
+        record_comparison(runner, "usb_tx", "USB transmit count", "raw-differential",
+                          reference_count == candidate_count);
         if (reference_count != candidate_count) {
             (*failures)++;
             if (!runner->summary_only) {
@@ -2364,7 +2629,10 @@ static bool compare_usb_transmit(Runner* runner, const StepParts* parts,
             if (reference_present && candidate_present) {
                 matched = usb_packets_match(&reference_packet, &candidate_packet);
             }
-            runner->comparisons++;
+            snprintf(comparison_name, sizeof(comparison_name),
+                     "USB transmit packet %zu", packet_index);
+            record_comparison(runner, "usb_tx", comparison_name, "raw-differential",
+                              matched);
             if (!matched) {
                 (*failures)++;
                 if (!runner->summary_only) {
@@ -2563,6 +2831,10 @@ static bool execute_step(Runner* runner, const char* scenario_name,
     if (step_name == NULL) {
         step_name = "unnamed step";
     }
+    runner->current_step_identifier = json_string(scalar_field(parts, "id"));
+    if (runner->current_step_identifier == NULL) {
+        runner->current_step_identifier = step_name;
+    }
     if (call == NULL) {
         call = scenario_call;
     }
@@ -2608,6 +2880,10 @@ static bool execute_step(Runner* runner, const char* scenario_name,
         if (!execution_failure) {
             return false;
         }
+        record_comparison(runner, "execution", "reference reached stop point",
+                          "literal-exact", false);
+        record_comparison(runner, "execution", "candidate reached stop point",
+                          "literal-exact", false);
         runner->failed++;
         if (!runner->summary_only) {
             printf("[failed] %zu/%zu %s (execution: %s)\n", runner->current_step,
@@ -2616,6 +2892,10 @@ static bool execute_step(Runner* runner, const char* scenario_name,
         }
         return true;
     }
+    record_comparison(runner, "execution", "reference reached stop point",
+                      "literal-exact", true);
+    record_comparison(runner, "execution", "candidate reached stop point",
+                      "literal-exact", true);
     if (!compare_registers(runner, parts, &failures, error, error_size) ||
         !compare_memory(runner, parts, &failures, error, error_size) ||
         !compare_pins(runner, parts, &failures, error, error_size) ||
@@ -2991,7 +3271,6 @@ static bool execute_scenario(const char* path, const JsonValue* scenario, void* 
     size_t start_comparisons;
     size_t index;
     bool completed;
-    (void)path;
     if (!scenario_selected(runner, scenario)) {
         return true;
     }
@@ -2999,6 +3278,8 @@ static bool execute_scenario(const char* path, const JsonValue* scenario, void* 
         return true;
     }
     runner->current_scenario++;
+    runner->current_scenario_identifier = id;
+    runner->current_scenario_source = path;
     start_step = runner->current_step;
     start_passed = runner->passed;
     start_failed = runner->failed;
@@ -3059,7 +3340,8 @@ static void print_usage(const char* program) {
     fprintf(stderr,
             "Usage: %s --suite FILE [--scenario PATTERN] [--step PATTERN] "
             "[--shard-index INDEX --shard-count COUNT] [--failures-only] "
-            "[--summary-only] [--plan] [--max-instructions COUNT]\n",
+            "[--summary-only] [--plan] [--max-instructions COUNT] "
+            "[--ledger FILE] [--summary-json FILE]\n",
             program);
 }
 
@@ -3068,6 +3350,7 @@ static int run_firmware_runner(int argc, char** argv, Runner* runner) {
     char error[256];
     int index;
     runner->shard_count = 1u;
+    runner->program_path = argv[0];
     runner->instruction_limit = DEFAULT_INSTRUCTION_LIMIT;
     for (index = 1; index < argc; index++) {
         if (strcmp(argv[index], "--suite") == 0 && index + 1 < argc) {
@@ -3103,12 +3386,18 @@ static int run_firmware_runner(int argc, char** argv, Runner* runner) {
                 print_usage(argv[0]);
                 return 2;
             }
+        } else if (strcmp(argv[index], "--ledger") == 0 && index + 1 < argc) {
+            runner->ledger_path = argv[++index];
+        } else if (strcmp(argv[index], "--summary-json") == 0 && index + 1 < argc) {
+            runner->summary_path = argv[++index];
         } else {
             print_usage(argv[0]);
             return 2;
         }
     }
     if (suite_path == NULL || runner->shard_index >= runner->shard_count ||
+        (runner->ledger_path != NULL && runner->summary_path != NULL &&
+         strcmp(runner->ledger_path, runner->summary_path) == 0) ||
         !suite_directory(suite_path, runner->suite_directory,
                          sizeof(runner->suite_directory))) {
         print_usage(argv[0]);
@@ -3148,8 +3437,15 @@ static int run_firmware_runner(int argc, char** argv, Runner* runner) {
         json_free((JsonValue*)runner->suite);
         return 1;
     }
+    if (!open_comparison_ledger(runner, error, sizeof(error))) {
+        fprintf(stderr, "[error] %s\n", error);
+        close_images(runner);
+        json_free((JsonValue*)runner->suite);
+        return 1;
+    }
     if (!start_run_tasks(runner)) {
         fprintf(stderr, "[error] cannot start native simulator workers\n");
+        close_comparison_ledger(runner, false, error, sizeof(error));
         close_images(runner);
         json_free((JsonValue*)runner->suite);
         return 1;
@@ -3159,13 +3455,29 @@ static int run_firmware_runner(int argc, char** argv, Runner* runner) {
     if (!stream_patterns(runner, execute_scenario, error, sizeof(error))) {
         fprintf(stderr, "[error] %s\n", error);
         stop_run_tasks(runner);
+        close_comparison_ledger(runner, false, error, sizeof(error));
         close_images(runner);
         json_free((JsonValue*)runner->suite);
         return 1;
     }
-    printf("[summary] scenarios=%zu steps=%zu passed=%zu failed=%zu comparisons=%zu\n",
+    if (!close_comparison_ledger(runner, true, error, sizeof(error))) {
+        fprintf(stderr, "[error] %s\n", error);
+        stop_run_tasks(runner);
+        close_images(runner);
+        json_free((JsonValue*)runner->suite);
+        return 1;
+    }
+    if (!write_summary_json(runner, error, sizeof(error))) {
+        fprintf(stderr, "[error] %s\n", error);
+        stop_run_tasks(runner);
+        close_images(runner);
+        json_free((JsonValue*)runner->suite);
+        return 1;
+    }
+    printf("[summary] scenarios=%zu steps=%zu passed=%zu failed=%zu comparisons=%zu "
+           "failed-comparisons=%zu\n",
            runner->current_scenario, runner->current_step, runner->passed,
-           runner->failed, runner->comparisons);
+           runner->failed, runner->comparisons, runner->failed_comparisons);
     printf("[work] reference-instructions=%" PRIu64 " candidate-instructions=%" PRIu64
            " reference-cycles=%" PRIu64 " candidate-cycles=%" PRIu64 "\n",
            runner->reference_instructions, runner->candidate_instructions,
