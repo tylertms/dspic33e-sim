@@ -2480,6 +2480,74 @@ static bool compare_uart_transmit(Runner* runner, const StepParts* parts,
     return true;
 }
 
+static bool compare_spi_transmit(Runner* runner, const StepParts* parts,
+                                 size_t* failures, char* error, size_t error_size) {
+    const JsonValue* values = scalar_field(parts, "spi_tx");
+    size_t index;
+    if (values == NULL) {
+        return true;
+    }
+    if (values->type != JSON_ARRAY) {
+        snprintf(error, error_size, "SPI transmit observations must be an array");
+        return false;
+    }
+    for (index = 0u; index < values->as.array.count; index++) {
+        const JsonValue* item = values->as.array.items[index];
+        uint64_t channel;
+        char comparison_name[64];
+        size_t reference_count;
+        size_t candidate_count;
+        size_t byte_index = 0u;
+        if (item->type != JSON_OBJECT ||
+            !event_number(item, "channel", DSPIC33_SPI_COUNT - 1u, 0u, true,
+                          &channel)) {
+            snprintf(error, error_size, "invalid SPI transmit observation");
+            return false;
+        }
+        reference_count = runner->reference.io.spi_tx[channel].count;
+        candidate_count = runner->candidate.io.spi_tx[channel].count;
+        snprintf(comparison_name, sizeof(comparison_name),
+                 "SPI%" PRIu64 " transmit count", channel + 1u);
+        record_comparison(runner, "spi_tx", comparison_name, "raw-differential",
+                          reference_count == candidate_count);
+        if (reference_count != candidate_count) {
+            (*failures)++;
+            if (!runner->summary_only) {
+                printf("  SPI%" PRIu64 " transmit count: reference=%zu candidate=%zu\n",
+                       channel + 1u, reference_count, candidate_count);
+            }
+        }
+        while (runner->reference.io.spi_tx[channel].count != 0u ||
+               runner->candidate.io.spi_tx[channel].count != 0u) {
+            uint8_t reference_value = 0u;
+            uint8_t candidate_value = 0u;
+            bool reference_present = dspic33_spi_transmit(
+                &runner->reference, (uint8_t)channel, &reference_value);
+            bool candidate_present = dspic33_spi_transmit(
+                &runner->candidate, (uint8_t)channel, &candidate_value);
+            bool matched = reference_present == candidate_present &&
+                           (!reference_present || reference_value == candidate_value);
+            snprintf(comparison_name, sizeof(comparison_name),
+                     "SPI%" PRIu64 " transmit byte %zu", channel + 1u, byte_index);
+            record_comparison(runner, "spi_tx", comparison_name, "raw-differential",
+                              matched);
+            if (!matched) {
+                (*failures)++;
+                if (!runner->summary_only) {
+                    printf(
+                        "  SPI%" PRIu64
+                        " transmit byte %zu: reference=%s0x%02x candidate=%s0x%02x\n",
+                        channel + 1u, byte_index, reference_present ? "" : "none/",
+                        reference_value, candidate_present ? "" : "none/",
+                        candidate_value);
+                }
+            }
+            byte_index++;
+        }
+    }
+    return true;
+}
+
 static void print_can_frame(bool present, const Dspic33CanFrame* frame) {
     uint8_t index;
     if (!present) {
@@ -2906,6 +2974,7 @@ static bool execute_step(Runner* runner, const char* scenario_name,
         !compare_memory(runner, parts, &failures, error, error_size) ||
         !compare_pins(runner, parts, &failures, error, error_size) ||
         !compare_uart_transmit(runner, parts, &failures, error, error_size) ||
+        !compare_spi_transmit(runner, parts, &failures, error, error_size) ||
         !compare_can_transmit(runner, parts, &failures, error, error_size) ||
         !compare_usb_transmit(runner, parts, &failures, error, error_size)) {
         return false;

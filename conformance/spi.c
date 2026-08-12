@@ -146,6 +146,31 @@ static void split_buffer_cases(SpiConformance* state, Dspic33* cpu) {
     }
 }
 
+static void transmit_output_cases(SpiConformance* state, Dspic33* cpu) {
+    uint8_t channel;
+    uint8_t value;
+    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
+        uint16_t base = bases[channel];
+        uint16_t transmitted = (uint16_t)(0xa500u + channel);
+        dspic33_reset(cpu, 0u);
+        configure_spi(cpu, channel, 0x043bu, 0u, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 8u), transmitted);
+        expect(state,
+               dspic33_spi_transmit(cpu, channel, &value) &&
+                   value == (uint8_t)transmitted,
+               "transmit output low byte");
+        expect(state,
+               dspic33_spi_transmit(cpu, channel, &value) &&
+                   value == (uint8_t)(transmitted >> 8u) &&
+                   !dspic33_spi_transmit(cpu, channel, &value),
+               "transmit output high byte and empty state");
+    }
+    expect(state,
+           !dspic33_spi_transmit(cpu, DSPIC33_SPI_COUNT, &value) &&
+               !dspic33_spi_transmit(cpu, 0u, NULL),
+           "transmit output rejects invalid requests");
+}
+
 static void timing_matrix_cases(SpiConformance* state, Dspic33* cpu) {
     uint8_t channel;
     uint8_t mode16;
@@ -840,6 +865,7 @@ int main(void) {
     if (initialized && copy_initialized) {
         register_cases(&state, &cpu);
         split_buffer_cases(&state, &cpu);
+        transmit_output_cases(&state, &cpu);
         timing_matrix_cases(&state, &cpu);
         standard_buffer_cases(&state, &cpu);
         enhanced_fifo_cases(&state, &cpu);
@@ -852,7 +878,7 @@ int main(void) {
         dma_cases(&state, &cpu);
         copy_and_reset_cases(&state, &cpu, &copy);
     }
-    expect(&state, state.cases == 2719u, "SPI assertion accounting");
+    expect(&state, state.cases == 2728u, "SPI assertion accounting");
     if (copy_initialized) {
         dspic33_destroy(&copy);
     }

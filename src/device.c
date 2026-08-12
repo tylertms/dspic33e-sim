@@ -1291,6 +1291,16 @@ static bool byte_queue_push(Dspic33ByteQueue* queue, uint8_t value) {
     return true;
 }
 
+static bool byte_queue_pop(Dspic33ByteQueue* queue, uint8_t* value) {
+    if (queue->count == 0u) {
+        return false;
+    }
+    *value = queue->bytes[queue->head];
+    queue->head = (uint16_t)((queue->head + 1u) % sizeof(queue->bytes));
+    queue->count--;
+    return true;
+}
+
 static bool uart_fifo_push(Dspic33UartFifo* fifo, const Dspic33UartFrame* frame) {
     uint8_t index;
     if (fifo->count == DSPIC33_UART_FIFO_SIZE) {
@@ -14291,6 +14301,11 @@ bool dspic33_spi_select(Dspic33* cpu, uint8_t channel, bool selected, uint64_t d
     return channel < DSPIC33_SPI_COUNT &&
            dspic33_schedule(cpu, DSPIC33_EVENT_SPI_SELECT, channel,
                             selected ? SPI_SELECT_ACTIVE : 0u, delay);
+}
+
+bool dspic33_spi_transmit(Dspic33* cpu, uint8_t channel, uint8_t* value) {
+    return channel < DSPIC33_SPI_COUNT && value != NULL &&
+           byte_queue_pop(&cpu->io.spi_tx[channel], value);
 }
 
 bool dspic33_spi_frame_output(const Dspic33* cpu, uint8_t channel, bool* high) {

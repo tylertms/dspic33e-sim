@@ -855,6 +855,7 @@ bool dspic33_uart_set_cts(Dspic33* cpu, uint8_t channel, bool clear, uint64_t de
 bool dspic33_uart_transmit(Dspic33* cpu, uint8_t channel, Dspic33UartFrame* frame);
 bool dspic33_spi_receive(Dspic33* cpu, uint8_t channel, uint16_t value, uint64_t delay);
 bool dspic33_spi_select(Dspic33* cpu, uint8_t channel, bool selected, uint64_t delay);
+bool dspic33_spi_transmit(Dspic33* cpu, uint8_t channel, uint8_t* value);
 bool dspic33_spi_frame_output(const Dspic33* cpu, uint8_t channel, bool* high);
 bool dspic33_spi_frame_pin(const Dspic33* cpu, uint8_t pin, bool* high);
 bool dspic33_i2c_respond(Dspic33* cpu, uint8_t channel, uint8_t value, bool acknowledge,
