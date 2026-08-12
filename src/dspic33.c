@@ -1964,6 +1964,10 @@ static bool literal_control_first_word_valid(uint32_t opcode) {
     return (opcode & 1u) == 0u;
 }
 
+static bool byte_extension_encoding_valid(uint32_t opcode) {
+    return (opcode & 0x007800u) == 0u && ((opcode >> 4u) & 0x07u) < 6u;
+}
+
 static void push_program_counter(Dspic33* cpu, uint32_t address) {
     uint16_t low = (uint16_t)(address & 0xfffeu);
     low |= (uint16_t)((cpu->corcon >> 2u) & 1u);
@@ -3472,6 +3476,10 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         return true;
     }
     if ((opcode & 0xff0000u) == 0xfb0000u) {
+        if (!byte_extension_encoding_valid(opcode)) {
+            perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+            return true;
+        }
         bool zero_extend = (opcode & 0x008000u) != 0u;
         uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
         uint8_t source_register = (uint8_t)(opcode & 0x0fu);

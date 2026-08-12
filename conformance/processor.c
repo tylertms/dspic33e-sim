@@ -5554,6 +5554,161 @@ static void prepare_arithmetic_matrix_case(Dspic33* cpu, uint16_t registers[16],
 }
 
 static bool binary_matrix_registers_match(const Dspic33* cpu,
+                                          const uint16_t registers[16]);
+
+static uint16_t byte_extension_status(uint16_t initial_status, uint16_t value) {
+    uint16_t status = (uint16_t)(initial_status & ~0x000bu);
+    if (value == 0u) {
+        status |= 0x0002u;
+    }
+    if ((value & 0x8000u) != 0u) {
+        status |= 0x0008u;
+    } else {
+        status |= 0x0001u;
+    }
+    return status;
+}
+
+static void run_legal_byte_extension_case(ProcessorConformance* state, Dspic33* cpu,
+                                          uint32_t opcode) {
+    bool zero_extend = (opcode & 0x008000u) != 0u;
+    uint8_t destination = (uint8_t)((opcode >> 7u) & 0x0fu);
+    uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
+    uint8_t source_register = (uint8_t)(opcode & 0x0fu);
+    uint16_t registers[16];
+    BinaryMatrixOperand source;
+    uint8_t source_value = (uint8_t)((opcode >> 1u) ^ opcode ^ 0xa5u);
+    uint16_t value;
+    uint16_t initial_status = (uint16_t)(0x0104u | (opcode & 0x000bu));
+    uint16_t expected_status;
+    uint64_t cycles;
+    bool matches;
+
+    prepare_arithmetic_matrix_case(cpu, registers, initial_status);
+    source = binary_matrix_operand(registers, source_mode, source_register, 1u);
+    if (source.direct) {
+        source_value = (uint8_t)registers[source_register];
+    } else {
+        dspic33_write_byte(cpu, source.address, source_value);
+    }
+    value = zero_extend ? source_value : (uint16_t)(int16_t)(int8_t)source_value;
+    binary_matrix_write_register(registers, destination, value);
+    value = registers[destination];
+    expected_status = byte_extension_status(initial_status, value);
+    cycles = cpu->cycles;
+    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+              cpu->cycles - cycles == 1u && cpu->sr == expected_status &&
+              cpu->corcon == 0x0020u && cpu->unsupported_opcode == 0u &&
+              !cpu->address_error && !cpu->illegal_reset &&
+              cpu->last_trap == UINT16_MAX &&
+              binary_matrix_registers_match(cpu, registers);
+    if (!source.direct) {
+        matches = matches && dspic33_read_byte(cpu, source.address) == source_value;
+    }
+    expect_dsp_matrix_case(state, matches, opcode, "SE and ZE legal encoding");
+}
+
+static void run_invalid_byte_extension_case(ProcessorConformance* state, Dspic33* cpu,
+                                            uint32_t opcode) {
+    uint64_t illegal_resets;
+    bool matches;
+
+    cpu->pc = 0u;
+    cpu->sr = 0x010fu;
+    cpu->corcon = 0x0020u;
+    cpu->illegal_reset = false;
+    cpu->last_trap = UINT16_MAX;
+    cpu->stop_reason = DSPIC33_RUNNING;
+    cpu->splim_enabled = false;
+    cpu->events.count = 0u;
+    illegal_resets = cpu->illegal_reset_count;
+    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset &&
+              cpu->illegal_reset_count == illegal_resets + 1u && cpu->pc == 0u &&
+              cpu->unsupported_opcode == 0u && cpu->last_trap == UINT16_MAX &&
+              cpu->trap_count == 0u &&
+              (dspic33_read_word(cpu, 0x0740u) & 0x4000u) != 0u;
+    expect_dsp_matrix_case(state, matches, opcode, "SE and ZE reserved encoding");
+}
+
+static void byte_extension_encoding_matrix_cases(ProcessorConformance* state,
+                                                 Dspic33* cpu) {
+    uint32_t fields;
+    uint32_t legal = 0u;
+    uint32_t reserved = 0u;
+
+    for (fields = 0u; fields <= 0xffffu; fields++) {
+        uint32_t opcode = 0xfb0000u | fields;
+        uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
+        if ((opcode & 0x007800u) == 0u && source_mode < 6u) {
+            run_legal_byte_extension_case(state, cpu, opcode);
+            legal++;
+        } else {
+            run_invalid_byte_extension_case(state, cpu, opcode);
+            reserved++;
+        }
+    }
+    expect(state, legal == 3072u, "SE and ZE legal encoding matrix is exhaustive");
+    expect(state, reserved == 62464u,
+           "SE and ZE reserved encoding matrix is exhaustive");
+}
+
+static void byte_extension_value_matrix_cases(ProcessorConformance* state,
+                                              Dspic33* cpu) {
+    uint16_t value;
+    uint8_t status_bits;
+    uint8_t operation;
+
+    for (operation = 0u; operation < 2u; operation++) {
+        for (value = 0u; value <= 0xffu; value++) {
+            for (status_bits = 0u; status_bits < 8u; status_bits++) {
+                uint32_t opcode = 0xfb0182u | ((uint32_t)operation << 15u);
+                uint16_t initial_status = (uint16_t)(0x0104u | (status_bits & 0x03u) |
+                                                     ((status_bits & 0x04u) << 1u));
+                uint16_t expected =
+                    operation != 0u ? value : (uint16_t)(int16_t)(int8_t)value;
+                uint16_t expected_status =
+                    byte_extension_status(initial_status, expected);
+                uint64_t cycles;
+                bool matches;
+
+                prepare_arithmetic_matrix_case(cpu, cpu->w, initial_status);
+                dspic33_set_working_register(cpu, 2u, value);
+                cycles = cpu->cycles;
+                matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+                          dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+                          cpu->cycles - cycles == 1u && cpu->w[3] == expected &&
+                          cpu->sr == expected_status && !cpu->illegal_reset &&
+                          cpu->unsupported_opcode == 0u;
+                expect_dsp_matrix_case(state, matches, opcode,
+                                       "SE and ZE value and status");
+            }
+        }
+    }
+    expect(state, value == 0x0100u, "SE and ZE byte value matrix is exhaustive");
+}
+
+static void byte_extension_lifecycle_cases(ProcessorConformance* state, Dspic33* cpu) {
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, 0xfb0192u);
+    dspic33_set_working_register(cpu, 2u, 0x0800u);
+    dspic33_write_word(cpu, 0x0800u, 0x00a5u);
+    cpu->sr = 0x010fu;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 2u &&
+               cpu->w[3] == 0xffa5u && cpu->w[2] == 0x0800u && cpu->sr == 0x010cu,
+           "SE non-CPU SFR byte source consumes two cycles");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, 0xfb8192u);
+    cpu->w[2] = 0x5000u;
+    cpu->initialized_working_registers &= (uint16_t)~0x0004u;
+    expect_illegal_reset(state, cpu,
+                         "ZE uninitialized source pointer resets processor");
+}
+
+static bool binary_matrix_registers_match(const Dspic33* cpu,
                                           const uint16_t registers[16]) {
     uint8_t reg;
 
@@ -10101,6 +10256,9 @@ int main(void) {
         loop_encoding_matrix_cases(&state, &cpu);
         arithmetic_encoding_matrix_cases(&state, &cpu);
         shift_encoding_matrix_cases(&state, &cpu);
+        byte_extension_encoding_matrix_cases(&state, &cpu);
+        byte_extension_value_matrix_cases(&state, &cpu);
+        byte_extension_lifecycle_cases(&state, &cpu);
         general_unary_encoding_matrix_cases(&state, &cpu);
         compare_encoding_matrix_cases(&state, &cpu);
         conditional_branch_encoding_matrix_cases(&state, &cpu);
