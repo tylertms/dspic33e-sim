@@ -3276,6 +3276,7 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         return true;
     }
     if ((opcode & 0xfffff0u) == 0x088000u || (opcode & 0xff8000u) == 0x080000u) {
+        uint32_t extension;
         uint16_t count;
         int16_t displacement;
         uint8_t depth;
@@ -3284,7 +3285,11 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         }
         count = (opcode & 0xfffff0u) == 0x088000u ? cpu->w[opcode & 0x0fu]
                                                   : (uint16_t)(opcode & 0x7fffu);
-        displacement = (int16_t)(dspic33_read_program_word(cpu, cpu->pc) & 0xffffu);
+        extension = dspic33_read_program_word(cpu, cpu->pc);
+        if ((extension & 0xff0000u) != 0u) {
+            return false;
+        }
+        displacement = (int16_t)extension;
         cpu->pc = program_address_add(cpu->pc, 2);
         if (cpu->do_depth == 4u) {
             dspic33_write_word(cpu, 0x08c4u,
@@ -4274,7 +4279,12 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
             } else {
                 uint8_t high = (uint8_t)(cpu->corcon >> 8u);
                 if ((value & 0x08u) != 0u && cpu->do_depth != 0u) {
-                    cpu->do_terminate[cpu->do_depth - 1u] = 1u;
+                    uint8_t depth = (uint8_t)(cpu->do_depth - 1u);
+                    bool late = cpu->instruction_active &&
+                                (cpu->current_instruction_pc == cpu->do_end[depth] ||
+                                 program_address_add(cpu->current_instruction_pc, 2) ==
+                                     cpu->do_end[depth]);
+                    cpu->do_terminate[depth] = late ? 2u : 1u;
                 }
                 high = (uint8_t)((high & 0x07u) | (value & 0xb0u));
                 cpu->corcon =
@@ -4323,14 +4333,12 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
                 *reg &= 0x03ffu;
             } else if (word_address == 0x0034u) {
                 *reg &= 0x01ffu;
+            } else if (word_address == 0x0038u && cpu->do_depth != 0u) {
+                cpu->do_count[cpu->do_depth - 1u] = cpu->dcount;
             }
             return;
         }
         if (word_address == 0x003au || word_address == 0x003cu) {
-            uint8_t shift = (uint8_t)((address - 0x003au) * 8u);
-            cpu->dostart = (cpu->dostart & ~((uint32_t)0xffu << shift)) |
-                           ((uint32_t)value << shift);
-            cpu->dostart &= 0x003ffffeu;
             return;
         }
         if (word_address == 0x003eu || word_address == 0x0040u) {
@@ -4338,6 +4346,9 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
             cpu->doend =
                 (cpu->doend & ~((uint32_t)0xffu << shift)) | ((uint32_t)value << shift);
             cpu->doend &= 0x003ffffeu;
+            if (cpu->do_depth != 0u) {
+                cpu->do_end[cpu->do_depth - 1u] = cpu->doend;
+            }
             return;
         }
     }
@@ -4528,8 +4539,11 @@ uint16_t dspic33_read_word(Dspic33* cpu, uint32_t address) {
 
 static void complete_do_loop_iteration(Dspic33* cpu) {
     uint8_t depth = (uint8_t)(cpu->do_depth - 1u);
-    if (cpu->do_count[depth] != 0u && cpu->do_terminate[depth] == 0u) {
+    if (cpu->do_count[depth] != 0u && cpu->do_terminate[depth] != 1u) {
         cpu->do_count[depth]--;
+        if (cpu->do_terminate[depth] == 2u) {
+            cpu->do_terminate[depth] = 1u;
+        }
         cpu->dcount = cpu->do_count[depth];
         cpu->pc = cpu->do_start[depth];
         return;
@@ -4558,6 +4572,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     uint16_t status;
     uint16_t control;
     uint16_t disicnt_before_instruction;
+    uint8_t do_depth_before_instruction;
     uint8_t interrupt_entry_overlap;
     uint64_t cycles;
     uint32_t opcode;
@@ -4710,6 +4725,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     cpu->psv_repeat_optimized = false;
     cpu->instruction_working_register_writes = 0u;
     cpu->instruction_source_address_registers = 0u;
+    do_depth_before_instruction = cpu->do_depth;
     cpu->current_instruction_cycles =
         (uint8_t)instruction_cycles(cpu, opcode, instruction_pc);
     cpu->current_instruction_pc = instruction_pc;
@@ -4826,7 +4842,8 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
             cpu->sr &= (uint16_t)~0x0010u;
         }
     }
-    if (cpu->do_depth != 0u && instruction_pc == cpu->do_end[cpu->do_depth - 1u]) {
+    if (cpu->do_depth != 0u && cpu->do_depth <= do_depth_before_instruction &&
+        instruction_pc == cpu->do_end[cpu->do_depth - 1u]) {
         uint8_t depth = (uint8_t)(cpu->do_depth - 1u);
         bool extra_decrement = cpu->nested_do_extra_decrement_depth == cpu->do_depth &&
                                cpu->nested_do_extra_decrement_end == instruction_pc;

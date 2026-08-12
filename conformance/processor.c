@@ -5018,6 +5018,325 @@ static void expect_dsp_matrix_case(ProcessorConformance* state, bool condition,
     printf("[processor-failed] %s opcode=%06" PRIx32 "\n", domain, opcode);
 }
 
+static void repeat_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu) {
+    uint32_t count;
+    uint8_t reg;
+
+    for (count = 0u; count <= 0x7fffu; count++) {
+        bool matches;
+        uint32_t opcode = 0x090000u | count;
+        reset_processor_conformance(cpu, 0x200u);
+        matches = dspic33_load_program_word(cpu, 0x200u, opcode) &&
+                  dspic33_load_program_word(cpu, 0x202u, OPCODE_NOP) &&
+                  dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x202u &&
+                  cpu->cycles == 1u && cpu->rcount == count &&
+                  cpu->repeat_active == (count != 0u) &&
+                  (cpu->sr & 0x0010u) == (count != 0u ? 0x0010u : 0u) &&
+                  cpu->repeat_pc == (count != 0u ? 0x202u : 0u) &&
+                  cpu->unsupported_opcode == 0u;
+        expect_dsp_matrix_case(state, matches, opcode, "REPEAT literal encoding");
+    }
+
+    for (reg = 0u; reg < 16u; reg++) {
+        uint16_t value;
+        uint32_t opcode = 0x098000u | reg;
+        bool matches;
+        reset_processor_conformance(cpu, 0x200u);
+        dspic33_set_working_register(cpu, reg,
+                                     reg == 0u ? 0u : (uint16_t)(0x1111u * reg));
+        value = cpu->w[reg];
+        matches = dspic33_load_program_word(cpu, 0x200u, opcode) &&
+                  dspic33_load_program_word(cpu, 0x202u, OPCODE_NOP) &&
+                  dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x202u &&
+                  cpu->cycles == 1u && cpu->rcount == value &&
+                  cpu->repeat_active == (value != 0u) &&
+                  (cpu->sr & 0x0010u) == (value != 0u ? 0x0010u : 0u) &&
+                  cpu->repeat_pc == (value != 0u ? 0x202u : 0u) &&
+                  cpu->unsupported_opcode == 0u;
+        expect_dsp_matrix_case(state, matches, opcode, "REPEAT register encoding");
+    }
+
+    reset_processor_conformance(cpu, 0x200u);
+    expect_dsp_matrix_case(state,
+                           dspic33_load_program_word(cpu, 0x200u, 0x098010u) &&
+                               dspic33_step(cpu) == DSPIC33_UNSUPPORTED_INSTRUCTION &&
+                               cpu->unsupported_opcode == 0x098010u &&
+                               cpu->pc == 0x200u,
+                           0x098010u, "REPEAT reserved register encoding");
+}
+
+static void run_do_encoding_case(ProcessorConformance* state, Dspic33* cpu,
+                                 uint32_t opcode, uint16_t count, uint32_t extension,
+                                 uint32_t expected_end, const char* domain) {
+    bool matches;
+    reset_processor_conformance(cpu, 0x20000u);
+    matches = dspic33_load_program_word(cpu, 0x20000u, opcode) &&
+              dspic33_load_program_word(cpu, 0x20002u, extension) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x20004u &&
+              cpu->cycles == 2u && cpu->do_depth == 1u && cpu->do_count[0] == count &&
+              cpu->dcount == count && cpu->do_start[0] == 0x20004u &&
+              cpu->dostart == 0x20004u && cpu->do_end[0] == expected_end &&
+              cpu->doend == expected_end && cpu->corcon == 0x0120u &&
+              (cpu->sr & 0x0200u) != 0u && cpu->unsupported_opcode == 0u;
+    expect_dsp_matrix_case(state, matches, opcode, domain);
+}
+
+static void do_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu) {
+    uint32_t count;
+    uint32_t extension;
+    uint8_t reg;
+
+    for (count = 0u; count <= 0x7fffu; count++) {
+        run_do_encoding_case(state, cpu, 0x080000u | count, (uint16_t)count, 2u,
+                             0x20008u, "DO literal encoding");
+    }
+
+    for (reg = 0u; reg < 16u; reg++) {
+        uint16_t value;
+        uint32_t opcode = 0x088000u | reg;
+        reset_processor_conformance(cpu, 0x20000u);
+        dspic33_set_working_register(cpu, reg,
+                                     reg == 0u ? 0u : (uint16_t)(0x1111u * reg));
+        value = cpu->w[reg];
+        expect_dsp_matrix_case(
+            state,
+            dspic33_load_program_word(cpu, 0x20000u, opcode) &&
+                dspic33_load_program_word(cpu, 0x20002u, 2u) &&
+                dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x20004u &&
+                cpu->cycles == 2u && cpu->do_depth == 1u && cpu->do_count[0] == value &&
+                cpu->dcount == value && cpu->do_start[0] == 0x20004u &&
+                cpu->do_end[0] == 0x20008u && cpu->dostart == 0x20004u &&
+                cpu->doend == 0x20008u && cpu->corcon == 0x0120u &&
+                (cpu->sr & 0x0200u) != 0u && cpu->unsupported_opcode == 0u,
+            opcode, "DO register encoding");
+    }
+
+    for (extension = 0u; extension <= 0xffffu; extension++) {
+        uint32_t expected_end;
+        if (extension == 0u || extension == 1u || extension == 0xffffu) {
+            continue;
+        }
+        expected_end = (uint32_t)(0x20004 + (int32_t)(int16_t)extension * 2);
+        run_do_encoding_case(state, cpu, OPCODE_DO_0, 0u, extension, expected_end,
+                             "DO loop-length encoding");
+    }
+
+    for (extension = 1u; extension <= 0xffu; extension++) {
+        uint32_t invalid_extension = extension << 16u | 2u;
+        reset_processor_conformance(cpu, 0x20000u);
+        expect_dsp_matrix_case(
+            state,
+            dspic33_load_program_word(cpu, 0x20000u, OPCODE_DO_0) &&
+                dspic33_load_program_word(cpu, 0x20002u, invalid_extension) &&
+                dspic33_step(cpu) == DSPIC33_UNSUPPORTED_INSTRUCTION &&
+                cpu->unsupported_opcode == OPCODE_DO_0 && cpu->pc == 0x20000u &&
+                cpu->cycles == 0u && cpu->do_depth == 0u,
+            invalid_extension, "DO literal reserved extension");
+
+        reset_processor_conformance(cpu, 0x20000u);
+        dspic33_set_working_register(cpu, 0u, 0xaaaau);
+        expect_dsp_matrix_case(
+            state,
+            dspic33_load_program_word(cpu, 0x20000u, OPCODE_DO_W0) &&
+                dspic33_load_program_word(cpu, 0x20002u, invalid_extension) &&
+                dspic33_step(cpu) == DSPIC33_UNSUPPORTED_INSTRUCTION &&
+                cpu->unsupported_opcode == OPCODE_DO_W0 && cpu->pc == 0x20000u &&
+                cpu->cycles == 0u && cpu->do_depth == 0u,
+            invalid_extension, "DO register reserved extension");
+    }
+
+    reset_processor_conformance(cpu, 0x20000u);
+    expect_dsp_matrix_case(state,
+                           dspic33_load_program_word(cpu, 0x20000u, 0x088010u) &&
+                               dspic33_step(cpu) == DSPIC33_UNSUPPORTED_INSTRUCTION &&
+                               cpu->unsupported_opcode == 0x088010u &&
+                               cpu->pc == 0x20000u,
+                           0x088010u, "DO reserved register encoding");
+}
+
+static void load_three_instruction_do(ProcessorConformance* state, Dspic33* cpu,
+                                      uint16_t count) {
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, 0x080000u | count);
+    load_instruction(state, cpu, 0x202u, 2u);
+    load_instruction(state, cpu, 0x204u, OPCODE_INCREMENT_W2);
+    load_instruction(state, cpu, 0x206u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x208u, OPCODE_NOP);
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->do_depth == 1u,
+           "DO control case starts loop");
+}
+
+static void do_register_control_cases(ProcessorConformance* state, Dspic33* cpu) {
+    uint32_t start;
+
+    reset_processor_conformance(cpu, 0x200u);
+    dspic33_write_word(cpu, 0x003au, 0xffffu);
+    dspic33_write_word(cpu, 0x003cu, 0xffffu);
+    dspic33_write_byte(cpu, 0x003au, 0xa5u);
+    dspic33_write_byte(cpu, 0x003du, 0x3fu);
+    expect(state,
+           cpu->dostart == 0u && dspic33_read_word(cpu, 0x003au) == 0u &&
+               dspic33_read_word(cpu, 0x003cu) == 0u,
+           "DOSTART ignores word and byte writes while inactive");
+
+    load_three_instruction_do(state, cpu, 2u);
+    start = cpu->dostart;
+    dspic33_write_word(cpu, 0x003au, 0xffffu);
+    dspic33_write_word(cpu, 0x003cu, 0xffffu);
+    expect(state,
+           cpu->dostart == start && cpu->do_start[0] == start &&
+               dspic33_read_word(cpu, 0x003au) == (uint16_t)start &&
+               dspic33_read_word(cpu, 0x003cu) == (uint16_t)(start >> 16u),
+           "DOSTART ignores writes while a loop is active");
+
+    dspic33_write_word(cpu, 0x0038u, 1u);
+    expect(state, cpu->dcount == 1u && cpu->do_count[0] == 1u,
+           "DCOUNT word write updates the active loop counter");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->do_depth == 0u &&
+               cpu->w[2] == 2u,
+           "active DCOUNT write changes remaining iteration count");
+
+    load_three_instruction_do(state, cpu, 2u);
+    dspic33_write_byte(cpu, 0x0038u, 0x34u);
+    dspic33_write_byte(cpu, 0x0039u, 0x12u);
+    expect(state, cpu->dcount == 0x1234u && cpu->do_count[0] == 0x1234u,
+           "DCOUNT byte writes update the active loop counter");
+
+    load_three_instruction_do(state, cpu, 1u);
+    dspic33_write_word(cpu, 0x003eu, 0x0206u);
+    dspic33_write_word(cpu, 0x0040u, 0u);
+    expect(state, cpu->doend == 0x0206u && cpu->do_end[0] == 0x0206u,
+           "DOEND word write updates the active loop boundary");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->do_depth == 0u &&
+               cpu->w[2] == 2u,
+           "active DOEND write changes the loop completion boundary");
+
+    load_three_instruction_do(state, cpu, 1u);
+    dspic33_write_byte(cpu, 0x003eu, 0x0au);
+    dspic33_write_byte(cpu, 0x003fu, 0x02u);
+    dspic33_write_byte(cpu, 0x0040u, 0x01u);
+    expect(state, cpu->doend == 0x01020au && cpu->do_end[0] == 0x01020au,
+           "DOEND byte writes update every implemented address field");
+}
+
+static void run_do_to_completion(ProcessorConformance* state, Dspic33* cpu,
+                                 uint32_t expected_increments, const char* name) {
+    uint32_t steps = 0u;
+    while (cpu->do_depth != 0u && steps < 16u) {
+        if (dspic33_step(cpu) != DSPIC33_RUNNING) {
+            break;
+        }
+        steps++;
+    }
+    expect(state, cpu->do_depth == 0u && cpu->w[2] == expected_increments, name);
+}
+
+static void do_early_termination_cases(ProcessorConformance* state, Dspic33* cpu) {
+    Dspic33 copy;
+    bool initialized;
+
+    load_three_instruction_do(state, cpu, 7u);
+    dspic33_write_word(cpu, 0x0044u, 0x0800u);
+    expect(state, cpu->do_terminate[0] == 1u && (cpu->corcon & 0x0800u) == 0u,
+           "EDT before the last two instructions requests current-iteration exit");
+    run_do_to_completion(state, cpu, 1u, "early EDT exits after the current iteration");
+
+    load_three_instruction_do(state, cpu, 7u);
+    cpu->instruction_active = true;
+    cpu->current_instruction_pc = 0x206u;
+    dspic33_write_word(cpu, 0x0044u, 0x0800u);
+    cpu->instruction_active = false;
+    expect(state, cpu->do_terminate[0] == 2u && (cpu->corcon & 0x0800u) == 0u,
+           "EDT in the penultimate instruction defers termination one iteration");
+    run_do_to_completion(state, cpu, 2u,
+                         "penultimate EDT permits exactly one additional iteration");
+
+    load_three_instruction_do(state, cpu, 7u);
+    cpu->instruction_active = true;
+    cpu->current_instruction_pc = 0x208u;
+    dspic33_write_word(cpu, 0x0044u, 0x0800u);
+    cpu->instruction_active = false;
+    expect(state, cpu->do_terminate[0] == 2u,
+           "EDT in the final instruction defers termination one iteration");
+    run_do_to_completion(
+        state, cpu, 2u,
+        "final-instruction EDT permits exactly one additional iteration");
+
+    load_three_instruction_do(state, cpu, 7u);
+    cpu->instruction_active = true;
+    cpu->current_instruction_pc = 0x206u;
+    dspic33_write_word(cpu, 0x0044u, 0x0800u);
+    cpu->instruction_active = false;
+    initialized = dspic33_initialize(&copy);
+    expect(state, initialized, "initialize active DO copy destination");
+    if (initialized) {
+        expect(state, dspic33_copy(&copy, cpu), "copy active late-EDT loop state");
+        cpu->do_terminate[0] = 1u;
+        run_do_to_completion(state, &copy, 2u,
+                             "copied late-EDT state completes independently");
+        expect(state, cpu->do_terminate[0] == 1u && cpu->do_depth == 1u,
+               "active DO source remains independent from its copy");
+        dspic33_destroy(&copy);
+    }
+}
+
+static void do_stack_overflow_cases(ProcessorConformance* state, Dspic33* cpu) {
+    uint32_t starts[4] = {0x300u, 0x320u, 0x340u, 0x360u};
+    uint32_t ends[4] = {0x308u, 0x328u, 0x348u, 0x368u};
+    uint16_t counts[4] = {1u, 2u, 3u, 4u};
+
+    reset_processor_conformance(cpu, 0x200u);
+    prepare_trap_vectors(state, cpu);
+    load_instruction(state, cpu, 0x0010u, 0x000340u);
+    load_instruction(state, cpu, 0x0340u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x200u, OPCODE_DO_0);
+    load_instruction(state, cpu, 0x202u, 2u);
+    memcpy(cpu->do_start, starts, sizeof(starts));
+    memcpy(cpu->do_end, ends, sizeof(ends));
+    memcpy(cpu->do_count, counts, sizeof(counts));
+    cpu->do_depth = 4u;
+    cpu->dostart = starts[3];
+    cpu->doend = ends[3];
+    cpu->dcount = counts[3];
+    cpu->corcon = 0x0420u;
+    cpu->sr |= 0x0200u;
+    cpu->w[15] = 0x5000u;
+    cpu->stop_on_trap = true;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->last_trap == 6u &&
+               cpu->pc == 0x000340u,
+           "fifth nested DO enters the generic stack-overflow trap");
+    expect(state,
+           cpu->do_depth == 4u && memcmp(cpu->do_start, starts, sizeof(starts)) == 0 &&
+               memcmp(cpu->do_end, ends, sizeof(ends)) == 0 &&
+               memcmp(cpu->do_count, counts, sizeof(counts)) == 0 &&
+               cpu->dostart == starts[3] && cpu->doend == ends[3] &&
+               cpu->dcount == counts[3] && cpu->corcon == 0x0428u,
+           "fifth nested DO leaves every active loop unchanged");
+    expect(state,
+           (dspic33_read_word(cpu, 0x08c4u) & 0x0010u) != 0u &&
+               active_pending_traps(cpu) == 1u && cpu->do_depth == 4u,
+           "fifth nested DO sets DOOVR and retains its level-sensitive source");
+}
+
+static void loop_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu) {
+    repeat_encoding_matrix_cases(state, cpu);
+    do_encoding_matrix_cases(state, cpu);
+    do_register_control_cases(state, cpu);
+    do_early_termination_cases(state, cpu);
+    do_stack_overflow_cases(state, cpu);
+}
+
 typedef enum {
     ARITHMETIC_MATRIX_SUBR,
     ARITHMETIC_MATRIX_SUBBR,
@@ -9075,6 +9394,7 @@ int main(void) {
         invalid_dsp_encoding_cases(&state, &cpu);
         valid_dsp_register_pair_cases(&state, &cpu);
         dsp_prefetch_destination_collision_cases(&state, &cpu);
+        loop_encoding_matrix_cases(&state, &cpu);
         arithmetic_encoding_matrix_cases(&state, &cpu);
         general_unary_encoding_matrix_cases(&state, &cpu);
         compare_encoding_matrix_cases(&state, &cpu);

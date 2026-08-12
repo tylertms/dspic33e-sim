@@ -100,6 +100,7 @@ loop_dostart_body:
 
     set_status 0x0100
     do #0, loop_doend_body
+    nop
     mov DOENDL, w2
     mov DOENDH, w3
 loop_doend_body:
@@ -192,8 +193,8 @@ loop_doend_body:
     record_case 0x091a, w2, w2
 
     set_status 0x0100
-    do #0, 2f
-    do #0, 1f
+    do #1, 2f
+    do #1, 1f
     mov CORCON, w2
     nop
 1:
@@ -204,8 +205,8 @@ loop_doend_body:
     record_case 0x091b, w2, w2
 
     set_status 0x0100
-    do #0, 2f
-    do #0, 1f
+    do #1, 2f
+    do #1, 1f
     nop
     nop
 1:
@@ -217,10 +218,10 @@ loop_doend_body:
     record_case 0x091c, w2, w2
 
     set_status 0x0100
-    do #0, 2f
+    do #1, 2f
     mov DOSTARTL, w2
     mov DOENDL, w3
-    do #0, 1f
+    do #1, 1f
     nop
     nop
 1:
