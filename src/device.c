@@ -8545,8 +8545,13 @@ static void spi_start_next(Dspic33* cpu, uint8_t channel) {
         spi_refresh_status(cpu, channel);
         return;
     }
+    if ((cpu->io.spi_busy & bit) == 0u &&
+        (raw_word(cpu, (uint16_t)(base + 4u)) & SPI_FRAME_ENABLE) == 0u) {
+        cpu->io.spi_clock_start_cycle[channel] = cpu->device_cycles;
+    }
     cpu->io.spi_busy |= bit;
     cpu->io.spi_shift[channel] = value;
+    cpu->io.spi_start_cycle[channel] = cpu->device_cycles;
     spi_begin_frame(cpu, channel);
     if ((control & SPI_DISABLE_OUTPUT) == 0u) {
         byte_queue_push(&cpu->io.spi_tx[channel], (uint8_t)value);
@@ -12574,6 +12579,9 @@ static void update_spi_register(Dspic33* cpu, uint16_t address, uint16_t previou
                 status &= (uint16_t)~SPI_OVERFLOW;
             }
             raw_write_word(cpu, base, status);
+            if ((previous & SPI_ENABLE) == 0u && (status & SPI_ENABLE) != 0u) {
+                cpu->io.spi_clock_start_cycle[channel] = cpu->device_cycles;
+            }
             if ((status & SPI_ENABLE) == 0u) {
                 spi_clear_buffers(cpu, channel);
             } else {
@@ -12606,6 +12614,10 @@ static void update_spi_register(Dspic33* cpu, uint16_t address, uint16_t previou
                         (SPI_FRAME_ENABLE | SPI_FRAME_SLAVE | SPI_FRAME_ACTIVE_HIGH |
                          SPI_FRAME_DELAY)) != 0u) {
                 cpu->io.spi_frame_active &= (uint8_t)~(1u << channel);
+                if ((previous & SPI_FRAME_ENABLE) == 0u &&
+                    (control & SPI_FRAME_ENABLE) != 0u) {
+                    cpu->io.spi_clock_start_cycle[channel] = cpu->device_cycles;
+                }
             }
             return;
         }
@@ -14418,6 +14430,109 @@ bool dspic33_spi_pin_input(Dspic33* cpu, uint8_t channel, bool clock_high,
 bool dspic33_spi_transmit(Dspic33* cpu, uint8_t channel, uint8_t* value) {
     return channel < DSPIC33_SPI_COUNT && value != NULL &&
            byte_queue_pop(&cpu->io.spi_tx[channel], value);
+}
+
+bool dspic33_spi_clock_output(const Dspic33* cpu, uint8_t channel, bool* high) {
+    uint16_t base;
+    uint16_t control;
+    uint16_t frame;
+    uint8_t bit;
+    bool running;
+    bool active;
+    uint64_t period;
+    uint64_t elapsed;
+    if (channel >= DSPIC33_SPI_COUNT || high == NULL ||
+        spi_module_disabled(cpu, channel)) {
+        return false;
+    }
+    base = spi_bases[channel];
+    control = raw_word(cpu, (uint16_t)(base + 2u));
+    frame = raw_word(cpu, (uint16_t)(base + 4u));
+    if ((raw_word(cpu, base) & SPI_ENABLE) == 0u || !spi_master(cpu, channel) ||
+        (control & SPI_DISABLE_CLOCK) != 0u) {
+        return false;
+    }
+    bit = (uint8_t)(1u << channel);
+    running = ((cpu->io.spi_busy & bit) != 0u || (frame & SPI_FRAME_ENABLE) != 0u) &&
+              spi_power_enabled(cpu, channel);
+    if (!running) {
+        *high = (control & SPI_CLOCK_POLARITY) != 0u;
+        return true;
+    }
+    period =
+        spi_transfer_cycles(cpu, channel) / ((control & SPI_MODE_16) != 0u ? 16u : 8u);
+    elapsed = cpu->device_cycles - cpu->io.spi_clock_start_cycle[channel];
+    active = elapsed % period < period / 2u;
+    *high = active != ((control & SPI_CLOCK_POLARITY) != 0u);
+    return true;
+}
+
+bool dspic33_spi_data_output(const Dspic33* cpu, uint8_t channel, bool* high) {
+    uint16_t base;
+    uint16_t control;
+    uint8_t bit;
+    uint8_t bits;
+    uint8_t index;
+    uint64_t period;
+    uint64_t elapsed;
+    if (channel >= DSPIC33_SPI_COUNT || high == NULL ||
+        spi_module_disabled(cpu, channel)) {
+        return false;
+    }
+    base = spi_bases[channel];
+    control = raw_word(cpu, (uint16_t)(base + 2u));
+    if ((raw_word(cpu, base) & SPI_ENABLE) == 0u || !spi_master(cpu, channel) ||
+        (control & SPI_DISABLE_OUTPUT) != 0u) {
+        return false;
+    }
+    bit = (uint8_t)(1u << channel);
+    bits = (control & SPI_MODE_16) != 0u ? 16u : 8u;
+    if ((cpu->io.spi_busy & bit) == 0u) {
+        *high = (cpu->io.spi_shift[channel] & 1u) != 0u;
+        return true;
+    }
+    period = spi_transfer_cycles(cpu, channel) / bits;
+    elapsed = cpu->device_cycles - cpu->io.spi_start_cycle[channel];
+    index = (uint8_t)(elapsed / period);
+    if ((control & SPI_CLOCK_EDGE) != 0u && elapsed % period >= period / 2u) {
+        index++;
+    }
+    if (index >= bits) {
+        index = (uint8_t)(bits - 1u);
+    }
+    *high = (cpu->io.spi_shift[channel] & (uint16_t)(1u << (bits - index - 1u))) != 0u;
+    return true;
+}
+
+bool dspic33_spi_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
+    static const uint8_t data_functions[DSPIC33_SPI_COUNT] = {5u, 0u, 31u, 34u};
+    static const uint8_t clock_functions[DSPIC33_SPI_COUNT] = {6u, 0u, 32u, 35u};
+    uint8_t function = 0u;
+    uint8_t channel;
+    size_t index;
+    if (high == NULL) {
+        return false;
+    }
+    for (index = 0u; index < sizeof(pps_outputs) / sizeof(pps_outputs[0]); index++) {
+        if (pps_outputs[index].pin == pin) {
+            function = (uint8_t)((raw_word(cpu, pps_outputs[index].address) >>
+                                  pps_outputs[index].shift) &
+                                 0x003fu);
+            break;
+        }
+    }
+    if (index == sizeof(pps_outputs) / sizeof(pps_outputs[0])) {
+        return false;
+    }
+    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
+        if (function == data_functions[channel] && data_functions[channel] != 0u) {
+            return dspic33_spi_data_output(cpu, channel, high);
+        }
+        if (function == clock_functions[channel] && clock_functions[channel] != 0u) {
+            return dspic33_spi_clock_output(cpu, channel, high);
+        }
+    }
+    return false;
 }
 
 bool dspic33_spi_frame_output(const Dspic33* cpu, uint8_t channel, bool* high) {

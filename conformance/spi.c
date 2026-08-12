@@ -455,6 +455,115 @@ static void pps_slave_input_cases(SpiConformance* state, Dspic33* cpu) {
            "B1 virtual PPS sources do not drive SPI input");
 }
 
+static void master_output_cases(SpiConformance* state, Dspic33* cpu, Dspic33* copy) {
+    static const uint16_t mappings[DSPIC33_SPI_COUNT] = {0x0605u, 0u, 0x201fu, 0x2322u};
+    uint8_t channel;
+    bool clock;
+    bool data;
+    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
+        uint8_t mode16;
+        for (mode16 = 0u; mode16 < 2u; mode16++) {
+            uint8_t polarity;
+            for (polarity = 0u; polarity < 2u; polarity++) {
+                uint8_t edge;
+                for (edge = 0u; edge < 2u; edge++) {
+                    uint16_t control =
+                        (uint16_t)(0x003bu | ((uint16_t)mode16 << 10u) |
+                                   ((uint16_t)edge << 8u) | ((uint16_t)polarity << 6u));
+                    uint16_t value = mode16 != 0u ? 0xa55bu : 0x00a5u;
+                    uint64_t cycles = transfer_cycles(control);
+
+                    dspic33_reset(cpu, 0u);
+                    if (mappings[channel] != 0u) {
+                        dspic33_write_word(cpu, 0x0680u, mappings[channel]);
+                    }
+                    configure_spi(cpu, channel, control, 0u, 0u);
+                    dspic33_write_word(cpu, (uint16_t)(bases[channel] + 8u), value);
+                    expect(state,
+                           dspic33_spi_clock_output(cpu, channel, &clock) &&
+                               clock == (polarity == 0u) &&
+                               dspic33_spi_data_output(cpu, channel, &data) && data &&
+                               (mappings[channel] == 0u ||
+                                (dspic33_spi_pin(cpu, 64u, &data) && data &&
+                                 dspic33_spi_pin(cpu, 65u, &clock) &&
+                                 clock == (polarity == 0u))),
+                           "master output starts on active clock with first data bit");
+                    expect(state,
+                           dspic33_device_advance(cpu, 1u) &&
+                               dspic33_spi_clock_output(cpu, channel, &clock) &&
+                               clock == (polarity != 0u) &&
+                               dspic33_spi_data_output(cpu, channel, &data) &&
+                               data == (edge == 0u),
+                           "master output reaches half-clock data phase");
+                    expect(state,
+                           dspic33_device_advance(cpu, 1u) &&
+                               dspic33_spi_clock_output(cpu, channel, &clock) &&
+                               clock == (polarity == 0u) &&
+                               dspic33_spi_data_output(cpu, channel, &data) && !data,
+                           "master output advances to second data bit");
+                    expect(state,
+                           dspic33_device_advance(cpu, cycles - 2u) &&
+                               dspic33_spi_clock_output(cpu, channel, &clock) &&
+                               clock == (polarity != 0u) &&
+                               dspic33_spi_data_output(cpu, channel, &data) && data,
+                           "master output returns to idle clock with final data bit");
+                }
+            }
+        }
+
+        dspic33_reset(cpu, 0u);
+        configure_spi(cpu, channel, 0x183bu, 0u, 0u);
+        dspic33_write_word(cpu, (uint16_t)(bases[channel] + 8u), 0x00a5u);
+        expect(state,
+               !dspic33_spi_clock_output(cpu, channel, &clock) &&
+                   !dspic33_spi_data_output(cpu, channel, &data),
+               "disabled master pins release clock and data outputs");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_device_advance(cpu, 1u);
+        configure_spi(cpu, channel, 0x003bu, 0x8000u, 0u);
+        expect(state, dspic33_spi_clock_output(cpu, channel, &clock) && clock,
+               "framed master clock starts from its enable cycle");
+        expect(state,
+               dspic33_device_advance(cpu, 1u) &&
+                   dspic33_spi_clock_output(cpu, channel, &clock) && !clock,
+               "framed master clock reaches continuous half-cycle");
+        dspic33_write_word(cpu, (uint16_t)(bases[channel] + 8u), 0x00a5u);
+        expect(state, dspic33_spi_clock_output(cpu, channel, &clock) && !clock,
+               "framed transmit does not restart continuous clock phase");
+    }
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0680u, 0x0605u);
+    configure_spi(cpu, 0u, 0x003bu, 0u, 0u);
+    dspic33_write_word(cpu, 0x0248u, 0x00a5u);
+    dspic33_write_word(cpu, 0x0680u, 0u);
+    expect(state,
+           !dspic33_spi_pin(cpu, 64u, &data) && !dspic33_spi_pin(cpu, 65u, &clock) &&
+               dspic33_spi_data_output(cpu, 0u, &data) && data,
+           "live remap releases master outputs without stopping transfer");
+    expect(state,
+           !dspic33_spi_clock_output(cpu, DSPIC33_SPI_COUNT, &clock) &&
+               !dspic33_spi_data_output(cpu, DSPIC33_SPI_COUNT, &data) &&
+               !dspic33_spi_pin(cpu, 0u, &data) && !dspic33_spi_pin(cpu, 64u, NULL),
+           "master output rejects invalid requests");
+
+    dspic33_reset(cpu, 0u);
+    configure_spi(cpu, 0u, 0x003bu, 0u, 0u);
+    dspic33_write_word(cpu, 0x0248u, 0x00a5u);
+    dspic33_device_advance(cpu, 1u);
+    expect(state, dspic33_copy(copy, cpu), "copy active master output phase");
+    expect(state,
+           dspic33_spi_clock_output(cpu, 0u, &clock) && !clock &&
+               dspic33_spi_clock_output(copy, 0u, &data) && !data,
+           "copied master output retains half-clock phase");
+    dspic33_device_advance(cpu, 1u);
+    expect(state,
+           dspic33_spi_clock_output(cpu, 0u, &clock) && clock &&
+               dspic33_spi_clock_output(copy, 0u, &data) && !data,
+           "copied master output advances independently");
+}
+
 static void timing_matrix_cases(SpiConformance* state, Dspic33* cpu) {
     uint8_t channel;
     uint8_t mode16;
@@ -1153,6 +1262,7 @@ int main(void) {
         receive_only_cases(&state, &cpu);
         physical_slave_input_cases(&state, &cpu, &copy);
         pps_slave_input_cases(&state, &cpu);
+        master_output_cases(&state, &cpu, &copy);
         timing_matrix_cases(&state, &cpu);
         standard_buffer_cases(&state, &cpu);
         enhanced_fifo_cases(&state, &cpu);
@@ -1165,7 +1275,7 @@ int main(void) {
         dma_cases(&state, &cpu);
         copy_and_reset_cases(&state, &cpu, &copy);
     }
-    expect(&state, state.cases == 2959u, "SPI assertion accounting");
+    expect(&state, state.cases == 3108u, "SPI assertion accounting");
     if (copy_initialized) {
         dspic33_destroy(&copy);
     }

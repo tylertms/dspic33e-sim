@@ -618,6 +618,8 @@ typedef struct {
     uint16_t spi_shift[DSPIC33_SPI_COUNT];
     uint16_t spi_pin_receive[DSPIC33_SPI_COUNT];
     uint16_t spi_generation[DSPIC33_SPI_COUNT];
+    uint64_t spi_start_cycle[DSPIC33_SPI_COUNT];
+    uint64_t spi_clock_start_cycle[DSPIC33_SPI_COUNT];
     uint8_t spi_busy;
     uint8_t spi_selected;
     uint8_t spi_frame_active;
@@ -862,6 +864,9 @@ bool dspic33_spi_select(Dspic33* cpu, uint8_t channel, bool selected, uint64_t d
 bool dspic33_spi_pin_input(Dspic33* cpu, uint8_t channel, bool clock_high,
                            bool data_high, bool select_high);
 bool dspic33_spi_transmit(Dspic33* cpu, uint8_t channel, uint8_t* value);
+bool dspic33_spi_clock_output(const Dspic33* cpu, uint8_t channel, bool* high);
+bool dspic33_spi_data_output(const Dspic33* cpu, uint8_t channel, bool* high);
+bool dspic33_spi_pin(const Dspic33* cpu, uint8_t pin, bool* high);
 bool dspic33_spi_frame_output(const Dspic33* cpu, uint8_t channel, bool* high);
 bool dspic33_spi_frame_pin(const Dspic33* cpu, uint8_t pin, bool* high);
 bool dspic33_i2c_respond(Dspic33* cpu, uint8_t channel, uint8_t value, bool acknowledge,
