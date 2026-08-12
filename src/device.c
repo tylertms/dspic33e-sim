@@ -8555,6 +8555,50 @@ static void uart_cancel_physical_receive(Dspic33* cpu, uint8_t channel) {
     uart_refresh_status(cpu, channel);
 }
 
+static void uart_reset_auto_baud(Dspic33* cpu, uint8_t channel) {
+    uint8_t mask = (uint8_t)(1u << channel);
+    cpu->io.uart_auto_baud_active &= (uint8_t)~mask;
+    cpu->io.uart_auto_baud_edges[channel] = 0u;
+    cpu->io.uart_auto_baud_first_cycle[channel] = 0u;
+}
+
+static void uart_auto_baud_edge(Dspic33* cpu, uint8_t channel, bool previous_high,
+                                bool high) {
+    uint16_t base = uart_bases[channel];
+    uint16_t mode = raw_word(cpu, base);
+    uint8_t mask = (uint8_t)(1u << channel);
+    if ((mode & UART_MODE_AUTO_BAUD) == 0u || previous_high == high) {
+        return;
+    }
+    if (previous_high && !high) {
+        if ((cpu->io.uart_auto_baud_active & mask) == 0u) {
+            uart_reset_auto_baud(cpu, channel);
+            cpu->io.uart_auto_baud_active |= mask;
+        }
+        return;
+    }
+    if ((cpu->io.uart_auto_baud_active & mask) == 0u) {
+        return;
+    }
+    cpu->io.uart_auto_baud_edges[channel]++;
+    if (cpu->io.uart_auto_baud_edges[channel] == 1u) {
+        cpu->io.uart_auto_baud_first_cycle[channel] = cpu->device_cycles;
+        return;
+    }
+    if (cpu->io.uart_auto_baud_edges[channel] == 5u) {
+        uint64_t elapsed =
+            cpu->device_cycles - cpu->io.uart_auto_baud_first_cycle[channel];
+        uint64_t clocks = (mode & UART_MODE_HIGH_SPEED) != 0u ? 4u : 16u;
+        uint64_t bit_cycles = elapsed / 8u;
+        uint16_t baud =
+            bit_cycles >= clocks ? (uint16_t)(bit_cycles / clocks - 1u) : 0u;
+        raw_write_word(cpu, (uint16_t)(base + 8u), baud);
+        raw_write_word(cpu, base, (uint16_t)(mode & ~UART_MODE_AUTO_BAUD));
+        uart_reset_auto_baud(cpu, channel);
+        dspic33_raise_interrupt(cpu, uart_rx_irqs[channel]);
+    }
+}
+
 static void uart_begin_physical_receive(Dspic33* cpu, uint8_t channel) {
     uint16_t mode = raw_word(cpu, uart_bases[channel]);
     uint64_t unit = (uint64_t)raw_word(cpu, (uint16_t)(uart_bases[channel] + 8u)) + 1u;
@@ -14329,6 +14373,9 @@ static void update_uart_register(Dspic33* cpu, uint16_t address, uint16_t previo
         if (offset == 0u) {
             uint16_t mode = raw_word(cpu, base);
             cpu->io.uart_rx_selection[channel] = 0xffu;
+            if (((previous ^ mode) & UART_MODE_AUTO_BAUD) != 0u) {
+                uart_reset_auto_baud(cpu, channel);
+            }
             if ((cpu->io.uart_rx_active & (uint8_t)(1u << channel)) != 0u &&
                 ((previous ^ mode) &
                  (UART_MODE_ENABLE | UART_MODE_IREN | UART_MODE_LOOPBACK |
@@ -16159,7 +16206,10 @@ static void uart_refresh_pps_inputs(Dspic33* cpu) {
         }
         if (!reconfigured && qualified && high != previous_high) {
             uint16_t mode = raw_word(cpu, uart_bases[channel]);
-            if ((mode & UART_MODE_WAKE) != 0u && (mode & UART_MODE_LOOPBACK) == 0u) {
+            if ((mode & UART_MODE_AUTO_BAUD) != 0u) {
+                uart_auto_baud_edge(cpu, channel, previous_high, high);
+            } else if ((mode & UART_MODE_WAKE) != 0u &&
+                       (mode & UART_MODE_LOOPBACK) == 0u) {
                 if (previous_high && !high) {
                     dspic33_raise_interrupt(cpu, uart_rx_irqs[channel]);
                 } else if (!previous_high && high) {
@@ -16197,6 +16247,9 @@ static void uart_update_power_state(Dspic33* cpu) {
                         (mode & UART_MODE_STOP_IDLE) != 0u);
         if (stopped && (cpu->io.uart_rx_active & mask) != 0u) {
             uart_cancel_physical_receive(cpu, channel);
+        }
+        if (stopped) {
+            uart_reset_auto_baud(cpu, channel);
         }
         if (stopped && (cpu->io.uart_tx_active & mask) != 0u) {
             cpu->io.uart_generation[channel]++;

@@ -930,6 +930,42 @@ static void physical_lifecycle_cases(UartConformance* state, Dspic33* cpu) {
            "UART PPS IrDA zero pulse ends");
 }
 
+static void physical_auto_baud_cases(UartConformance* state, Dspic33* cpu) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_UART_COUNT; channel++) {
+        uint16_t mode = (uint16_t)(0x8020u | ((channel & 1u) != 0u ? 8u : 0u));
+        uint16_t expected_baud = (uint16_t)(channel + 1u);
+        uint64_t clocks = (mode & 8u) != 0u ? 4u : 16u;
+        uint64_t bit_cycles = ((uint64_t)expected_baud + 1u) * clocks;
+        uint8_t bit;
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, 0x0e3eu, 0u);
+        dspic33_gpio_drive(cpu, 3u, 1u, 1u);
+        dspic33_write_word(cpu, pps_registers[channel], 64u);
+        configure(cpu, channel, mode, 0u, 0x1234u);
+        clear_interrupt(cpu, receive_irqs[channel]);
+        expect(state, drive_uart_level(cpu, false, false, bit_cycles),
+               "UART PPS auto-baud start edge");
+        for (bit = 0u; bit < 8u; bit++) {
+            expect(state,
+                   drive_uart_level(cpu, (0x55u & (uint8_t)(1u << bit)) != 0u, false,
+                                    bit_cycles),
+                   "UART PPS auto-baud data edge");
+        }
+        expect(state, drive_uart_level(cpu, true, false, bit_cycles),
+               "UART PPS auto-baud stop edge");
+        expect(state,
+               dspic33_read_word(cpu, (uint16_t)(bases[channel] + 8u)) ==
+                       expected_baud &&
+                   (dspic33_read_word(cpu, bases[channel]) & 0x0020u) == 0u &&
+                   interrupt_flag(cpu, receive_irqs[channel]),
+               "UART PPS auto-baud fifth rising edge result");
+        expect(state,
+               (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) & 1u) == 0u,
+               "UART PPS auto-baud does not populate receive FIFO");
+    }
+}
+
 static void disable_copy_and_api_cases(UartConformance* state, Dspic33* cpu) {
     Dspic33 copy;
     Dspic33UartFrame frame;
@@ -1008,6 +1044,7 @@ int main(void) {
         dma_cases(&state, &cpu);
         physical_pps_cases(&state, &cpu);
         physical_lifecycle_cases(&state, &cpu);
+        physical_auto_baud_cases(&state, &cpu);
         disable_copy_and_api_cases(&state, &cpu);
         dspic33_destroy(&cpu);
     }
