@@ -542,6 +542,7 @@ typedef struct {
     uint8_t can_rx_serial_active;
     uint8_t can_tx_busy;
     uint8_t can_tx_on_bus;
+    uint8_t can_tx_retry_wait;
     uint16_t adc[DSPIC33_ADC_CHANNEL_COUNT];
     uint16_t adc_latched[DSPIC33_ADC_COUNT][4];
     uint16_t adc_generation[DSPIC33_ADC_COUNT];

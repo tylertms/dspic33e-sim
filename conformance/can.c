@@ -1261,6 +1261,158 @@ static bool bridge_can_pins(Dspic33* cpu, uint8_t transmit_channel, uint8_t pin,
     return bit != 0u && bit < 160u && dspic33_device_advance(cpu, 32u);
 }
 
+static bool drive_shared_can_bus(Dspic33* can1, Dspic33* can2, uint8_t active_channel,
+                                 uint64_t bit_cycles) {
+    uint16_t count = 0u;
+    Dspic33* active = active_channel == 0u ? can1 : can2;
+    while ((active->io.can_tx_on_bus & (uint8_t)(1u << active_channel)) != 0u &&
+           count < 160u) {
+        bool can1_high;
+        bool can2_high;
+        bool bus_high;
+        if (!dspic33_can_pin(can1, 65u, &can1_high) ||
+            !dspic33_can_pin(can2, 66u, &can2_high)) {
+            return false;
+        }
+        bus_high = can1_high && can2_high;
+        if (!dspic33_can_input_pin(can1, 64u, bus_high, 0u) ||
+            !dspic33_can_input_pin(can2, 64u, bus_high, 0u) ||
+            !dspic33_device_advance(can1, bit_cycles) ||
+            !dspic33_device_advance(can2, bit_cycles)) {
+            return false;
+        }
+        count++;
+    }
+    return count != 0u && count < 160u;
+}
+
+static void arbitration_field_cases(CanConformance* state, Dspic33* cpu) {
+    Dspic33CanFrame contenders[4][2];
+    Dspic33 winner;
+    contenders[0][0] = frame(0x155u, false, false, 0u, 0u);
+    contenders[0][1] = frame(0x155u, false, true, 0u, 0u);
+    contenders[1][0] = frame(0x155u, false, false, 0u, 0u);
+    contenders[1][1] = frame(0x5540000u, true, false, 0u, 0u);
+    contenders[2][0] = frame(0x1550000u, true, false, 0u, 0u);
+    contenders[2][1] = frame(0x1550001u, true, false, 0u, 0u);
+    contenders[3][0] = frame(0x1550000u, true, false, 0u, 0u);
+    contenders[3][1] = frame(0x1550000u, true, true, 0u, 0u);
+    expect(state, dspic33_initialize(&winner),
+           "initialize independent CAN arbitration contender");
+    for (uint8_t index = 0u; index < 4u; index++) {
+        Dspic33CanFrame output;
+        dspic33_reset(cpu, 0u);
+        dspic33_reset(&winner, 0u);
+        dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+        dspic33_write_word(cpu, 0x0e3eu, 0u);
+        dspic33_write_word(cpu, 0x0680u, 0x0e00u);
+        dspic33_write_word(cpu, 0x06d4u, 0x0040u);
+        dspic33_write_word(&winner, 0x0e30u, 0xffffu);
+        dspic33_write_word(&winner, 0x0e3eu, 0u);
+        dspic33_write_word(&winner, 0x0682u, 0x000fu);
+        dspic33_write_word(&winner, 0x06d4u, 0x4000u);
+        configure_transmit(cpu, 0u, 0xd400u);
+        configure_transmit(&winner, 1u, 0xd600u);
+        write_transmit_frame(cpu, 0xd400u, &contenders[index][0]);
+        write_transmit_frame(&winner, 0xd600u, &contenders[index][1]);
+        select_window(cpu, 0u, false);
+        select_window(&winner, 1u, false);
+        dspic33_write_word(cpu, 0x0410u, 0u);
+        dspic33_write_word(cpu, 0x0412u, 0u);
+        dspic33_write_word(&winner, 0x0510u, 0u);
+        dspic33_write_word(&winner, 0x0512u, 0u);
+        set_mode(cpu, 0u, 0u);
+        set_mode(&winner, 1u, 0u);
+        dspic33_write_word(cpu, 0x0430u, 0x008bu);
+        dspic33_write_word(&winner, 0x0530u, 0x008bu);
+        expect(state,
+               dspic33_device_advance(cpu, 8u) && dspic33_device_advance(&winner, 8u) &&
+                   (cpu->io.can_tx_on_bus & 1u) != 0u &&
+                   (winner.io.can_tx_on_bus & 2u) != 0u,
+               "CAN arbitration field contenders start together");
+        expect(state, drive_shared_can_bus(cpu, &winner, 0u, 4u),
+               "CAN arbitration field selects the dominant contender");
+        expect(state,
+               (dspic33_read_word(&winner, 0x0530u) & 0x0028u) == 0x0028u &&
+                   dspic33_can_transmit(cpu, 0u, &output) &&
+                   output.identifier == contenders[index][0].identifier &&
+                   output.extended == contenders[index][0].extended &&
+                   output.remote == contenders[index][0].remote,
+               "CAN arbitration field records loss and completes the winner");
+    }
+    dspic33_destroy(&winner);
+}
+
+static void arbitration_cases(CanConformance* state, Dspic33* cpu) {
+    Dspic33CanFrame higher = frame(0x400u, false, false, 2u, 0xa0u);
+    Dspic33CanFrame lower = frame(0u, false, false, 2u, 0xb0u);
+    Dspic33CanFrame output;
+    Dspic33 winner;
+    expect(state, dspic33_initialize(&winner),
+           "initialize independent CAN arbitration winner");
+    dspic33_reset(cpu, 0u);
+    dspic33_reset(&winner, 0u);
+    dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_write_word(cpu, 0x0680u, 0x0e00u);
+    dspic33_write_word(cpu, 0x06d4u, 0x0040u);
+    dspic33_write_word(&winner, 0x0e30u, 0xffffu);
+    dspic33_write_word(&winner, 0x0e3eu, 0u);
+    dspic33_write_word(&winner, 0x0682u, 0x000fu);
+    dspic33_write_word(&winner, 0x06d4u, 0x4000u);
+    configure_receive(cpu, 0u, 0xd000u, 4u, 0u);
+    configure_receive(&winner, 1u, 0xd200u, 4u, 0u);
+    configure_filter(cpu, 0u, 0u, lower.identifier, false, 0x7ffu, true, 0u, 0u);
+    configure_filter(&winner, 1u, 0u, higher.identifier, false, 0x7ffu, true, 0u, 0u);
+    enable_filter(cpu, 0u, 1u);
+    enable_filter(&winner, 1u, 1u);
+    configure_transmit(cpu, 0u, 0xd400u);
+    configure_transmit(&winner, 1u, 0xd600u);
+    write_transmit_frame(cpu, 0xd400u, &higher);
+    write_transmit_frame(&winner, 0xd600u, &lower);
+    select_window(cpu, 0u, false);
+    select_window(&winner, 1u, false);
+    dspic33_write_word(cpu, 0x0410u, 0u);
+    dspic33_write_word(cpu, 0x0412u, 0u);
+    dspic33_write_word(&winner, 0x0510u, 0u);
+    dspic33_write_word(&winner, 0x0512u, 0u);
+    set_mode(cpu, 0u, 0u);
+    set_mode(&winner, 1u, 0u);
+    dspic33_write_word(cpu, 0x0430u, 0x008bu);
+    dspic33_write_word(&winner, 0x0530u, 0x008bu);
+    expect(state,
+           dspic33_device_advance(cpu, 8u) && dspic33_device_advance(&winner, 8u) &&
+               (cpu->io.can_tx_on_bus & 1u) != 0u &&
+               (winner.io.can_tx_on_bus & 2u) != 0u,
+           "competing CAN transmissions enter the bus together");
+    expect(state, drive_shared_can_bus(cpu, &winner, 1u, 4u),
+           "lower identifier wins CAN arbitration");
+    expect(state,
+           (dspic33_read_word(cpu, 0x0430u) & 0x0028u) == 0x0028u &&
+               (cpu->io.can_tx_busy & 1u) != 0u && (cpu->io.can_tx_on_bus & 1u) == 0u &&
+               !dspic33_can_transmit(cpu, 0u, &output),
+           "losing CAN transmission records TXLARB and begins an automatic retry");
+    expect(state,
+           dspic33_can_transmit(&winner, 1u, &output) &&
+               output.identifier == lower.identifier,
+           "winning CAN frame completes before the retry");
+    expect(state,
+           cpu->io.can_rx_serial_count[0] != 0u && dspic33_device_advance(cpu, 7u) &&
+               dspic33_device_advance(&winner, 7u) &&
+               (cpu->io.can_tx_retry_wait & 1u) == 0u &&
+               (cpu->io.can_tx_on_bus & 1u) != 0u,
+           "losing node monitors the winner and retries after intermission");
+    expect(state, drive_shared_can_bus(cpu, &winner, 0u, 4u),
+           "retried CAN transmission completes on the shared bus");
+    expect(state,
+           dspic33_device_advance(cpu, 8u) && dspic33_can_transmit(cpu, 0u, &output) &&
+               output.identifier == higher.identifier &&
+               (dspic33_read_word(cpu, 0x0430u) & 0x0078u) == 0x0020u &&
+               winner.io.can_rx_serial_count[1] != 0u,
+           "successful retry preserves TXLARB and clears TXREQ without errors");
+    dspic33_destroy(&winner);
+}
+
 static void receive_pps_cases(CanConformance* state, Dspic33* cpu) {
     expect(state, !dspic33_can_input_pin(cpu, 63u, true, 0u),
            "CAN input rejects non-remappable pin");
@@ -1956,7 +2108,7 @@ static void copy_and_reset_cases(CanConformance* state, Dspic33* cpu) {
                cpu->io.can_rx_busy == 0u && cpu->io.can_tx_busy == 0u &&
                cpu->io.can_rx_serial_active == 0u &&
                cpu->io.can_rx_serial_count[0] == 0u && cpu->io.can_rx_pin_high == 3u &&
-               cpu->io.can_rx_ack == 0u,
+               cpu->io.can_rx_ack == 0u && cpu->io.can_tx_retry_wait == 0u,
            "reset clears CAN runtime");
 }
 
@@ -1989,6 +2141,8 @@ int main(void) {
     transmit_abort_timing_cases(&state, &cpu);
     transmit_pps_cases(&state, &cpu);
     receive_pps_cases(&state, &cpu);
+    arbitration_field_cases(&state, &cpu);
+    arbitration_cases(&state, &cpu);
     receive_pps_qualification_cases(&state, &cpu);
     priority_and_abort_cases(&state, &cpu);
     mode_and_power_cases(&state, &cpu);
@@ -1996,7 +2150,7 @@ int main(void) {
     interrupt_and_error_cases(&state, &cpu);
     invalid_message_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
-    expect(&state, state.cases == 1462615u, "CAN assertion accounting");
+    expect(&state, state.cases == 1462636u, "CAN assertion accounting");
     report_sfr_side_effect_coverage(
         "can", can_sfr_side_effect_coverage,
         SFR_SIDE_EFFECT_COVERAGE_COUNT(can_sfr_side_effect_coverage),
