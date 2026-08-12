@@ -544,6 +544,7 @@ enum {
     CAN_EVENT_TRANSMIT_WORD = 5u,
     CAN_EVENT_TRANSMIT_FINISH = 6u,
     CAN_EVENT_ERROR = 7u,
+    CAN_EVENT_TRANSMIT_BUS_FINISH = 8u,
     CAN_EVENT_KIND_MASK = 0x000000ffu,
     CAN_EVENT_TRANSMIT_ERROR = 0x00000100u,
     CAN_EVENT_ERROR_COUNT_SHIFT = 16u,
@@ -10703,6 +10704,83 @@ static Dspic33CanFrame can_decode_frame(const uint16_t words[8]) {
     return frame;
 }
 
+static void can_append_bits(bool bits[128], uint8_t* count, uint32_t value,
+                            uint8_t width) {
+    while (width != 0u) {
+        width--;
+        bits[(*count)++] = (value & (uint32_t)(1u << width)) != 0u;
+    }
+}
+
+static uint16_t can_crc(const bool bits[128], uint8_t count) {
+    uint16_t crc = 0u;
+    for (uint8_t index = 0u; index < count; index++) {
+        bool feedback = ((crc & 0x4000u) != 0u) != bits[index];
+        crc = (uint16_t)((crc << 1u) & 0x7fffu);
+        if (feedback) {
+            crc ^= 0x4599u;
+        }
+    }
+    return crc;
+}
+
+static uint16_t can_frame_bit_count(const Dspic33CanFrame* frame) {
+    bool bits[128];
+    uint8_t count = 0u;
+    uint8_t length = frame->length > 8u ? 8u : frame->length;
+    uint16_t stuffed;
+    bool previous;
+    uint8_t run;
+    can_append_bits(bits, &count, 0u, 1u);
+    if (frame->extended) {
+        can_append_bits(bits, &count, frame->identifier >> 18u, 11u);
+        can_append_bits(bits, &count, 3u, 2u);
+        can_append_bits(bits, &count, frame->identifier & 0x3ffffu, 18u);
+        can_append_bits(bits, &count, frame->remote ? 1u : 0u, 1u);
+        can_append_bits(bits, &count, 0u, 2u);
+    } else {
+        can_append_bits(bits, &count, frame->identifier, 11u);
+        can_append_bits(bits, &count, frame->remote ? 1u : 0u, 1u);
+        can_append_bits(bits, &count, 0u, 2u);
+    }
+    can_append_bits(bits, &count, length, 4u);
+    if (!frame->remote) {
+        for (uint8_t index = 0u; index < length; index++) {
+            can_append_bits(bits, &count, frame->data[index], 8u);
+        }
+    }
+    can_append_bits(bits, &count, can_crc(bits, count), 15u);
+    stuffed = count;
+    previous = bits[0];
+    run = 1u;
+    for (uint8_t index = 1u; index < count; index++) {
+        if (bits[index] == previous) {
+            run++;
+        } else {
+            previous = bits[index];
+            run = 1u;
+        }
+        if (run == 5u) {
+            stuffed++;
+            previous = !previous;
+            run = 1u;
+        }
+    }
+    return (uint16_t)(stuffed + 13u);
+}
+
+static uint64_t can_frame_cycles(const Dspic33* cpu, uint8_t channel,
+                                 const Dspic33CanFrame* frame) {
+    uint16_t config1 = raw_word(cpu, (uint16_t)(can_bases[channel] + 0x10u));
+    uint16_t config2 = raw_word(cpu, (uint16_t)(can_bases[channel] + 0x12u));
+    uint16_t control = raw_word(cpu, can_bases[channel]);
+    uint64_t prescaler = (config1 & 0x003fu) + 1u;
+    uint64_t quanta = 1u + (config2 & 7u) + 1u + ((config2 >> 3u) & 7u) + 1u +
+                      ((config2 >> 8u) & 7u) + 1u;
+    uint64_t clock_divisor = (control & 0x0800u) != 0u ? 2u : 1u;
+    return (uint64_t)can_frame_bit_count(frame) * prescaler * quanta * clock_divisor;
+}
+
 static void can_refresh_error_status(Dspic33* cpu, uint8_t channel) {
     uint16_t base = can_bases[channel];
     uint16_t counts = raw_word(cpu, (uint16_t)(base + 0x0eu));
@@ -10886,7 +10964,7 @@ static void can_transmit_word(Dspic33* cpu, uint8_t channel) {
     dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_WORD, 1u);
 }
 
-static void can_transmit_finish(Dspic33* cpu, uint8_t channel) {
+static void can_transmit_bus_finish(Dspic33* cpu, uint8_t channel) {
     uint8_t buffer = cpu->io.can_tx_buffer[channel];
     uint8_t bit = (uint8_t)(1u << channel);
     uint16_t control = can_buffer_control(cpu, channel, buffer);
@@ -10908,6 +10986,16 @@ static void can_transmit_finish(Dspic33* cpu, uint8_t channel) {
     }
     cpu->io.can_tx_busy &= (uint8_t)~bit;
     dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_START, 0u);
+}
+
+static void can_transmit_finish(Dspic33* cpu, uint8_t channel) {
+    Dspic33CanFrame frame = can_decode_frame(cpu->io.can_tx_words[channel]);
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel,
+                          CAN_EVENT_TRANSMIT_BUS_FINISH,
+                          can_frame_cycles(cpu, channel, &frame))) {
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+        cpu->io.can_tx_busy &= (uint8_t)~(uint8_t)(1u << channel);
+    }
 }
 
 static void can_error_event(Dspic33* cpu, uint8_t channel, uint32_t value) {
@@ -10958,6 +11046,9 @@ static void run_can(Dspic33* cpu, uint8_t channel, uint32_t value) {
         break;
     case CAN_EVENT_TRANSMIT_FINISH:
         can_transmit_finish(cpu, channel);
+        break;
+    case CAN_EVENT_TRANSMIT_BUS_FINISH:
+        can_transmit_bus_finish(cpu, channel);
         break;
     case CAN_EVENT_ERROR:
         can_error_event(cpu, channel, value);
@@ -13603,6 +13694,19 @@ static void update_dma_request(Dspic33* cpu, uint8_t channel, uint16_t previous)
 }
 
 static void can_abort_transmissions(Dspic33* cpu, uint8_t channel) {
+    size_t destination = 0u;
+    for (size_t source = 0u; source < cpu->events.count; source++) {
+        Dspic33Event* event = &cpu->events.items[source];
+        uint32_t kind = event->value & CAN_EVENT_KIND_MASK;
+        if (event->type != DSPIC33_EVENT_CAN || event->source != channel ||
+            (kind != CAN_EVENT_TRANSMIT_START && kind != CAN_EVENT_TRANSMIT_WORD &&
+             kind != CAN_EVENT_TRANSMIT_FINISH &&
+             kind != CAN_EVENT_TRANSMIT_BUS_FINISH)) {
+            cpu->events.items[destination++] = *event;
+        }
+    }
+    cpu->events.count = destination;
+    dspic33_reorder_events(cpu);
     uint8_t buffer;
     for (buffer = 0u; buffer < 8u; buffer++) {
         uint16_t control = can_buffer_control(cpu, channel, buffer);

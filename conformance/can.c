@@ -980,7 +980,7 @@ static void transmission_cases(CanConformance* state, Dspic33* cpu) {
                 set_mode(cpu, channel, 0u);
                 dspic33_write_word(cpu, (uint16_t)(base + 0x0cu), 1u);
                 dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x008bu);
-                expect(state, dspic33_device_advance(cpu, 32u), "transmit advance");
+                expect(state, dspic33_device_advance(cpu, 4096u), "transmit advance");
                 expect(state, dspic33_can_transmit(cpu, channel, &actual),
                        "transmit queue output");
                 expect(state,
@@ -1004,6 +1004,120 @@ static void transmission_cases(CanConformance* state, Dspic33* cpu) {
     }
 }
 
+static void clock_timing_cases(CanConformance* state, Dspic33* cpu) {
+    static const uint16_t clock_controls[] = {0u, 0x0800u, 0u, 0u};
+    static const uint16_t config1_values[] = {0u, 0u, 1u, 0u};
+    static const uint16_t config2_values[] = {0u, 0u, 0u, 0x0311u};
+    static const uint64_t completion_cycles[] = {208u, 408u, 408u, 508u};
+    for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        for (uint8_t timing = 0u;
+             timing < sizeof(completion_cycles) / sizeof(completion_cycles[0]);
+             timing++) {
+            uint16_t base = bases[channel];
+            uint32_t memory = (uint32_t)(0xb800u + channel * 0x100u);
+            Dspic33CanFrame output;
+            dspic33_reset(cpu, 0u);
+            configure_transmit(cpu, channel, memory);
+            write_memory_word(cpu, memory, 2u);
+            for (uint8_t word = 1u; word < 8u; word++) {
+                write_memory_word(cpu, memory + word * 2u, 0u);
+            }
+            select_window(cpu, channel, false);
+            set_mode(cpu, channel, 4u);
+            dspic33_write_word(cpu, (uint16_t)(base + 0x10u), config1_values[timing]);
+            dspic33_write_word(cpu, (uint16_t)(base + 0x12u), config2_values[timing]);
+            dspic33_write_word(cpu, base,
+                               (uint16_t)((dspic33_read_word(cpu, base) & ~0x0800u) |
+                                          clock_controls[timing]));
+            set_mode(cpu, channel, 0u);
+            dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x008bu);
+            expect(state,
+                   dspic33_read_word(cpu, (uint16_t)(base + 0x10u)) ==
+                           config1_values[timing] &&
+                       dspic33_read_word(cpu, (uint16_t)(base + 0x12u)) ==
+                           config2_values[timing] &&
+                       (dspic33_read_word(cpu, base) & 0x0800u) ==
+                           clock_controls[timing],
+                   "CAN bit timing configuration is retained");
+            expect(state,
+                   dspic33_device_advance(cpu, completion_cycles[timing] - 1u) &&
+                       !dspic33_can_transmit(cpu, channel, &output),
+                   "CAN frame remains active before its final bus bit");
+            expect(state,
+                   dspic33_device_advance(cpu, 1u) &&
+                       dspic33_can_transmit(cpu, channel, &output) &&
+                       output.identifier == 0u && output.remote && output.length == 0u,
+                   "CAN frame completes on its configured B1 clock boundary");
+        }
+    }
+}
+
+static void stuffed_frame_timing_cases(CanConformance* state, Dspic33* cpu) {
+    static const uint16_t words[][8] = {
+        {0x0c84u, 0u, 1u, 0x00a5u, 0u, 0u, 0u, 0u},
+        {0x0123u, 0x0d15u, 0x9c08u, 0x0100u, 0x0302u, 0x0504u, 0x0706u, 0u},
+    };
+    static const uint64_t completion_cycles[] = {236u, 576u};
+    for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        for (uint8_t frame_index = 0u;
+             frame_index < sizeof(completion_cycles) / sizeof(completion_cycles[0]);
+             frame_index++) {
+            uint16_t base = bases[channel];
+            uint32_t memory = (uint32_t)(0xba00u + channel * 0x100u);
+            Dspic33CanFrame output;
+            dspic33_reset(cpu, 0u);
+            configure_transmit(cpu, channel, memory);
+            for (uint8_t word = 0u; word < 8u; word++) {
+                write_memory_word(cpu, memory + word * 2u, words[frame_index][word]);
+            }
+            select_window(cpu, channel, false);
+            set_mode(cpu, channel, 0u);
+            dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x008bu);
+            expect(state,
+                   dspic33_device_advance(cpu, completion_cycles[frame_index] - 1u) &&
+                       !dspic33_can_transmit(cpu, channel, &output),
+                   "stuffed CAN frame remains active before its calculated boundary");
+            expect(state,
+                   dspic33_device_advance(cpu, 1u) &&
+                       dspic33_can_transmit(cpu, channel, &output) &&
+                       output.extended == (frame_index != 0u) &&
+                       output.length == (frame_index == 0u ? 1u : 8u),
+                   "stuffed CAN frame completes on its calculated boundary");
+        }
+    }
+}
+
+static void transmit_abort_timing_cases(CanConformance* state, Dspic33* cpu) {
+    for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint16_t base = bases[channel];
+        uint32_t memory = (uint32_t)(0xbc00u + channel * 0x100u);
+        Dspic33CanFrame output;
+        dspic33_reset(cpu, 0u);
+        configure_transmit(cpu, channel, memory);
+        write_memory_word(cpu, memory, 2u);
+        for (uint8_t word = 1u; word < 8u; word++) {
+            write_memory_word(cpu, memory + word * 2u, 0u);
+        }
+        select_window(cpu, channel, false);
+        set_mode(cpu, channel, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x008bu);
+        expect(state,
+               dspic33_device_advance(cpu, 8u) &&
+                   (cpu->io.can_tx_busy & (uint8_t)(1u << channel)) != 0u &&
+                   !dspic33_can_transmit(cpu, channel, &output),
+               "CAN abort test reaches the on-bus interval");
+        dspic33_write_word(cpu, base,
+                           (uint16_t)(dspic33_read_word(cpu, base) | 0x1000u));
+        expect(state,
+               (cpu->io.can_tx_busy & (uint8_t)(1u << channel)) == 0u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) & 0x0048u) ==
+                       0x0040u &&
+                   dspic33_device_advance(cpu, 1000u) &&
+                   !dspic33_can_transmit(cpu, channel, &output),
+               "CAN abort cancels the pending on-bus completion");
+    }
+}
+
 static void priority_and_abort_cases(CanConformance* state, Dspic33* cpu) {
     Dspic33CanFrame output;
     uint8_t buffer;
@@ -1019,7 +1133,7 @@ static void priority_and_abort_cases(CanConformance* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0432u, 0x8a8bu);
     dspic33_write_word(cpu, 0x0434u, 0x8a89u);
     dspic33_write_word(cpu, 0x0436u, 0x8b8bu);
-    expect(state, dspic33_device_advance(cpu, 80u), "priority transmissions");
+    expect(state, dspic33_device_advance(cpu, 32768u), "priority transmissions");
     expect(state, dspic33_can_transmit(cpu, 0u, &output) && output.identifier == 0x107u,
            "highest priority natural order");
     expect(state, dspic33_can_transmit(cpu, 0u, &output) && output.identifier == 0x106u,
@@ -1248,7 +1362,7 @@ static void complete_error_test_transmission(CanConformance* state, Dspic33* cpu
     }
     select_window(cpu, channel, false);
     dspic33_write_word(cpu, (uint16_t)(bases[channel] + 0x30u), 0x008bu);
-    expect(state, dspic33_device_advance(cpu, 32u),
+    expect(state, dspic33_device_advance(cpu, 4096u),
            "error recovery transmission advance");
     expect(state, dspic33_can_transmit(cpu, channel, &output),
            "error recovery transmission output");
@@ -1358,10 +1472,14 @@ int main(void) {
     receive_flag_hardware_event_cases(&state, &cpu);
     overflow_and_fallback_cases(&state, &cpu);
     transmission_cases(&state, &cpu);
+    clock_timing_cases(&state, &cpu);
+    stuffed_frame_timing_cases(&state, &cpu);
+    transmit_abort_timing_cases(&state, &cpu);
     priority_and_abort_cases(&state, &cpu);
     mode_and_power_cases(&state, &cpu);
     interrupt_and_error_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
+    expect(&state, state.cases == 1462526u, "CAN assertion accounting");
     report_sfr_side_effect_coverage(
         "can", can_sfr_side_effect_coverage,
         SFR_SIDE_EFFECT_COVERAGE_COUNT(can_sfr_side_effect_coverage),
