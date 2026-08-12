@@ -24,6 +24,7 @@ static const uint16_t bases[DSPIC33_CAN_COUNT] = {0x0400u, 0x0500u};
 static const uint8_t event_irqs[DSPIC33_CAN_COUNT] = {35u, 56u};
 static const uint8_t receive_requests[DSPIC33_CAN_COUNT] = {34u, 55u};
 static const uint8_t transmit_requests[DSPIC33_CAN_COUNT] = {70u, 71u};
+static void write_memory_word(Dspic33* cpu, uint32_t address, uint16_t value);
 
 enum {
     CAN_INTERRUPT_ERROR = 0x0020u,
@@ -159,6 +160,32 @@ static Dspic33CanFrame frame(uint32_t identifier, bool extended, bool remote,
         result.data[index] = (uint8_t)(seed + index * 17u);
     }
     return result;
+}
+
+static void write_transmit_frame(Dspic33* cpu, uint32_t memory,
+                                 const Dspic33CanFrame* value) {
+    uint16_t words[8] = {0};
+    uint32_t sid =
+        value->extended ? (value->identifier >> 18u) & 0x7ffu : value->identifier;
+    uint32_t eid = value->identifier & 0x3ffffu;
+    words[0] = (uint16_t)(sid << 2u);
+    if (value->extended) {
+        words[0] |= 3u;
+        words[1] = (uint16_t)(eid >> 6u);
+        words[2] = (uint16_t)((eid & 0x3fu) << 10u);
+        if (value->remote) {
+            words[2] |= 0x0200u;
+        }
+    } else if (value->remote) {
+        words[0] |= 2u;
+    }
+    words[2] |= value->length;
+    for (uint8_t index = 0u; index < value->length; index++) {
+        words[3u + index / 2u] |= (uint16_t)value->data[index] << ((index & 1u) * 8u);
+    }
+    for (uint8_t index = 0u; index < 8u; index++) {
+        write_memory_word(cpu, memory + index * 2u, words[index]);
+    }
 }
 
 static void clear_receive_flag(Dspic33* cpu, uint8_t channel, uint8_t buffer) {
@@ -1207,6 +1234,215 @@ static void transmit_pps_cases(CanConformance* state, Dspic33* cpu) {
     }
 }
 
+static bool bridge_can_pins(Dspic33* cpu, uint8_t transmit_channel, uint8_t pin,
+                            uint8_t acknowledge_pin, uint64_t bit_cycles,
+                            int corrupt_bit, bool* acknowledge_observed) {
+    uint16_t bit = 0u;
+    while ((cpu->io.can_tx_on_bus & (uint8_t)(1u << transmit_channel)) != 0u &&
+           bit < 160u) {
+        bool high;
+        bool acknowledge_high;
+        if (dspic33_can_pin(cpu, acknowledge_pin, &acknowledge_high) &&
+            !acknowledge_high) {
+            *acknowledge_observed = true;
+        }
+        if (!dspic33_can_pin(cpu, pin, &high)) {
+            return false;
+        }
+        if (bit == corrupt_bit) {
+            high = !high;
+        }
+        if (!dspic33_can_input_pin(cpu, pin, high, 0u) ||
+            !dspic33_device_advance(cpu, bit_cycles)) {
+            return false;
+        }
+        bit++;
+    }
+    return bit != 0u && bit < 160u && dspic33_device_advance(cpu, 32u);
+}
+
+static void receive_pps_cases(CanConformance* state, Dspic33* cpu) {
+    expect(state, !dspic33_can_input_pin(cpu, 63u, true, 0u),
+           "CAN input rejects non-remappable pin");
+    for (uint8_t transmit_channel = 0u; transmit_channel < DSPIC33_CAN_COUNT;
+         transmit_channel++) {
+        uint8_t receive_channel = (uint8_t)(transmit_channel ^ 1u);
+        uint8_t pin = (uint8_t)(64u + transmit_channel);
+        uint16_t transmit_base = bases[transmit_channel];
+        uint16_t receive_base = bases[receive_channel];
+        uint32_t transmit_memory = (uint32_t)(0xd800u + transmit_channel * 0x100u);
+        uint32_t receive_memory = (uint32_t)(0xda00u + transmit_channel * 0x100u);
+        Dspic33CanFrame input =
+            frame(transmit_channel == 0u ? 0x345u : 0x1234567u, transmit_channel != 0u,
+                  false, 3u, (uint8_t)(0x60u + transmit_channel * 0x10u));
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+        dspic33_write_word(cpu, 0x0e3eu, 0u);
+        dspic33_write_word(cpu, 0x0680u, 0x0f0eu);
+        dspic33_write_word(cpu, 0x06d4u,
+                           receive_channel == 0u ? pin : (uint16_t)(pin << 8u));
+        configure_receive(cpu, receive_channel, receive_memory, 4u, 0u);
+        configure_filter(cpu, receive_channel, 0u, input.identifier, input.extended,
+                         input.extended ? 0x1fffffffu : 0x7ffu, true, 0u, 0u);
+        enable_filter(cpu, receive_channel, 1u);
+        configure_transmit(cpu, transmit_channel, transmit_memory);
+        write_transmit_frame(cpu, transmit_memory, &input);
+        select_window(cpu, transmit_channel, false);
+        select_window(cpu, receive_channel, false);
+        dspic33_write_word(cpu, (uint16_t)(transmit_base + 0x10u), 0u);
+        dspic33_write_word(cpu, (uint16_t)(transmit_base + 0x12u),
+                           transmit_channel == 0u ? 0u : 0x0311u);
+        dspic33_write_word(cpu, (uint16_t)(receive_base + 0x10u), 0u);
+        dspic33_write_word(cpu, (uint16_t)(receive_base + 0x12u),
+                           transmit_channel == 0u ? 0u : 0x0311u);
+        set_mode(cpu, transmit_channel, 0u);
+        set_mode(cpu, receive_channel, 0u);
+        dspic33_write_word(cpu, (uint16_t)(transmit_base + 0x30u), 0x008bu);
+        bool acknowledge_observed = false;
+        expect(state,
+               dspic33_device_advance(cpu, 8u) &&
+                   bridge_can_pins(
+                       cpu, transmit_channel, pin, (uint8_t)(65u - transmit_channel),
+                       transmit_channel == 0u ? 4u : 10u, -1, &acknowledge_observed),
+               "CAN PPS serial frame bridge advances");
+        expect(state,
+               receive_full(cpu, receive_channel, 0u) &&
+                   cpu->io.can_rx_serial_count[receive_channel] != 0u &&
+                   (cpu->io.can_rx_serial_active & (uint8_t)(1u << receive_channel)) ==
+                       0u,
+               "CAN PPS receiver accepts a complete stuffed frame");
+        expect(state,
+               memory_word(cpu, receive_memory) ==
+                       (uint16_t)(((input.extended ? (input.identifier >> 18u) & 0x7ffu
+                                                   : input.identifier)
+                                   << 2u) |
+                                  (input.extended ? 3u : 0u)) &&
+                   (uint8_t)memory_word(cpu, receive_memory + 6u) == input.data[0] &&
+                   (uint8_t)(memory_word(cpu, receive_memory + 6u) >> 8u) ==
+                       input.data[1],
+               "CAN PPS receiver preserves header and payload bits");
+        expect(state, acknowledge_observed,
+               "CAN PPS receiver drives the acknowledge slot dominant");
+    }
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_write_word(cpu, 0x0680u, 0x0f0eu);
+    dspic33_write_word(cpu, 0x06d4u, 0x4000u);
+    configure_receive(cpu, 1u, 0xdc00u, 4u, 0u);
+    configure_filter(cpu, 1u, 0u, 0u, false, 0x7ffu, true, 0u, 0u);
+    enable_filter(cpu, 1u, 1u);
+    configure_transmit(cpu, 0u, 0xde00u);
+    Dspic33CanFrame invalid = frame(0u, false, false, 0u, 0u);
+    write_transmit_frame(cpu, 0xde00u, &invalid);
+    select_window(cpu, 0u, false);
+    select_window(cpu, 1u, false);
+    dspic33_write_word(cpu, 0x050cu, 0x0080u);
+    set_mode(cpu, 0u, 0u);
+    set_mode(cpu, 1u, 0u);
+    dspic33_write_word(cpu, 0x0430u, 0x008bu);
+    bool acknowledge_observed = false;
+    expect(state,
+           dspic33_device_advance(cpu, 8u) &&
+               bridge_can_pins(cpu, 0u, 64u, 65u, 4u, 42, &acknowledge_observed),
+           "corrupted CAN PPS frame advances");
+    expect(state,
+           (dspic33_read_word(cpu, 0x050au) & 0x0080u) != 0u &&
+               !receive_full(cpu, 1u, 0u),
+           "corrupted CAN PPS frame raises IVRIF without receive data");
+}
+
+static void receive_pps_qualification_cases(CanConformance* state, Dspic33* cpu) {
+    static const uint8_t modes[] = {0u, 3u, 7u, 2u, 4u, 1u};
+    for (uint8_t index = 0u; index < sizeof(modes); index++) {
+        uint8_t mode = modes[index];
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+        dspic33_write_word(cpu, 0x0e3eu, 0u);
+        dspic33_write_word(cpu, 0x06d4u, 64u);
+        set_mode(cpu, 0u, mode);
+        expect(state,
+               dspic33_can_input_pin(cpu, 64u, false, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   (((cpu->io.can_rx_serial_active & 1u) != 0u) ==
+                    (mode == 0u || mode == 3u || mode == 7u)),
+               "CAN receive mode qualifies physical start of frame");
+    }
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e30u, 0xfffeu);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_write_word(cpu, 0x06d4u, 64u);
+    set_mode(cpu, 0u, 0u);
+    expect(state,
+           dspic33_can_input_pin(cpu, 64u, false, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               (cpu->io.can_rx_serial_active & 1u) == 0u,
+           "CAN PPS receiver rejects an output pin");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e3eu, 0x0040u);
+    dspic33_write_word(cpu, 0x06d4u, 70u);
+    set_mode(cpu, 0u, 0u);
+    expect(state,
+           dspic33_can_input_pin(cpu, 70u, false, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               (cpu->io.can_rx_serial_active & 1u) == 0u,
+           "CAN PPS receiver rejects an analog pin");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_write_word(cpu, 0x06d4u, 65u);
+    set_mode(cpu, 0u, 0u);
+    expect(state,
+           dspic33_can_input_pin(cpu, 64u, false, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               (cpu->io.can_rx_serial_active & 1u) == 0u,
+           "CAN PPS receiver rejects an unmapped pin");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_write_word(cpu, 0x06d4u, 64u);
+    set_mode(cpu, 0u, 0u);
+    dspic33_write_word(cpu, 0x0760u, (uint16_t)(dspic33_read_word(cpu, 0x0760u) | 2u));
+    expect(state,
+           dspic33_device_advance(cpu, 1u) &&
+               dspic33_can_input_pin(cpu, 64u, false, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               (cpu->io.can_rx_serial_active & 1u) == 0u,
+           "PMD suppresses the CAN PPS receiver");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_write_word(cpu, 0x06d4u, 64u);
+    dspic33_write_word(cpu, 0x0412u, 0u);
+    set_mode(cpu, 0u, 0u);
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    expect(state,
+           dspic33_can_input_pin(cpu, 64u, false, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               (dspic33_read_word(cpu, 0x040au) & 0x0040u) == 0u,
+           "disabled CAN wake filter rejects physical bus activity");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_write_word(cpu, 0x06d4u, 64u);
+    dspic33_write_word(cpu, 0x0412u, 0x4000u);
+    set_mode(cpu, 0u, 0u);
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    expect(state,
+           dspic33_can_input_pin(cpu, 64u, false, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               (dspic33_read_word(cpu, 0x040au) & 0x0040u) != 0u,
+           "enabled CAN wake filter accepts physical bus activity");
+}
+
 static void priority_and_abort_cases(CanConformance* state, Dspic33* cpu) {
     Dspic33CanFrame output;
     uint8_t buffer;
@@ -1693,11 +1929,34 @@ static void copy_and_reset_cases(CanConformance* state, Dspic33* cpu) {
                dspic33_can_transmit(&copy, 0u, &copy_output) &&
                source_output.identifier == copy_output.identifier,
            "copy preserves pending CAN bus completion");
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_write_word(cpu, 0x06d4u, 64u);
+    set_mode(cpu, 0u, 0u);
+    expect(state,
+           dspic33_can_input_pin(cpu, 64u, false, 0u) &&
+               dspic33_device_advance(cpu, 3u) &&
+               cpu->io.can_rx_serial_count[0] == 1u &&
+               (cpu->io.can_rx_serial_active & 1u) != 0u,
+           "copy reaches active CAN serial reception");
+    expect(state, dspic33_copy(&copy, cpu), "copy active CAN serial state");
+    expect(state,
+           dspic33_can_input_pin(cpu, 64u, true, 1u) &&
+               dspic33_can_input_pin(&copy, 64u, true, 1u) &&
+               dspic33_device_advance(cpu, 4u) && dspic33_device_advance(&copy, 4u) &&
+               cpu->io.can_rx_serial_count[0] == 2u &&
+               copy.io.can_rx_serial_count[0] == 2u &&
+               cpu->io.can_rx_serial_bits[0][1] == copy.io.can_rx_serial_bits[0][1],
+           "copy preserves CAN serial receive phase");
     dspic33_destroy(&copy);
     dspic33_reset(cpu, 0u);
     expect(state,
            cpu->io.can_rx[0].count == 0u && cpu->io.can_tx[0].count == 0u &&
-               cpu->io.can_rx_busy == 0u && cpu->io.can_tx_busy == 0u,
+               cpu->io.can_rx_busy == 0u && cpu->io.can_tx_busy == 0u &&
+               cpu->io.can_rx_serial_active == 0u &&
+               cpu->io.can_rx_serial_count[0] == 0u && cpu->io.can_rx_pin_high == 3u &&
+               cpu->io.can_rx_ack == 0u,
            "reset clears CAN runtime");
 }
 
@@ -1729,13 +1988,15 @@ int main(void) {
     stuffed_frame_timing_cases(&state, &cpu);
     transmit_abort_timing_cases(&state, &cpu);
     transmit_pps_cases(&state, &cpu);
+    receive_pps_cases(&state, &cpu);
+    receive_pps_qualification_cases(&state, &cpu);
     priority_and_abort_cases(&state, &cpu);
     mode_and_power_cases(&state, &cpu);
     capture_timestamp_cases(&state, &cpu);
     interrupt_and_error_cases(&state, &cpu);
     invalid_message_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
-    expect(&state, state.cases == 1462589u, "CAN assertion accounting");
+    expect(&state, state.cases == 1462615u, "CAN assertion accounting");
     report_sfr_side_effect_coverage(
         "can", can_sfr_side_effect_coverage,
         SFR_SIDE_EFFECT_COVERAGE_COUNT(can_sfr_side_effect_coverage),

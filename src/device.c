@@ -34,6 +34,7 @@ static void dci_update_power_state(Dspic33* cpu);
 static void dma_update_power_state(Dspic33* cpu);
 static void dci_refresh_pps_inputs(Dspic33* cpu);
 static void spi_refresh_pps_inputs(Dspic33* cpu);
+static void can_invalid_event(Dspic33* cpu, uint8_t channel);
 static void spi_update_power_state(Dspic33* cpu);
 static void comparator_update_filter_power(Dspic33* cpu);
 static void comparator_evaluate_all(Dspic33* cpu);
@@ -549,7 +550,12 @@ enum {
     CAN_EVENT_KIND_MASK = 0x000000ffu,
     CAN_EVENT_CAPTURE_RELEASE = 9u,
     CAN_EVENT_INVALID = 10u,
+    CAN_EVENT_RECEIVE_PIN = 11u,
+    CAN_EVENT_RECEIVE_SAMPLE = 12u,
+    CAN_EVENT_ACK_START = 13u,
+    CAN_EVENT_ACK_FINISH = 14u,
     CAN_EVENT_TRANSMIT_ERROR = 0x00000100u,
+    CAN_EVENT_PIN_HIGH = 0x00000200u,
     CAN_EVENT_ERROR_COUNT_SHIFT = 16u,
     USB_OTGIR = 0x0488u,
     USB_OTGIE = 0x048au,
@@ -10818,6 +10824,256 @@ static void can_capture_received_frame(Dspic33* cpu, uint8_t channel) {
     }
 }
 
+typedef enum {
+    CAN_SERIAL_INCOMPLETE,
+    CAN_SERIAL_VALID,
+    CAN_SERIAL_INVALID
+} Dspic33CanSerialResult;
+
+static uint32_t can_serial_value(const bool* bits, uint16_t first, uint8_t width) {
+    uint32_t value = 0u;
+    for (uint8_t index = 0u; index < width; index++) {
+        value = (value << 1u) | (bits[first + index] ? 1u : 0u);
+    }
+    return value;
+}
+
+static Dspic33CanSerialResult can_decode_serial(const Dspic33* cpu, uint8_t channel,
+                                                Dspic33CanFrame* frame,
+                                                uint16_t* tail_start) {
+    bool raw[128];
+    uint16_t serial_count = cpu->io.can_rx_serial_count[channel];
+    uint16_t serial_index = 0u;
+    uint16_t raw_count = 0u;
+    uint16_t expected = 0u;
+    bool previous = false;
+    bool expect_stuff = false;
+    uint8_t run = 0u;
+    bool extended = false;
+    bool remote = false;
+    uint8_t length = 0u;
+    *tail_start = 0u;
+    while (serial_index < serial_count) {
+        bool bit = cpu->io.can_rx_serial_bits[channel][serial_index++] != 0u;
+        if (expect_stuff) {
+            if (bit == previous) {
+                return CAN_SERIAL_INVALID;
+            }
+            previous = bit;
+            run = 1u;
+            expect_stuff = false;
+            if (expected != 0u && raw_count == expected) {
+                break;
+            }
+            continue;
+        }
+        raw[raw_count++] = bit;
+        if (raw_count == 1u && bit) {
+            return CAN_SERIAL_INVALID;
+        }
+        if (run == 0u || bit != previous) {
+            previous = bit;
+            run = 1u;
+        } else {
+            run++;
+        }
+        if (run == 5u) {
+            expect_stuff = true;
+        }
+        if (raw_count >= 14u) {
+            extended = raw[13];
+        }
+        if (!extended && raw_count >= 19u) {
+            remote = raw[12];
+            length = (uint8_t)can_serial_value(raw, 15u, 4u);
+            if (length > 8u) {
+                length = 8u;
+            }
+            expected = (uint16_t)(34u + (remote ? 0u : length * 8u));
+        } else if (extended && raw_count >= 39u) {
+            if (!raw[12]) {
+                return CAN_SERIAL_INVALID;
+            }
+            remote = raw[32];
+            length = (uint8_t)can_serial_value(raw, 35u, 4u);
+            if (length > 8u) {
+                length = 8u;
+            }
+            expected = (uint16_t)(54u + (remote ? 0u : length * 8u));
+        }
+        if (expected != 0u && raw_count == expected && !expect_stuff) {
+            break;
+        }
+        if (raw_count >= sizeof(raw)) {
+            return CAN_SERIAL_INVALID;
+        }
+    }
+    if (expected == 0u || raw_count < expected || expect_stuff) {
+        return CAN_SERIAL_INCOMPLETE;
+    }
+    *tail_start = serial_index;
+    uint16_t crc_index = (uint16_t)(expected - 15u);
+    if (can_crc(raw, (uint8_t)crc_index) !=
+        (uint16_t)can_serial_value(raw, crc_index, 15u)) {
+        return CAN_SERIAL_INVALID;
+    }
+    if ((uint16_t)(serial_count - serial_index) < 10u) {
+        return CAN_SERIAL_INCOMPLETE;
+    }
+    if (!cpu->io.can_rx_serial_bits[channel][serial_index] ||
+        !cpu->io.can_rx_serial_bits[channel][serial_index + 2u]) {
+        return CAN_SERIAL_INVALID;
+    }
+    for (uint8_t index = 3u; index < 10u; index++) {
+        if (!cpu->io.can_rx_serial_bits[channel][serial_index + index]) {
+            return CAN_SERIAL_INVALID;
+        }
+    }
+    memset(frame, 0, sizeof(*frame));
+    frame->extended = extended;
+    frame->remote = remote;
+    frame->length = length;
+    if (extended) {
+        frame->identifier =
+            (can_serial_value(raw, 1u, 11u) << 18u) | can_serial_value(raw, 14u, 18u);
+    } else {
+        frame->identifier = can_serial_value(raw, 1u, 11u);
+    }
+    uint16_t data_index = extended ? 39u : 19u;
+    for (uint8_t index = 0u; index < length && !remote; index++) {
+        frame->data[index] =
+            (uint8_t)can_serial_value(raw, data_index + index * 8u, 8u);
+    }
+    return CAN_SERIAL_VALID;
+}
+
+static uint64_t can_sample_cycles(const Dspic33* cpu, uint8_t channel) {
+    uint16_t config1 = raw_word(cpu, (uint16_t)(can_bases[channel] + 0x10u));
+    uint16_t config2 = raw_word(cpu, (uint16_t)(can_bases[channel] + 0x12u));
+    uint16_t control = raw_word(cpu, can_bases[channel]);
+    uint64_t prescaler = (config1 & 0x003fu) + 1u;
+    uint64_t quanta = 1u + (config2 & 7u) + 1u + ((config2 >> 3u) & 7u) + 1u;
+    uint64_t clock_divisor = (control & 0x0800u) != 0u ? 2u : 1u;
+    return prescaler * quanta * clock_divisor;
+}
+
+static uint8_t can_receive_pps_pin(const Dspic33* cpu, uint8_t channel) {
+    uint16_t mapping = raw_word(cpu, 0x06d4u);
+    return channel == 0u ? (uint8_t)(mapping & 0x007fu)
+                         : (uint8_t)((mapping >> 8u) & 0x007fu);
+}
+
+static bool can_serial_receive_enabled(const Dspic33* cpu, uint8_t channel) {
+    uint8_t mode = can_mode(cpu, channel);
+    return can_power_enabled(cpu, channel) && cpu->power_state != DSPIC33_POWER_SLEEP &&
+           (mode == CAN_MODE_NORMAL || mode == CAN_MODE_LISTEN ||
+            mode == CAN_MODE_LISTEN_ALL);
+}
+
+static void can_receive_pin_level(Dspic33* cpu, uint8_t pin, bool high) {
+    for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint8_t bit = (uint8_t)(1u << channel);
+        bool previous = (cpu->io.can_rx_pin_high & bit) != 0u;
+        if (can_receive_pps_pin(cpu, channel) != pin ||
+            !pps_physical_input_enabled(cpu, pin)) {
+            continue;
+        }
+        if (high) {
+            cpu->io.can_rx_pin_high |= bit;
+        } else {
+            cpu->io.can_rx_pin_high &= (uint8_t)~bit;
+        }
+        if (previous && !high && cpu->power_state == DSPIC33_POWER_SLEEP &&
+            (raw_word(cpu, (uint16_t)(can_bases[channel] + 0x12u)) & CAN_WAKE_FILTER) !=
+                0u &&
+            (raw_word(cpu, 0x0760u) & (uint16_t)(2u << channel)) == 0u) {
+            can_raise_event(cpu, channel, CAN_INTERRUPT_WAKE, 0u, 0u);
+            continue;
+        }
+        if (previous && !high && (cpu->io.can_rx_serial_active & bit) == 0u &&
+            can_serial_receive_enabled(cpu, channel)) {
+            cpu->io.can_rx_serial_active |= bit;
+            cpu->io.can_rx_serial_count[channel] = 0u;
+            if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel,
+                                  CAN_EVENT_RECEIVE_SAMPLE,
+                                  can_sample_cycles(cpu, channel))) {
+                cpu->io.can_rx_serial_active &= (uint8_t)~bit;
+                cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+            }
+        }
+    }
+}
+
+static void can_receive_sample(Dspic33* cpu, uint8_t channel) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    Dspic33CanFrame frame;
+    Dspic33CanSerialResult result;
+    uint16_t count;
+    uint16_t tail_start;
+    if ((cpu->io.can_rx_serial_active & bit) == 0u ||
+        !can_serial_receive_enabled(cpu, channel)) {
+        cpu->io.can_rx_serial_active &= (uint8_t)~bit;
+        return;
+    }
+    count = cpu->io.can_rx_serial_count[channel];
+    if (count >= sizeof(cpu->io.can_rx_serial_bits[channel])) {
+        cpu->io.can_rx_serial_active &= (uint8_t)~bit;
+        can_invalid_event(cpu, channel);
+        return;
+    }
+    cpu->io.can_rx_serial_bits[channel][count] = (cpu->io.can_rx_pin_high & bit) != 0u;
+    cpu->io.can_rx_serial_count[channel]++;
+    result = can_decode_serial(cpu, channel, &frame, &tail_start);
+    if (result == CAN_SERIAL_INCOMPLETE && tail_start != 0u &&
+        cpu->io.can_rx_serial_count[channel] == tail_start + 1u &&
+        cpu->io.can_rx_serial_bits[channel][tail_start] != 0u) {
+        uint64_t bit_cycles = can_bit_cycles(cpu, channel);
+        uint64_t sample_cycles = can_sample_cycles(cpu, channel);
+        if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_ACK_START,
+                              bit_cycles - sample_cycles)) {
+            cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+            cpu->io.can_rx_serial_active &= (uint8_t)~bit;
+            return;
+        }
+    }
+    if (result == CAN_SERIAL_VALID) {
+        cpu->io.can_rx_serial_active &= (uint8_t)~bit;
+        if (!can_queue_push(&cpu->io.can_rx[channel], &frame) ||
+            !dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_START,
+                              0u)) {
+            cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+        }
+        return;
+    }
+    if (result == CAN_SERIAL_INVALID) {
+        cpu->io.can_rx_serial_active &= (uint8_t)~bit;
+        can_invalid_event(cpu, channel);
+        return;
+    }
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_SAMPLE,
+                          can_bit_cycles(cpu, channel))) {
+        cpu->io.can_rx_serial_active &= (uint8_t)~bit;
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    }
+}
+
+static void can_ack_start(Dspic33* cpu, uint8_t channel) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    if (!can_serial_receive_enabled(cpu, channel)) {
+        return;
+    }
+    cpu->io.can_rx_ack |= bit;
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_ACK_FINISH,
+                          can_bit_cycles(cpu, channel))) {
+        cpu->io.can_rx_ack &= (uint8_t)~bit;
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    }
+}
+
+static void can_ack_finish(Dspic33* cpu, uint8_t channel) {
+    cpu->io.can_rx_ack &= (uint8_t)~(uint8_t)(1u << channel);
+}
+
 static void can_refresh_error_status(Dspic33* cpu, uint8_t channel) {
     uint16_t base = can_bases[channel];
     uint16_t counts = raw_word(cpu, (uint16_t)(base + 0x0eu));
@@ -11080,10 +11336,15 @@ static void can_invalid_event(Dspic33* cpu, uint8_t channel) {
 }
 
 static void run_can(Dspic33* cpu, uint8_t channel, uint32_t value) {
+    uint32_t kind = value & CAN_EVENT_KIND_MASK;
+    if (kind == CAN_EVENT_RECEIVE_PIN) {
+        can_receive_pin_level(cpu, channel, (value & CAN_EVENT_PIN_HIGH) != 0u);
+        return;
+    }
     if (channel >= DSPIC33_CAN_COUNT) {
         return;
     }
-    switch (value & CAN_EVENT_KIND_MASK) {
+    switch (kind) {
     case CAN_EVENT_RECEIVE_START:
         can_receive_start(cpu, channel);
         break;
@@ -11110,6 +11371,15 @@ static void run_can(Dspic33* cpu, uint8_t channel, uint32_t value) {
         break;
     case CAN_EVENT_INVALID:
         can_invalid_event(cpu, channel);
+        break;
+    case CAN_EVENT_RECEIVE_SAMPLE:
+        can_receive_sample(cpu, channel);
+        break;
+    case CAN_EVENT_ACK_START:
+        can_ack_start(cpu, channel);
+        break;
+    case CAN_EVENT_ACK_FINISH:
+        can_ack_finish(cpu, channel);
         break;
     case CAN_EVENT_ERROR:
         can_error_event(cpu, channel, value);
@@ -15576,6 +15846,10 @@ bool dspic33_can_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
         return false;
     }
     *high = true;
+    if ((cpu->io.can_rx_ack & (uint8_t)(1u << channel)) != 0u) {
+        *high = false;
+        return true;
+    }
     if ((cpu->io.can_tx_on_bus & (uint8_t)(1u << channel)) != 0u &&
         can_power_enabled(cpu, channel) && can_mode(cpu, channel) == CAN_MODE_NORMAL) {
         Dspic33CanFrame frame = can_decode_frame(cpu->io.can_tx_words[channel]);
@@ -15588,6 +15862,13 @@ bool dspic33_can_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
         }
     }
     return true;
+}
+
+bool dspic33_can_input_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t delay) {
+    return pps_pin(pin) != NULL &&
+           dspic33_schedule(cpu, DSPIC33_EVENT_CAN, pin,
+                            CAN_EVENT_RECEIVE_PIN | (high ? CAN_EVENT_PIN_HIGH : 0u),
+                            delay);
 }
 
 static bool usb_schedule_pending(Dspic33* cpu, const Dspic33UsbPending* pending,
@@ -15795,6 +16076,7 @@ void dspic33_device_reset(Dspic33* cpu) {
     memcpy(cpu->io.qei.filtered_inputs, cpu->qei_inputs, sizeof(cpu->qei_inputs));
     memcpy(cpu->io.qei.logical_inputs, cpu->qei_inputs, sizeof(cpu->qei_inputs));
     cpu->io.uart_cts = (uint8_t)((1u << DSPIC33_UART_COUNT) - 1u);
+    cpu->io.can_rx_pin_high = (uint8_t)((1u << DSPIC33_CAN_COUNT) - 1u);
     cpu->io.input_capture.sync_output_high = 0x00ffu;
     cpu->io.output_compare.fault_inputs = 0u;
     memset(cpu->interrupt_deferred, 0, sizeof(cpu->interrupt_deferred));

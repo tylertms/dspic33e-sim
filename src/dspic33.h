@@ -534,7 +534,12 @@ typedef struct {
     uint8_t can_last_filter[DSPIC33_CAN_COUNT];
     uint8_t can_fifo_write[DSPIC33_CAN_COUNT];
     uint64_t can_tx_start_cycle[DSPIC33_CAN_COUNT];
+    uint8_t can_rx_serial_bits[DSPIC33_CAN_COUNT][160];
+    uint16_t can_rx_serial_count[DSPIC33_CAN_COUNT];
     uint8_t can_rx_busy;
+    uint8_t can_rx_ack;
+    uint8_t can_rx_pin_high;
+    uint8_t can_rx_serial_active;
     uint8_t can_tx_busy;
     uint8_t can_tx_on_bus;
     uint16_t adc[DSPIC33_ADC_CHANNEL_COUNT];
@@ -940,6 +945,7 @@ bool dspic33_can_error(Dspic33* cpu, uint8_t channel, bool transmit, uint8_t cou
 bool dspic33_can_invalid(Dspic33* cpu, uint8_t channel, uint64_t delay);
 bool dspic33_can_transmit(Dspic33* cpu, uint8_t channel, Dspic33CanFrame* frame);
 bool dspic33_can_pin(const Dspic33* cpu, uint8_t pin, bool* high);
+bool dspic33_can_input_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t delay);
 bool dspic33_usb_receive(Dspic33* cpu, uint8_t endpoint, const uint8_t* data,
                          uint16_t size, uint64_t delay);
 bool dspic33_usb_token(Dspic33* cpu, uint8_t address, uint8_t endpoint,
