@@ -1108,6 +1108,74 @@ static void selection_and_frame_cases(SpiConformance* state, Dspic33* cpu) {
     }
 }
 
+static void slave_select_retry_cases(SpiConformance* state, Dspic33* cpu) {
+    static const uint8_t data_functions[DSPIC33_SPI_COUNT] = {5u, 0u, 31u, 34u};
+    for (uint8_t channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
+        uint16_t base = bases[channel];
+        uint16_t received = (uint16_t)(0x5aa0u + channel);
+        uint16_t transmitted = (uint16_t)(0xa550u + channel);
+        uint8_t bit = (uint8_t)(1u << channel);
+        bool data = false;
+
+        dspic33_reset(cpu, 0u);
+        if (data_functions[channel] != 0u) {
+            dspic33_write_word(cpu, 0x0680u, data_functions[channel]);
+        }
+        configure_spi(cpu, channel, 0x0480u, 0u, 0u);
+        dspic33_spi_pin_input(cpu, channel, false, false, true);
+        dspic33_write_word(cpu, (uint16_t)(base + 8u), transmitted);
+        expect(state,
+               (cpu->io.spi_busy & bit) == 0u &&
+                   cpu->io.spi_tx_fifo[channel].count == 1u,
+               "inactive slave select holds pending data");
+        expect(state,
+               !dspic33_spi_data_output(cpu, channel, &data) &&
+                   (data_functions[channel] == 0u || !dspic33_spi_pin(cpu, 64u, &data)),
+               "inactive slave select tri-states output");
+
+        dspic33_spi_pin_input(cpu, channel, false, false, false);
+        expect(state,
+               (cpu->io.spi_busy & bit) != 0u &&
+                   cpu->io.spi_shift[channel] == transmitted &&
+                   dspic33_spi_data_output(cpu, channel, &data) && data &&
+                   (data_functions[channel] == 0u ||
+                    (dspic33_spi_pin(cpu, 64u, &data) && data)),
+               "active slave select starts the held transmission");
+
+        for (uint8_t index = 0u; index < 4u; index++) {
+            bool high = (received & (uint16_t)(1u << (15u - index))) != 0u;
+            dspic33_spi_pin_input(cpu, channel, true, high, false);
+            dspic33_spi_pin_input(cpu, channel, false, high, false);
+        }
+        dspic33_spi_pin_input(cpu, channel, false, false, true);
+        expect(state,
+               (cpu->io.spi_busy & bit) == 0u &&
+                   cpu->io.spi_tx_fifo[channel].count == 1u &&
+                   cpu->io.spi_pin_bits[channel] == 0u &&
+                   !dspic33_spi_data_output(cpu, channel, &data) &&
+                   !interrupt_flag(cpu, irqs[channel]),
+               "slave deselection aborts and retains the incomplete word");
+
+        dspic33_spi_pin_input(cpu, channel, false, false, false);
+        expect(state,
+               (cpu->io.spi_busy & bit) != 0u &&
+                   cpu->io.spi_shift[channel] == transmitted &&
+                   cpu->io.spi_tx_fifo[channel].count == 0u,
+               "slave reselection retries the retained word from its first bit");
+        for (uint8_t index = 0u; index < 16u; index++) {
+            bool high = (received & (uint16_t)(1u << (15u - index))) != 0u;
+            dspic33_spi_pin_input(cpu, channel, true, high, false);
+            dspic33_spi_pin_input(cpu, channel, false, high, false);
+        }
+        expect(state,
+               (cpu->io.spi_busy & bit) == 0u &&
+                   dspic33_read_word(cpu, (uint16_t)(base + 8u)) == received &&
+                   !interrupt_flag(cpu, irqs[channel]) &&
+                   transfer_interrupt_after_cycle(cpu, irqs[channel]),
+               "retried slave word completes once with delayed interrupt");
+    }
+}
+
 static void b1_frame_output_cases(SpiConformance* state, Dspic33* cpu, Dspic33* copy) {
     static const uint8_t frame_functions[DSPIC33_SPI_COUNT] = {7u, 10u, 33u, 36u};
     uint8_t channel;
@@ -1298,7 +1366,7 @@ static void b1_frame_output_cases(SpiConformance* state, Dspic33* cpu, Dspic33* 
     for (uint8_t clock_mode = 0u; clock_mode < 4u; clock_mode++) {
         uint16_t control = (uint16_t)(((clock_mode & 1u) != 0u ? 0x0100u : 0u) |
                                       ((clock_mode & 2u) != 0u ? 0x0040u : 0u));
-        bool sample_high = ((control & 0x0100u) != 0u) != ((control & 0x0040u) != 0u);
+        bool sample_high = (control & 0x0040u) != 0u;
         dspic33_reset(cpu, 0u);
         dspic33_write_word(cpu, 0x0680u, 5u);
         dspic33_spi_pin_input(cpu, 0u, sample_high, false, false);
@@ -1511,6 +1579,11 @@ static void clock_and_power_cases(SpiConformance* state, Dspic33* cpu) {
         configure_spi(cpu, channel, 0x043bu, 0u, 0u);
         dspic33_write_word(cpu, (uint16_t)(base + 8u), 0x2222u);
         cpu->power_state = DSPIC33_POWER_SLEEP;
+        dspic33_device_power_state_changed(cpu);
+        expect(state,
+               (cpu->io.spi_busy & (uint8_t)(1u << channel)) == 0u &&
+                   cpu->events.count == 0u,
+               "master sleep aborts transfer immediately");
         expect(state, dspic33_device_advance(cpu, cycles),
                "master sleep transfer advance");
         expect(state,
@@ -1529,6 +1602,31 @@ static void clock_and_power_cases(SpiConformance* state, Dspic33* cpu) {
                "slave sleep completes transfer");
 
         dspic33_reset(cpu, 0u);
+        configure_spi(cpu, channel, 0u, 0u, 0u);
+        dspic33_write_word(cpu, base, 0xa000u);
+        cpu->power_state = DSPIC33_POWER_IDLE;
+        expect(state,
+               dspic33_spi_receive(cpu, channel, 0x55u, 1u) &&
+                   dspic33_device_advance(cpu, 1u) &&
+                   (dspic33_read_word(cpu, base) & 1u) == 0u,
+               "stopped-idle slave ignores logical transfer input");
+        for (uint8_t index = 0u; index < 8u; index++) {
+            dspic33_spi_pin_input(cpu, channel, true, true, false);
+            dspic33_spi_pin_input(cpu, channel, false, true, false);
+        }
+        expect(state,
+               cpu->io.spi_pin_bits[channel] == 0u &&
+                   (dspic33_read_word(cpu, base) & 1u) == 0u,
+               "stopped-idle slave ignores physical clock edges");
+        cpu->power_state = DSPIC33_POWER_ACTIVE;
+        for (uint8_t index = 0u; index < 8u; index++) {
+            dspic33_spi_pin_input(cpu, channel, true, true, false);
+            dspic33_spi_pin_input(cpu, channel, false, true, false);
+        }
+        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0xffu,
+               "stopped-idle slave resumes on the next active physical edge");
+
+        dspic33_reset(cpu, 0u);
         configure_spi(cpu, channel, 0x043bu, 0u, 0u);
         dspic33_write_word(cpu, (uint16_t)(base + 8u), 0x4444u);
         cpu->power_state = DSPIC33_POWER_IDLE;
@@ -1542,6 +1640,11 @@ static void clock_and_power_cases(SpiConformance* state, Dspic33* cpu) {
         dspic33_write_word(cpu, base, 0xa000u);
         dspic33_write_word(cpu, (uint16_t)(base + 8u), 0x5555u);
         cpu->power_state = DSPIC33_POWER_IDLE;
+        dspic33_device_power_state_changed(cpu);
+        expect(state,
+               (cpu->io.spi_busy & (uint8_t)(1u << channel)) == 0u &&
+                   cpu->events.count == 0u,
+               "stopped-idle master aborts transfer immediately");
         expect(state, dspic33_device_advance(cpu, cycles),
                "master stopped idle advance");
         expect(state,
@@ -1705,6 +1808,7 @@ int main(void) {
         interrupt_mode_cases(&state, &cpu);
         mode_transition_cases(&state, &cpu);
         selection_and_frame_cases(&state, &cpu);
+        slave_select_retry_cases(&state, &cpu);
         b1_frame_output_cases(&state, &cpu, &copy);
         master_frame_slave_cases(&state, &cpu);
         clock_and_power_cases(&state, &cpu);
@@ -1712,7 +1816,7 @@ int main(void) {
         dma_cases(&state, &cpu);
         copy_and_reset_cases(&state, &cpu, &copy);
     }
-    expect(&state, state.cases == 3349u, "SPI assertion accounting");
+    expect(&state, state.cases == 3393u, "SPI assertion accounting");
     if (copy_initialized) {
         dspic33_destroy(&copy);
     }
