@@ -60,6 +60,8 @@ typedef struct {
 #endif
 } Runner;
 
+static const uint64_t DEFAULT_INSTRUCTION_LIMIT = 1000000u;
+
 typedef struct {
     const JsonValue* items[MAX_STEP_PARTS];
     size_t count;
@@ -3066,6 +3068,7 @@ static int run_firmware_runner(int argc, char** argv, Runner* runner) {
     char error[256];
     int index;
     runner->shard_count = 1u;
+    runner->instruction_limit = DEFAULT_INSTRUCTION_LIMIT;
     for (index = 1; index < argc; index++) {
         if (strcmp(argv[index], "--suite") == 0 && index + 1 < argc) {
             suite_path = argv[++index];
@@ -3133,6 +3136,7 @@ static int run_firmware_runner(int argc, char** argv, Runner* runner) {
     }
     printf("[prepare] Loaded %zu scenarios with %zu test steps\n", runner->scenarios,
            runner->steps);
+    printf("[limits] max-instructions=%" PRIu64 "\n", runner->instruction_limit);
     fflush(stdout);
     if (runner->plan_only) {
         json_free((JsonValue*)runner->suite);
