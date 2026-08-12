@@ -358,7 +358,8 @@ static void physical_slave_input_cases(SpiConformance* state, Dspic33* cpu,
     dspic33_reset(cpu, 0u);
     expect(state,
            cpu->io.spi_pin_bits[0] == 0u && cpu->io.spi_pin_receive[0] == 0u &&
-               cpu->io.spi_pin_clock_high == 0u && cpu->io.spi_pin_select_high == 0u,
+               cpu->io.spi_pin_clock_high == 0u && cpu->io.spi_pin_data_high == 0u &&
+               cpu->io.spi_pin_select_high == 0u,
            "reset clears physical slave state");
 }
 
@@ -562,6 +563,160 @@ static void master_output_cases(SpiConformance* state, Dspic33* cpu, Dspic33* co
            dspic33_spi_clock_output(cpu, 0u, &clock) && clock &&
                dspic33_spi_clock_output(copy, 0u, &data) && !data,
            "copied master output advances independently");
+}
+
+static void set_master_input(Dspic33* cpu, uint8_t channel, bool high) {
+    if (channel == 1u) {
+        dspic33_spi_pin_input(cpu, channel, false, high, false);
+    } else {
+        dspic33_gpio_drive(cpu, 3u, high ? 1u : 0u, 1u);
+    }
+}
+
+static void drive_master_input(Dspic33* cpu, uint8_t channel, uint16_t value,
+                               uint8_t width) {
+    uint8_t index;
+    for (index = 0u; index < width; index++) {
+        set_master_input(cpu, channel,
+                         (value & (uint16_t)(1u << (width - index - 1u))) != 0u);
+        dspic33_device_advance(cpu, 2u);
+    }
+}
+
+static void master_input_cases(SpiConformance* state, Dspic33* cpu, Dspic33* copy) {
+    static const uint16_t input_registers[DSPIC33_SPI_COUNT] = {0x06c8u, 0u, 0x06dau,
+                                                                0x06deu};
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
+        uint8_t mode16;
+        for (mode16 = 0u; mode16 < 2u; mode16++) {
+            uint8_t sample_end;
+            for (sample_end = 0u; sample_end < 2u; sample_end++) {
+                uint16_t control = (uint16_t)(0x003bu | ((uint16_t)mode16 << 10u) |
+                                              ((uint16_t)sample_end << 9u));
+                uint16_t received = mode16 != 0u ? 0xa55au : 0x005au;
+                uint8_t width = mode16 != 0u ? 16u : 8u;
+
+                dspic33_reset(cpu, 0u);
+                if (input_registers[channel] != 0u) {
+                    dspic33_write_word(
+                        cpu, 0x0e3eu,
+                        (uint16_t)(dspic33_read_word(cpu, 0x0e3eu) & ~1u));
+                    dspic33_write_word(cpu, input_registers[channel], 64u);
+                }
+                configure_spi(cpu, channel, control, 0u, 0u);
+                set_master_input(cpu, channel, false);
+                dspic33_write_word(cpu, (uint16_t)(bases[channel] + 8u), 0xffffu);
+                drive_master_input(cpu, channel, received, width);
+                expect(state,
+                       interrupt_flag(cpu, irqs[channel]) &&
+                           dspic33_read_word(cpu, (uint16_t)(bases[channel] + 8u)) ==
+                               received,
+                       "master samples physical serial input");
+            }
+        }
+    }
+
+    for (uint8_t sample_end = 0u; sample_end < 2u; sample_end++) {
+        dspic33_reset(cpu, 0u);
+        configure_spi(cpu, 1u, (uint16_t)(0x003bu | ((uint16_t)sample_end << 9u)), 0u,
+                      0u);
+        set_master_input(cpu, 1u, true);
+        dspic33_write_word(cpu, 0x0268u, 0xffu);
+        dspic33_device_advance(cpu, 1u);
+        set_master_input(cpu, 1u, false);
+        dspic33_device_advance(cpu, 1u);
+        drive_master_input(cpu, 1u, 0u, 7u);
+        expect(state,
+               dspic33_read_word(cpu, 0x0268u) == (sample_end == 0u ? 0x80u : 0u),
+               "master sample phase selects middle or end of data period");
+    }
+
+    dspic33_reset(cpu, 0u);
+    configure_spi(cpu, 0u, 0x003bu, 0u, 0u);
+    dspic33_write_word(cpu, 0x0248u, 0xa5u);
+    dspic33_device_advance(cpu, 16u);
+    expect(state, dspic33_read_word(cpu, 0x0248u) == 0xa5u,
+           "unmapped master retains logical transport loopback");
+
+    dspic33_reset(cpu, 0u);
+    configure_spi(cpu, 1u, 0x083bu, 0u, 0u);
+    set_master_input(cpu, 1u, false);
+    dspic33_write_word(cpu, 0x0268u, 0xffu);
+    drive_master_input(cpu, 1u, 0xa5u, 8u);
+    expect(state,
+           dspic33_read_word(cpu, 0x0268u) == 0xa5u &&
+               !dspic33_spi_data_output(cpu, 1u, &(bool){false}),
+           "receive-only master samples input with serial output released");
+
+    dspic33_reset(cpu, 0u);
+    configure_spi(cpu, 1u, 0x043bu, 0u, 0u);
+    set_master_input(cpu, 1u, false);
+    dspic33_write_word(cpu, 0x0268u, 0xffffu);
+    drive_master_input(cpu, 1u, 0xa5u, 8u);
+    expect(state, dspic33_copy(copy, cpu), "copy partial master physical input");
+    drive_master_input(cpu, 1u, 0x5au, 8u);
+    drive_master_input(copy, 1u, 0xc3u, 8u);
+    expect(state, dspic33_read_word(cpu, 0x0268u) == 0xa55au,
+           "source master physical input completes independently");
+    expect(state, dspic33_read_word(copy, 0x0268u) == 0xa5c3u,
+           "copied master physical input completes independently");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x06c8u, 70u);
+    dspic33_write_word(cpu, 0x0e3eu,
+                       (uint16_t)(dspic33_read_word(cpu, 0x0e3eu) | 0x0040u));
+    configure_spi(cpu, 0u, 0x003bu, 0u, 0u);
+    dspic33_write_word(cpu, 0x0248u, 0xffu);
+    for (uint8_t index = 0u; index < 8u; index++) {
+        dspic33_gpio_drive(cpu, 3u, 0x0040u, 0x0040u);
+        dspic33_device_advance(cpu, 2u);
+    }
+    expect(state, dspic33_read_word(cpu, 0x0248u) == 0u,
+           "analog PPS data pin suppresses master input");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e3eu, (uint16_t)(dspic33_read_word(cpu, 0x0e3eu) & ~3u));
+    dspic33_write_word(cpu, 0x06c8u, 64u);
+    configure_spi(cpu, 0u, 0x003bu, 0u, 0u);
+    dspic33_write_word(cpu, 0x0248u, 0xffu);
+    for (uint8_t index = 0u; index < 4u; index++) {
+        bool high = (0xa5u & (uint16_t)(1u << (7u - index))) != 0u;
+        dspic33_gpio_drive(cpu, 3u, high ? 1u : 0u, 1u);
+        dspic33_device_advance(cpu, 2u);
+    }
+    dspic33_write_word(cpu, 0x06c8u, 65u);
+    for (uint8_t index = 4u; index < 8u; index++) {
+        bool high = (0xa5u & (uint16_t)(1u << (7u - index))) != 0u;
+        dspic33_gpio_drive(cpu, 3u, high ? 2u : 0u, 2u);
+        dspic33_device_advance(cpu, 2u);
+    }
+    expect(state, dspic33_read_word(cpu, 0x0248u) == 0xa5u,
+           "live PPS remap changes master input source");
+
+    dspic33_reset(cpu, 0u);
+    configure_spi(cpu, 1u, 0x003bu, 0u, 0u);
+    set_master_input(cpu, 1u, false);
+    cpu->device_cycles = UINT64_MAX;
+    dspic33_write_word(cpu, 0x0268u, 0xffu);
+    expect(state,
+           cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR && cpu->events.count == 0u &&
+               (cpu->io.spi_busy & 2u) == 0u,
+           "master input scheduling failure aborts transfer");
+
+    dspic33_reset(cpu, 0u);
+    set_master_input(cpu, 1u, true);
+    dspic33_load_program_word(cpu, 0u, 0xfe0000u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->software_reset_count == 1u &&
+               (cpu->io.spi_pin_input_enabled & 2u) != 0u &&
+               (cpu->io.spi_pin_data_high & 2u) != 0u,
+           "warm reset preserves dedicated master input level");
+    configure_spi(cpu, 1u, 0x003bu, 0u, 0u);
+    dspic33_write_word(cpu, 0x0268u, 0u);
+    expect(state,
+           dspic33_device_advance(cpu, 16u) && dspic33_read_word(cpu, 0x0268u) == 0xffu,
+           "retained master input remains observable after warm reset");
 }
 
 static void timing_matrix_cases(SpiConformance* state, Dspic33* cpu) {
@@ -1263,6 +1418,7 @@ int main(void) {
         physical_slave_input_cases(&state, &cpu, &copy);
         pps_slave_input_cases(&state, &cpu);
         master_output_cases(&state, &cpu, &copy);
+        master_input_cases(&state, &cpu, &copy);
         timing_matrix_cases(&state, &cpu);
         standard_buffer_cases(&state, &cpu);
         enhanced_fifo_cases(&state, &cpu);
@@ -1275,7 +1431,7 @@ int main(void) {
         dma_cases(&state, &cpu);
         copy_and_reset_cases(&state, &cpu, &copy);
     }
-    expect(&state, state.cases == 3108u, "SPI assertion accounting");
+    expect(&state, state.cases == 3136u, "SPI assertion accounting");
     if (copy_initialized) {
         dspic33_destroy(&copy);
     }

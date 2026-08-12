@@ -496,9 +496,10 @@ enum {
     SPI_EVENT_EXTERNAL = 0x00010000u,
     SPI_EVENT_INTERNAL = 0x00020000u,
     SPI_EVENT_FRAME = 0x00030000u,
-    SPI_EVENT_KIND_MASK = 0x00030000u,
-    SPI_EVENT_GENERATION_SHIFT = 18u,
-    SPI_EVENT_GENERATION_MASK = 0x3fffu,
+    SPI_EVENT_SAMPLE = 0x00040000u,
+    SPI_EVENT_KIND_MASK = 0x00070000u,
+    SPI_EVENT_GENERATION_SHIFT = 19u,
+    SPI_EVENT_GENERATION_MASK = 0x1fffu,
     SPI_SELECT_ACTIVE = 0x00000001u,
     CAN_WINDOW = 0x0001u,
     CAN_CAPTURE = 0x0008u,
@@ -8479,6 +8480,24 @@ static bool spi_pps_input_high(const Dspic33* cpu, uint8_t selection) {
     return (gpio_pin_values(cpu, mapping->port) & bit) != 0u;
 }
 
+static bool spi_master_input_high(const Dspic33* cpu, uint8_t channel) {
+    static const uint16_t input_registers[DSPIC33_SPI_COUNT] = {0x06c8u, 0u, 0x06dau,
+                                                                0x06deu};
+    if (input_registers[channel] != 0u) {
+        return spi_pps_input_high(
+            cpu, (uint8_t)(raw_word(cpu, input_registers[channel]) & 0x007fu));
+    }
+    return (cpu->io.spi_pin_data_high & (uint8_t)(1u << channel)) != 0u;
+}
+
+static bool spi_master_pin_input_enabled(const Dspic33* cpu, uint8_t channel) {
+    static const uint16_t input_registers[DSPIC33_SPI_COUNT] = {0x06c8u, 0u, 0x06dau,
+                                                                0x06deu};
+    return (cpu->io.spi_pin_input_enabled & (uint8_t)(1u << channel)) != 0u ||
+           (input_registers[channel] != 0u &&
+            (raw_word(cpu, input_registers[channel]) & 0x007fu) != 0u);
+}
+
 static void spi_refresh_pps_inputs(Dspic33* cpu) {
     static const uint8_t channels[] = {0u, 2u, 3u};
     static const uint16_t input_registers[] = {0x06c8u, 0x06dau, 0x06deu};
@@ -8517,10 +8536,29 @@ static void spi_raise_mode(Dspic33* cpu, uint8_t channel, uint8_t mode) {
     }
 }
 
+static void spi_remove_internal_events(Dspic33* cpu, uint8_t channel) {
+    size_t destination = 0u;
+    size_t source;
+    for (source = 0u; source < cpu->events.count; source++) {
+        Dspic33Event* event = &cpu->events.items[source];
+        if (event->type != DSPIC33_EVENT_SPI || event->source != channel ||
+            (event->value & SPI_EVENT_KIND_MASK) == SPI_EVENT_EXTERNAL) {
+            cpu->events.items[destination++] = *event;
+        }
+    }
+    cpu->events.count = destination;
+    dspic33_reorder_events(cpu);
+}
+
 static void spi_schedule_current(Dspic33* cpu, uint8_t channel) {
     uint16_t control = raw_word(cpu, (uint16_t)(spi_bases[channel] + 2u));
     uint8_t bit = (uint8_t)(1u << channel);
+    uint8_t bits;
+    uint8_t index;
     uint32_t event_value;
+    uint64_t period;
+    uint64_t sample;
+    bool scheduled = true;
     if ((cpu->io.spi_busy & bit) == 0u || !spi_master(cpu, channel) ||
         (control & SPI_DISABLE_CLOCK) != 0u || !spi_power_enabled(cpu, channel)) {
         return;
@@ -8529,8 +8567,25 @@ static void spi_schedule_current(Dspic33* cpu, uint8_t channel) {
         SPI_EVENT_INTERNAL |
         ((uint32_t)cpu->io.spi_generation[channel] << SPI_EVENT_GENERATION_SHIFT) |
         cpu->io.spi_shift[channel];
-    dspic33_schedule(cpu, DSPIC33_EVENT_SPI, channel, event_value,
-                     spi_transfer_cycles(cpu, channel));
+    if (spi_master_pin_input_enabled(cpu, channel)) {
+        bits = (control & SPI_MODE_16) != 0u ? 16u : 8u;
+        period = spi_transfer_cycles(cpu, channel) / bits;
+        sample = (control & SPI_SAMPLE_END) != 0u ? period : (period + 1u) / 2u;
+        for (index = 0u; index < bits; index++) {
+            scheduled &= dspic33_schedule(cpu, DSPIC33_EVENT_SPI, channel,
+                                          SPI_EVENT_SAMPLE |
+                                              ((uint32_t)cpu->io.spi_generation[channel]
+                                               << SPI_EVENT_GENERATION_SHIFT),
+                                          sample + (uint64_t)index * period);
+        }
+    }
+    scheduled &= dspic33_schedule(cpu, DSPIC33_EVENT_SPI, channel, event_value,
+                                  spi_transfer_cycles(cpu, channel));
+    if (!scheduled) {
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+        spi_remove_internal_events(cpu, channel);
+        spi_clear_buffers(cpu, channel);
+    }
 }
 
 static void spi_start_next(Dspic33* cpu, uint8_t channel) {
@@ -8552,6 +8607,8 @@ static void spi_start_next(Dspic33* cpu, uint8_t channel) {
     cpu->io.spi_busy |= bit;
     cpu->io.spi_shift[channel] = value;
     cpu->io.spi_start_cycle[channel] = cpu->device_cycles;
+    cpu->io.spi_pin_receive[channel] = 0u;
+    cpu->io.spi_pin_bits[channel] = 0u;
     spi_begin_frame(cpu, channel);
     if ((control & SPI_DISABLE_OUTPUT) == 0u) {
         byte_queue_push(&cpu->io.spi_tx[channel], (uint8_t)value);
@@ -8607,6 +8664,8 @@ static void spi_complete_transfer(Dspic33* cpu, uint8_t channel, uint16_t value)
     uint8_t bit = (uint8_t)(1u << channel);
     cpu->io.spi_busy &= (uint8_t)~bit;
     cpu->io.spi_frame_active &= (uint8_t)~bit;
+    cpu->io.spi_pin_receive[channel] = 0u;
+    cpu->io.spi_pin_bits[channel] = 0u;
     spi_receive_word(cpu, channel, value);
     dspic33_dma_request(cpu, spi_dma_requests[channel],
                         (uint16_t)(spi_bases[channel] + 8u), 0u);
@@ -8662,7 +8721,22 @@ static void run_spi(Dspic33* cpu, uint8_t channel, uint32_t event_value) {
             spi_clear_buffers(cpu, channel);
             return;
         }
-        spi_complete_transfer(cpu, channel, value);
+        spi_complete_transfer(cpu, channel,
+                              spi_master_pin_input_enabled(cpu, channel)
+                                  ? cpu->io.spi_pin_receive[channel]
+                                  : value);
+        return;
+    }
+    if (kind == SPI_EVENT_SAMPLE) {
+        uint16_t generation = (uint16_t)((event_value >> SPI_EVENT_GENERATION_SHIFT) &
+                                         SPI_EVENT_GENERATION_MASK);
+        if (generation == cpu->io.spi_generation[channel] &&
+            (cpu->io.spi_busy & bit) != 0u && spi_power_enabled(cpu, channel)) {
+            cpu->io.spi_pin_receive[channel] =
+                (uint16_t)((cpu->io.spi_pin_receive[channel] << 1u) |
+                           (spi_master_input_high(cpu, channel) ? 1u : 0u));
+            cpu->io.spi_pin_bits[channel]++;
+        }
         return;
     }
     if (!spi_selected(cpu, channel) ||
@@ -14374,11 +14448,17 @@ bool dspic33_spi_pin_input(Dspic33* cpu, uint8_t channel, bool clock_high,
     control1 = raw_word(cpu, (uint16_t)(base + 2u));
     control2 = raw_word(cpu, (uint16_t)(base + 4u));
     bit = (uint8_t)(1u << channel);
+    cpu->io.spi_pin_input_enabled |= bit;
     previous_clock = (cpu->io.spi_pin_clock_high & bit) != 0u;
     if (clock_high) {
         cpu->io.spi_pin_clock_high |= bit;
     } else {
         cpu->io.spi_pin_clock_high &= (uint8_t)~bit;
+    }
+    if (data_high) {
+        cpu->io.spi_pin_data_high |= bit;
+    } else {
+        cpu->io.spi_pin_data_high &= (uint8_t)~bit;
     }
     if (select_high) {
         cpu->io.spi_pin_select_high |= bit;

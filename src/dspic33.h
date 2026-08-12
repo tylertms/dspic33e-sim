@@ -625,6 +625,8 @@ typedef struct {
     uint8_t spi_frame_active;
     uint8_t spi_pin_bits[DSPIC33_SPI_COUNT];
     uint8_t spi_pin_clock_high;
+    uint8_t spi_pin_data_high;
+    uint8_t spi_pin_input_enabled;
     uint8_t spi_pin_select_high;
     uint64_t cpu_write_cycle;
     uint32_t cpu_write_address;

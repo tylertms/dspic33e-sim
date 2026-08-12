@@ -4033,6 +4033,10 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
         (uint16_t)(cpu->data[0x0740u] | ((uint16_t)cpu->data[0x0741u] << 8u));
     uint8_t uart_cts = cpu->io.uart_cts;
     uint8_t spi_selected = cpu->io.spi_selected;
+    uint8_t spi_pin_clock_high = cpu->io.spi_pin_clock_high;
+    uint8_t spi_pin_data_high = cpu->io.spi_pin_data_high;
+    uint8_t spi_pin_input_enabled = cpu->io.spi_pin_input_enabled;
+    uint8_t spi_pin_select_high = cpu->io.spi_pin_select_high;
     uint16_t timer_gate = cpu->io.timer_gate;
     uint8_t pwm_dead_time_inputs = cpu->io.pwm_dead_time_inputs;
     uint8_t pwm_sync_inputs = cpu->io.pwm_sync_inputs;
@@ -4129,6 +4133,10 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
     cpu->io.rtcc.calibration_pending = rtcc.calibration_pending;
     cpu->io.uart_cts = uart_cts;
     cpu->io.spi_selected = spi_selected;
+    cpu->io.spi_pin_clock_high = spi_pin_clock_high;
+    cpu->io.spi_pin_data_high = spi_pin_data_high;
+    cpu->io.spi_pin_input_enabled = spi_pin_input_enabled;
+    cpu->io.spi_pin_select_high = spi_pin_select_high;
     cpu->io.timer_gate = timer_gate;
     cpu->io.pwm_dead_time_direct = pwm_dead_time_direct;
     cpu->io.pwm_sync_direct = pwm_sync_direct;
