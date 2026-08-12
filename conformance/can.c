@@ -1115,6 +1115,28 @@ static void transmit_abort_timing_cases(CanConformance* state, Dspic33* cpu) {
                    dspic33_device_advance(cpu, 1000u) &&
                    !dspic33_can_transmit(cpu, channel, &output),
                "CAN abort cancels the pending on-bus completion");
+
+        dspic33_reset(cpu, 0u);
+        configure_transmit(cpu, channel, memory);
+        write_memory_word(cpu, memory, 2u);
+        for (uint8_t word = 1u; word < 8u; word++) {
+            write_memory_word(cpu, memory + word * 2u, 0u);
+        }
+        select_window(cpu, channel, false);
+        set_mode(cpu, channel, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x008bu);
+        expect(state,
+               dspic33_device_advance(cpu, 8u) &&
+                   (cpu->io.can_tx_busy & (uint8_t)(1u << channel)) != 0u,
+               "individual CAN abort reaches the on-bus interval");
+        dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x0083u);
+        expect(state,
+               (cpu->io.can_tx_busy & (uint8_t)(1u << channel)) == 0u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) & 0x0048u) ==
+                       0x0040u &&
+                   dspic33_device_advance(cpu, 1000u) &&
+                   !dspic33_can_transmit(cpu, channel, &output),
+               "clearing TXREQ aborts the active CAN transmission");
     }
 }
 
@@ -1440,6 +1462,28 @@ static void copy_and_reset_cases(CanConformance* state, Dspic33* cpu) {
            "copy receives identically");
     expect(state, memory_word(cpu, 0xd000u) == memory_word(&copy, 0xd000u),
            "copy DMA contents");
+    dspic33_reset(cpu, 0u);
+    configure_transmit(cpu, 0u, 0xd100u);
+    write_memory_word(cpu, 0xd100u, 2u);
+    for (uint8_t word = 1u; word < 8u; word++) {
+        write_memory_word(cpu, 0xd100u + word * 2u, 0u);
+    }
+    select_window(cpu, 0u, false);
+    set_mode(cpu, 0u, 0u);
+    dspic33_write_word(cpu, 0x0430u, 0x008bu);
+    expect(state, dspic33_device_advance(cpu, 8u) && (cpu->io.can_tx_busy & 1u) != 0u,
+           "copy reaches pending CAN bus completion");
+    expect(state, dspic33_copy(&copy, cpu), "copy pending CAN bus state");
+    expect(state,
+           dspic33_device_advance(cpu, 1000u) && dspic33_device_advance(&copy, 1000u),
+           "copied CAN bus completions advance");
+    Dspic33CanFrame source_output;
+    Dspic33CanFrame copy_output;
+    expect(state,
+           dspic33_can_transmit(cpu, 0u, &source_output) &&
+               dspic33_can_transmit(&copy, 0u, &copy_output) &&
+               source_output.identifier == copy_output.identifier,
+           "copy preserves pending CAN bus completion");
     dspic33_destroy(&copy);
     dspic33_reset(cpu, 0u);
     expect(state,
@@ -1479,7 +1523,7 @@ int main(void) {
     mode_and_power_cases(&state, &cpu);
     interrupt_and_error_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
-    expect(&state, state.cases == 1462526u, "CAN assertion accounting");
+    expect(&state, state.cases == 1462534u, "CAN assertion accounting");
     report_sfr_side_effect_coverage(
         "can", can_sfr_side_effect_coverage,
         SFR_SIDE_EFFECT_COVERAGE_COUNT(can_sfr_side_effect_coverage),

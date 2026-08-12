@@ -13693,7 +13693,7 @@ static void update_dma_request(Dspic33* cpu, uint8_t channel, uint16_t previous)
     }
 }
 
-static void can_abort_transmissions(Dspic33* cpu, uint8_t channel) {
+static void can_remove_transmit_events(Dspic33* cpu, uint8_t channel) {
     size_t destination = 0u;
     for (size_t source = 0u; source < cpu->events.count; source++) {
         Dspic33Event* event = &cpu->events.items[source];
@@ -13707,6 +13707,10 @@ static void can_abort_transmissions(Dspic33* cpu, uint8_t channel) {
     }
     cpu->events.count = destination;
     dspic33_reorder_events(cpu);
+}
+
+static void can_abort_transmissions(Dspic33* cpu, uint8_t channel) {
+    can_remove_transmit_events(cpu, channel);
     uint8_t buffer;
     for (buffer = 0u; buffer < 8u; buffer++) {
         uint16_t control = can_buffer_control(cpu, channel, buffer);
@@ -13764,9 +13768,17 @@ static void can_update_transmit_control(Dspic33* cpu, uint8_t channel, uint16_t 
                              0u);
         } else if ((current & CAN_BUFFER_REQUEST) == 0u &&
                    (before & CAN_BUFFER_REQUEST) != 0u) {
+            bool active = (cpu->io.can_tx_busy & (uint8_t)(1u << channel)) != 0u &&
+                          cpu->io.can_tx_buffer[channel] == buffer;
             can_set_buffer_control(cpu, channel, buffer,
                                    (uint16_t)(current | CAN_BUFFER_ABORTED));
             can_raise_event(cpu, channel, CAN_INTERRUPT_TRANSMIT, buffer, 0u);
+            if (active) {
+                can_remove_transmit_events(cpu, channel);
+                cpu->io.can_tx_busy &= (uint8_t)~(uint8_t)(1u << channel);
+                dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel,
+                                 CAN_EVENT_TRANSMIT_START, 0u);
+            }
         }
     }
 }
