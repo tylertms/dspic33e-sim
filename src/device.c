@@ -483,6 +483,9 @@ enum {
     SPI_DISABLE_OUTPUT = 0x0800u,
     SPI_MODE_16 = 0x0400u,
     SPI_SAMPLE_END = 0x0200u,
+    SPI_CLOCK_EDGE = 0x0100u,
+    SPI_SLAVE_SELECT = 0x0080u,
+    SPI_CLOCK_POLARITY = 0x0040u,
     SPI_MASTER = 0x0020u,
     SPI_FRAME_ENABLE = 0x8000u,
     SPI_FRAME_SLAVE = 0x4000u,
@@ -8417,6 +8420,8 @@ static void spi_clear_buffers(Dspic33* cpu, uint8_t channel) {
     cpu->io.spi_busy &= (uint8_t)~(1u << channel);
     cpu->io.spi_frame_active &= (uint8_t)~(1u << channel);
     cpu->io.spi_shift[channel] = 0u;
+    cpu->io.spi_pin_receive[channel] = 0u;
+    cpu->io.spi_pin_bits[channel] = 0u;
     cpu->io.spi_generation[channel] =
         (uint16_t)((cpu->io.spi_generation[channel] + 1u) & SPI_EVENT_GENERATION_MASK);
     raw_write_word(cpu, (uint16_t)(spi_bases[channel] + 8u), 0u);
@@ -14304,6 +14309,76 @@ bool dspic33_spi_select(Dspic33* cpu, uint8_t channel, bool selected, uint64_t d
     return channel < DSPIC33_SPI_COUNT &&
            dspic33_schedule(cpu, DSPIC33_EVENT_SPI_SELECT, channel,
                             selected ? SPI_SELECT_ACTIVE : 0u, delay);
+}
+
+bool dspic33_spi_pin_input(Dspic33* cpu, uint8_t channel, bool clock_high,
+                           bool data_high, bool select_high) {
+    uint16_t base;
+    uint16_t control1;
+    uint16_t control2;
+    uint8_t bit;
+    uint8_t width;
+    bool previous_clock;
+    bool selected;
+    bool sample_high;
+    if (channel >= DSPIC33_SPI_COUNT) {
+        return false;
+    }
+    base = spi_bases[channel];
+    control1 = raw_word(cpu, (uint16_t)(base + 2u));
+    control2 = raw_word(cpu, (uint16_t)(base + 4u));
+    bit = (uint8_t)(1u << channel);
+    previous_clock = (cpu->io.spi_pin_clock_high & bit) != 0u;
+    if (clock_high) {
+        cpu->io.spi_pin_clock_high |= bit;
+    } else {
+        cpu->io.spi_pin_clock_high &= (uint8_t)~bit;
+    }
+    if (select_high) {
+        cpu->io.spi_pin_select_high |= bit;
+    } else {
+        cpu->io.spi_pin_select_high &= (uint8_t)~bit;
+    }
+    if ((control2 & (SPI_FRAME_ENABLE | SPI_FRAME_SLAVE)) ==
+        (SPI_FRAME_ENABLE | SPI_FRAME_SLAVE)) {
+        selected = select_high == ((control2 & SPI_FRAME_ACTIVE_HIGH) != 0u);
+    } else if ((control1 & SPI_SLAVE_SELECT) != 0u) {
+        selected = !select_high;
+    } else {
+        selected = true;
+    }
+    if (selected) {
+        cpu->io.spi_selected |= bit;
+    } else {
+        cpu->io.spi_selected &= (uint8_t)~bit;
+        cpu->io.spi_pin_receive[channel] = 0u;
+        cpu->io.spi_pin_bits[channel] = 0u;
+    }
+    if (clock_high == previous_clock || !selected ||
+        (raw_word(cpu, base) & SPI_ENABLE) == 0u || spi_module_disabled(cpu, channel) ||
+        spi_master(cpu, channel)) {
+        return true;
+    }
+    sample_high =
+        ((control1 & SPI_CLOCK_EDGE) != 0u) != ((control1 & SPI_CLOCK_POLARITY) != 0u);
+    if (clock_high != sample_high) {
+        return true;
+    }
+    if ((cpu->io.spi_busy & bit) == 0u) {
+        cpu->io.spi_busy |= bit;
+        cpu->io.spi_shift[channel] = raw_word(cpu, (uint16_t)(base + 8u));
+    }
+    cpu->io.spi_pin_receive[channel] =
+        (uint16_t)((cpu->io.spi_pin_receive[channel] << 1u) | (data_high ? 1u : 0u));
+    cpu->io.spi_pin_bits[channel]++;
+    width = (control1 & SPI_MODE_16) != 0u ? 16u : 8u;
+    if (cpu->io.spi_pin_bits[channel] == width) {
+        uint16_t value = cpu->io.spi_pin_receive[channel];
+        cpu->io.spi_pin_receive[channel] = 0u;
+        cpu->io.spi_pin_bits[channel] = 0u;
+        spi_complete_transfer(cpu, channel, value);
+    }
+    return true;
 }
 
 bool dspic33_spi_transmit(Dspic33* cpu, uint8_t channel, uint8_t* value) {

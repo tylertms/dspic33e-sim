@@ -218,6 +218,135 @@ static void receive_only_cases(SpiConformance* state, Dspic33* cpu) {
     }
 }
 
+static void physical_slave_input_cases(SpiConformance* state, Dspic33* cpu,
+                                       Dspic33* copy) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
+        uint8_t mode16;
+        for (mode16 = 0u; mode16 < 2u; mode16++) {
+            uint8_t polarity;
+            for (polarity = 0u; polarity < 2u; polarity++) {
+                uint8_t edge;
+                for (edge = 0u; edge < 2u; edge++) {
+                    uint16_t base = bases[channel];
+                    uint16_t control =
+                        (uint16_t)(((uint16_t)mode16 << 10u) | ((uint16_t)edge << 8u) |
+                                   0x0080u | ((uint16_t)polarity << 6u) | 0x001bu);
+                    uint16_t received = (uint16_t)(0xa500u | ((uint16_t)channel << 4u) |
+                                                   ((uint16_t)polarity << 2u) |
+                                                   ((uint16_t)edge << 1u) | mode16);
+                    uint16_t expected = mode16 != 0u ? received : received & 0x00ffu;
+                    uint8_t width = mode16 != 0u ? 16u : 8u;
+                    bool idle = polarity != 0u;
+                    bool accepted = true;
+                    uint8_t index;
+
+                    dspic33_reset(cpu, 0u);
+                    accepted &= dspic33_spi_pin_input(cpu, channel, idle, false, false);
+                    configure_spi(cpu, channel, control, 0u, 0u);
+                    for (index = 0u; index < width; index++) {
+                        bool high =
+                            (received & (uint16_t)(1u << (width - index - 1u))) != 0u;
+                        accepted &=
+                            dspic33_spi_pin_input(cpu, channel, !idle, high, false);
+                        accepted &=
+                            dspic33_spi_pin_input(cpu, channel, idle, high, false);
+                        if (index + 1u != width) {
+                            accepted &= !interrupt_flag(cpu, irqs[channel]);
+                        }
+                    }
+                    expect(state, accepted, "physical slave accepts exact clock edges");
+                    expect(state,
+                           interrupt_flag(cpu, irqs[channel]) &&
+                               dspic33_read_word(cpu, (uint16_t)(base + 8u)) ==
+                                   expected,
+                           "physical slave receives serial input");
+
+                    clear_interrupt(cpu, irqs[channel]);
+                    accepted = dspic33_spi_pin_input(cpu, channel, idle, false, true);
+                    for (index = 0u; index < width; index++) {
+                        accepted &=
+                            dspic33_spi_pin_input(cpu, channel, !idle, true, true);
+                        accepted &=
+                            dspic33_spi_pin_input(cpu, channel, idle, true, true);
+                    }
+                    expect(state,
+                           accepted && !interrupt_flag(cpu, irqs[channel]) &&
+                               (dspic33_read_word(cpu, base) & 1u) == 0u,
+                           "deselected physical slave ignores serial input");
+                }
+            }
+        }
+    }
+    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
+        uint8_t polarity;
+        for (polarity = 0u; polarity < 2u; polarity++) {
+            uint16_t base = bases[channel];
+            uint16_t received =
+                (uint16_t)(0x0060u | ((uint16_t)channel << 1u) | polarity);
+            bool active = polarity != 0u;
+            bool accepted = true;
+            uint8_t index;
+
+            dspic33_reset(cpu, 0u);
+            accepted &= dspic33_spi_pin_input(cpu, channel, false, false, !active);
+            configure_spi(cpu, channel, 0x001bu,
+                          (uint16_t)(0xc000u | ((uint16_t)polarity << 13u)), 0u);
+            accepted &= dspic33_spi_pin_input(cpu, channel, false, false, active);
+            for (index = 0u; index < 8u; index++) {
+                bool high = (received & (uint16_t)(0x0080u >> index)) != 0u;
+                accepted &= dspic33_spi_pin_input(cpu, channel, true, high, active);
+                accepted &= dspic33_spi_pin_input(cpu, channel, false, high, active);
+            }
+            expect(state,
+                   accepted && interrupt_flag(cpu, irqs[channel]) &&
+                       dspic33_read_word(cpu, (uint16_t)(base + 8u)) == received,
+                   "framed slave accepts selected physical input");
+
+            clear_interrupt(cpu, irqs[channel]);
+            accepted = dspic33_spi_pin_input(cpu, channel, false, false, !active);
+            for (index = 0u; index < 8u; index++) {
+                accepted &= dspic33_spi_pin_input(cpu, channel, true, true, !active);
+                accepted &= dspic33_spi_pin_input(cpu, channel, false, true, !active);
+            }
+            expect(state, accepted && !interrupt_flag(cpu, irqs[channel]),
+                   "framed slave rejects inactive physical input");
+        }
+    }
+    expect(state, !dspic33_spi_pin_input(cpu, DSPIC33_SPI_COUNT, false, false, false),
+           "physical slave rejects invalid channel");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_spi_pin_input(cpu, 0u, false, false, false);
+    configure_spi(cpu, 0u, 0x049bu, 0u, 0u);
+    for (uint8_t index = 0u; index < 8u; index++) {
+        bool high = (0xa55au & (uint16_t)(1u << (15u - index))) != 0u;
+        dspic33_spi_pin_input(cpu, 0u, true, high, false);
+        dspic33_spi_pin_input(cpu, 0u, false, high, false);
+    }
+    expect(state, dspic33_copy(copy, cpu), "copy partial physical slave input");
+    expect(state,
+           copy->io.spi_pin_bits[0] == 8u && copy->io.spi_pin_receive[0] == 0x00a5u,
+           "copied physical slave retains partial word");
+    for (uint8_t index = 8u; index < 16u; index++) {
+        bool high = (0xa55au & (uint16_t)(1u << (15u - index))) != 0u;
+        dspic33_spi_pin_input(copy, 0u, true, high, false);
+        dspic33_spi_pin_input(copy, 0u, false, high, false);
+    }
+    expect(state,
+           interrupt_flag(copy, irqs[0]) && dspic33_read_word(copy, 0x0248u) == 0xa55au,
+           "copied physical slave completes independently");
+    expect(state,
+           !interrupt_flag(cpu, irqs[0]) && cpu->io.spi_pin_bits[0] == 8u &&
+               cpu->io.spi_pin_receive[0] == 0x00a5u,
+           "source physical slave remains partial");
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           cpu->io.spi_pin_bits[0] == 0u && cpu->io.spi_pin_receive[0] == 0u &&
+               cpu->io.spi_pin_clock_high == 0u && cpu->io.spi_pin_select_high == 0u,
+           "reset clears physical slave state");
+}
+
 static void timing_matrix_cases(SpiConformance* state, Dspic33* cpu) {
     uint8_t channel;
     uint8_t mode16;
@@ -914,6 +1043,7 @@ int main(void) {
         split_buffer_cases(&state, &cpu);
         transmit_output_cases(&state, &cpu);
         receive_only_cases(&state, &cpu);
+        physical_slave_input_cases(&state, &cpu, &copy);
         timing_matrix_cases(&state, &cpu);
         standard_buffer_cases(&state, &cpu);
         enhanced_fifo_cases(&state, &cpu);
@@ -926,7 +1056,7 @@ int main(void) {
         dma_cases(&state, &cpu);
         copy_and_reset_cases(&state, &cpu, &copy);
     }
-    expect(&state, state.cases == 2824u, "SPI assertion accounting");
+    expect(&state, state.cases == 2942u, "SPI assertion accounting");
     if (copy_initialized) {
         dspic33_destroy(&copy);
     }
