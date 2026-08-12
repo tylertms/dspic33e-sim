@@ -789,6 +789,12 @@ static void dma_cases(SpiConformance* state, Dspic33* cpu) {
                "duplex dma completion advance");
         expect(state, dspic33_read_word(cpu, rx_memory) == 0x9d00u + channel,
                "duplex dma receive value");
+        expect(state,
+               cpu->io.spi_shift[channel] == 0x3000u + channel &&
+                   cpu->io.dma_active == 1u,
+               "duplex DMA receive channel has controller priority");
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "duplex DMA receive completion and transmit start");
         expect(state, cpu->io.spi_shift[channel] == 0x8c00u + channel,
                "duplex dma transmit value");
     }
@@ -846,7 +852,7 @@ int main(void) {
         dma_cases(&state, &cpu);
         copy_and_reset_cases(&state, &cpu, &copy);
     }
-    expect(&state, state.cases == 2711u, "SPI assertion accounting");
+    expect(&state, state.cases == 2719u, "SPI assertion accounting");
     if (copy_initialized) {
         dspic33_destroy(&copy);
     }

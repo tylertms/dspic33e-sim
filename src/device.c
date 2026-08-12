@@ -20,6 +20,7 @@ static void output_compare_raise(Dspic33* cpu, uint8_t channel);
 static void output_compare_refresh_fault_pps_inputs(Dspic33* cpu);
 static void dci_discard_internal_events(Dspic33* cpu);
 static void dci_update_power_state(Dspic33* cpu);
+static void dma_update_power_state(Dspic33* cpu);
 static void dci_refresh_pps_inputs(Dspic33* cpu);
 static void comparator_update_filter_power(Dspic33* cpu);
 static void comparator_evaluate_all(Dspic33* cpu);
@@ -1675,6 +1676,7 @@ void dspic33_device_power_state_changed(Dspic33* cpu) {
     }
     output_compare_update_power_state(cpu);
     dci_update_power_state(cpu);
+    dma_update_power_state(cpu);
     comparator_update_filter_power(cpu);
     comparator_evaluate_all(cpu);
     dspic33_i2c_refresh_pins(cpu);
@@ -7573,6 +7575,60 @@ static uint16_t dma_channel_base(uint8_t channel) {
 
 static uint16_t dma_channel_bit(uint8_t channel) { return (uint16_t)(1u << channel); }
 
+static bool dma_channel_event(const Dspic33Event* event, uint8_t channel) {
+    return event->type == DSPIC33_EVENT_DMA &&
+           event->source % DSPIC33_DMA_COUNT == channel;
+}
+
+static void dma_remove_channel_events(Dspic33* cpu, uint8_t channel) {
+    size_t source;
+    size_t destination = 0u;
+    for (source = 0u; source < cpu->events.count; source++) {
+        if (!dma_channel_event(&cpu->events.items[source], channel)) {
+            cpu->events.items[destination++] = cpu->events.items[source];
+        }
+    }
+    cpu->events.count = destination;
+    dspic33_reorder_events(cpu);
+}
+
+static void dma_advance_generation(Dspic33* cpu, uint8_t channel) {
+    if ((cpu->io.dma_generation[channel] & DMA_EVENT_GENERATION_MASK) ==
+        DMA_EVENT_GENERATION_MASK) {
+        dma_remove_channel_events(cpu, channel);
+    }
+    cpu->io.dma_generation[channel]++;
+}
+
+static void dma_update_power_state(Dspic33* cpu) {
+    size_t index;
+    bool available = cpu->power_state != DSPIC33_POWER_SLEEP;
+    bool changed = false;
+    for (index = 0u; index < cpu->events.count; index++) {
+        Dspic33Event* event = &cpu->events.items[index];
+        if (event->type != DSPIC33_EVENT_DMA) {
+            continue;
+        }
+        if (!available && !event->paused) {
+            event->paused_remaining = event->cycle - cpu->device_cycles;
+            event->paused = true;
+            changed = true;
+        } else if (available && event->paused) {
+            if (event->paused_remaining > UINT64_MAX - cpu->device_cycles) {
+                cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+                continue;
+            }
+            event->cycle = cpu->device_cycles + event->paused_remaining;
+            event->paused_remaining = 0u;
+            event->paused = false;
+            changed = true;
+        }
+    }
+    if (changed) {
+        dspic33_reorder_events(cpu);
+    }
+}
+
 static uint32_t dma_start_address(const Dspic33* cpu, uint8_t channel) {
     return (cpu->io.dma_bank & dma_channel_bit(channel)) != 0u
                ? cpu->io.dma_start_b[channel]
@@ -7734,7 +7790,7 @@ static void dma_disable_channel(Dspic33* cpu, uint8_t channel, uint16_t control)
     cpu->io.dma_forced_pending &= (uint16_t)~bit;
     cpu->io.dma_peripheral_pending &= (uint16_t)~bit;
     cpu->io.dma_active &= (uint16_t)~bit;
-    cpu->io.dma_generation[channel]++;
+    dma_advance_generation(cpu, channel);
 }
 
 static void dma_complete_block(Dspic33* cpu, uint8_t channel, uint16_t control) {
@@ -7822,7 +7878,7 @@ static void run_dma(Dspic33* cpu, uint16_t source, uint32_t event_value) {
         complete_dma_transfer(cpu, channel, event_value);
         return;
     }
-    if ((cpu->io.dma_active & bit) != 0u) {
+    if (cpu->io.dma_active != 0u) {
         if (!dspic33_schedule(cpu, DSPIC33_EVENT_DMA, source, event_value, 1u)) {
             if (forced) {
                 cpu->io.dma_forced_pending &= (uint16_t)~bit;
@@ -7901,7 +7957,14 @@ static void run_dma(Dspic33* cpu, uint16_t source, uint32_t event_value) {
     if ((cpu->io.dma_active & bit) != 0u &&
         !dspic33_schedule(cpu, DSPIC33_EVENT_DMA,
                           (uint16_t)(channel + DSPIC33_DMA_COUNT), event_value, 1u)) {
-        complete_dma_transfer(cpu, channel, event_value);
+        cpu->io.dma_active &= (uint16_t)~bit;
+        if (forced) {
+            cpu->io.dma_forced_pending &= (uint16_t)~bit;
+            raw_write_word(
+                cpu, (uint16_t)(base + 2u),
+                (uint16_t)(raw_word(cpu, (uint16_t)(base + 2u)) & ~DMA_REQ_FORCE));
+        }
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
 }
 
@@ -7928,6 +7991,9 @@ static bool schedule_dma_channel(Dspic33* cpu, uint8_t channel,
         return false;
     }
     *pending |= bit;
+    if (cpu->power_state == DSPIC33_POWER_SLEEP) {
+        dma_update_power_state(cpu);
+    }
     return true;
 }
 
@@ -12424,7 +12490,7 @@ static void initialize_dma_channel(Dspic33* cpu, uint8_t channel) {
     cpu->io.dma_peripheral_pending &= (uint16_t)~bit;
     cpu->io.dma_active &= (uint16_t)~bit;
     cpu->io.dma_enabled |= bit;
-    cpu->io.dma_generation[channel]++;
+    dma_advance_generation(cpu, channel);
     raw_write_word(cpu, DMA_PPS, (uint16_t)(raw_word(cpu, DMA_PPS) & ~bit));
 }
 
@@ -12441,7 +12507,7 @@ static void update_dma_control(Dspic33* cpu, uint8_t channel, uint16_t previous)
         cpu->io.dma_forced_pending &= (uint16_t)~bit;
         cpu->io.dma_peripheral_pending &= (uint16_t)~bit;
         cpu->io.dma_active &= (uint16_t)~bit;
-        cpu->io.dma_generation[channel]++;
+        dma_advance_generation(cpu, channel);
         raw_write_word(
             cpu, (uint16_t)(base + 2u),
             (uint16_t)(raw_word(cpu, (uint16_t)(base + 2u)) & ~DMA_REQ_FORCE));

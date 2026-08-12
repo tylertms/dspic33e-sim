@@ -572,7 +572,13 @@ static void routing_and_status_cases(DmaConformance* state, Dspic33* cpu) {
            "shared request reaches channels");
     expect(state, dspic33_read_word(cpu, 0x0bf6u) == 2u,
            "lower channel priority executes first");
-    expect(state, interrupt_flag(cpu, 0u) && interrupt_flag(cpu, 2u),
+    expect(state,
+           interrupt_flag(cpu, 0u) && !interrupt_flag(cpu, 2u) &&
+               cpu->io.dma_active == 4u,
+           "lower-priority channel remains active after arbitration");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && interrupt_flag(cpu, 2u) &&
+               cpu->io.dma_active == 0u,
            "channel interrupt mapping");
 
     dspic33_reset(cpu, 0u);
@@ -724,6 +730,175 @@ static void stale_request_cases(DmaConformance* state, Dspic33* cpu) {
            "new generation transfers");
 }
 
+static void power_and_lifecycle_cases(DmaConformance* state, Dspic33* cpu,
+                                      Dspic33* copy) {
+    uint64_t sleep_cycle;
+    uint64_t remaining;
+    uint16_t generation;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x3600u, 0x1111u);
+    configure_channel(cpu, 0u, 0x2001u, 0xd0u, 0x3600u, 0u, DMA_TEST_WRITE_PAD, 0u);
+    cpu->power_state = DSPIC33_POWER_IDLE;
+    dspic33_device_power_state_changed(cpu);
+    expect(state, request(cpu, 0xd0u, 0u), "DMA operates during Idle");
+    expect(state,
+           stored_word(cpu, DMA_TEST_WRITE_PAD) == 0x1111u && interrupt_flag(cpu, 0u),
+           "Idle DMA transfer completes and raises interrupt");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x3600u, 0x2222u);
+    configure_channel(cpu, 0u, 0x2001u, 0xd1u, 0x3600u, 0u, DMA_TEST_WRITE_PAD, 0u);
+    expect(state, dspic33_dma_request(cpu, 0xd1u, 0u, 3u), "queue DMA before Sleep");
+    expect(state, dspic33_device_advance(cpu, 1u), "advance DMA before Sleep");
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    dspic33_device_power_state_changed(cpu);
+    sleep_cycle = cpu->device_cycles;
+    remaining = cpu->events.items[0].paused_remaining;
+    expect(state,
+           cpu->events.count == 1u && cpu->events.items[0].paused && remaining == 2u,
+           "Sleep pauses pending DMA request");
+    expect(state,
+           dspic33_device_advance(cpu, 20u) &&
+               cpu->device_cycles == sleep_cycle + 20u &&
+               stored_word(cpu, DMA_TEST_WRITE_PAD) == 0u && !interrupt_flag(cpu, 0u),
+           "Sleep suppresses DMA transfer and interrupt");
+    cpu->power_state = DSPIC33_POWER_ACTIVE;
+    dspic33_device_power_state_changed(cpu);
+    expect(state,
+           cpu->events.count == 1u && !cpu->events.items[0].paused &&
+               cpu->events.items[0].cycle == cpu->device_cycles + remaining,
+           "wake restores pending DMA interval");
+    expect(state,
+           dspic33_device_advance(cpu, remaining - 1u) &&
+               stored_word(cpu, DMA_TEST_WRITE_PAD) == 0u,
+           "DMA remains pending before restored deadline");
+    expect(state,
+           dspic33_device_advance(cpu, 2u) &&
+               stored_word(cpu, DMA_TEST_WRITE_PAD) == 0x2222u &&
+               interrupt_flag(cpu, 0u),
+           "DMA resumes after wake");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x3600u, 0x3333u);
+    configure_channel(cpu, 0u, 0x2001u, 0xd2u, 0x3600u, 0u, DMA_TEST_WRITE_PAD, 0u);
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    dspic33_device_power_state_changed(cpu);
+    expect(state, dspic33_dma_request(cpu, 0xd2u, 0u, 2u), "queue DMA while asleep");
+    expect(state,
+           cpu->events.count == 1u && cpu->events.items[0].paused &&
+               cpu->events.items[0].paused_remaining == 2u,
+           "asleep DMA request starts paused");
+    expect(state, dspic33_copy(copy, cpu), "copy paused DMA state");
+    expect(state,
+           copy->events.count == 1u && copy->events.items[0].paused &&
+               copy->io.dma_peripheral_pending == cpu->io.dma_peripheral_pending &&
+               copy->events.items != cpu->events.items,
+           "copy preserves independent DMA event state");
+    cpu->power_state = DSPIC33_POWER_ACTIVE;
+    copy->power_state = DSPIC33_POWER_ACTIVE;
+    dspic33_device_power_state_changed(cpu);
+    dspic33_device_power_state_changed(copy);
+    expect(state,
+           dspic33_device_advance(cpu, 3u) && dspic33_device_advance(copy, 3u) &&
+               stored_word(cpu, DMA_TEST_WRITE_PAD) == 0x3333u &&
+               stored_word(copy, DMA_TEST_WRITE_PAD) == 0x3333u,
+           "copied DMA requests complete independently");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x3600u, 0x4444u);
+    configure_channel(cpu, 0u, 0x2001u, 0xd3u, 0x3600u, 0u, DMA_TEST_WRITE_PAD, 0u);
+    expect(state, dspic33_dma_request(cpu, 0xd3u, 0u, 4u),
+           "queue DMA before cold reset");
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           cpu->events.count == 0u && cpu->io.dma_peripheral_pending == 0u &&
+               cpu->io.dma_active == 0u,
+           "cold reset cancels DMA state");
+    expect(state,
+           dspic33_device_advance(cpu, 5u) &&
+               stored_word(cpu, DMA_TEST_WRITE_PAD) == 0u,
+           "cold reset DMA event cannot execute");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x3600u, 0x5555u);
+    configure_channel(cpu, 0u, 0x2001u, 0xd4u, 0x3600u, 0u, DMA_TEST_WRITE_PAD, 0u);
+    expect(state, dspic33_dma_request(cpu, 0xd4u, 0u, 4u),
+           "queue DMA before warm reset");
+    dspic33_load_program_word(cpu, 0u, 0xfe0000u);
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "execute DMA warm reset");
+    expect(state,
+           cpu->events.count == 0u && cpu->io.dma_peripheral_pending == 0u &&
+               dspic33_read_word(cpu, 0x0b00u) == 0u,
+           "warm reset cancels DMA state");
+
+    dspic33_reset(cpu, 0u);
+    configure_channel(cpu, 0u, 0x2000u, 0xd5u, 0x3600u, 0u, DMA_TEST_WRITE_PAD, 0u);
+    cpu->device_cycles = UINT64_MAX;
+    expect(state, !dspic33_dma_request(cpu, 0xd5u, 0u, 1u),
+           "DMA request reports deadline overflow");
+    expect(state, cpu->events.count == 0u && cpu->io.dma_peripheral_pending == 0u,
+           "failed DMA request leaves no pending state");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x3600u, 0x5656u);
+    configure_channel(cpu, 0u, 0x2000u, 0xd5u, 0x3600u, 0u, DMA_TEST_WRITE_PAD, 0u);
+    cpu->device_cycles = UINT64_MAX;
+    expect(state,
+           dspic33_schedule(cpu, DSPIC33_EVENT_DMA, 0u,
+                            (uint32_t)cpu->io.dma_generation[0] << 17u, 0u) &&
+               !dspic33_device_advance(cpu, 0u),
+           "execute DMA with unavailable completion deadline");
+    expect(state,
+           stored_word(cpu, DMA_TEST_WRITE_PAD) == 0x5656u &&
+               cpu->io.dma_active == 0u && cpu->io.dma_index[0] == 0u &&
+               !interrupt_flag(cpu, 0u) &&
+               cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR,
+           "DMA completion schedule failure stops without false completion");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x3600u, 0x6666u);
+    configure_channel(cpu, 0u, 0x2000u, 0xd6u, 0x3600u, 0u, DMA_TEST_WRITE_PAD, 1u);
+    cpu->io.dma_generation[0] = 0x7fffu;
+    expect(state, dspic33_dma_request(cpu, 0xd6u, 0u, 10u),
+           "queue maximum-generation DMA request");
+    dspic33_write_word(cpu, 0x0b00u, 0x2000u);
+    expect(state, cpu->events.count == 0u && cpu->io.dma_generation[0] == 0x8000u,
+           "generation wrap discards aliased DMA request");
+    dspic33_write_word(cpu, 0x0b00u, 0xa000u);
+    expect(state, dspic33_device_advance(cpu, 10u),
+           "advance past discarded DMA request");
+    expect(state,
+           stored_word(cpu, DMA_TEST_WRITE_PAD) == 0u && cpu->io.dma_index[0] == 0u,
+           "wrapped stale DMA request remains invalid");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x3600u, 0x7777u);
+    dspic33_write_word(cpu, 0x3620u, 0x8888u);
+    configure_channel(cpu, 1u, 0x2001u, 0xd7u, 0x3620u, 0u, DMA_TEST_ALT_WRITE_PAD, 0u);
+    configure_channel(cpu, 0u, 0x2001u, 0xd7u, 0x3600u, 0u, DMA_TEST_WRITE_PAD, 0u);
+    expect(state, dspic33_dma_request(cpu, 0xd7u, 0u, 0u),
+           "queue simultaneous DMA arbitration");
+    expect(state, dspic33_device_advance(cpu, 0u),
+           "start highest-priority DMA channel");
+    expect(state,
+           stored_word(cpu, DMA_TEST_WRITE_PAD) == 0x7777u &&
+               dspic33_read_word(cpu, DMA_TEST_ALT_WRITE_PAD) == 0u &&
+               cpu->io.dma_active == 1u,
+           "only highest-priority DMA channel starts");
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "complete high-priority and start pending DMA");
+    expect(state,
+           dspic33_read_word(cpu, DMA_TEST_ALT_WRITE_PAD) == 0x8888u &&
+               cpu->io.dma_active == 2u,
+           "pending DMA channel starts after current transfer");
+    expect(state, dspic33_device_advance(cpu, 1u) && cpu->io.dma_active == 0u,
+           "pending DMA channel completes serially");
+
+    generation = cpu->io.dma_generation[0];
+    expect(state, generation != 0u, "DMA lifecycle advances generation");
+}
+
 int main(void) {
     DmaConformance state = {0u, 0u, 0u};
     Dspic33 cpu;
@@ -743,6 +918,15 @@ int main(void) {
         peripheral_collision_cases(&state, &cpu);
         memory_collision_cases(&state, &cpu);
         stale_request_cases(&state, &cpu);
+        {
+            Dspic33 copy;
+            bool copy_initialized = dspic33_initialize(&copy);
+            expect(&state, copy_initialized, "initialize DMA copy processor");
+            if (copy_initialized) {
+                power_and_lifecycle_cases(&state, &cpu, &copy);
+                dspic33_destroy(&copy);
+            }
+        }
         dspic33_destroy(&cpu);
     }
     report_sfr_side_effect_coverage(
