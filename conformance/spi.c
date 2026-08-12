@@ -45,6 +45,11 @@ static void clear_interrupt(Dspic33* cpu, uint8_t irq) {
         (uint16_t)(dspic33_read_word(cpu, address) & ~(uint16_t)(1u << (irq % 16u))));
 }
 
+static bool transfer_interrupt_after_cycle(Dspic33* cpu, uint8_t irq) {
+    return !interrupt_flag(cpu, irq) && dspic33_device_advance(cpu, 1u) &&
+           interrupt_flag(cpu, irq);
+}
+
 static uint64_t transfer_cycles(uint16_t control) {
     static const uint8_t primary[] = {64u, 16u, 4u, 1u};
     uint8_t secondary = (uint8_t)(8u - ((control >> 2u) & 7u));
@@ -215,7 +220,7 @@ static void receive_only_cases(SpiConformance* state, Dspic33* cpu) {
                        "receive-only transfer completes");
                 expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == expected,
                        "receive-only retains input");
-                expect(state, interrupt_flag(cpu, irqs[channel]),
+                expect(state, transfer_interrupt_after_cycle(cpu, irqs[channel]),
                        "receive-only raises transfer interrupt");
                 expect(state, cpu->io.spi_tx[channel].count == 0u,
                        "receive-only transfer emits no output");
@@ -272,7 +277,7 @@ static void physical_slave_input_cases(SpiConformance* state, Dspic33* cpu,
                     }
                     expect(state, accepted, "physical slave accepts exact clock edges");
                     expect(state,
-                           interrupt_flag(cpu, irqs[channel]) &&
+                           transfer_interrupt_after_cycle(cpu, irqs[channel]) &&
                                dspic33_read_word(cpu, (uint16_t)(base + 8u)) ==
                                    expected,
                            "physical slave receives serial input");
@@ -314,7 +319,7 @@ static void physical_slave_input_cases(SpiConformance* state, Dspic33* cpu,
                 accepted &= dspic33_spi_pin_input(cpu, channel, false, high, active);
             }
             expect(state,
-                   accepted && interrupt_flag(cpu, irqs[channel]) &&
+                   accepted && transfer_interrupt_after_cycle(cpu, irqs[channel]) &&
                        dspic33_read_word(cpu, (uint16_t)(base + 8u)) == received,
                    "framed slave accepts selected physical input");
 
@@ -349,7 +354,8 @@ static void physical_slave_input_cases(SpiConformance* state, Dspic33* cpu,
         dspic33_spi_pin_input(copy, 0u, false, high, false);
     }
     expect(state,
-           interrupt_flag(copy, irqs[0]) && dspic33_read_word(copy, 0x0248u) == 0xa55au,
+           transfer_interrupt_after_cycle(copy, irqs[0]) &&
+               dspic33_read_word(copy, 0x0248u) == 0xa55au,
            "copied physical slave completes independently");
     expect(state,
            !interrupt_flag(cpu, irqs[0]) && cpu->io.spi_pin_bits[0] == 8u &&
@@ -361,6 +367,19 @@ static void physical_slave_input_cases(SpiConformance* state, Dspic33* cpu,
                cpu->io.spi_pin_clock_high == 0u && cpu->io.spi_pin_data_high == 0u &&
                cpu->io.spi_pin_select_high == 0u,
            "reset clears physical slave state");
+
+    dspic33_reset(cpu, 0u);
+    configure_spi(cpu, 0u, 0x001bu, 0u, 0u);
+    cpu->device_cycles = UINT64_MAX;
+    for (uint8_t index = 0u; index < 8u; index++) {
+        dspic33_spi_pin_input(cpu, 0u, true, true, false);
+        dspic33_spi_pin_input(cpu, 0u, false, true, false);
+    }
+    expect(state,
+           cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR &&
+               !interrupt_flag(cpu, irqs[0]) &&
+               dspic33_read_word(cpu, 0x0248u) == 0xffu,
+           "transfer interrupt scheduling failure is fail-closed");
 }
 
 static void pps_slave_input_cases(SpiConformance* state, Dspic33* cpu) {
@@ -390,7 +409,7 @@ static void pps_slave_input_cases(SpiConformance* state, Dspic33* cpu) {
             expect(state,
                    dspic33_gpio_drive(cpu, 3u, 0u, 0x0004u) &&
                        drive_pps_spi_word(cpu, received, width, 0x0001u, 0x0002u) &&
-                       interrupt_flag(cpu, irqs[channel]) &&
+                       transfer_interrupt_after_cycle(cpu, irqs[channel]) &&
                        dspic33_read_word(cpu, (uint16_t)(base + 8u)) == received,
                    "mapped PPS slave receives serial input");
         }
@@ -420,7 +439,8 @@ static void pps_slave_input_cases(SpiConformance* state, Dspic33* cpu) {
                        (uint16_t)(dspic33_read_word(cpu, 0x0e3eu) & ~0x0040u));
     expect(state,
            drive_pps_spi_word(cpu, 0x00a5u, 8u, 0x0001u, 0x0040u) &&
-               interrupt_flag(cpu, irqs[0]) && dspic33_read_word(cpu, 0x0248u) == 0xa5u,
+               transfer_interrupt_after_cycle(cpu, irqs[0]) &&
+               dspic33_read_word(cpu, 0x0248u) == 0xa5u,
            "digital PPS clock restores slave input");
 
     clear_interrupt(cpu, irqs[0]);
@@ -434,7 +454,8 @@ static void pps_slave_input_cases(SpiConformance* state, Dspic33* cpu) {
                        (uint16_t)(dspic33_read_word(cpu, 0x0e30u) | 0x0040u));
     expect(state,
            drive_pps_spi_word(cpu, 0x005au, 8u, 0x0001u, 0x0040u) &&
-               interrupt_flag(cpu, irqs[0]) && dspic33_read_word(cpu, 0x0248u) == 0x5au,
+               transfer_interrupt_after_cycle(cpu, irqs[0]) &&
+               dspic33_read_word(cpu, 0x0248u) == 0x5au,
            "input-configured PPS clock restores slave input");
 
     clear_interrupt(cpu, irqs[0]);
@@ -445,7 +466,8 @@ static void pps_slave_input_cases(SpiConformance* state, Dspic33* cpu) {
            "live PPS remap releases old slave inputs");
     expect(state,
            drive_pps_spi_word(cpu, 0x003cu, 8u, 0x0008u, 0x0010u) &&
-               interrupt_flag(cpu, irqs[0]) && dspic33_read_word(cpu, 0x0248u) == 0x3cu,
+               transfer_interrupt_after_cycle(cpu, irqs[0]) &&
+               dspic33_read_word(cpu, 0x0248u) == 0x3cu,
            "live PPS remap selects new slave inputs");
 
     clear_interrupt(cpu, irqs[0]);
@@ -609,7 +631,7 @@ static void master_input_cases(SpiConformance* state, Dspic33* cpu, Dspic33* cop
                 dspic33_write_word(cpu, (uint16_t)(bases[channel] + 8u), 0xffffu);
                 drive_master_input(cpu, channel, received, width);
                 expect(state,
-                       interrupt_flag(cpu, irqs[channel]) &&
+                       transfer_interrupt_after_cycle(cpu, irqs[channel]) &&
                            dspic33_read_word(cpu, (uint16_t)(bases[channel] + 8u)) ==
                                received,
                        "master samples physical serial input");
@@ -765,7 +787,7 @@ static void timing_matrix_cases(SpiConformance* state, Dspic33* cpu) {
                         dspic33_read_word(cpu, (uint16_t)(bases[channel] + 8u)) ==
                             (mode16 != 0u ? received : (uint16_t)(received & 0x00ffu)),
                         "matrix received value");
-                    expect(state, interrupt_flag(cpu, irqs[channel]),
+                    expect(state, transfer_interrupt_after_cycle(cpu, irqs[channel]),
                            "matrix transfer interrupt");
                 }
             }
@@ -797,12 +819,15 @@ static void standard_buffer_cases(SpiConformance* state, Dspic33* cpu) {
                "standard queued word moved to shift");
         expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0x1111u,
                "standard first response order");
+        expect(state, transfer_interrupt_after_cycle(cpu, irqs[channel]),
+               "standard first interrupt follows one-cycle latency");
         clear_interrupt(cpu, irqs[channel]);
-        expect(state, dspic33_device_advance(cpu, cycles),
+        expect(state, dspic33_device_advance(cpu, cycles - 1u),
                "standard second completion");
         expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0x2222u,
                "standard second response order");
-        expect(state, interrupt_flag(cpu, irqs[channel]), "standard second interrupt");
+        expect(state, transfer_interrupt_after_cycle(cpu, irqs[channel]),
+               "standard second interrupt");
 
         dspic33_reset(cpu, 0u);
         configure_spi(cpu, channel, 0u, 0u, 0u);
@@ -1431,7 +1456,7 @@ int main(void) {
         dma_cases(&state, &cpu);
         copy_and_reset_cases(&state, &cpu, &copy);
     }
-    expect(&state, state.cases == 3136u, "SPI assertion accounting");
+    expect(&state, state.cases == 3141u, "SPI assertion accounting");
     if (copy_initialized) {
         dspic33_destroy(&copy);
     }

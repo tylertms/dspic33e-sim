@@ -8536,6 +8536,12 @@ static void spi_raise_mode(Dspic33* cpu, uint8_t channel, uint8_t mode) {
     }
 }
 
+static void spi_raise_transfer_interrupt(Dspic33* cpu, uint8_t channel) {
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, spi_irqs[channel], 0u, 1u)) {
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    }
+}
+
 static void spi_remove_internal_events(Dspic33* cpu, uint8_t channel) {
     size_t destination = 0u;
     size_t source;
@@ -8671,7 +8677,7 @@ static void spi_complete_transfer(Dspic33* cpu, uint8_t channel, uint16_t value)
                         (uint16_t)(spi_bases[channel] + 8u), 0u);
     spi_start_next(cpu, channel);
     if (!spi_enhanced(cpu, channel)) {
-        dspic33_raise_interrupt(cpu, spi_irqs[channel]);
+        spi_raise_transfer_interrupt(cpu, channel);
     } else if ((cpu->io.spi_busy & bit) == 0u &&
                cpu->io.spi_tx_fifo[channel].count == 0u) {
         spi_raise_mode(cpu, channel, 5u);
