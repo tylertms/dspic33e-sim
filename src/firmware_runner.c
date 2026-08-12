@@ -2707,6 +2707,51 @@ static void print_usb_packet(bool present, const Dspic33UsbPacket* packet) {
     }
 }
 
+static bool load_usb_packet_expectation(const JsonValue* specification,
+                                        Dspic33UsbPacket* packet) {
+    const JsonValue* data = json_get(specification, "data");
+    const JsonValue* data1 = json_get(specification, "data1");
+    const JsonValue* low_speed = json_get(specification, "low_speed");
+    uint64_t value;
+    size_t index;
+    memset(packet, 0, sizeof(*packet));
+    if (specification->type != JSON_OBJECT || data == NULL ||
+        data->type != JSON_ARRAY || data->as.array.count > sizeof(packet->data) ||
+        !event_number(specification, "address", 0x7fu, 0u, true, &value)) {
+        return false;
+    }
+    packet->address = (uint8_t)value;
+    if (!event_number(specification, "endpoint", 0x0fu, 0u, true, &value)) {
+        return false;
+    }
+    packet->endpoint = (uint8_t)value;
+    if (!event_number(specification, "pid", 0x0fu, 0u, true, &value)) {
+        return false;
+    }
+    packet->pid = (uint8_t)value;
+    if (!event_number(specification, "handshake", DSPIC33_USB_HANDSHAKE_ERROR, 0u, true,
+                      &value)) {
+        return false;
+    }
+    packet->handshake = (Dspic33UsbHandshake)value;
+    if (!event_number(specification, "error", UINT8_MAX, 0u, true, &value) ||
+        data1 == NULL || !json_boolean(data1, &packet->data1) || low_speed == NULL ||
+        !json_boolean(low_speed, &packet->low_speed)) {
+        return false;
+    }
+    packet->error = (uint8_t)value;
+    packet->size = (uint16_t)data->as.array.count;
+    for (index = 0u; index < data->as.array.count; index++) {
+        int64_t byte;
+        if (!parse_number(data->as.array.items[index], &byte) || byte < 0 ||
+            byte > UINT8_MAX) {
+            return false;
+        }
+        packet->data[index] = (uint8_t)byte;
+    }
+    return true;
+}
+
 static bool compare_usb_transmit(Runner* runner, const StepParts* parts,
                                  size_t* failures, char* error, size_t error_size) {
     const JsonValue* values = scalar_field(parts, "usb_tx");
@@ -2720,29 +2765,64 @@ static bool compare_usb_transmit(Runner* runner, const StepParts* parts,
     }
     for (index = 0u; index < values->as.array.count; index++) {
         const JsonValue* item = values->as.array.items[index];
+        const JsonValue* expected_values;
+        const char* evidence_class;
         size_t reference_count;
         size_t candidate_count;
+        size_t expected_count = 0u;
         size_t packet_index = 0u;
         char comparison_name[64];
         if (item->type != JSON_OBJECT) {
             snprintf(error, error_size, "invalid USB transmit observation");
             return false;
         }
+        expected_values = json_get(item, "packets");
+        evidence_class = expected_values != NULL ? "literal-exact" : "raw-differential";
+        if (expected_values != NULL) {
+            if (expected_values->type != JSON_ARRAY ||
+                expected_values->as.array.count > DSPIC33_USB_PACKET_QUEUE_SIZE) {
+                snprintf(error, error_size, "invalid USB transmit packet expectation");
+                return false;
+            }
+            expected_count = expected_values->as.array.count;
+            for (packet_index = 0u; packet_index < expected_count; packet_index++) {
+                Dspic33UsbPacket expected_packet;
+                if (!load_usb_packet_expectation(
+                        expected_values->as.array.items[packet_index],
+                        &expected_packet)) {
+                    snprintf(error, error_size,
+                             "invalid USB transmit packet expectation");
+                    return false;
+                }
+            }
+            packet_index = 0u;
+        }
         reference_count = runner->reference.io.usb_tx.count;
         candidate_count = runner->candidate.io.usb_tx.count;
-        record_comparison(runner, "usb_tx", "USB transmit count", "raw-differential",
-                          reference_count == candidate_count);
-        if (reference_count != candidate_count) {
+        record_comparison(
+            runner, "usb_tx", "USB transmit count", evidence_class,
+            reference_count == candidate_count &&
+                (expected_values == NULL || reference_count == expected_count));
+        if (reference_count != candidate_count ||
+            (expected_values != NULL && reference_count != expected_count)) {
             (*failures)++;
             if (!runner->summary_only) {
-                printf("  USB transmit count: reference=%zu candidate=%zu\n",
+                printf("  USB transmit count: reference=%zu candidate=%zu",
                        reference_count, candidate_count);
+                if (expected_values != NULL) {
+                    printf(" expected=%zu", expected_count);
+                }
+                printf("\n");
             }
         }
         while (runner->reference.io.usb_tx.count != 0u ||
-               runner->candidate.io.usb_tx.count != 0u) {
+               runner->candidate.io.usb_tx.count != 0u ||
+               (expected_values != NULL && packet_index < expected_count)) {
             Dspic33UsbPacket reference_packet;
             Dspic33UsbPacket candidate_packet;
+            Dspic33UsbPacket expected_packet;
+            bool expected_present =
+                expected_values != NULL && packet_index < expected_count;
             bool reference_present =
                 dspic33_usb_transmit(&runner->reference, &reference_packet);
             bool candidate_present =
@@ -2751,9 +2831,18 @@ static bool compare_usb_transmit(Runner* runner, const StepParts* parts,
             if (reference_present && candidate_present) {
                 matched = usb_packets_match(&reference_packet, &candidate_packet);
             }
+            if (expected_values != NULL) {
+                if (expected_present) {
+                    load_usb_packet_expectation(
+                        expected_values->as.array.items[packet_index],
+                        &expected_packet);
+                }
+                matched = matched && expected_present && reference_present &&
+                          usb_packets_match(&reference_packet, &expected_packet);
+            }
             snprintf(comparison_name, sizeof(comparison_name),
                      "USB transmit packet %zu", packet_index);
-            record_comparison(runner, "usb_tx", comparison_name, "raw-differential",
+            record_comparison(runner, "usb_tx", comparison_name, evidence_class,
                               matched);
             if (!matched) {
                 (*failures)++;
@@ -2762,6 +2851,10 @@ static bool compare_usb_transmit(Runner* runner, const StepParts* parts,
                     print_usb_packet(reference_present, &reference_packet);
                     printf(" candidate=");
                     print_usb_packet(candidate_present, &candidate_packet);
+                    if (expected_values != NULL) {
+                        printf(" expected=");
+                        print_usb_packet(expected_present, &expected_packet);
+                    }
                     printf("\n");
                 }
             }
