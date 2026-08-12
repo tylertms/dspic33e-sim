@@ -540,6 +540,7 @@ typedef struct {
     uint8_t can_rx_ack;
     uint8_t can_rx_pin_high;
     uint8_t can_rx_physical_active;
+    uint8_t can_fctrl_fsa_ready;
     uint8_t can_rx_serial_active;
     uint8_t can_tx_busy;
     uint8_t can_tx_on_bus;

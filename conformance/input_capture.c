@@ -519,6 +519,9 @@ static void paired_firmware_case(InputCaptureConformance* state, Dspic33* cpu,
     uint16_t second = capture_base((uint8_t)(channel + 1u));
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, pps_register, pin);
+    if (pin == 17u) {
+        dspic33_write_word(cpu, 0x0e0eu, 0x0002u);
+    }
     configure_capture(cpu, channel, 1u, true);
     configure_capture(cpu, (uint8_t)(channel + 1u), 1u, true);
     configure_capture_interrupt(cpu, channel);

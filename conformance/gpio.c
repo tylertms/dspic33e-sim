@@ -29,17 +29,17 @@ static const uint16_t pull_up_addresses[DSPIC33_GPIO_PORT_COUNT] = {
 static const uint16_t pull_down_addresses[DSPIC33_GPIO_PORT_COUNT] = {
     0x0e0cu, 0x0e1cu, 0x0e2cu, 0x0e3cu, 0x0e4cu, 0x0e5cu, 0x0e6cu};
 static const uint16_t port_masks[DSPIC33_GPIO_PORT_COUNT] = {
-    0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x313fu, 0xf3cfu};
+    0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x317fu, 0xf3cfu};
 static const uint16_t latch_masks[DSPIC33_GPIO_PORT_COUNT] = {
-    0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x313fu, 0xf3c3u};
+    0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x317fu, 0xf3c3u};
 static const uint16_t analog_masks[DSPIC33_GPIO_PORT_COUNT] = {
     0x06c0u, 0xffffu, 0x601eu, 0x00c0u, 0x03ffu, 0u, 0x03c0u};
 static const uint16_t input_only_masks[DSPIC33_GPIO_PORT_COUNT] = {0u, 0u, 0u,     0u,
                                                                    0u, 0u, 0x000cu};
 static const uint16_t pull_masks[DSPIC33_GPIO_PORT_COUNT] = {
-    0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x313fu, 0xf3c3u};
+    0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x317fu, 0xf3c3u};
 static const uint16_t open_drain_masks[DSPIC33_GPIO_PORT_COUNT] = {
-    0xc03fu, 0u, 0u, 0xff3fu, 0u, 0x313fu, 0xf003u};
+    0xc03fu, 0u, 0u, 0xff3fu, 0u, 0x317fu, 0xf003u};
 enum {
     CHANGE_NOTIFICATION_FLAG = 0x0008u,
     CHANGE_NOTIFICATION_IRQ = 19u,
@@ -857,7 +857,7 @@ int main(void) {
         change_notification_qualification_cases(&state, &cpu);
         change_notification_interrupt_cases(&state, &cpu);
         change_notification_dma_lifecycle_cases(&state, &cpu);
-        expect(&state, state.cases == 754u, "GPIO assertion accounting");
+        expect(&state, state.cases == 760u, "GPIO assertion accounting");
         dspic33_destroy(&cpu);
     }
     printf("[gpio-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",

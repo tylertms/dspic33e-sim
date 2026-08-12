@@ -791,7 +791,7 @@ static void reference_ladder_cases(ComparatorConformance* state, Dspic33* cpu) {
 }
 
 static void reference_selection_cases(ComparatorConformance* state, Dspic33* cpu) {
-    static const uint16_t band_gap_levels[4] = {2200u, 600u, 200u, 1700u};
+    static const uint16_t band_gap_levels[4] = {1200u, 600u, 200u, 1700u};
     uint8_t comparator;
     for (comparator = 0u; comparator < DSPIC33_COMPARATOR_COUNT; comparator++) {
         uint8_t selection;

@@ -189,17 +189,17 @@ static void source_cases(PpsConformance* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x06aeu, 32u);
     dspic33_write_word(cpu, 0x0e1eu, 0u);
     configure_capture(cpu);
-    expect(state, physical_edge(cpu, 32u), "digital PPS edge advances");
-    expect(state, cpu->io.input_capture.fifo[0].count == 1u,
-           "digital input PPS edge reaches mapped capture");
+    expect(state, physical_edge(cpu, 32u), "RPI digital stimulus advances");
+    expect(state, cpu->io.input_capture.fifo[0].count == 0u,
+           "RPI input ignores a cleared ANS bit");
 
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, 0x06aeu, 32u);
     dspic33_write_word(cpu, 0x0e1eu, 1u);
     configure_capture(cpu);
-    expect(state, physical_edge(cpu, 32u), "analog PPS stimulus advances");
-    expect(state, cpu->io.input_capture.fifo[0].count == 0u,
-           "analog mode disables physical PPS input");
+    expect(state, physical_edge(cpu, 32u), "RPI analog-qualified stimulus advances");
+    expect(state, cpu->io.input_capture.fifo[0].count == 1u,
+           "RPI input recognizes a set ANS bit");
 
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, 0x06aeu, 32u);

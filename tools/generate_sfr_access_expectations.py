@@ -30,7 +30,7 @@ EXPECTED_ABSENT_PERIPHERALS = {
     "ptg": ("PTG",),
 }
 EXPECTED_MASTER_CLEAR_RESET_RECORDS = 49
-EXPECTED_MASTER_CLEAR_UNCHANGED_BITS = 729
+EXPECTED_MASTER_CLEAR_UNCHANGED_BITS = 730
 EXPECTED_MASTER_CLEAR_CHANGED_BITS = 2
 EXPECTED_ACCESS_BITS = {
     "-": 2933,
@@ -111,16 +111,28 @@ DOCUMENTED_SIDE_EFFECT_OVERRIDES = {
     ("OC16CON2", 0x0998): 0x0040,
 }
 DOCUMENTED_SPLIT_ACCESS_OVERRIDES = {
+    ("C1FCTRL", 0x0406): 0xE01F,
+    ("C2FCTRL", 0x0506): 0xE01F,
     ("PORTA", 0x0E02): 0xC6FF,
     ("PORTB", 0x0E12): 0xFFFF,
     ("PORTC", 0x0E22): 0xF01E,
     ("PORTD", 0x0E32): 0xFFFF,
     ("PORTE", 0x0E42): 0x03FF,
-    ("PORTF", 0x0E52): 0x313F,
+    ("PORTF", 0x0E52): 0x317F,
     ("PORTG", 0x0E62): 0xF3C3,
 }
 DOCUMENTED_NORMAL_OVERRIDES = {
     ("IEC8", 0x0830): 0x7FC0,
+    ("TRISF", 0x0E50): 0x0040,
+    ("PORTF", 0x0E52): 0x0040,
+    ("LATF", 0x0E54): 0x0040,
+    ("ODCF", 0x0E56): 0x0040,
+    ("CNENF", 0x0E58): 0x0040,
+    ("CNPUF", 0x0E5A): 0x0040,
+    ("CNPDF", 0x0E5C): 0x0040,
+}
+DOCUMENTED_MASTER_CLEAR_UNCHANGED_OVERRIDES = {
+    ("LATF", 0x0E54): 0x0040,
 }
 DOCUMENTED_WRITABLE_OVERRIDES = {
     ("INTCON1", 0x08C0): 0x78C0,
@@ -383,7 +395,7 @@ def access_masks(register):
             f"documented access overrides overlap for {register['name']} "
             f"at 0x{address:04x}"
         )
-    if override & ~normal:
+    if override & ~(normal | normal_override):
         raise ValueError(
             f"documented access override is not DFP-normal for "
             f"{register['name']} at 0x{address:04x}"
@@ -394,7 +406,7 @@ def access_masks(register):
             f"{register['name']} at 0x{address:04x}"
         )
     return {
-        "normal": (normal & ~override) | normal_override | writable_override,
+        "normal": ((normal | normal_override) & ~override) | writable_override,
         "read_only": (
             pattern_mask(access, "r")
             & ~writable_override
@@ -632,9 +644,12 @@ def render_map(defaults):
     for register in defaults:
         por = register["por"]
         mclr = register["mclr"]
+        identity = (register["name"], int(register["address"], 16))
         known_mask = pattern_mask(mclr, "01")
         value = pattern_mask(mclr, "1")
-        unchanged = pattern_mask(mclr, "u")
+        unchanged = pattern_mask(
+            mclr, "u"
+        ) | DOCUMENTED_MASTER_CLEAR_UNCHANGED_OVERRIDES.get(identity, 0)
         por_value = pattern_mask(por, "1")
         if unchanged or ((value ^ por_value) & known_mask):
             master_clear_resets.append(
@@ -825,8 +840,8 @@ def render(defaults, muxes, conditionals):
             split_access_entries.append(
                 f"{{{register['address']}u, 0x{masks['split_access']:04x}u}},"
             )
-    for offset in range(0, len(split_access_entries), 4):
-        lines.append("        " + " ".join(split_access_entries[offset : offset + 4]))
+    for offset in range(0, len(split_access_entries), 3):
+        lines.append("        " + " ".join(split_access_entries[offset : offset + 3]))
     lines.extend(
         [
             "};",

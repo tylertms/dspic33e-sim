@@ -50,6 +50,15 @@ static void expect(CanConformance* state, bool condition, const char* name) {
     }
 }
 
+static void reset_can_raw(Dspic33* cpu, uint32_t entry) { dspic33_reset(cpu, entry); }
+
+static void reset_can_fixture(Dspic33* cpu, uint32_t entry) {
+    reset_can_raw(cpu, entry);
+    dspic33_gpio_drive(cpu, 3u, 0xffffu, 0xffffu);
+}
+
+#define dspic33_reset reset_can_fixture
+
 static bool interrupt_flag(Dspic33* cpu, uint8_t irq) {
     uint16_t address = (uint16_t)(0x0800u + (irq / 16u) * 2u);
     return (dspic33_read_word(cpu, address) & (uint16_t)(1u << (irq % 16u))) != 0u;
@@ -154,8 +163,30 @@ static void configure_receive(Dspic33* cpu, uint8_t channel, uint32_t memory,
     uint16_t base = bases[channel];
     configure_dma(cpu, (uint8_t)(channel * 2u), 0x0020u, receive_requests[channel],
                   memory, (uint16_t)(base + 0x40u));
-    dspic33_write_word(cpu, (uint16_t)(base + 6u),
-                       (uint16_t)(((uint16_t)dmabs << 13u) | fifo_start));
+    dspic33_write_byte(cpu, (uint16_t)(base + 6u), fifo_start);
+    dspic33_write_byte(cpu, (uint16_t)(base + 7u), (uint8_t)(dmabs << 5u));
+}
+
+static void fifo_control_write_cases(CanConformance* state, Dspic33* cpu) {
+    for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint16_t address = (uint16_t)(bases[channel] + 6u);
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, address, 0xa012u);
+        expect(state, dspic33_read_word(cpu, address) == 0u,
+               "CAN FIFO control rejects a word write");
+        dspic33_write_byte(cpu, (uint16_t)(address + 1u), 0xa0u);
+        expect(state, dspic33_read_word(cpu, address) == 0u,
+               "CAN FIFO control rejects DMABS before FSA");
+        dspic33_write_byte(cpu, address, 0x12u);
+        expect(state, dspic33_read_word(cpu, address) == 0x0012u,
+               "CAN FIFO control accepts FSA first");
+        dspic33_write_byte(cpu, (uint16_t)(address + 1u), 0xa0u);
+        expect(state,
+               dspic33_read_word(cpu, address) == 0xa012u &&
+                   cpu->io.can_fifo_write[channel] == 0x12u &&
+                   (cpu->io.can_fctrl_fsa_ready & (uint8_t)(1u << channel)) == 0u,
+               "CAN FIFO control accepts DMABS after FSA");
+    }
 }
 
 static void configure_transmit(Dspic33* cpu, uint8_t channel, uint32_t memory) {
@@ -239,9 +270,10 @@ static void register_cases(CanConformance* state, Dspic33* cpu) {
         dspic33_write_word(cpu, (uint16_t)(base + 2u), 0xffffu);
         expect(state, dspic33_read_word(cpu, (uint16_t)(base + 2u)) == 0u,
                "control two mask");
-        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0xffffu);
+        dspic33_write_byte(cpu, (uint16_t)(base + 6u), 0xffu);
+        dspic33_write_byte(cpu, (uint16_t)(base + 7u), 0xffu);
         expect(state, dspic33_read_word(cpu, (uint16_t)(base + 6u)) == 0xe01fu,
-               "fifo control mask");
+               "fifo control byte masks");
         dspic33_write_word(cpu, (uint16_t)(base + 0x0cu), 0xffffu);
         expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x0cu)) == 0x00efu,
                "interrupt enable mask");
@@ -2910,6 +2942,32 @@ static void copy_and_reset_cases(CanConformance* state, Dspic33* cpu) {
            "copied CAN majority samples advance together");
     dspic33_destroy(&copy);
     dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_write_word(cpu, 0x06d4u, 64u);
+    expect(state,
+           dspic33_can_input_pin(cpu, 64u, false, 0u) &&
+               dspic33_device_advance(cpu, 0u) && (cpu->io.can_rx_pin_high & 1u) == 0u,
+           "CAN external pin holds a dominant level");
+    reset_can_raw(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_write_word(cpu, 0x06d4u, 64u);
+    expect(state,
+           (cpu->io.can_rx_pin_high & 1u) == 0u &&
+               (cpu->io.can_rx_physical_active & 1u) != 0u,
+           "CAN power-on reset preserves the external pin level");
+    dspic33_can_input_pin(cpu, 64u, true, 0u);
+    dspic33_device_advance(cpu, 0u);
+    dspic33_mclr_reset(cpu);
+    dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_write_word(cpu, 0x06d4u, 64u);
+    expect(state,
+           (cpu->io.can_rx_pin_high & 1u) != 0u &&
+               (cpu->io.can_rx_physical_active & 1u) != 0u,
+           "CAN warm reset preserves the external pin level");
+    dspic33_reset(cpu, 0u);
     expect(state,
            cpu->io.can_rx[0].count == 0u && cpu->io.can_tx[0].count == 0u &&
                cpu->io.can_rx_busy == 0u && cpu->io.can_tx_busy == 0u &&
@@ -2945,6 +3003,7 @@ int main(void) {
     }
     register_cases(&state, &cpu);
     register_access_cases(&state, &cpu);
+    fifo_control_write_cases(&state, &cpu);
     interrupt_flag_write_zero_cases(&state, &cpu);
     standard_filter_domain(&state, &cpu);
     extended_filter_cases(&state, &cpu);
@@ -2984,7 +3043,7 @@ int main(void) {
     interrupt_and_error_cases(&state, &cpu);
     invalid_message_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
-    expect(&state, state.cases == 1462747u, "CAN assertion accounting");
+    expect(&state, state.cases == 1462758u, "CAN assertion accounting");
     report_sfr_side_effect_coverage(
         "can", can_sfr_side_effect_coverage,
         SFR_SIDE_EFFECT_COVERAGE_COUNT(can_sfr_side_effect_coverage),
