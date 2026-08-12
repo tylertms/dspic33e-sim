@@ -1140,6 +1140,73 @@ static void transmit_abort_timing_cases(CanConformance* state, Dspic33* cpu) {
     }
 }
 
+static void transmit_pps_cases(CanConformance* state, Dspic33* cpu) {
+    bool high;
+    expect(state, !dspic33_can_pin(cpu, 64u, NULL),
+           "CAN output rejects null pin level");
+    expect(state, !dspic33_can_pin(cpu, 63u, &high),
+           "CAN output rejects non-remappable pin");
+    for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint16_t base = bases[channel];
+        uint32_t memory = (uint32_t)(0xbe00u + channel * 0x100u);
+        uint8_t function = (uint8_t)(14u + channel);
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, 0x0680u, function);
+        expect(state, dspic33_can_pin(cpu, 64u, &high) && high,
+               "mapped CAN transmit pin is recessive while idle");
+        configure_transmit(cpu, channel, memory);
+        for (uint8_t word = 0u; word < 8u; word++) {
+            write_memory_word(cpu, memory + word * 2u, 0u);
+        }
+        select_window(cpu, channel, false);
+        set_mode(cpu, channel, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x008bu);
+        expect(state,
+               dspic33_device_advance(cpu, 8u) && dspic33_can_pin(cpu, 64u, &high) &&
+                   !high,
+               "CAN transmit pin drives dominant start of frame");
+        expect(state,
+               dspic33_device_advance(cpu, 20u) && dspic33_can_pin(cpu, 64u, &high) &&
+                   high,
+               "CAN transmit pin inserts the sixth complementary stuffed bit");
+        expect(state,
+               dspic33_device_advance(cpu, 4u) && dspic33_can_pin(cpu, 64u, &high) &&
+                   !high,
+               "CAN transmit pin resumes frame data after stuffing");
+        dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x0083u);
+        expect(state, dspic33_can_pin(cpu, 64u, &high) && high,
+               "aborted CAN transmit pin returns recessive");
+        dspic33_write_word(cpu, 0x0680u, (uint16_t)(function << 8u));
+        expect(state,
+               !dspic33_can_pin(cpu, 64u, &high) && dspic33_can_pin(cpu, 65u, &high) &&
+                   high,
+               "CAN transmit output follows PPS remapping");
+        dspic33_write_word(
+            cpu, 0x0760u,
+            (uint16_t)(dspic33_read_word(cpu, 0x0760u) | (uint16_t)(2u << channel)));
+        expect(state,
+               dspic33_device_advance(cpu, 1u) && !dspic33_can_pin(cpu, 65u, &high),
+               "PMD releases the CAN transmit PPS output");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, 0x0680u, function);
+        configure_transmit(cpu, channel, memory);
+        for (uint8_t word = 0u; word < 8u; word++) {
+            write_memory_word(cpu, memory + word * 2u, 0u);
+        }
+        select_window(cpu, channel, false);
+        set_mode(cpu, channel, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x008bu);
+        expect(state,
+               dspic33_device_advance(cpu, 8u) && dspic33_can_pin(cpu, 64u, &high) &&
+                   !high,
+               "CAN Sleep output test reaches dominant bus phase");
+        cpu->power_state = DSPIC33_POWER_SLEEP;
+        expect(state, dspic33_can_pin(cpu, 64u, &high) && high,
+               "Sleep forces the CAN transmit pin recessive");
+    }
+}
+
 static void priority_and_abort_cases(CanConformance* state, Dspic33* cpu) {
     Dspic33CanFrame output;
     uint8_t buffer;
@@ -1595,6 +1662,7 @@ static void copy_and_reset_cases(CanConformance* state, Dspic33* cpu) {
     expect(state, memory_word(cpu, 0xd000u) == memory_word(&copy, 0xd000u),
            "copy DMA contents");
     dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0680u, 14u);
     configure_transmit(cpu, 0u, 0xd100u);
     write_memory_word(cpu, 0xd100u, 2u);
     for (uint8_t word = 1u; word < 8u; word++) {
@@ -1607,7 +1675,16 @@ static void copy_and_reset_cases(CanConformance* state, Dspic33* cpu) {
            "copy reaches pending CAN bus completion");
     expect(state, dspic33_copy(&copy, cpu), "copy pending CAN bus state");
     expect(state,
-           dspic33_device_advance(cpu, 1000u) && dspic33_device_advance(&copy, 1000u),
+           dspic33_device_advance(cpu, 20u) && dspic33_device_advance(&copy, 20u),
+           "copied CAN bus phases advance");
+    bool source_high;
+    bool copy_high;
+    expect(state,
+           dspic33_can_pin(cpu, 64u, &source_high) &&
+               dspic33_can_pin(&copy, 64u, &copy_high) && source_high && copy_high,
+           "copy preserves CAN transmit bit phase");
+    expect(state,
+           dspic33_device_advance(cpu, 980u) && dspic33_device_advance(&copy, 980u),
            "copied CAN bus completions advance");
     Dspic33CanFrame source_output;
     Dspic33CanFrame copy_output;
@@ -1651,13 +1728,14 @@ int main(void) {
     clock_timing_cases(&state, &cpu);
     stuffed_frame_timing_cases(&state, &cpu);
     transmit_abort_timing_cases(&state, &cpu);
+    transmit_pps_cases(&state, &cpu);
     priority_and_abort_cases(&state, &cpu);
     mode_and_power_cases(&state, &cpu);
     capture_timestamp_cases(&state, &cpu);
     interrupt_and_error_cases(&state, &cpu);
     invalid_message_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
-    expect(&state, state.cases == 1462567u, "CAN assertion accounting");
+    expect(&state, state.cases == 1462589u, "CAN assertion accounting");
     report_sfr_side_effect_coverage(
         "can", can_sfr_side_effect_coverage,
         SFR_SIDE_EFFECT_COVERAGE_COUNT(can_sfr_side_effect_coverage),

@@ -10737,49 +10737,57 @@ static uint16_t can_crc(const bool bits[128], uint8_t count) {
     return crc;
 }
 
-static uint16_t can_frame_bit_count(const Dspic33CanFrame* frame) {
-    bool bits[128];
-    uint8_t count = 0u;
+static uint16_t can_frame_bits(const Dspic33CanFrame* frame, bool bits[160]) {
+    bool raw[128];
+    uint8_t raw_count = 0u;
     uint8_t length = frame->length > 8u ? 8u : frame->length;
-    uint16_t stuffed;
+    uint16_t count = 0u;
     bool previous;
     uint8_t run;
-    can_append_bits(bits, &count, 0u, 1u);
+    can_append_bits(raw, &raw_count, 0u, 1u);
     if (frame->extended) {
-        can_append_bits(bits, &count, frame->identifier >> 18u, 11u);
-        can_append_bits(bits, &count, 3u, 2u);
-        can_append_bits(bits, &count, frame->identifier & 0x3ffffu, 18u);
-        can_append_bits(bits, &count, frame->remote ? 1u : 0u, 1u);
-        can_append_bits(bits, &count, 0u, 2u);
+        can_append_bits(raw, &raw_count, frame->identifier >> 18u, 11u);
+        can_append_bits(raw, &raw_count, 3u, 2u);
+        can_append_bits(raw, &raw_count, frame->identifier & 0x3ffffu, 18u);
+        can_append_bits(raw, &raw_count, frame->remote ? 1u : 0u, 1u);
+        can_append_bits(raw, &raw_count, 0u, 2u);
     } else {
-        can_append_bits(bits, &count, frame->identifier, 11u);
-        can_append_bits(bits, &count, frame->remote ? 1u : 0u, 1u);
-        can_append_bits(bits, &count, 0u, 2u);
+        can_append_bits(raw, &raw_count, frame->identifier, 11u);
+        can_append_bits(raw, &raw_count, frame->remote ? 1u : 0u, 1u);
+        can_append_bits(raw, &raw_count, 0u, 2u);
     }
-    can_append_bits(bits, &count, length, 4u);
+    can_append_bits(raw, &raw_count, length, 4u);
     if (!frame->remote) {
         for (uint8_t index = 0u; index < length; index++) {
-            can_append_bits(bits, &count, frame->data[index], 8u);
+            can_append_bits(raw, &raw_count, frame->data[index], 8u);
         }
     }
-    can_append_bits(bits, &count, can_crc(bits, count), 15u);
-    stuffed = count;
-    previous = bits[0];
-    run = 1u;
-    for (uint8_t index = 1u; index < count; index++) {
-        if (bits[index] == previous) {
+    can_append_bits(raw, &raw_count, can_crc(raw, raw_count), 15u);
+    previous = raw[0];
+    run = 0u;
+    for (uint8_t index = 0u; index < raw_count; index++) {
+        bits[count++] = raw[index];
+        if (raw[index] == previous) {
             run++;
         } else {
-            previous = bits[index];
+            previous = raw[index];
             run = 1u;
         }
         if (run == 5u) {
-            stuffed++;
+            bits[count++] = !previous;
             previous = !previous;
             run = 1u;
         }
     }
-    return (uint16_t)(stuffed + 13u);
+    for (uint8_t index = 0u; index < 13u; index++) {
+        bits[count++] = true;
+    }
+    return count;
+}
+
+static uint16_t can_frame_bit_count(const Dspic33CanFrame* frame) {
+    bool bits[160];
+    return can_frame_bits(frame, bits);
 }
 
 static uint64_t can_bit_cycles(const Dspic33* cpu, uint8_t channel) {
@@ -11017,16 +11025,21 @@ static void can_transmit_bus_finish(Dspic33* cpu, uint8_t channel) {
     } else {
         can_queue_push(&cpu->io.can_tx[channel], &frame);
     }
+    cpu->io.can_tx_on_bus &= (uint8_t)~bit;
     cpu->io.can_tx_busy &= (uint8_t)~bit;
     dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_START, 0u);
 }
 
 static void can_transmit_finish(Dspic33* cpu, uint8_t channel) {
     Dspic33CanFrame frame = can_decode_frame(cpu->io.can_tx_words[channel]);
+    uint8_t bit = (uint8_t)(1u << channel);
+    cpu->io.can_tx_start_cycle[channel] = cpu->device_cycles;
+    cpu->io.can_tx_on_bus |= bit;
     if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel,
                           CAN_EVENT_TRANSMIT_BUS_FINISH,
                           can_frame_cycles(cpu, channel, &frame))) {
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+        cpu->io.can_tx_on_bus &= (uint8_t)~bit;
         cpu->io.can_tx_busy &= (uint8_t)~(uint8_t)(1u << channel);
     }
 }
@@ -13771,6 +13784,7 @@ static void can_abort_transmissions(Dspic33* cpu, uint8_t channel) {
     }
     raw_write_word(cpu, can_bases[channel],
                    (uint16_t)(raw_word(cpu, can_bases[channel]) & ~CAN_ABORT_ALL));
+    cpu->io.can_tx_on_bus &= (uint8_t)~(uint8_t)(1u << channel);
     cpu->io.can_tx_busy &= (uint8_t)~(uint8_t)(1u << channel);
 }
 
@@ -13823,6 +13837,7 @@ static void can_update_transmit_control(Dspic33* cpu, uint8_t channel, uint16_t 
             can_raise_event(cpu, channel, CAN_INTERRUPT_TRANSMIT, buffer, 0u);
             if (active) {
                 can_remove_transmit_events(cpu, channel);
+                cpu->io.can_tx_on_bus &= (uint8_t)~(uint8_t)(1u << channel);
                 cpu->io.can_tx_busy &= (uint8_t)~(uint8_t)(1u << channel);
                 dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel,
                                  CAN_EVENT_TRANSMIT_START, 0u);
@@ -15534,6 +15549,45 @@ bool dspic33_can_invalid(Dspic33* cpu, uint8_t channel, uint64_t delay) {
 bool dspic33_can_transmit(Dspic33* cpu, uint8_t channel, Dspic33CanFrame* frame) {
     return channel < DSPIC33_CAN_COUNT &&
            can_queue_pop(&cpu->io.can_tx[channel], frame);
+}
+
+bool dspic33_can_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
+    uint8_t function = 0u;
+    uint8_t channel;
+    size_t mapping;
+    if (high == NULL) {
+        return false;
+    }
+    for (mapping = 0u; mapping < sizeof(pps_outputs) / sizeof(pps_outputs[0]);
+         mapping++) {
+        if (pps_outputs[mapping].pin == pin) {
+            function = (uint8_t)((raw_word(cpu, pps_outputs[mapping].address) >>
+                                  pps_outputs[mapping].shift) &
+                                 0x003fu);
+            break;
+        }
+    }
+    if (mapping == sizeof(pps_outputs) / sizeof(pps_outputs[0]) || function < 14u ||
+        function > 15u) {
+        return false;
+    }
+    channel = (uint8_t)(function - 14u);
+    if ((raw_word(cpu, 0x0760u) & (uint16_t)(2u << channel)) != 0u) {
+        return false;
+    }
+    *high = true;
+    if ((cpu->io.can_tx_on_bus & (uint8_t)(1u << channel)) != 0u &&
+        can_power_enabled(cpu, channel) && can_mode(cpu, channel) == CAN_MODE_NORMAL) {
+        Dspic33CanFrame frame = can_decode_frame(cpu->io.can_tx_words[channel]);
+        bool bits[160];
+        uint16_t count = can_frame_bits(&frame, bits);
+        uint64_t index = (cpu->device_cycles - cpu->io.can_tx_start_cycle[channel]) /
+                         can_bit_cycles(cpu, channel);
+        if (index < count) {
+            *high = bits[index];
+        }
+    }
+    return true;
 }
 
 static bool usb_schedule_pending(Dspic33* cpu, const Dspic33UsbPending* pending,
