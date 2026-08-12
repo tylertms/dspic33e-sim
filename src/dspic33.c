@@ -1752,6 +1752,10 @@ static bool execute_bit(Dspic33* cpu, uint32_t opcode) {
                                  &address)) {
                 return false;
             }
+            if (kind == 4u && address == 0x0042u) {
+                perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+                return true;
+            }
             indirect = true;
             value =
                 byte_mode ? read_data_byte(cpu, address) : read_data_word(cpu, address);
@@ -1976,6 +1980,28 @@ static bool stack_encoding_valid(uint32_t opcode) {
         return opcode == 0xfa8000u || (opcode & 0xffc001u) == 0xfa0000u;
     }
     return true;
+}
+
+static bool bit_encoding_valid(uint32_t opcode) {
+    uint8_t kind = (uint8_t)((opcode >> 16u) & 0x07u);
+    bool file = (opcode & 0x080000u) != 0u;
+    uint8_t mode = (uint8_t)((opcode >> 4u) & 0x07u);
+
+    if (file) {
+        return kind != 5u && (kind != 4u || (opcode & 0x001ffeu) != 0x000042u);
+    }
+    if (mode >= 6u) {
+        return false;
+    }
+    if (kind <= 2u) {
+        bool byte_mode = (opcode & 0x000400u) != 0u;
+        uint8_t bit = (uint8_t)((opcode >> 12u) & 0x0fu);
+        return (opcode & 0x000b80u) == 0u && (!byte_mode || bit < 8u);
+    }
+    if (kind <= 5u) {
+        return (opcode & 0x000780u) == 0u;
+    }
+    return (opcode & 0x000f80u) == 0u;
 }
 
 static void push_program_counter(Dspic33* cpu, uint32_t address) {
@@ -3443,6 +3469,10 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         return execute_table(cpu, opcode);
     }
     if ((opcode & 0xf00000u) == 0xa00000u) {
+        if (!bit_encoding_valid(opcode)) {
+            perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+            return true;
+        }
         return execute_bit(cpu, opcode);
     }
     if ((opcode & 0xf80000u) == 0x800000u) {

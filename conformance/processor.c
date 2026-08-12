@@ -6048,6 +6048,242 @@ static void run_invalid_binary_matrix_case(ProcessorConformance* state, Dspic33*
     expect_dsp_matrix_case(state, matches, opcode, "illegal binary encoding");
 }
 
+static bool documented_bit_encoding_valid(uint32_t opcode) {
+    uint8_t kind = (uint8_t)((opcode >> 16u) & 0x07u);
+    bool file = (opcode & 0x080000u) != 0u;
+    uint8_t mode = (uint8_t)((opcode >> 4u) & 0x07u);
+
+    if (file) {
+        return kind != 5u && (kind != 4u || (opcode & 0x001ffeu) != 0x000042u);
+    }
+    if (mode >= 6u) {
+        return false;
+    }
+    if (kind <= 2u) {
+        bool byte_mode = (opcode & 0x000400u) != 0u;
+        uint8_t bit = (uint8_t)((opcode >> 12u) & 0x0fu);
+        return (opcode & 0x000b80u) == 0u && (!byte_mode || bit < 8u);
+    }
+    if (kind <= 5u) {
+        return (opcode & 0x000780u) == 0u;
+    }
+    return (opcode & 0x000f80u) == 0u;
+}
+
+static void run_legal_register_bit_case(ProcessorConformance* state, Dspic33* cpu,
+                                        uint32_t opcode) {
+    uint8_t kind = (uint8_t)((opcode >> 16u) & 0x07u);
+    uint8_t mode = (uint8_t)((opcode >> 4u) & 0x07u);
+    uint8_t reg = (uint8_t)(opcode & 0x0fu);
+    bool byte_mode = kind <= 2u && (opcode & 0x000400u) != 0u;
+    uint8_t width = byte_mode ? 1u : 2u;
+    uint16_t initial_status = (uint16_t)(0x010cu | (opcode & 0x0003u));
+    uint16_t registers[16];
+    BinaryMatrixOperand operand;
+    uint16_t value;
+    uint16_t original;
+    uint8_t bit;
+    uint16_t mask;
+    uint16_t expected_status = initial_status;
+    uint64_t cycles;
+    uint64_t expected_cycles = 1u;
+    uint32_t expected_pc = 2u;
+    bool matches;
+
+    prepare_arithmetic_matrix_case(cpu, registers, initial_status);
+    bit = kind == 5u ? (uint8_t)(registers[(opcode >> 11u) & 0x0fu] & 0x0fu)
+                     : (uint8_t)((opcode >> 12u) & 0x0fu);
+    operand = binary_matrix_operand(registers, mode, reg, width);
+    original = byte_mode ? (uint8_t)(0x5au ^ opcode) : (uint16_t)(0x5aa5u ^ opcode);
+    if (operand.direct) {
+        original = byte_mode ? (uint8_t)registers[reg] : registers[reg];
+    } else if (byte_mode) {
+        dspic33_write_byte(cpu, operand.address, (uint8_t)original);
+    } else {
+        dspic33_write_word(cpu, operand.address, original);
+    }
+    value = original;
+    mask = (uint16_t)(1u << bit);
+    if (kind == 0u) {
+        value |= mask;
+    } else if (kind == 1u) {
+        value &= (uint16_t)~mask;
+    } else if (kind == 2u) {
+        value ^= mask;
+    } else if (kind == 3u || kind == 5u) {
+        bool zero_destination = (opcode & (kind == 5u ? 0x008000u : 0x000800u)) != 0u;
+        if (zero_destination) {
+            expected_status = (uint16_t)((initial_status & ~0x0002u) |
+                                         ((value & mask) == 0u ? 0x0002u : 0u));
+        } else {
+            expected_status = (uint16_t)((initial_status & ~0x0001u) |
+                                         ((value & mask) != 0u ? 0x0001u : 0u));
+        }
+    } else if (kind == 4u) {
+        bool zero_destination = (opcode & 0x000800u) != 0u;
+        if (zero_destination) {
+            expected_status = (uint16_t)((initial_status & ~0x0002u) |
+                                         ((value & mask) == 0u ? 0x0002u : 0u));
+        } else {
+            expected_status = (uint16_t)((initial_status & ~0x0001u) |
+                                         ((value & mask) != 0u ? 0x0001u : 0u));
+        }
+        value |= mask;
+    } else {
+        bool set = (value & mask) != 0u;
+        if ((kind == 6u && set) || (kind == 7u && !set)) {
+            expected_pc = 4u;
+            expected_cycles = 2u;
+        }
+    }
+    if (kind <= 2u || kind == 4u) {
+        if (operand.direct) {
+            if (byte_mode) {
+                value = (uint16_t)((registers[reg] & 0xff00u) | (value & 0x00ffu));
+            }
+            binary_matrix_write_register(registers, reg, value);
+        }
+    }
+    cycles = cpu->cycles;
+    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+              dspic33_load_program_word(cpu, 2u, 0u) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == expected_pc &&
+              cpu->cycles - cycles == expected_cycles && cpu->sr == expected_status &&
+              cpu->corcon == 0x0020u && cpu->unsupported_opcode == 0u &&
+              !cpu->address_error && !cpu->illegal_reset &&
+              cpu->last_trap == UINT16_MAX &&
+              binary_matrix_registers_match(cpu, registers);
+    if (!operand.direct) {
+        uint16_t expected = kind <= 2u || kind == 4u ? value : original;
+        matches =
+            matches &&
+            (byte_mode ? dspic33_read_byte(cpu, operand.address) == (uint8_t)expected
+                       : dspic33_read_word(cpu, operand.address) == expected);
+    }
+    expect_dsp_matrix_case(state, matches, opcode, "legal register bit encoding");
+}
+
+static void run_legal_file_bit_admission_case(ProcessorConformance* state, Dspic33* cpu,
+                                              uint32_t opcode) {
+    bool matches;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    cpu->pc = 0u;
+    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+              dspic33_load_program_word(cpu, 2u, 0u) &&
+              dspic33_step(cpu) != DSPIC33_UNSUPPORTED_INSTRUCTION &&
+              cpu->unsupported_opcode == 0u && !cpu->illegal_reset;
+    expect_dsp_matrix_case(state, matches, opcode, "legal file bit encoding");
+}
+
+static void bit_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu) {
+    uint32_t fields;
+    uint32_t legal = 0u;
+    uint32_t reserved = 0u;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    for (fields = 0u; fields < 0x100000u; fields++) {
+        uint32_t opcode = 0xa00000u | fields;
+        if (documented_bit_encoding_valid(opcode)) {
+            if ((opcode & 0x080000u) != 0u) {
+                run_legal_file_bit_admission_case(state, cpu, opcode);
+            } else {
+                run_legal_register_bit_case(state, cpu, opcode);
+            }
+            legal++;
+        } else {
+            run_invalid_binary_matrix_case(state, cpu, opcode);
+            reserved++;
+        }
+    }
+    expect(state, legal == 477936u, "bit legal encoding matrix is exhaustive");
+    expect(state, reserved == 570640u, "bit illegal encoding matrix is exhaustive");
+}
+
+static void direct_file_bit_value_cases(ProcessorConformance* state, Dspic33* cpu) {
+    static const uint8_t kinds[] = {0u, 1u, 2u, 3u, 4u, 6u, 7u};
+    static const uint16_t values[] = {0x0000u, 0xffffu, 0xa55au, 0x5aa5u};
+    size_t kind_index;
+    uint8_t bit;
+    size_t value_index;
+    uint32_t cases = 0u;
+
+    for (kind_index = 0u; kind_index < sizeof(kinds) / sizeof(kinds[0]); kind_index++) {
+        uint8_t kind = kinds[kind_index];
+        for (bit = 0u; bit < 16u; bit++) {
+            uint16_t address = (uint16_t)(0x1000u + (bit >> 3u));
+            uint32_t opcode = 0xa80000u | ((uint32_t)kind << 16u) |
+                              ((uint32_t)(bit & 7u) << 13u) | address;
+            uint16_t mask = (uint16_t)(1u << bit);
+            for (value_index = 0u; value_index < sizeof(values) / sizeof(values[0]);
+                 value_index++) {
+                uint16_t initial = values[value_index];
+                uint16_t expected = initial;
+                uint16_t initial_status =
+                    (uint16_t)(0x010du | (uint16_t)(value_index & 2u));
+                uint16_t expected_status = initial_status;
+                uint32_t expected_pc = 2u;
+                uint64_t expected_cycles = 1u;
+                bool matches;
+
+                reset_processor_conformance(cpu, 0u);
+                dspic33_write_word(cpu, 0x1000u, initial);
+                cpu->sr = initial_status;
+                if (kind == 0u) {
+                    expected |= mask;
+                } else if (kind == 1u) {
+                    expected &= (uint16_t)~mask;
+                } else if (kind == 2u) {
+                    expected ^= mask;
+                } else if (kind == 3u) {
+                    expected_status =
+                        (uint16_t)((initial_status & ~0x0002u) |
+                                   ((initial & mask) == 0u ? 0x0002u : 0u));
+                } else if (kind == 4u) {
+                    expected_status =
+                        (uint16_t)((initial_status & ~0x0002u) |
+                                   ((initial & mask) == 0u ? 0x0002u : 0u));
+                    expected |= mask;
+                } else {
+                    bool set = (initial & mask) != 0u;
+                    if ((kind == 6u && set) || (kind == 7u && !set)) {
+                        expected_pc = 4u;
+                        expected_cycles = 2u;
+                    }
+                }
+                matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+                          dspic33_load_program_word(cpu, 2u, 0u) &&
+                          dspic33_step(cpu) == DSPIC33_RUNNING &&
+                          cpu->pc == expected_pc && cpu->cycles == expected_cycles &&
+                          cpu->sr == expected_status &&
+                          dspic33_read_word(cpu, 0x1000u) == expected &&
+                          !cpu->illegal_reset && cpu->unsupported_opcode == 0u;
+                expect_dsp_matrix_case(state, matches, opcode,
+                                       "direct file bit value and status");
+                cases++;
+            }
+        }
+    }
+    expect(state, cases == 448u,
+           "direct file bit value matrix covers every operation and bit");
+}
+
+static void bit_operand_lifecycle_cases(ProcessorConformance* state, Dspic33* cpu) {
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, 0xa40012u);
+    dspic33_set_working_register(cpu, 2u, 0x0042u);
+    expect_illegal_reset(state, cpu, "indirect BTSTS targeting SR resets processor");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, 0xa40012u);
+    cpu->w[2] = 0x1000u;
+    cpu->initialized_working_registers &= (uint16_t)~0x0004u;
+    expect_illegal_reset(state, cpu,
+                         "BTSTS uninitialized source pointer resets processor");
+}
+
 static void general_arithmetic_encoding_matrix_cases(ProcessorConformance* state,
                                                      Dspic33* cpu) {
     static const uint32_t bases[6] = {0x100000u, 0x180000u, 0x400000u,
@@ -10460,6 +10696,9 @@ int main(void) {
         valid_dsp_register_pair_cases(&state, &cpu);
         dsp_prefetch_destination_collision_cases(&state, &cpu);
         loop_encoding_matrix_cases(&state, &cpu);
+        bit_encoding_matrix_cases(&state, &cpu);
+        direct_file_bit_value_cases(&state, &cpu);
+        bit_operand_lifecycle_cases(&state, &cpu);
         arithmetic_encoding_matrix_cases(&state, &cpu);
         shift_encoding_matrix_cases(&state, &cpu);
         byte_extension_encoding_matrix_cases(&state, &cpu);
