@@ -6284,6 +6284,151 @@ static void bit_operand_lifecycle_cases(ProcessorConformance* state, Dspic33* cp
                          "BTSTS uninitialized source pointer resets processor");
 }
 
+static bool documented_table_encoding_valid(uint32_t opcode) {
+    bool write = (opcode & 0x010000u) != 0u;
+    uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
+    uint8_t destination_mode = (uint8_t)((opcode >> 11u) & 0x07u);
+
+    return write ? source_mode < 6u && destination_mode >= 1u && destination_mode < 6u
+                 : source_mode >= 1u && source_mode < 6u && destination_mode < 6u;
+}
+
+static void prepare_table_encoding_case(Dspic33* cpu, bool write) {
+    uint8_t reg;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    cpu->pc = 0u;
+    cpu->tblpag = write ? 0x00fau : 0u;
+    cpu->sr = 0x010fu;
+    cpu->corcon = 0x0020u;
+    cpu->unsupported_opcode = 0u;
+    cpu->last_trap = UINT16_MAX;
+    cpu->address_error = false;
+    cpu->illegal_reset = false;
+    cpu->stop_reason = DSPIC33_RUNNING;
+    cpu->events.count = 0u;
+    cpu->splim_enabled = false;
+    for (reg = 0u; reg < 16u; reg++) {
+        dspic33_set_working_register(cpu, reg, 0x5000u);
+    }
+    dspic33_write_word(cpu, 0x4ffeu, 0xa55au);
+    dspic33_write_word(cpu, 0x5000u, 0xa55au);
+    dspic33_write_word(cpu, 0x5002u, 0xa55au);
+    dspic33_load_program_word(cpu, 0x4ffeu, 0x12ab56u);
+    dspic33_load_program_word(cpu, 0x5000u, 0x12ab56u);
+    dspic33_load_program_word(cpu, 0x5002u, 0x12ab56u);
+}
+
+static void run_legal_table_encoding_case(ProcessorConformance* state, Dspic33* cpu,
+                                          uint32_t opcode) {
+    bool write = (opcode & 0x010000u) != 0u;
+    bool matches;
+
+    prepare_table_encoding_case(cpu, write);
+    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+              dspic33_step(cpu) != DSPIC33_UNSUPPORTED_INSTRUCTION &&
+              cpu->unsupported_opcode == 0u && !cpu->illegal_reset;
+    expect_dsp_matrix_case(state, matches, opcode, "legal table encoding");
+}
+
+static void table_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu) {
+    uint32_t fields;
+    uint32_t legal = 0u;
+    uint32_t illegal = 0u;
+
+    for (fields = 0u; fields < 0x20000u; fields++) {
+        uint32_t opcode = 0xba0000u | fields;
+        if (documented_table_encoding_valid(opcode)) {
+            run_legal_table_encoding_case(state, cpu, opcode);
+            legal++;
+        } else {
+            run_invalid_binary_matrix_case(state, cpu, opcode);
+            illegal++;
+        }
+    }
+    expect(state, legal == 61440u, "table legal encoding matrix is exhaustive");
+    expect(state, illegal == 69632u, "table illegal encoding matrix is exhaustive");
+}
+
+static void table_value_cases(ProcessorConformance* state, Dspic33* cpu) {
+    uint8_t high;
+    uint8_t byte_mode;
+    uint8_t odd;
+
+    for (high = 0u; high < 2u; high++) {
+        for (byte_mode = 0u; byte_mode < 2u; byte_mode++) {
+            for (odd = 0u; odd < 2u; odd++) {
+                uint32_t opcode = 0xba0000u | ((uint32_t)high << 15u) |
+                                  ((uint32_t)byte_mode << 14u) | ((uint32_t)3u << 7u) |
+                                  0x0012u;
+                uint16_t expected = high != 0u ? 0x0012u : 0xab56u;
+                bool matches;
+
+                reset_processor_conformance(cpu, 0u);
+                load_instruction(state, cpu, 0u, opcode);
+                load_instruction(state, cpu, 0x0200u, 0x12ab56u);
+                cpu->tblpag = 0u;
+                dspic33_set_working_register(cpu, 2u, (uint16_t)(0x0200u + odd));
+                dspic33_set_working_register(cpu, 3u, 0xa500u);
+                if (byte_mode != 0u) {
+                    expected = high != 0u ? (odd != 0u ? 0u : 0x0012u)
+                                          : (odd != 0u ? 0x00abu : 0x0056u);
+                    expected |= 0xa500u;
+                }
+                matches = dspic33_step(cpu) == DSPIC33_RUNNING &&
+                          cpu->w[2] == (uint16_t)(0x0200u + odd) &&
+                          cpu->w[3] == expected && cpu->sr == 0u && cpu->cycles == 5u &&
+                          !cpu->illegal_reset;
+                expect_dsp_matrix_case(state, matches, opcode,
+                                       "table read value and byte selection");
+
+                opcode = 0xbb0000u | ((uint32_t)high << 15u) |
+                         ((uint32_t)byte_mode << 14u) | ((uint32_t)1u << 11u) |
+                         ((uint32_t)3u << 7u) | 2u;
+                reset_processor_conformance(cpu, 0u);
+                load_instruction(state, cpu, 0u, opcode);
+                cpu->tblpag = 0x00fau;
+                dspic33_set_working_register(cpu, 2u, 0xa5c3u);
+                dspic33_set_working_register(cpu, 3u, odd);
+                matches = dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 2u &&
+                          !cpu->illegal_reset;
+                expected = 0xffffu;
+                if (high != 0u) {
+                    matches =
+                        matches && ((cpu->write_latches[0] >> 16u) & 0xffu) ==
+                                       (byte_mode != 0u && odd != 0u ? 0xffu : 0xc3u);
+                } else {
+                    expected = byte_mode == 0u ? 0xa5c3u
+                               : odd != 0u     ? 0xc3ffu
+                                               : 0xffc3u;
+                    matches = matches && (cpu->write_latches[0] & 0xffffu) == expected;
+                }
+                expect_dsp_matrix_case(state, matches, opcode,
+                                       "table write latch and byte selection");
+            }
+        }
+    }
+}
+
+static void table_operand_lifecycle_cases(ProcessorConformance* state, Dspic33* cpu) {
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, 0xbb0982u);
+    dspic33_set_working_register(cpu, 2u, 0xa55au);
+    cpu->w[3] = 0x5000u;
+    cpu->initialized_working_registers &= (uint16_t)~0x0008u;
+    expect_illegal_reset(state, cpu,
+                         "table write uninitialized destination resets processor");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, 0xbb0992u);
+    cpu->w[2] = 0x5000u;
+    dspic33_set_working_register(cpu, 3u, 0u);
+    cpu->initialized_working_registers &= (uint16_t)~0x0004u;
+    expect_illegal_reset(state, cpu,
+                         "table write uninitialized source resets processor");
+}
+
 static void general_arithmetic_encoding_matrix_cases(ProcessorConformance* state,
                                                      Dspic33* cpu) {
     static const uint32_t bases[6] = {0x100000u, 0x180000u, 0x400000u,
@@ -10699,6 +10844,9 @@ int main(void) {
         bit_encoding_matrix_cases(&state, &cpu);
         direct_file_bit_value_cases(&state, &cpu);
         bit_operand_lifecycle_cases(&state, &cpu);
+        table_encoding_matrix_cases(&state, &cpu);
+        table_value_cases(&state, &cpu);
+        table_operand_lifecycle_cases(&state, &cpu);
         arithmetic_encoding_matrix_cases(&state, &cpu);
         shift_encoding_matrix_cases(&state, &cpu);
         byte_extension_encoding_matrix_cases(&state, &cpu);

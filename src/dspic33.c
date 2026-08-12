@@ -2004,6 +2004,15 @@ static bool bit_encoding_valid(uint32_t opcode) {
     return (opcode & 0x000f80u) == 0u;
 }
 
+static bool table_encoding_valid(uint32_t opcode) {
+    bool write = (opcode & 0x010000u) != 0u;
+    uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
+    uint8_t destination_mode = (uint8_t)((opcode >> 11u) & 0x07u);
+
+    return write ? source_mode < 6u && destination_mode >= 1u && destination_mode < 6u
+                 : source_mode >= 1u && source_mode < 6u && destination_mode < 6u;
+}
+
 static void push_program_counter(Dspic33* cpu, uint32_t address) {
     uint16_t low = (uint16_t)(address & 0xfffeu);
     low |= (uint16_t)((cpu->corcon >> 2u) & 1u);
@@ -3466,6 +3475,10 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         return execute_move_double(cpu, opcode);
     }
     if ((opcode & 0xfe0000u) == 0xba0000u) {
+        if (!table_encoding_valid(opcode)) {
+            perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+            return true;
+        }
         return execute_table(cpu, opcode);
     }
     if ((opcode & 0xf00000u) == 0xa00000u) {
