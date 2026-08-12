@@ -555,6 +555,7 @@ enum {
     CAN_EVENT_ACK_START = 13u,
     CAN_EVENT_ACK_FINISH = 14u,
     CAN_EVENT_TRANSMIT_RETRY = 15u,
+    CAN_EVENT_TRANSMIT_ERROR_START = 16u,
     CAN_EVENT_TRANSMIT_ERROR = 0x00000100u,
     CAN_EVENT_PIN_HIGH = 0x00000200u,
     CAN_EVENT_ERROR_COUNT_SHIFT = 16u,
@@ -10992,6 +10993,7 @@ static bool can_serial_receive_enabled(const Dspic33* cpu, uint8_t channel) {
 }
 
 static void can_remove_transmit_events(Dspic33* cpu, uint8_t channel);
+static void can_error_event(Dspic33* cpu, uint8_t channel, uint32_t value);
 
 static void can_lose_arbitration(Dspic33* cpu, uint8_t channel) {
     uint8_t bit = (uint8_t)(1u << channel);
@@ -11004,9 +11006,31 @@ static void can_lose_arbitration(Dspic33* cpu, uint8_t channel) {
     cpu->io.can_tx_retry_wait |= bit;
 }
 
+static void can_transmit_error(Dspic33* cpu, uint8_t channel) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    uint8_t buffer = cpu->io.can_tx_buffer[channel];
+    uint16_t control = can_buffer_control(cpu, channel, buffer);
+    uint64_t remaining = can_bit_cycles(cpu, channel) - can_sample_cycles(cpu, channel);
+    can_set_buffer_control(cpu, channel, buffer,
+                           (uint16_t)(control | CAN_BUFFER_ERROR));
+    can_remove_transmit_events(cpu, channel);
+    cpu->io.can_tx_on_bus &= (uint8_t)~bit;
+    cpu->io.can_tx_busy &= (uint8_t)~bit;
+    cpu->io.can_tx_retry_wait |= bit;
+    cpu->io.can_rx_serial_active &= (uint8_t)~bit;
+    can_error_event(cpu, channel,
+                    CAN_EVENT_ERROR | CAN_EVENT_TRANSMIT_ERROR |
+                        (8u << CAN_EVENT_ERROR_COUNT_SHIFT));
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel,
+                          CAN_EVENT_TRANSMIT_ERROR_START, remaining)) {
+        cpu->io.can_tx_retry_wait &= (uint8_t)~bit;
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    }
+}
+
 static void can_monitor_transmit_sample(Dspic33* cpu, uint8_t channel, bool bus_high) {
     uint8_t bit = (uint8_t)(1u << channel);
-    if ((cpu->io.can_tx_on_bus & bit) == 0u || bus_high) {
+    if ((cpu->io.can_tx_on_bus & bit) == 0u) {
         return;
     }
     Dspic33CanFrame frame = can_decode_frame(cpu->io.can_tx_words[channel]);
@@ -11016,7 +11040,11 @@ static void can_monitor_transmit_sample(Dspic33* cpu, uint8_t channel, bool bus_
     uint16_t index = (uint16_t)(elapsed / bit_cycles);
     uint16_t count = can_frame_bits(&frame, bits);
     if (index < count && index < can_arbitration_bit_count(&frame) && bits[index]) {
-        can_lose_arbitration(cpu, channel);
+        if (!bus_high) {
+            can_lose_arbitration(cpu, channel);
+        }
+    } else if (index == count - 12u && bus_high) {
+        can_transmit_error(cpu, channel);
     }
 }
 
@@ -11362,8 +11390,25 @@ static void can_transmit_finish(Dspic33* cpu, uint8_t channel) {
 }
 
 static void can_transmit_retry(Dspic33* cpu, uint8_t channel) {
-    cpu->io.can_tx_retry_wait &= (uint8_t)~(uint8_t)(1u << channel);
+    uint8_t bit = (uint8_t)(1u << channel);
+    cpu->io.can_tx_error_active &= (uint8_t)~bit;
+    cpu->io.can_tx_retry_wait &= (uint8_t)~bit;
     can_transmit_start(cpu, channel);
+}
+
+static void can_transmit_error_start(Dspic33* cpu, uint8_t channel) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    if ((cpu->io.can_tx_retry_wait & bit) == 0u) {
+        return;
+    }
+    cpu->io.can_tx_error_active |= bit;
+    cpu->io.can_tx_error_start_cycle[channel] = cpu->device_cycles;
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_RETRY,
+                          17u * can_bit_cycles(cpu, channel))) {
+        cpu->io.can_tx_error_active &= (uint8_t)~bit;
+        cpu->io.can_tx_retry_wait &= (uint8_t)~bit;
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    }
 }
 
 static void can_error_event(Dspic33* cpu, uint8_t channel, uint32_t value) {
@@ -11449,6 +11494,9 @@ static void run_can(Dspic33* cpu, uint8_t channel, uint32_t value) {
         break;
     case CAN_EVENT_TRANSMIT_RETRY:
         can_transmit_retry(cpu, channel);
+        break;
+    case CAN_EVENT_TRANSMIT_ERROR_START:
+        can_transmit_error_start(cpu, channel);
         break;
     case CAN_EVENT_ERROR:
         can_error_event(cpu, channel, value);
@@ -14102,7 +14150,8 @@ static void can_remove_transmit_events(Dspic33* cpu, uint8_t channel) {
             (kind != CAN_EVENT_TRANSMIT_START && kind != CAN_EVENT_TRANSMIT_WORD &&
              kind != CAN_EVENT_TRANSMIT_FINISH &&
              kind != CAN_EVENT_TRANSMIT_BUS_FINISH &&
-             kind != CAN_EVENT_TRANSMIT_RETRY)) {
+             kind != CAN_EVENT_TRANSMIT_RETRY &&
+             kind != CAN_EVENT_TRANSMIT_ERROR_START)) {
             cpu->events.items[destination++] = *event;
         }
     }
@@ -14127,6 +14176,7 @@ static void can_abort_transmissions(Dspic33* cpu, uint8_t channel) {
     cpu->io.can_tx_on_bus &= (uint8_t)~(uint8_t)(1u << channel);
     cpu->io.can_tx_busy &= (uint8_t)~(uint8_t)(1u << channel);
     cpu->io.can_tx_retry_wait &= (uint8_t)~(uint8_t)(1u << channel);
+    cpu->io.can_tx_error_active &= (uint8_t)~(uint8_t)(1u << channel);
 }
 
 static void can_clear_receive_flags(Dspic33* cpu, uint8_t channel, uint16_t address,
@@ -14181,6 +14231,7 @@ static void can_update_transmit_control(Dspic33* cpu, uint8_t channel, uint16_t 
                 cpu->io.can_tx_on_bus &= (uint8_t)~(uint8_t)(1u << channel);
                 cpu->io.can_tx_busy &= (uint8_t)~(uint8_t)(1u << channel);
                 cpu->io.can_tx_retry_wait &= (uint8_t)~(uint8_t)(1u << channel);
+                cpu->io.can_tx_error_active &= (uint8_t)~(uint8_t)(1u << channel);
                 dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel,
                                  CAN_EVENT_TRANSMIT_START, 0u);
             }
@@ -15918,6 +15969,13 @@ bool dspic33_can_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
         return false;
     }
     *high = true;
+    if ((cpu->io.can_tx_error_active & (uint8_t)(1u << channel)) != 0u) {
+        uint64_t index =
+            (cpu->device_cycles - cpu->io.can_tx_error_start_cycle[channel]) /
+            can_bit_cycles(cpu, channel);
+        *high = index >= 6u;
+        return true;
+    }
     if ((cpu->io.can_rx_ack & (uint8_t)(1u << channel)) != 0u) {
         *high = false;
         return true;

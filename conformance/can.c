@@ -1252,7 +1252,7 @@ static bool bridge_can_pins(Dspic33* cpu, uint8_t transmit_channel, uint8_t pin,
         if (bit == corrupt_bit) {
             high = !high;
         }
-        if (!dspic33_can_input_pin(cpu, pin, high, 0u) ||
+        if (!dspic33_can_input_pin(cpu, pin, high && acknowledge_high, 0u) ||
             !dspic33_device_advance(cpu, bit_cycles)) {
             return false;
         }
@@ -1413,6 +1413,98 @@ static void arbitration_cases(CanConformance* state, Dspic33* cpu) {
     dspic33_destroy(&winner);
 }
 
+static bool drive_unacknowledged_can_frame(Dspic33* cpu, uint8_t channel,
+                                           uint8_t transmit_pin, uint8_t receive_pin,
+                                           uint64_t bit_cycles) {
+    uint16_t count = 0u;
+    while ((cpu->io.can_tx_on_bus & (uint8_t)(1u << channel)) != 0u && count < 160u) {
+        bool high;
+        if (!dspic33_can_pin(cpu, transmit_pin, &high) ||
+            !dspic33_can_input_pin(cpu, receive_pin, high, 0u) ||
+            !dspic33_device_advance(cpu, bit_cycles)) {
+            return false;
+        }
+        count++;
+    }
+    return count != 0u && count < 160u;
+}
+
+static void acknowledge_error_cases(CanConformance* state, Dspic33* cpu) {
+    for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint16_t base = bases[channel];
+        uint32_t memory = (uint32_t)(0xdc00u + channel * 0x100u);
+        uint8_t function = (uint8_t)(14u + channel);
+        Dspic33CanFrame output;
+        bool high;
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+        dspic33_write_word(cpu, 0x0e3eu, 0u);
+        dspic33_write_word(cpu, 0x0680u, function);
+        dspic33_write_word(cpu, 0x06d4u, channel == 0u ? 65u : (uint16_t)(65u << 8u));
+        configure_transmit(cpu, channel, memory);
+        Dspic33CanFrame input = frame((uint32_t)(0x240u + channel), false, false, 1u,
+                                      (uint8_t)(0xc0u + channel));
+        write_transmit_frame(cpu, memory, &input);
+        select_window(cpu, channel, false);
+        dspic33_write_word(cpu, (uint16_t)(base + 0x10u), 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 0x12u), 0u);
+        set_mode(cpu, channel, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x008bu);
+        expect(state,
+               dspic33_device_advance(cpu, 8u) &&
+                   (cpu->io.can_tx_on_bus & (uint8_t)(1u << channel)) != 0u,
+               "unacknowledged CAN frame reaches the bus");
+        expect(state, drive_unacknowledged_can_frame(cpu, channel, 64u, 65u, 4u),
+               "unacknowledged CAN frame reaches the ACK slot");
+        expect(state,
+               (dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) & 0x0018u) ==
+                       0x0018u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0eu)) >> 8u) == 8u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 1u) == 0u &&
+                   (cpu->io.can_tx_error_active & (uint8_t)(1u << channel)) != 0u &&
+                   !dspic33_can_transmit(cpu, channel, &output),
+               "missing CAN ACK sets TXERR and TEC without completing transmission");
+        expect(state, dspic33_can_pin(cpu, 64u, &high) && !high,
+               "CAN acknowledge error emits an active error flag");
+        if (channel == 0u) {
+            Dspic33 copy;
+            bool copy_high;
+            expect(state, dspic33_initialize(&copy), "initialize CAN error-frame copy");
+            expect(state,
+                   dspic33_copy(&copy, cpu) && copy.io.can_tx_error_active == 1u &&
+                       copy.io.can_tx_error_start_cycle[0] ==
+                           cpu->io.can_tx_error_start_cycle[0],
+                   "copy preserves active CAN error-frame phase");
+            expect(state,
+                   dspic33_device_advance(cpu, 24u) &&
+                       dspic33_device_advance(&copy, 24u) &&
+                       dspic33_can_pin(cpu, 64u, &high) && high &&
+                       dspic33_can_pin(&copy, 64u, &copy_high) && copy_high &&
+                       copy.io.can_tx_error_active == 1u,
+                   "copied CAN error frames enter the recessive delimiter together");
+            dspic33_destroy(&copy);
+        } else {
+            expect(state,
+                   dspic33_device_advance(cpu, 24u) &&
+                       dspic33_can_pin(cpu, 64u, &high) && high &&
+                       (cpu->io.can_tx_error_active & (uint8_t)(1u << channel)) != 0u,
+                   "CAN active error flag is followed by a recessive delimiter");
+        }
+        expect(
+            state,
+            dspic33_device_advance(cpu, 52u) &&
+                (cpu->io.can_tx_error_active & (uint8_t)(1u << channel)) == 0u &&
+                (cpu->io.can_tx_on_bus & (uint8_t)(1u << channel)) != 0u,
+            "unacknowledged CAN transmission automatically retries after intermission");
+        dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x0093u);
+        expect(state,
+               (cpu->io.can_tx_busy & (uint8_t)(1u << channel)) == 0u &&
+                   (cpu->io.can_tx_retry_wait & (uint8_t)(1u << channel)) == 0u &&
+                   dspic33_can_pin(cpu, 64u, &high) && high,
+               "aborting a retried CAN frame clears error-bus state");
+    }
+}
+
 static void receive_pps_cases(CanConformance* state, Dspic33* cpu) {
     expect(state, !dspic33_can_input_pin(cpu, 63u, true, 0u),
            "CAN input rejects non-remappable pin");
@@ -1431,8 +1523,7 @@ static void receive_pps_cases(CanConformance* state, Dspic33* cpu) {
         dspic33_write_word(cpu, 0x0e30u, 0xffffu);
         dspic33_write_word(cpu, 0x0e3eu, 0u);
         dspic33_write_word(cpu, 0x0680u, 0x0f0eu);
-        dspic33_write_word(cpu, 0x06d4u,
-                           receive_channel == 0u ? pin : (uint16_t)(pin << 8u));
+        dspic33_write_word(cpu, 0x06d4u, (uint16_t)(pin | ((uint16_t)pin << 8u)));
         configure_receive(cpu, receive_channel, receive_memory, 4u, 0u);
         configure_filter(cpu, receive_channel, 0u, input.identifier, input.extended,
                          input.extended ? 0x1fffffffu : 0x7ffu, true, 0u, 0u);
@@ -1473,8 +1564,13 @@ static void receive_pps_cases(CanConformance* state, Dspic33* cpu) {
                    (uint8_t)(memory_word(cpu, receive_memory + 6u) >> 8u) ==
                        input.data[1],
                "CAN PPS receiver preserves header and payload bits");
-        expect(state, acknowledge_observed,
-               "CAN PPS receiver drives the acknowledge slot dominant");
+        expect(
+            state,
+            acknowledge_observed &&
+                (dspic33_read_word(cpu, (uint16_t)(transmit_base + 0x30u)) & 0x0010u) ==
+                    0u &&
+                (dspic33_read_word(cpu, (uint16_t)(transmit_base + 0x0eu)) >> 8u) == 0u,
+            "CAN PPS receiver drives the acknowledge slot dominant");
     }
 
     dspic33_reset(cpu, 0u);
@@ -2108,7 +2204,8 @@ static void copy_and_reset_cases(CanConformance* state, Dspic33* cpu) {
                cpu->io.can_rx_busy == 0u && cpu->io.can_tx_busy == 0u &&
                cpu->io.can_rx_serial_active == 0u &&
                cpu->io.can_rx_serial_count[0] == 0u && cpu->io.can_rx_pin_high == 3u &&
-               cpu->io.can_rx_ack == 0u && cpu->io.can_tx_retry_wait == 0u,
+               cpu->io.can_rx_ack == 0u && cpu->io.can_tx_retry_wait == 0u &&
+               cpu->io.can_tx_error_active == 0u,
            "reset clears CAN runtime");
 }
 
@@ -2143,6 +2240,7 @@ int main(void) {
     receive_pps_cases(&state, &cpu);
     arbitration_field_cases(&state, &cpu);
     arbitration_cases(&state, &cpu);
+    acknowledge_error_cases(&state, &cpu);
     receive_pps_qualification_cases(&state, &cpu);
     priority_and_abort_cases(&state, &cpu);
     mode_and_power_cases(&state, &cpu);
@@ -2150,7 +2248,7 @@ int main(void) {
     interrupt_and_error_cases(&state, &cpu);
     invalid_message_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
-    expect(&state, state.cases == 1462636u, "CAN assertion accounting");
+    expect(&state, state.cases == 1462652u, "CAN assertion accounting");
     report_sfr_side_effect_coverage(
         "can", can_sfr_side_effect_coverage,
         SFR_SIDE_EFFECT_COVERAGE_COUNT(can_sfr_side_effect_coverage),

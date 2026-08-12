@@ -543,6 +543,8 @@ typedef struct {
     uint8_t can_tx_busy;
     uint8_t can_tx_on_bus;
     uint8_t can_tx_retry_wait;
+    uint8_t can_tx_error_active;
+    uint64_t can_tx_error_start_cycle[DSPIC33_CAN_COUNT];
     uint16_t adc[DSPIC33_ADC_CHANNEL_COUNT];
     uint16_t adc_latched[DSPIC33_ADC_COUNT][4];
     uint16_t adc_generation[DSPIC33_ADC_COUNT];
