@@ -3218,6 +3218,10 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
         return true;
     }
+    if ((opcode & 0xfff000u) == 0xfd4000u && (opcode & 0xfffff0u) != 0xfd4000u) {
+        perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+        return true;
+    }
     if (!stack_encoding_valid(opcode)) {
         perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
         return true;

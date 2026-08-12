@@ -6689,6 +6689,71 @@ static void divide_encoding_matrix_cases(ProcessorConformance* state, Dspic33* c
     expect(state, illegal == 130144u, "divide illegal encoding matrix is exhaustive");
 }
 
+static uint16_t decimal_adjust_reference(uint16_t value, uint16_t status, bool* carry) {
+    uint16_t adjusted = (uint8_t)value;
+
+    if ((adjusted & 0x000fu) > 9u || (status & 0x0100u) != 0u) {
+        adjusted += 6u;
+    }
+    if (adjusted > 0x009fu || (status & 0x0001u) != 0u) {
+        adjusted += 0x0060u;
+    }
+    *carry = (status & 0x0001u) != 0u || adjusted > 0x00ffu;
+    return (uint16_t)((value & 0xff00u) | (adjusted & 0x00ffu));
+}
+
+static void decimal_adjust_cases(ProcessorConformance* state, Dspic33* cpu) {
+    uint32_t cases = 0u;
+    uint32_t invalid = 0u;
+    uint32_t opcode;
+    uint16_t value;
+    uint16_t status_inputs;
+    uint8_t destination;
+
+    for (destination = 0u; destination < 16u; destination++) {
+        for (status_inputs = 0u; status_inputs < 4u; status_inputs++) {
+            uint16_t status =
+                (uint16_t)(0x000eu | ((status_inputs & 1u) != 0u ? 1u : 0u) |
+                           ((status_inputs & 2u) != 0u ? 0x0100u : 0u));
+            for (value = 0u; value <= UINT8_MAX; value++) {
+                bool carry;
+                opcode = 0xfd4000u | destination;
+                uint16_t initial = (uint16_t)(0xa500u | value);
+                uint16_t expected = decimal_adjust_reference(initial, status, &carry);
+                uint16_t expected_status =
+                    (uint16_t)((status & ~1u) | (carry ? 1u : 0u));
+                if (destination == 15u) {
+                    expected &= 0xfffeu;
+                }
+                bool matches;
+
+                reset_processor_conformance(cpu, 0x0200u);
+                cpu->sr = status;
+                dspic33_set_working_register(cpu, destination, initial);
+                matches = dspic33_load_program_word(cpu, 0x0200u, opcode) &&
+                          dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0202u &&
+                          cpu->cycles == 1u && cpu->w[destination] == expected &&
+                          cpu->sr == expected_status && !cpu->illegal_reset &&
+                          cpu->unsupported_opcode == 0u;
+                expect_dsp_matrix_case(state, matches, opcode,
+                                       "decimal adjust value and flags");
+                cases++;
+            }
+        }
+    }
+    expect(state, cases == 16384u,
+           "decimal adjust matrix covers every byte, flag and register");
+
+    for (opcode = 0xfd4000u; opcode <= 0xfd4fffu; opcode++) {
+        if ((opcode & 0xfffff0u) != 0xfd4000u) {
+            run_invalid_binary_matrix_case(state, cpu, opcode);
+            invalid++;
+        }
+    }
+    expect(state, invalid == 4080u,
+           "decimal adjust illegal encoding matrix is exhaustive");
+}
+
 static void general_arithmetic_encoding_matrix_cases(ProcessorConformance* state,
                                                      Dspic33* cpu) {
     static const uint32_t bases[6] = {0x100000u, 0x180000u, 0x400000u,
@@ -11111,6 +11176,7 @@ int main(void) {
         system_encoding_matrix_cases(&state, &cpu);
         system_control_value_cases(&state, &cpu);
         divide_encoding_matrix_cases(&state, &cpu);
+        decimal_adjust_cases(&state, &cpu);
         arithmetic_encoding_matrix_cases(&state, &cpu);
         shift_encoding_matrix_cases(&state, &cpu);
         byte_extension_encoding_matrix_cases(&state, &cpu);
