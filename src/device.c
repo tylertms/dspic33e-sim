@@ -480,6 +480,7 @@ enum {
     SPI_TX_FULL = 0x0002u,
     SPI_RX_FULL = 0x0001u,
     SPI_DISABLE_CLOCK = 0x1000u,
+    SPI_DISABLE_OUTPUT = 0x0800u,
     SPI_MODE_16 = 0x0400u,
     SPI_SAMPLE_END = 0x0200u,
     SPI_MASTER = 0x0020u,
@@ -8512,9 +8513,11 @@ static void spi_start_next(Dspic33* cpu, uint8_t channel) {
     cpu->io.spi_busy |= bit;
     cpu->io.spi_shift[channel] = value;
     spi_begin_frame(cpu, channel);
-    byte_queue_push(&cpu->io.spi_tx[channel], (uint8_t)value);
-    if ((control & SPI_MODE_16) != 0u) {
-        byte_queue_push(&cpu->io.spi_tx[channel], (uint8_t)(value >> 8u));
+    if ((control & SPI_DISABLE_OUTPUT) == 0u) {
+        byte_queue_push(&cpu->io.spi_tx[channel], (uint8_t)value);
+        if ((control & SPI_MODE_16) != 0u) {
+            byte_queue_push(&cpu->io.spi_tx[channel], (uint8_t)(value >> 8u));
+        }
     }
     spi_refresh_status(cpu, channel);
     if (spi_enhanced(cpu, channel)) {

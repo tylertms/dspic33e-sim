@@ -171,6 +171,53 @@ static void transmit_output_cases(SpiConformance* state, Dspic33* cpu) {
            "transmit output rejects invalid requests");
 }
 
+static void receive_only_cases(SpiConformance* state, Dspic33* cpu) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
+        uint8_t master;
+        for (master = 0u; master < 2u; master++) {
+            uint8_t mode16;
+            for (mode16 = 0u; mode16 < 2u; mode16++) {
+                uint16_t base = bases[channel];
+                uint16_t control = (uint16_t)(0x081bu | ((uint16_t)master << 5u) |
+                                              ((uint16_t)mode16 << 10u));
+                uint16_t received = (uint16_t)(0xd500u | ((uint16_t)channel << 4u) |
+                                               ((uint16_t)master << 3u) | mode16);
+                uint16_t expected = mode16 != 0u ? received : received & 0x00ffu;
+                uint64_t cycles = master != 0u ? transfer_cycles(control) : 1u;
+                uint8_t value;
+                bool scheduled;
+
+                dspic33_reset(cpu, 0u);
+                configure_spi(cpu, channel, control, 0u, 0u);
+                scheduled = dspic33_spi_receive(cpu, channel, received, cycles);
+                dspic33_write_word(cpu, (uint16_t)(base + 8u), 0xa55au);
+                expect(state,
+                       cpu->io.spi_tx[channel].count == 0u &&
+                           !dspic33_spi_transmit(cpu, channel, &value),
+                       "receive-only suppresses serial output");
+                expect(state, scheduled && dspic33_device_advance(cpu, cycles),
+                       "receive-only transfer completes");
+                expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == expected,
+                       "receive-only retains input");
+                expect(state, interrupt_flag(cpu, irqs[channel]),
+                       "receive-only raises transfer interrupt");
+                expect(state, cpu->io.spi_tx[channel].count == 0u,
+                       "receive-only transfer emits no output");
+
+                clear_interrupt(cpu, irqs[channel]);
+                dspic33_write_word(cpu, (uint16_t)(base + 2u),
+                                   (uint16_t)(control & ~0x0800u));
+                dspic33_write_word(cpu, (uint16_t)(base + 8u), 0x5aa5u);
+                expect(state,
+                       dspic33_spi_transmit(cpu, channel, &value) && value == 0xa5u &&
+                           cpu->io.spi_tx[channel].count == (mode16 != 0u ? 1u : 0u),
+                       "serial output resumes after receive-only mode");
+            }
+        }
+    }
+}
+
 static void timing_matrix_cases(SpiConformance* state, Dspic33* cpu) {
     uint8_t channel;
     uint8_t mode16;
@@ -866,6 +913,7 @@ int main(void) {
         register_cases(&state, &cpu);
         split_buffer_cases(&state, &cpu);
         transmit_output_cases(&state, &cpu);
+        receive_only_cases(&state, &cpu);
         timing_matrix_cases(&state, &cpu);
         standard_buffer_cases(&state, &cpu);
         enhanced_fifo_cases(&state, &cpu);
@@ -878,7 +926,7 @@ int main(void) {
         dma_cases(&state, &cpu);
         copy_and_reset_cases(&state, &cpu, &copy);
     }
-    expect(&state, state.cases == 2728u, "SPI assertion accounting");
+    expect(&state, state.cases == 2824u, "SPI assertion accounting");
     if (copy_initialized) {
         dspic33_destroy(&copy);
     }
