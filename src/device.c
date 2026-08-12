@@ -10931,6 +10931,18 @@ static bool usb_write_memory_word(Dspic33* cpu, uint32_t address, uint16_t value
     return true;
 }
 
+static void usb_refresh_activity_pending(Dspic33* cpu) {
+    uint16_t power = raw_word(cpu, USB_PWRC);
+    bool pending = raw_word(cpu, USB_IR) != 0u || raw_word(cpu, USB_EIR) != 0u ||
+                   raw_word(cpu, USB_OTGIR) != 0u;
+    if ((power & USB_SLEEP_GUARD) != 0u && pending) {
+        power |= USB_ACTIVITY_PENDING;
+    } else {
+        power &= (uint16_t)~USB_ACTIVITY_PENDING;
+    }
+    raw_write_word(cpu, USB_PWRC, power);
+}
+
 static bool usb_descriptor(const Dspic33* cpu, uint8_t endpoint, uint8_t direction,
                            uint8_t bank, uint16_t words[4]) {
     uint32_t address = usb_descriptor_address(cpu, endpoint, direction, bank);
@@ -10964,6 +10976,7 @@ static void usb_refresh_interrupt(Dspic33* cpu) {
         interrupts &= (uint16_t)~USB_ERROR_INTERRUPT;
     }
     raw_write_word(cpu, USB_IR, interrupts);
+    usb_refresh_activity_pending(cpu);
     if ((interrupts & raw_word(cpu, USB_IE)) != 0u ||
         (raw_word(cpu, USB_OTGIR) & raw_word(cpu, USB_OTGIE)) != 0u) {
         dspic33_raise_interrupt(cpu, USB_IRQ);
@@ -13431,6 +13444,7 @@ static void update_usb_register(Dspic33* cpu, uint16_t address, uint16_t previou
         if ((previous & USB_POWER) != 0u && (current & USB_POWER) == 0u) {
             usb_reset_registers(cpu);
         } else {
+            usb_refresh_activity_pending(cpu);
             usb_update_power_state(cpu);
         }
         return;

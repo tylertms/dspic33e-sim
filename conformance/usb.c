@@ -696,6 +696,63 @@ static void idle_rearm_cases(UsbConformance* state, Dspic33* cpu) {
     }
 }
 
+static void sleep_guard_cases(UsbConformance* state, Dspic33* cpu) {
+    configure_device(cpu);
+    dspic33_write_word(cpu, PWRC, 0x0091u);
+    expect(state, dspic33_read_word(cpu, PWRC) == 0x0011u,
+           "USB activity pending is hardware controlled");
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_SOF, 1u, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               (dspic33_read_word(cpu, PWRC) & 0x0080u) != 0u,
+           "USB notification sets guarded activity pending");
+    dspic33_write_word(cpu, PWRC, 0x0011u);
+    expect(state, (dspic33_read_word(cpu, PWRC) & 0x0080u) != 0u,
+           "software cannot clear guarded activity pending");
+    dspic33_write_word(cpu, IR, 0x0004u);
+    expect(state, (dspic33_read_word(cpu, PWRC) & 0x0080u) == 0u,
+           "clearing USB notification clears activity pending");
+
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_ERROR, 1u, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               (dspic33_read_word(cpu, PWRC) & 0x0080u) != 0u,
+           "USB error notification sets activity pending");
+    dspic33_write_word(cpu, EIR, 1u);
+    expect(state, (dspic33_read_word(cpu, PWRC) & 0x0080u) == 0u,
+           "clearing USB error notification clears activity pending");
+
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_OTG_STATE, 1u, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               (dspic33_read_word(cpu, PWRC) & 0x0080u) != 0u,
+           "USB OTG notification sets activity pending");
+    dspic33_write_word(cpu, PWRC, 1u);
+    expect(state,
+           (dspic33_read_word(cpu, PWRC) & 0x0080u) == 0u &&
+               dspic33_read_word(cpu, OTGIR) != 0u,
+           "clearing sleep guard clears activity pending");
+    dspic33_write_word(cpu, PWRC, 0x0011u);
+    expect(state, (dspic33_read_word(cpu, PWRC) & 0x0080u) != 0u,
+           "setting sleep guard detects an existing notification");
+    dspic33_write_word(cpu, OTGIR, 0x00fdu);
+    expect(state, (dspic33_read_word(cpu, PWRC) & 0x0080u) == 0u,
+           "clearing OTG notification clears activity pending");
+
+    configure_device(cpu);
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_IDLE, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               (dspic33_read_word(cpu, PWRC) & 0x0080u) == 0u,
+           "USB notification does not set activity pending without guard");
+    dspic33_write_word(cpu, PWRC, 0x0011u);
+    expect(state, (dspic33_read_word(cpu, PWRC) & 0x0080u) != 0u,
+           "sleep guard observes a prior USB notification");
+    dspic33_reset(cpu, 0u);
+    expect(state, dspic33_read_word(cpu, PWRC) == 0u,
+           "USB reset clears sleep guard activity state");
+}
+
 static void host_interrupt_cases(UsbConformance* state, Dspic33* cpu) {
     Dspic33UsbPacket packet;
     uint8_t data[8] = {0u};
@@ -1284,6 +1341,7 @@ int main(void) {
     bus_access_error_cases(&state, &cpu);
     interrupt_and_bus_cases(&state, &cpu);
     idle_rearm_cases(&state, &cpu);
+    sleep_guard_cases(&state, &cpu);
     host_interrupt_cases(&state, &cpu);
     host_cases(&state, &cpu);
     pmd_cases(&state, &cpu);
