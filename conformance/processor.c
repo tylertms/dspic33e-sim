@@ -6429,6 +6429,132 @@ static void table_operand_lifecycle_cases(ProcessorConformance* state, Dspic33* 
                          "table write uninitialized source resets processor");
 }
 
+static bool documented_system_encoding_valid(uint32_t opcode) {
+    uint8_t family = (uint8_t)(opcode >> 16u);
+
+    if (family == 0xfcu) {
+        return (opcode & 0x00c000u) == 0u;
+    }
+    if (family != 0xfeu) {
+        return true;
+    }
+    if (opcode == 0xfe0000u || opcode == 0xfe2000u ||
+        (opcode & 0xfffffeu) == 0xfe4000u || opcode == 0xfe6000u ||
+        opcode == 0xfe8000u || opcode == 0xfea000u) {
+        return true;
+    }
+    if ((opcode & 0xfff000u) == 0xfec000u) {
+        return ((opcode >> 10u) & 3u) != 3u;
+    }
+    return (opcode & 0xfff000u) == 0xfed000u && (opcode & 0x0003f0u) == 0u &&
+           ((opcode >> 10u) & 3u) != 3u;
+}
+
+static void prepare_system_encoding_case(Dspic33* cpu) {
+    reset_processor_conformance(cpu, 0x0200u);
+    cpu->sr = 0x010fu;
+    cpu->corcon = 0x0020u;
+    dspic33_set_working_register(cpu, 15u, 0x5000u);
+}
+
+static void run_legal_system_encoding_case(ProcessorConformance* state, Dspic33* cpu,
+                                           uint32_t opcode) {
+    bool matches;
+
+    prepare_system_encoding_case(cpu);
+    matches = dspic33_load_program_word(cpu, 0x0200u, opcode) &&
+              dspic33_step(cpu) != DSPIC33_UNSUPPORTED_INSTRUCTION &&
+              cpu->unsupported_opcode == 0u && !cpu->illegal_reset;
+    expect_dsp_matrix_case(state, matches, opcode, "legal system encoding");
+}
+
+static void run_illegal_system_encoding_case(ProcessorConformance* state, Dspic33* cpu,
+                                             uint32_t opcode) {
+    uint64_t illegal_resets;
+    bool matches;
+
+    prepare_system_encoding_case(cpu);
+    illegal_resets = cpu->illegal_reset_count;
+    matches = dspic33_load_program_word(cpu, 0x0200u, opcode) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset &&
+              cpu->illegal_reset_count == illegal_resets + 1u && cpu->pc == 0u &&
+              cpu->w[15] == 0x1000u && cpu->initialized_working_registers == 0x8000u &&
+              cpu->last_trap == UINT16_MAX && cpu->unsupported_opcode == 0u;
+    expect_dsp_matrix_case(state, matches, opcode, "illegal system encoding");
+}
+
+static void system_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu) {
+    uint32_t fields;
+    uint32_t legal = 0u;
+    uint32_t illegal = 0u;
+
+    for (fields = 0u; fields <= 0xffffu; fields++) {
+        run_legal_system_encoding_case(state, cpu, fields);
+        legal++;
+        run_legal_system_encoding_case(state, cpu, 0xff0000u | fields);
+        legal++;
+    }
+    for (fields = 0u; fields <= 0xffffu; fields++) {
+        uint32_t opcode = 0xfc0000u | fields;
+        if (documented_system_encoding_valid(opcode)) {
+            run_legal_system_encoding_case(state, cpu, opcode);
+            legal++;
+        } else {
+            run_illegal_system_encoding_case(state, cpu, opcode);
+            illegal++;
+        }
+    }
+    for (fields = 0u; fields <= 0xffffu; fields++) {
+        uint32_t opcode = 0xfe0000u | fields;
+        if (documented_system_encoding_valid(opcode)) {
+            run_legal_system_encoding_case(state, cpu, opcode);
+            legal++;
+        } else {
+            run_illegal_system_encoding_case(state, cpu, opcode);
+            illegal++;
+        }
+    }
+    expect(state, legal == 150583u, "system legal encoding matrix is exhaustive");
+    expect(state, illegal == 111561u, "system illegal encoding matrix is exhaustive");
+}
+
+static void system_control_value_cases(ProcessorConformance* state, Dspic33* cpu) {
+    uint32_t literal;
+
+    for (literal = 0u; literal < 0x4000u; literal++) {
+        uint32_t opcode = 0xfc0000u | literal;
+        uint64_t cycles;
+        bool matches;
+
+        prepare_system_encoding_case(cpu);
+        cpu->disicnt = 0u;
+        cycles = cpu->cycles;
+        matches = dspic33_load_program_word(cpu, 0x0200u, opcode) &&
+                  dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0202u &&
+                  cpu->cycles - cycles == 1u &&
+                  cpu->disicnt == (literal == 0u ? 0u : literal) &&
+                  cpu->sr == 0x010fu && !cpu->illegal_reset;
+        expect_dsp_matrix_case(state, matches, opcode, "DISI literal value");
+    }
+    expect(state, literal == 0x4000u, "DISI value matrix is exhaustive");
+
+    prepare_system_encoding_case(cpu);
+    expect(state,
+           dspic33_load_program_word(cpu, 0x0200u, 0xfe2000u) &&
+               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0202u &&
+               cpu->cycles == 1u && cpu->sr == 0x010fu && cpu->corcon == 0x0020u,
+           "BOOTSWP executes as NOP when dual boot is unavailable");
+
+    prepare_system_encoding_case(cpu);
+    cpu->watchdog.ticks = 123u;
+    cpu->configuration[10u] |= 0x40u;
+    expect(state,
+           dspic33_load_program_word(cpu, 0x0200u, 0xfe6000u) &&
+               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->watchdog.ticks == 0u &&
+               cpu->sr == 0x010fu,
+           "CLRWDT clears watchdog state and preserves status");
+}
+
 static void general_arithmetic_encoding_matrix_cases(ProcessorConformance* state,
                                                      Dspic33* cpu) {
     static const uint32_t bases[6] = {0x100000u, 0x180000u, 0x400000u,
@@ -10847,6 +10973,8 @@ int main(void) {
         table_encoding_matrix_cases(&state, &cpu);
         table_value_cases(&state, &cpu);
         table_operand_lifecycle_cases(&state, &cpu);
+        system_encoding_matrix_cases(&state, &cpu);
+        system_control_value_cases(&state, &cpu);
         arithmetic_encoding_matrix_cases(&state, &cpu);
         shift_encoding_matrix_cases(&state, &cpu);
         byte_extension_encoding_matrix_cases(&state, &cpu);

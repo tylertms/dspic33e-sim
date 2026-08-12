@@ -2013,6 +2013,27 @@ static bool table_encoding_valid(uint32_t opcode) {
                  : source_mode >= 1u && source_mode < 6u && destination_mode < 6u;
 }
 
+static bool system_encoding_valid(uint32_t opcode) {
+    uint8_t family = (uint8_t)(opcode >> 16u);
+
+    if (family == 0xfcu) {
+        return (opcode & 0x00c000u) == 0u;
+    }
+    if (family != 0xfeu) {
+        return true;
+    }
+    if (opcode == 0xfe0000u || opcode == 0xfe2000u ||
+        (opcode & 0xfffffeu) == 0xfe4000u || opcode == 0xfe6000u ||
+        opcode == 0xfe8000u || opcode == 0xfea000u) {
+        return true;
+    }
+    if ((opcode & 0xfff000u) == 0xfec000u) {
+        return ((opcode >> 10u) & 3u) != 3u;
+    }
+    return (opcode & 0xfff000u) == 0xfed000u && (opcode & 0x0003f0u) == 0u &&
+           ((opcode >> 10u) & 3u) != 3u;
+}
+
 static void push_program_counter(Dspic33* cpu, uint32_t address) {
     uint16_t low = (uint16_t)(address & 0xfffeu);
     low |= (uint16_t)((cpu->corcon >> 2u) & 1u);
@@ -3164,6 +3185,10 @@ static bool reserved_move_encoding(uint32_t opcode) {
 }
 
 static bool execute(Dspic33* cpu, uint32_t opcode) {
+    if (!system_encoding_valid(opcode)) {
+        perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+        return true;
+    }
     if ((opcode & 0xff0000u) == 0x3f0000u) {
         perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
         return true;
@@ -3715,6 +3740,9 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         perform_warm_reset(cpu, 0x0040u, DSPIC33_RESET_SOFTWARE);
         return true;
     }
+    if (opcode == 0xfe2000u) {
+        return true;
+    }
     if ((opcode & 0xfffffeu) == 0xfe4000u) {
         if (cpu->nvm.active) {
             return true;
@@ -3740,8 +3768,7 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         clear_watchdog(cpu);
         return true;
     }
-    if (opcode == 0x000000u || opcode == 0x00075au ||
-        (opcode & 0xff0000u) == 0xff0000u) {
+    if ((opcode & 0xff0000u) == 0x000000u || (opcode & 0xff0000u) == 0xff0000u) {
         return true;
     }
     return false;
@@ -4738,10 +4765,18 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         cpu->watchdog.ticks = 0u;
         cpu->stop_reason = DSPIC33_RUNNING;
     } else {
+        uint32_t next_opcode =
+            (cpu->pc & 1u) == 0u && dspic33_program_range_implemented(cpu->pc, 2u)
+                ? dspic33_read_program_word(cpu, cpu->pc)
+                : 0u;
+        if (!system_encoding_valid(next_opcode)) {
+            perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+            return cpu->stop_reason;
+        }
         power_save_next =
             !cpu->nvm.active && !vector_segment_execution_address(cpu->pc) &&
             (cpu->pc & 1u) == 0u && dspic33_program_range_implemented(cpu->pc, 2u) &&
-            (dspic33_read_program_word(cpu, cpu->pc) & 0xfffffeu) == 0xfe4000u;
+            (next_opcode & 0xfffffeu) == 0xfe4000u;
         exception_dispatched = service_pending_soft_trap(cpu);
         if (!exception_dispatched && !power_save_next) {
             exception_dispatched = dspic33_device_service_interrupt(cpu);
