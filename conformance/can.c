@@ -1371,6 +1371,52 @@ static void triple_sample_cases(CanConformance* state, Dspic33* cpu) {
     }
 }
 
+static void prepare_resynchronization(Dspic33* cpu, uint16_t config1) {
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_write_word(cpu, 0x06d4u, 64u);
+    dspic33_write_word(cpu, 0x0410u, config1);
+    dspic33_write_word(cpu, 0x0412u, 0u);
+    set_mode(cpu, 0u, 0u);
+    dspic33_can_input_pin(cpu, 64u, false, 0u);
+    dspic33_device_advance(cpu, 3u);
+    dspic33_can_input_pin(cpu, 64u, true, 0u);
+    dspic33_device_advance(cpu, 0u);
+}
+
+static void resynchronization_cases(CanConformance* state, Dspic33* cpu) {
+    prepare_resynchronization(cpu, 0u);
+    expect(state,
+           cpu->io.can_rx_serial_count[0] == 1u &&
+               dspic33_can_input_pin(cpu, 64u, false, 0u) &&
+               dspic33_device_advance(cpu, 2u) && cpu->io.can_rx_serial_count[0] == 1u,
+           "early CAN edge shortens Phase Segment 2");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && cpu->io.can_rx_serial_count[0] == 2u,
+           "early CAN edge advances the next sample point by one TQ");
+
+    prepare_resynchronization(cpu, 0u);
+    expect(state,
+           dspic33_device_advance(cpu, 3u) &&
+               dspic33_can_input_pin(cpu, 64u, false, 0u) &&
+               dspic33_device_advance(cpu, 1u) && cpu->io.can_rx_serial_count[0] == 1u,
+           "late CAN edge lengthens Phase Segment 1");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && cpu->io.can_rx_serial_count[0] == 2u,
+           "one-TQ SJW limits a late CAN resynchronization");
+
+    prepare_resynchronization(cpu, 0x0040u);
+    expect(state,
+           dspic33_device_advance(cpu, 3u) &&
+               dspic33_can_input_pin(cpu, 64u, false, 0u) &&
+               dspic33_device_advance(cpu, 2u) && cpu->io.can_rx_serial_count[0] == 1u,
+           "two-TQ SJW permits a larger CAN phase correction");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && cpu->io.can_rx_serial_count[0] == 2u,
+           "two-TQ CAN resynchronization reaches its adjusted sample point");
+}
+
 static bool drive_shared_can_bus(Dspic33* can1, Dspic33* can2, uint8_t active_channel,
                                  uint64_t bit_cycles) {
     uint16_t count = 0u;
@@ -1675,11 +1721,19 @@ static void transmit_error_variant_cases(CanConformance* state, Dspic33* cpu) {
            dspic33_can_pin(cpu, 64u, &high) && high &&
                (cpu->io.can_tx_error_active & 1u) != 0u,
            "error-passive CAN flag remains recessive");
+    expect(state, dspic33_device_advance(cpu, 99u),
+           "error-passive CAN Suspend Transmission advances");
+    expect(state, (cpu->io.can_tx_error_active & 1u) != 0u,
+           "error-passive CAN flag remains active through Suspend Transmission");
+    expect(state, (cpu->io.can_tx_on_bus & 1u) == 0u,
+           "error-passive CAN transmitter remains off-bus during suspension");
     expect(state,
-           dspic33_device_advance(cpu, 76u) &&
+           dspic33_device_advance(cpu, 1u) &&
                (cpu->io.can_tx_error_active & 1u) == 0u &&
-               (cpu->io.can_tx_on_bus & 1u) != 0u,
-           "error-passive CAN transmission retries after delimiter and intermission");
+               (cpu->io.can_tx_on_bus & 1u) == 0u,
+           "error-passive CAN suspension ends after eight additional bits");
+    expect(state, dspic33_device_advance(cpu, 8u) && (cpu->io.can_tx_on_bus & 1u) != 0u,
+           "error-passive CAN transmission retries after suspension");
     dspic33_write_word(cpu, 0x0430u, 0x0093u);
     expect(state,
            cpu->io.can_tx_busy == 0u && cpu->io.can_tx_retry_wait == 0u &&
@@ -2788,6 +2842,9 @@ static void copy_and_reset_cases(CanConformance* state, Dspic33* cpu) {
                cpu->io.can_rx_error_active == 0u &&
                cpu->io.can_bus_off_recessive_bits[0] == 0u &&
                cpu->io.can_bus_off_recessive_bits[1] == 0u &&
+               cpu->io.can_resync_count[0] == 0u && cpu->io.can_resync_count[1] == 0u &&
+               cpu->io.can_tx_phase_adjustment[0] == 0 &&
+               cpu->io.can_tx_phase_adjustment[1] == 0 &&
                cpu->io.can_rx_sample_high[0] == 0u &&
                cpu->io.can_rx_sample_high[1] == 0u &&
                cpu->io.can_tx_sample_high[0] == 0u &&
@@ -2825,6 +2882,7 @@ int main(void) {
     transmit_pps_cases(&state, &cpu);
     receive_pps_cases(&state, &cpu);
     triple_sample_cases(&state, &cpu);
+    resynchronization_cases(&state, &cpu);
     arbitration_field_cases(&state, &cpu);
     arbitration_cases(&state, &cpu);
     acknowledge_error_cases(&state, &cpu);
@@ -2841,7 +2899,7 @@ int main(void) {
     interrupt_and_error_cases(&state, &cpu);
     invalid_message_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
-    expect(&state, state.cases == 1462728u, "CAN assertion accounting");
+    expect(&state, state.cases == 1462738u, "CAN assertion accounting");
     report_sfr_side_effect_coverage(
         "can", can_sfr_side_effect_coverage,
         SFR_SIDE_EFFECT_COVERAGE_COUNT(can_sfr_side_effect_coverage),

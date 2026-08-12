@@ -11050,6 +11050,71 @@ static bool can_schedule_transmit_sample(Dspic33* cpu, uint8_t channel,
     return dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, event, delay);
 }
 
+static bool can_receive_sample_event(uint32_t kind) {
+    return kind == CAN_EVENT_RECEIVE_SAMPLE || kind == CAN_EVENT_RECEIVE_SAMPLE_FIRST ||
+           kind == CAN_EVENT_RECEIVE_SAMPLE_SECOND;
+}
+
+static bool can_transmit_timing_event(uint32_t kind) {
+    return kind == CAN_EVENT_TRANSMIT_SAMPLE ||
+           kind == CAN_EVENT_TRANSMIT_SAMPLE_FIRST ||
+           kind == CAN_EVENT_TRANSMIT_SAMPLE_SECOND ||
+           kind == CAN_EVENT_TRANSMIT_BUS_FINISH;
+}
+
+static uint64_t can_receive_sample_point(const Dspic33* cpu, uint8_t channel) {
+    for (size_t index = 0u; index < cpu->events.count; index++) {
+        const Dspic33Event* event = &cpu->events.items[index];
+        uint32_t kind = event->value & CAN_EVENT_KIND_MASK;
+        if (event->type != DSPIC33_EVENT_CAN || event->source != channel ||
+            !can_receive_sample_event(kind)) {
+            continue;
+        }
+        if (kind == CAN_EVENT_RECEIVE_SAMPLE_FIRST) {
+            return event->cycle + 2u * can_time_quantum(cpu, channel);
+        }
+        if (kind == CAN_EVENT_RECEIVE_SAMPLE_SECOND) {
+            return event->cycle + can_time_quantum(cpu, channel);
+        }
+        return event->cycle;
+    }
+    return 0u;
+}
+
+static void can_shift_timing(Dspic33* cpu, uint8_t channel, int64_t adjustment) {
+    for (size_t index = 0u; index < cpu->events.count; index++) {
+        Dspic33Event* event = &cpu->events.items[index];
+        uint32_t kind = event->value & CAN_EVENT_KIND_MASK;
+        if (event->type == DSPIC33_EVENT_CAN && event->source == channel &&
+            (can_receive_sample_event(kind) || can_transmit_timing_event(kind))) {
+            event->cycle = (uint64_t)((int64_t)event->cycle + adjustment);
+        }
+    }
+    cpu->io.can_tx_phase_adjustment[channel] += adjustment;
+    dspic33_reorder_events(cpu);
+}
+
+static void can_resynchronize(Dspic33* cpu, uint8_t channel) {
+    uint16_t count = cpu->io.can_rx_serial_count[channel];
+    uint64_t sample = can_receive_sample_point(cpu, channel);
+    if (sample == 0u || cpu->io.can_resync_count[channel] == count) {
+        return;
+    }
+    int64_t expected_start = (int64_t)sample - (int64_t)can_sample_cycles(cpu, channel);
+    int64_t phase_error = (int64_t)cpu->device_cycles - expected_start;
+    uint16_t config1 = raw_word(cpu, (uint16_t)(can_bases[channel] + 0x10u));
+    int64_t jump = (int64_t)(((config1 >> 6u) & 3u) + 1u) *
+                   (int64_t)can_time_quantum(cpu, channel);
+    int64_t adjustment = phase_error;
+    if (adjustment > jump) {
+        adjustment = jump;
+    } else if (adjustment < -jump) {
+        adjustment = -jump;
+    }
+    cpu->io.can_resync_count[channel] = count;
+    can_shift_timing(cpu, channel, adjustment);
+}
+
 static void can_lose_arbitration(Dspic33* cpu, uint8_t channel) {
     uint8_t bit = (uint8_t)(1u << channel);
     uint8_t buffer = cpu->io.can_tx_buffer[channel];
@@ -11095,8 +11160,13 @@ static void can_monitor_transmit_sample(Dspic33* cpu, uint8_t channel, bool bus_
     Dspic33CanFrame frame = can_decode_frame(cpu->io.can_tx_words[channel]);
     bool bits[160];
     uint64_t bit_cycles = can_bit_cycles(cpu, channel);
-    uint64_t elapsed = cpu->device_cycles - cpu->io.can_tx_start_cycle[channel];
-    uint16_t index = (uint16_t)(elapsed / bit_cycles);
+    int64_t elapsed =
+        (int64_t)(cpu->device_cycles - cpu->io.can_tx_start_cycle[channel]) -
+        cpu->io.can_tx_phase_adjustment[channel];
+    if (elapsed < 0) {
+        elapsed = 0;
+    }
+    uint16_t index = (uint16_t)((uint64_t)elapsed / bit_cycles);
     uint16_t count = can_frame_bits(&frame, bits);
     if (index >= count) {
         return;
@@ -11213,12 +11283,16 @@ static void can_receive_pin_level(Dspic33* cpu, uint8_t pin, bool high) {
             can_raise_event(cpu, channel, CAN_INTERRUPT_WAKE, 0u, 0u);
             continue;
         }
+        if (previous && !high && (cpu->io.can_rx_serial_active & bit) != 0u) {
+            can_resynchronize(cpu, channel);
+        }
         if (previous && !high && (cpu->io.can_rx_serial_active & bit) == 0u &&
             (cpu->io.can_rx_error_active & bit) == 0u &&
             (cpu->io.can_tx_error_active & bit) == 0u &&
             can_serial_receive_enabled(cpu, channel)) {
             cpu->io.can_rx_serial_active |= bit;
             cpu->io.can_rx_serial_count[channel] = 0u;
+            cpu->io.can_resync_count[channel] = 0u;
             cpu->io.can_rx_sample_high[channel] = 0u;
             if (!can_schedule_receive_sample(cpu, channel,
                                              can_first_sample_delay(cpu, channel))) {
@@ -11629,6 +11703,7 @@ static void can_transmit_finish(Dspic33* cpu, uint8_t channel) {
     Dspic33CanFrame frame = can_decode_frame(cpu->io.can_tx_words[channel]);
     uint8_t bit = (uint8_t)(1u << channel);
     cpu->io.can_tx_start_cycle[channel] = cpu->device_cycles;
+    cpu->io.can_tx_phase_adjustment[channel] = 0;
     cpu->io.can_tx_on_bus |= bit;
     if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel,
                           CAN_EVENT_TRANSMIT_BUS_FINISH,
@@ -11721,8 +11796,12 @@ static void can_transmit_error_start(Dspic33* cpu, uint8_t channel) {
     }
     cpu->io.can_tx_error_active |= bit;
     cpu->io.can_tx_error_start_cycle[channel] = cpu->device_cycles;
+    uint64_t bits = (raw_word(cpu, (uint16_t)(can_bases[channel] + 0x0au)) &
+                     CAN_TRANSMIT_PASSIVE) != 0u
+                        ? 25u
+                        : 17u;
     if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_RETRY,
-                          17u * can_bit_cycles(cpu, channel))) {
+                          bits * can_bit_cycles(cpu, channel))) {
         cpu->io.can_tx_error_active &= (uint8_t)~bit;
         cpu->io.can_tx_retry_wait &= (uint8_t)~bit;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
@@ -16361,8 +16440,11 @@ bool dspic33_can_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
         Dspic33CanFrame frame = can_decode_frame(cpu->io.can_tx_words[channel]);
         bool bits[160];
         uint16_t count = can_frame_bits(&frame, bits);
-        uint64_t index = (cpu->device_cycles - cpu->io.can_tx_start_cycle[channel]) /
-                         can_bit_cycles(cpu, channel);
+        int64_t elapsed =
+            (int64_t)(cpu->device_cycles - cpu->io.can_tx_start_cycle[channel]) -
+            cpu->io.can_tx_phase_adjustment[channel];
+        uint64_t index =
+            elapsed > 0 ? (uint64_t)elapsed / can_bit_cycles(cpu, channel) : 0u;
         if (index < count) {
             *high = bits[index];
         }
