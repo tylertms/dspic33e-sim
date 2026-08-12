@@ -556,6 +556,7 @@ enum {
     CAN_EVENT_ACK_FINISH = 14u,
     CAN_EVENT_TRANSMIT_RETRY = 15u,
     CAN_EVENT_TRANSMIT_ERROR_START = 16u,
+    CAN_EVENT_TRANSMIT_SAMPLE = 17u,
     CAN_EVENT_TRANSMIT_ERROR = 0x00000100u,
     CAN_EVENT_PIN_HIGH = 0x00000200u,
     CAN_EVENT_ERROR_COUNT_SHIFT = 16u,
@@ -11039,11 +11040,22 @@ static void can_monitor_transmit_sample(Dspic33* cpu, uint8_t channel, bool bus_
     uint64_t elapsed = cpu->device_cycles - cpu->io.can_tx_start_cycle[channel];
     uint16_t index = (uint16_t)(elapsed / bit_cycles);
     uint16_t count = can_frame_bits(&frame, bits);
-    if (index < count && index < can_arbitration_bit_count(&frame) && bits[index]) {
-        if (!bus_high) {
-            can_lose_arbitration(cpu, channel);
+    if (index >= count) {
+        return;
+    }
+    if (index == count - 12u) {
+        if (bus_high) {
+            can_transmit_error(cpu, channel);
         }
-    } else if (index == count - 12u && bus_high) {
+    } else if (bits[index] == bus_high) {
+        return;
+    } else if (index < can_arbitration_bit_count(&frame)) {
+        if (bits[index]) {
+            can_lose_arbitration(cpu, channel);
+        } else {
+            can_transmit_error(cpu, channel);
+        }
+    } else {
         can_transmit_error(cpu, channel);
     }
 }
@@ -11056,6 +11068,7 @@ static void can_receive_pin_level(Dspic33* cpu, uint8_t pin, bool high) {
             !pps_physical_input_enabled(cpu, pin)) {
             continue;
         }
+        cpu->io.can_rx_physical_active |= bit;
         if (high) {
             cpu->io.can_rx_pin_high |= bit;
         } else {
@@ -11101,8 +11114,6 @@ static void can_receive_sample(Dspic33* cpu, uint8_t channel) {
     }
     cpu->io.can_rx_serial_bits[channel][count] = (cpu->io.can_rx_pin_high & bit) != 0u;
     cpu->io.can_rx_serial_count[channel]++;
-    can_monitor_transmit_sample(cpu, channel,
-                                cpu->io.can_rx_serial_bits[channel][count] != 0u);
     result = can_decode_serial(cpu, channel, &frame, &tail_start);
     if (result == CAN_SERIAL_INCOMPLETE && tail_start != 0u &&
         cpu->io.can_rx_serial_count[channel] == tail_start + 1u &&
@@ -11382,10 +11393,32 @@ static void can_transmit_finish(Dspic33* cpu, uint8_t channel) {
     cpu->io.can_tx_on_bus |= bit;
     if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel,
                           CAN_EVENT_TRANSMIT_BUS_FINISH,
-                          can_frame_cycles(cpu, channel, &frame))) {
+                          can_frame_cycles(cpu, channel, &frame)) ||
+        !dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_SAMPLE,
+                          can_sample_cycles(cpu, channel))) {
+        can_remove_transmit_events(cpu, channel);
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
         cpu->io.can_tx_on_bus &= (uint8_t)~bit;
         cpu->io.can_tx_busy &= (uint8_t)~(uint8_t)(1u << channel);
+    }
+}
+
+static void can_transmit_sample(Dspic33* cpu, uint8_t channel) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    if ((cpu->io.can_tx_on_bus & bit) == 0u) {
+        return;
+    }
+    if ((cpu->io.can_rx_physical_active & bit) != 0u) {
+        can_monitor_transmit_sample(cpu, channel,
+                                    (cpu->io.can_rx_pin_high & bit) != 0u);
+    }
+    if ((cpu->io.can_tx_on_bus & bit) != 0u &&
+        !dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_SAMPLE,
+                          can_bit_cycles(cpu, channel))) {
+        can_remove_transmit_events(cpu, channel);
+        cpu->io.can_tx_on_bus &= (uint8_t)~bit;
+        cpu->io.can_tx_busy &= (uint8_t)~bit;
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
 }
 
@@ -11497,6 +11530,9 @@ static void run_can(Dspic33* cpu, uint8_t channel, uint32_t value) {
         break;
     case CAN_EVENT_TRANSMIT_ERROR_START:
         can_transmit_error_start(cpu, channel);
+        break;
+    case CAN_EVENT_TRANSMIT_SAMPLE:
+        can_transmit_sample(cpu, channel);
         break;
     case CAN_EVENT_ERROR:
         can_error_event(cpu, channel, value);
@@ -14151,7 +14187,8 @@ static void can_remove_transmit_events(Dspic33* cpu, uint8_t channel) {
              kind != CAN_EVENT_TRANSMIT_FINISH &&
              kind != CAN_EVENT_TRANSMIT_BUS_FINISH &&
              kind != CAN_EVENT_TRANSMIT_RETRY &&
-             kind != CAN_EVENT_TRANSMIT_ERROR_START)) {
+             kind != CAN_EVENT_TRANSMIT_ERROR_START &&
+             kind != CAN_EVENT_TRANSMIT_SAMPLE)) {
             cpu->events.items[destination++] = *event;
         }
     }
@@ -15973,7 +16010,9 @@ bool dspic33_can_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
         uint64_t index =
             (cpu->device_cycles - cpu->io.can_tx_error_start_cycle[channel]) /
             can_bit_cycles(cpu, channel);
-        *high = index >= 6u;
+        *high = (raw_word(cpu, (uint16_t)(can_bases[channel] + 0x0au)) &
+                 CAN_TRANSMIT_PASSIVE) != 0u ||
+                index >= 6u;
         return true;
     }
     if ((cpu->io.can_rx_ack & (uint8_t)(1u << channel)) != 0u) {

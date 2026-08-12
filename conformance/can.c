@@ -1505,6 +1505,78 @@ static void acknowledge_error_cases(CanConformance* state, Dspic33* cpu) {
     }
 }
 
+static void transmit_error_variant_cases(CanConformance* state, Dspic33* cpu) {
+    bool high;
+    Dspic33CanFrame input = frame(0u, false, false, 0u, 0u);
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_write_word(cpu, 0x0680u, 14u);
+    dspic33_write_word(cpu, 0x06d4u, 65u);
+    configure_transmit(cpu, 0u, 0xdc00u);
+    write_transmit_frame(cpu, 0xdc00u, &input);
+    select_window(cpu, 0u, false);
+    dspic33_write_word(cpu, 0x0410u, 0u);
+    dspic33_write_word(cpu, 0x0412u, 0u);
+    set_mode(cpu, 0u, 0u);
+    dspic33_write_word(cpu, 0x0430u, 0x008bu);
+    expect(state,
+           dspic33_device_advance(cpu, 8u) && dspic33_can_pin(cpu, 64u, &high) && !high,
+           "CAN dominant-bit mismatch test reaches SOF");
+    expect(state,
+           dspic33_can_input_pin(cpu, 65u, true, 0u) && dspic33_device_advance(cpu, 4u),
+           "CAN transmitter samples recessive while driving dominant");
+    expect(state,
+           (dspic33_read_word(cpu, 0x0430u) & 0x0038u) == 0x0018u &&
+               (dspic33_read_word(cpu, 0x040eu) >> 8u) == 8u &&
+               (cpu->io.can_tx_error_active & 1u) != 0u,
+           "dominant CAN mismatch is a bit error rather than arbitration loss");
+    expect(state, dspic33_can_pin(cpu, 64u, &high) && !high,
+           "active CAN bit error drives a dominant error flag");
+    dspic33_write_word(cpu, 0x0430u, 0x0093u);
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_write_word(cpu, 0x0680u, 14u);
+    dspic33_write_word(cpu, 0x06d4u, 65u);
+    configure_transmit(cpu, 0u, 0xdc00u);
+    write_transmit_frame(cpu, 0xdc00u, &input);
+    select_window(cpu, 0u, false);
+    dspic33_write_word(cpu, 0x0410u, 0u);
+    dspic33_write_word(cpu, 0x0412u, 0u);
+    set_mode(cpu, 0u, 0u);
+    expect(state,
+           dspic33_can_error(cpu, 0u, true, 120u, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               (dspic33_read_word(cpu, 0x040eu) >> 8u) == 120u,
+           "CAN transmitter reaches the error-passive boundary precursor");
+    dspic33_write_word(cpu, 0x0430u, 0x008bu);
+    expect(state,
+           dspic33_device_advance(cpu, 8u) &&
+               drive_unacknowledged_can_frame(cpu, 0u, 64u, 65u, 4u),
+           "error-passive CAN transmitter encounters a missing ACK");
+    expect(state,
+           (dspic33_read_word(cpu, 0x040eu) >> 8u) == 128u &&
+               (dspic33_read_word(cpu, 0x040au) & 0x1000u) != 0u &&
+               (dspic33_read_word(cpu, 0x0430u) & 0x0018u) == 0x0018u,
+           "missing ACK transitions the CAN transmitter to error-passive");
+    expect(state,
+           dspic33_can_pin(cpu, 64u, &high) && high &&
+               (cpu->io.can_tx_error_active & 1u) != 0u,
+           "error-passive CAN flag remains recessive");
+    expect(state,
+           dspic33_device_advance(cpu, 76u) &&
+               (cpu->io.can_tx_error_active & 1u) == 0u &&
+               (cpu->io.can_tx_on_bus & 1u) != 0u,
+           "error-passive CAN transmission retries after delimiter and intermission");
+    dspic33_write_word(cpu, 0x0430u, 0x0093u);
+    expect(state,
+           cpu->io.can_tx_busy == 0u && cpu->io.can_tx_retry_wait == 0u &&
+               dspic33_can_pin(cpu, 64u, &high) && high,
+           "aborting an error-passive retry releases the CAN bus");
+}
+
 static void receive_pps_cases(CanConformance* state, Dspic33* cpu) {
     expect(state, !dspic33_can_input_pin(cpu, 63u, true, 0u),
            "CAN input rejects non-remappable pin");
@@ -2241,6 +2313,7 @@ int main(void) {
     arbitration_field_cases(&state, &cpu);
     arbitration_cases(&state, &cpu);
     acknowledge_error_cases(&state, &cpu);
+    transmit_error_variant_cases(&state, &cpu);
     receive_pps_qualification_cases(&state, &cpu);
     priority_and_abort_cases(&state, &cpu);
     mode_and_power_cases(&state, &cpu);
@@ -2248,7 +2321,7 @@ int main(void) {
     interrupt_and_error_cases(&state, &cpu);
     invalid_message_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
-    expect(&state, state.cases == 1462652u, "CAN assertion accounting");
+    expect(&state, state.cases == 1462662u, "CAN assertion accounting");
     report_sfr_side_effect_coverage(
         "can", can_sfr_side_effect_coverage,
         SFR_SIDE_EFFECT_COVERAGE_COUNT(can_sfr_side_effect_coverage),
