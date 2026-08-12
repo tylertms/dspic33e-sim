@@ -1519,6 +1519,57 @@ static void interrupt_and_error_cases(CanConformance* state, Dspic33* cpu) {
     }
 }
 
+static void invalid_message_cases(CanConformance* state, Dspic33* cpu) {
+    expect(state, !dspic33_can_invalid(cpu, DSPIC33_CAN_COUNT, 0u),
+           "invalid CAN message rejects unavailable channel");
+    for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint16_t base = bases[channel];
+        dspic33_reset(cpu, 0u);
+        set_mode(cpu, channel, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 0x0cu), 0x0080u);
+        clear_interrupt_flag(cpu, event_irqs[channel]);
+        expect(state, dspic33_can_invalid(cpu, channel, 2u),
+               "schedule invalid CAN message");
+        expect(state,
+               dspic33_device_advance(cpu, 1u) &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x0080u) == 0u &&
+                   !interrupt_flag(cpu, event_irqs[channel]),
+               "invalid CAN message waits for its event boundary");
+        expect(state,
+               dspic33_device_advance(cpu, 1u) &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x0080u) != 0u &&
+                   interrupt_flag(cpu, event_irqs[channel]) &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 4u)) & 0x007fu) == 0x40u,
+               "invalid CAN message raises IVRIF and the event interrupt");
+        dspic33_write_word(
+            cpu, (uint16_t)(base + 0x0au),
+            (uint16_t)(dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & ~0x0080u));
+        clear_interrupt_flag(cpu, event_irqs[channel]);
+        expect(state,
+               (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x0080u) == 0u &&
+                   !interrupt_flag(cpu, event_irqs[channel]),
+               "software clears the invalid CAN message event");
+
+        dspic33_reset(cpu, 0u);
+        expect(state,
+               dspic33_can_invalid(cpu, channel, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x0080u) == 0u,
+               "configuration mode suppresses invalid CAN message events");
+
+        dspic33_reset(cpu, 0u);
+        set_mode(cpu, channel, 0u);
+        dspic33_write_word(
+            cpu, 0x0760u,
+            (uint16_t)(dspic33_read_word(cpu, 0x0760u) | (uint16_t)(2u << channel)));
+        expect(state,
+               dspic33_can_invalid(cpu, channel, 0u) &&
+                   dspic33_device_advance(cpu, 1u) &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x0080u) == 0u,
+               "PMD-disabled CAN suppresses invalid message events");
+    }
+}
+
 static void copy_and_reset_cases(CanConformance* state, Dspic33* cpu) {
     Dspic33 copy;
     bool initialized = dspic33_initialize(&copy);
@@ -1604,8 +1655,9 @@ int main(void) {
     mode_and_power_cases(&state, &cpu);
     capture_timestamp_cases(&state, &cpu);
     interrupt_and_error_cases(&state, &cpu);
+    invalid_message_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
-    expect(&state, state.cases == 1462554u, "CAN assertion accounting");
+    expect(&state, state.cases == 1462567u, "CAN assertion accounting");
     report_sfr_side_effect_coverage(
         "can", can_sfr_side_effect_coverage,
         SFR_SIDE_EFFECT_COVERAGE_COUNT(can_sfr_side_effect_coverage),

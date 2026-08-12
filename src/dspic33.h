@@ -935,6 +935,7 @@ bool dspic33_can_receive(Dspic33* cpu, uint8_t channel, const Dspic33CanFrame* f
                          uint64_t delay);
 bool dspic33_can_error(Dspic33* cpu, uint8_t channel, bool transmit, uint8_t count,
                        uint64_t delay);
+bool dspic33_can_invalid(Dspic33* cpu, uint8_t channel, uint64_t delay);
 bool dspic33_can_transmit(Dspic33* cpu, uint8_t channel, Dspic33CanFrame* frame);
 bool dspic33_usb_receive(Dspic33* cpu, uint8_t endpoint, const uint8_t* data,
                          uint16_t size, uint64_t delay);

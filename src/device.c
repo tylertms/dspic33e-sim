@@ -548,6 +548,7 @@ enum {
     CAN_EVENT_TRANSMIT_BUS_FINISH = 8u,
     CAN_EVENT_KIND_MASK = 0x000000ffu,
     CAN_EVENT_CAPTURE_RELEASE = 9u,
+    CAN_EVENT_INVALID = 10u,
     CAN_EVENT_TRANSMIT_ERROR = 0x00000100u,
     CAN_EVENT_ERROR_COUNT_SHIFT = 16u,
     USB_OTGIR = 0x0488u,
@@ -11056,6 +11057,15 @@ static void can_error_event(Dspic33* cpu, uint8_t channel, uint32_t value) {
     can_refresh_error_status(cpu, channel);
 }
 
+static void can_invalid_event(Dspic33* cpu, uint8_t channel) {
+    uint8_t mode = can_mode(cpu, channel);
+    if (!can_power_enabled(cpu, channel) || cpu->power_state == DSPIC33_POWER_SLEEP ||
+        mode == CAN_MODE_DISABLE || mode == CAN_MODE_CONFIGURATION) {
+        return;
+    }
+    can_raise_event(cpu, channel, CAN_INTERRUPT_INVALID, 0u, 0u);
+}
+
 static void run_can(Dspic33* cpu, uint8_t channel, uint32_t value) {
     if (channel >= DSPIC33_CAN_COUNT) {
         return;
@@ -11084,6 +11094,9 @@ static void run_can(Dspic33* cpu, uint8_t channel, uint32_t value) {
         break;
     case CAN_EVENT_CAPTURE_RELEASE:
         input_capture_level(cpu, 1u, false);
+        break;
+    case CAN_EVENT_INVALID:
+        can_invalid_event(cpu, channel);
         break;
     case CAN_EVENT_ERROR:
         can_error_event(cpu, channel, value);
@@ -15511,6 +15524,11 @@ bool dspic33_can_error(Dspic33* cpu, uint8_t channel, bool transmit, uint8_t cou
         value |= CAN_EVENT_TRANSMIT_ERROR;
     }
     return dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, value, delay);
+}
+
+bool dspic33_can_invalid(Dspic33* cpu, uint8_t channel, uint64_t delay) {
+    return channel < DSPIC33_CAN_COUNT &&
+           dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_INVALID, delay);
 }
 
 bool dspic33_can_transmit(Dspic33* cpu, uint8_t channel, Dspic33CanFrame* frame) {
