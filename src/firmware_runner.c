@@ -773,10 +773,16 @@ static bool suite_directory(const char* path, char* directory, size_t size) {
 }
 
 static bool open_images(Runner* runner, char* error, size_t error_size) {
-    const char* reference_path =
-        json_string(json_get(suite_section(runner, "reference"), "path"));
-    const char* candidate_path =
-        json_string(json_get(suite_section(runner, "candidate"), "path"));
+    const char* reference_path = runner->reference_path;
+    const char* candidate_path = runner->candidate_path;
+    if (reference_path == NULL) {
+        reference_path =
+            json_string(json_get(suite_section(runner, "reference"), "path"));
+    }
+    if (candidate_path == NULL) {
+        candidate_path =
+            json_string(json_get(suite_section(runner, "candidate"), "path"));
+    }
     if (reference_path == NULL || candidate_path == NULL) {
         snprintf(error, error_size, "suite image paths are invalid");
         return false;
@@ -3341,7 +3347,8 @@ static void print_usage(const char* program) {
             "Usage: %s --suite FILE [--scenario PATTERN] [--step PATTERN] "
             "[--shard-index INDEX --shard-count COUNT] [--failures-only] "
             "[--summary-only] [--plan] [--max-instructions COUNT] "
-            "[--ledger FILE] [--summary-json FILE]\n",
+            "[--reference FILE] [--candidate FILE] [--ledger FILE] "
+            "[--summary-json FILE]\n",
             program);
 }
 
@@ -3386,6 +3393,10 @@ static int run_firmware_runner(int argc, char** argv, Runner* runner) {
                 print_usage(argv[0]);
                 return 2;
             }
+        } else if (strcmp(argv[index], "--reference") == 0 && index + 1 < argc) {
+            runner->reference_path = argv[++index];
+        } else if (strcmp(argv[index], "--candidate") == 0 && index + 1 < argc) {
+            runner->candidate_path = argv[++index];
         } else if (strcmp(argv[index], "--ledger") == 0 && index + 1 < argc) {
             runner->ledger_path = argv[++index];
         } else if (strcmp(argv[index], "--summary-json") == 0 && index + 1 < argc) {
