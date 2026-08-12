@@ -1968,6 +1968,16 @@ static bool byte_extension_encoding_valid(uint32_t opcode) {
     return (opcode & 0x007800u) == 0u && ((opcode >> 4u) & 0x07u) < 6u;
 }
 
+static bool stack_encoding_valid(uint32_t opcode) {
+    if ((opcode & 0xff0000u) == 0xf80000u || (opcode & 0xff0000u) == 0xf90000u) {
+        return (opcode & 1u) == 0u;
+    }
+    if ((opcode & 0xff0000u) == 0xfa0000u) {
+        return opcode == 0xfa8000u || (opcode & 0xffc001u) == 0xfa0000u;
+    }
+    return true;
+}
+
 static void push_program_counter(Dspic33* cpu, uint32_t address) {
     uint16_t low = (uint16_t)(address & 0xfffeu);
     low |= (uint16_t)((cpu->corcon >> 2u) & 1u);
@@ -3127,6 +3137,10 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
         return true;
     }
+    if (!stack_encoding_valid(opcode)) {
+        perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+        return true;
+    }
     if ((opcode & 0xff0000u) == 0x010000u &&
         !computed_control_transfer_encoding(opcode)) {
         perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
@@ -3183,20 +3197,20 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         cpu->instruction_working_register_writes |= UINT16_C(0x000f);
         return true;
     }
-    if ((opcode & 0xffe000u) == 0xf80000u) {
+    if ((opcode & 0xff0000u) == 0xf80000u) {
         check_stack_address(cpu, cpu->w[15], cpu->w[15] > 0xfffdu);
-        write_word(cpu, cpu->w[15], read_data_word(cpu, opcode & 0x1fffu));
+        write_word(cpu, cpu->w[15], read_data_word(cpu, opcode & 0xffffu));
         write_working_register(cpu, 15u, (uint16_t)(cpu->w[15] + 2u));
         return true;
     }
-    if ((opcode & 0xffe000u) == 0xf90000u) {
+    if ((opcode & 0xff0000u) == 0xf90000u) {
         check_stack_address(cpu, (int32_t)cpu->w[15] - 2, cpu->w[15] < 2u);
         write_working_register(cpu, 15u, (uint16_t)(cpu->w[15] - 2u));
         record_source_address_register(cpu, 15u);
-        write_word(cpu, opcode & 0x1fffu, read_word(cpu, cpu->w[15]));
+        write_word(cpu, opcode & 0xffffu, read_word(cpu, cpu->w[15]));
         return true;
     }
-    if ((opcode & 0xff8001u) == 0xfa0000u) {
+    if ((opcode & 0xffc001u) == 0xfa0000u) {
         int32_t stack_top;
         if ((cpu->corcon & 0x0004u) != 0u) {
             schedule_stack_error(cpu, 2u);

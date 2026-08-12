@@ -5708,6 +5708,212 @@ static void byte_extension_lifecycle_cases(ProcessorConformance* state, Dspic33*
                          "ZE uninitialized source pointer resets processor");
 }
 
+static void prepare_stack_encoding_case(Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    cpu->pc = 0u;
+    cpu->sr = 0x010fu;
+    cpu->corcon = 0x0020u;
+    cpu->previous_working_register_writes = 0u;
+    cpu->unsupported_opcode = 0u;
+    cpu->last_trap = UINT16_MAX;
+    cpu->last_interrupt = UINT16_MAX;
+    cpu->address_error = false;
+    cpu->illegal_reset = false;
+    cpu->stop_reason = DSPIC33_RUNNING;
+    cpu->instruction_active = false;
+    cpu->repeat_active = 0u;
+    cpu->do_depth = 0u;
+    cpu->events.count = 0u;
+    cpu->splim_enabled = false;
+    dspic33_set_working_register(cpu, 14u, 0x4444u);
+    dspic33_set_working_register(cpu, 15u, 0x5000u);
+}
+
+static void run_invalid_stack_encoding_case(ProcessorConformance* state, Dspic33* cpu,
+                                            uint32_t opcode) {
+    uint64_t illegal_resets;
+    bool matches;
+
+    prepare_stack_encoding_case(cpu);
+    illegal_resets = cpu->illegal_reset_count;
+    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset &&
+              cpu->illegal_reset_count == illegal_resets + 1u && cpu->pc == 0u &&
+              cpu->w[15] == 0x1000u && cpu->initialized_working_registers == 0x8000u &&
+              cpu->last_trap == UINT16_MAX && cpu->unsupported_opcode == 0u &&
+              (dspic33_read_word(cpu, 0x0740u) & 0x4000u) != 0u;
+    expect_dsp_matrix_case(state, matches, opcode, "reserved stack encoding");
+}
+
+static void run_direct_stack_encoding_case(ProcessorConformance* state, Dspic33* cpu,
+                                           uint32_t opcode, uint16_t address) {
+    uint16_t value = (uint16_t)(address ^ 0xa55au);
+    bool matches;
+
+    prepare_stack_encoding_case(cpu);
+    dspic33_write_word(cpu, address, value);
+    dspic33_write_word(cpu, 0x4ffeu, 0x1357u);
+    dspic33_write_word(cpu, 0x5000u, 0x5aa5u);
+    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+              dspic33_step(cpu) != DSPIC33_UNSUPPORTED_INSTRUCTION &&
+              cpu->unsupported_opcode == 0u && !cpu->illegal_reset;
+    expect_dsp_matrix_case(state, matches, opcode, "direct PUSH and POP encoding");
+}
+
+static void direct_stack_value_cases(ProcessorConformance* state, Dspic33* cpu) {
+    static const uint16_t addresses[] = {0x1000u, 0x2000u, 0xdffeu};
+    size_t index;
+
+    for (index = 0u; index < sizeof(addresses) / sizeof(addresses[0]); index++) {
+        uint16_t address = addresses[index];
+        uint16_t value = (uint16_t)(0xa55au ^ address);
+        uint64_t cycles;
+
+        prepare_stack_encoding_case(cpu);
+        dspic33_write_word(cpu, address, value);
+        cycles = cpu->cycles;
+        expect(state,
+               dspic33_load_program_word(cpu, 0u, 0xf80000u | address) &&
+                   dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+                   cpu->cycles - cycles == 1u && cpu->w[15] == 0x5002u &&
+                   dspic33_read_word(cpu, 0x5000u) == value &&
+                   dspic33_read_word(cpu, address) == value && !cpu->illegal_reset,
+               "direct PUSH covers the full implemented file address range");
+
+        prepare_stack_encoding_case(cpu);
+        dspic33_write_word(cpu, 0x4ffeu, value);
+        cycles = cpu->cycles;
+        expect(state,
+               dspic33_load_program_word(cpu, 0u, 0xf90000u | address) &&
+                   dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+                   cpu->cycles - cycles == 1u && cpu->w[15] == 0x4ffeu &&
+                   dspic33_read_word(cpu, address) == value && !cpu->illegal_reset,
+               "direct POP covers the full implemented file address range");
+    }
+
+    reset_processor_conformance(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, 0xf8e000u);
+    dspic33_set_working_register(cpu, 15u, 0x5000u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->last_trap == 1u &&
+               cpu->last_trap_return == 2u && cpu->w[15] == 0x5006u &&
+               dspic33_read_word(cpu, 0x5000u) == 0u,
+           "direct PUSH unimplemented file source completes stack state before trap");
+
+    reset_processor_conformance(cpu, 0u);
+    load_instruction(state, cpu, 0u, 0xf8dfffu);
+    expect_illegal_reset(state, cpu, "direct PUSH odd file address resets processor");
+}
+
+static void direct_stack_encoding_matrix_cases(ProcessorConformance* state,
+                                               Dspic33* cpu) {
+    uint32_t fields;
+    uint32_t legal = 0u;
+    uint32_t reserved = 0u;
+    uint8_t pop;
+
+    for (pop = 0u; pop < 2u; pop++) {
+        for (fields = 0u; fields <= 0xffffu; fields++) {
+            uint32_t opcode = (pop != 0u ? 0xf90000u : 0xf80000u) | fields;
+            if ((fields & 1u) == 0u) {
+                run_direct_stack_encoding_case(state, cpu, opcode, (uint16_t)fields);
+                legal++;
+            } else {
+                run_invalid_stack_encoding_case(state, cpu, opcode);
+                reserved++;
+            }
+        }
+    }
+    expect(state, legal == 65536u,
+           "direct PUSH and POP legal encoding matrix is exhaustive");
+    expect(state, reserved == 65536u,
+           "direct PUSH and POP reserved encoding matrix is exhaustive");
+}
+
+static void link_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu) {
+    uint32_t fields;
+    uint32_t legal = 0u;
+    uint32_t reserved = 0u;
+
+    for (fields = 0u; fields < 0x8000u; fields++) {
+        uint32_t opcode = 0xfa0000u | fields;
+        if ((fields & 0x4001u) == 0u) {
+            uint16_t frame_size = (uint16_t)fields;
+            uint64_t cycles;
+            bool matches;
+
+            prepare_stack_encoding_case(cpu);
+            cycles = cpu->cycles;
+            matches = dspic33_load_program_word(cpu, 0u, opcode) &&
+                      dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+                      cpu->cycles - cycles == 1u && cpu->w[14] == 0x5002u &&
+                      cpu->w[15] == (uint16_t)(0x5002u + frame_size) &&
+                      dspic33_read_word(cpu, 0x5000u) == 0x4444u &&
+                      cpu->corcon == 0x0024u && cpu->sr == 0x010fu &&
+                      !cpu->illegal_reset && cpu->unsupported_opcode == 0u;
+            expect_dsp_matrix_case(state, matches, opcode, "LNK legal encoding");
+            legal++;
+        } else {
+            run_invalid_stack_encoding_case(state, cpu, opcode);
+            reserved++;
+        }
+    }
+    expect(state, legal == 8192u, "LNK legal encoding matrix is exhaustive");
+    expect(state, reserved == 24576u, "LNK reserved encoding matrix is exhaustive");
+}
+
+static void shadow_stack_encoding_cases(ProcessorConformance* state, Dspic33* cpu) {
+    static const uint32_t legal_opcodes[] = {0xfe8000u, 0xfea000u, 0xfa8000u};
+    size_t index;
+
+    for (index = 0u; index < sizeof(legal_opcodes) / sizeof(legal_opcodes[0]);
+         index++) {
+        bool matches;
+
+        reset_processor_conformance(cpu, 0u);
+        if (legal_opcodes[index] == 0xfea000u) {
+            cpu->w[0] = 0x1111u;
+            cpu->w[1] = 0x2222u;
+            cpu->w[2] = 0x3333u;
+            cpu->w[3] = 0x4444u;
+            cpu->sr = 0x01efu;
+        } else if (legal_opcodes[index] == 0xfe8000u) {
+            cpu->shadow_w[0] = 0x1111u;
+            cpu->shadow_w[1] = 0x2222u;
+            cpu->shadow_w[2] = 0x3333u;
+            cpu->shadow_w[3] = 0x4444u;
+            cpu->shadow_status = 0x010fu;
+            cpu->sr = 0x00e0u;
+        } else {
+            cpu->corcon |= 0x0004u;
+            dspic33_set_working_register(cpu, 14u, 0x5002u);
+            dspic33_set_working_register(cpu, 15u, 0x5100u);
+            dspic33_write_word(cpu, 0x5000u, 0x4444u);
+        }
+        matches = dspic33_load_program_word(cpu, 0u, legal_opcodes[index]) &&
+                  dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+                  cpu->cycles == 1u && !cpu->illegal_reset &&
+                  cpu->unsupported_opcode == 0u;
+        if (legal_opcodes[index] == 0xfea000u) {
+            matches = matches && cpu->shadow_w[0] == 0x1111u &&
+                      cpu->shadow_w[1] == 0x2222u && cpu->shadow_w[2] == 0x3333u &&
+                      cpu->shadow_w[3] == 0x4444u && cpu->shadow_status == 0x010fu &&
+                      cpu->sr == 0x01efu;
+        } else if (legal_opcodes[index] == 0xfe8000u) {
+            matches = matches && cpu->w[0] == 0x1111u && cpu->w[1] == 0x2222u &&
+                      cpu->w[2] == 0x3333u && cpu->w[3] == 0x4444u &&
+                      cpu->sr == 0x01efu;
+        } else {
+            matches = matches && cpu->w[14] == 0x4444u && cpu->w[15] == 0x5000u &&
+                      cpu->corcon == 0x0020u;
+        }
+        expect_dsp_matrix_case(state, matches, legal_opcodes[index],
+                               "shadow stack and ULNK encoding");
+    }
+}
+
 static bool binary_matrix_registers_match(const Dspic33* cpu,
                                           const uint16_t registers[16]) {
     uint8_t reg;
@@ -10259,6 +10465,10 @@ int main(void) {
         byte_extension_encoding_matrix_cases(&state, &cpu);
         byte_extension_value_matrix_cases(&state, &cpu);
         byte_extension_lifecycle_cases(&state, &cpu);
+        direct_stack_encoding_matrix_cases(&state, &cpu);
+        direct_stack_value_cases(&state, &cpu);
+        link_encoding_matrix_cases(&state, &cpu);
+        shadow_stack_encoding_cases(&state, &cpu);
         general_unary_encoding_matrix_cases(&state, &cpu);
         compare_encoding_matrix_cases(&state, &cpu);
         conditional_branch_encoding_matrix_cases(&state, &cpu);
