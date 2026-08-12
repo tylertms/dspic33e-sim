@@ -310,6 +310,8 @@ typedef struct {
     uint16_t pmd_generation[DSPIC33_QEI_COUNT];
     uint8_t filtered_inputs[DSPIC33_QEI_COUNT];
     uint8_t logical_inputs[DSPIC33_QEI_COUNT];
+    uint8_t pps_selection[DSPIC33_QEI_COUNT][4];
+    uint8_t pps_qualified[DSPIC33_QEI_COUNT];
     uint8_t filter_stability[DSPIC33_QEI_COUNT][4];
     uint8_t home_index_count[DSPIC33_QEI_COUNT];
     int8_t direction[DSPIC33_QEI_COUNT];

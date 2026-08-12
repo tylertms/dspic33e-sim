@@ -16,6 +16,7 @@ static void refresh_gpio_change_notification(Dspic33* cpu);
 static void refresh_external_interrupts(Dspic33* cpu);
 static void refresh_timer_inputs(Dspic33* cpu);
 static void refresh_input_capture_pps_inputs(Dspic33* cpu);
+static void refresh_qei_pps_inputs(Dspic33* cpu);
 static void run_timer_pmd(Dspic33* cpu, uint16_t timer, uint32_t value);
 static void run_adc_pmd(Dspic33* cpu, uint16_t module, uint32_t value);
 static void adc_update_power_state(Dspic33* cpu);
@@ -90,6 +91,8 @@ static const uint8_t external_interrupt_irqs[DSPIC33_EXTERNAL_INTERRUPT_COUNT] =
 static const uint8_t pwm_irqs[DSPIC33_PWM_COUNT] = {94u, 95u, 96u, 97u, 98u, 99u};
 static const uint16_t qei_bases[DSPIC33_QEI_COUNT] = {0x01c0u, 0x05c0u};
 static const uint8_t qei_irqs[DSPIC33_QEI_COUNT] = {58u, 75u};
+static const uint16_t qei_pps_registers[DSPIC33_QEI_COUNT][2] = {{0x06bcu, 0x06beu},
+                                                                 {0x06c0u, 0x06c2u}};
 static const uint16_t gpio_port_addresses[DSPIC33_GPIO_PORT_COUNT] = {
     0x0e02u, 0x0e12u, 0x0e22u, 0x0e32u, 0x0e42u, 0x0e52u, 0x0e62u};
 static const uint16_t gpio_tris_addresses[DSPIC33_GPIO_PORT_COUNT] = {
@@ -2704,6 +2707,18 @@ static bool pps_output_capable(uint8_t pin) {
         }
     }
     return false;
+}
+
+static uint8_t pps_output_function(const Dspic33* cpu, uint8_t pin) {
+    for (size_t index = 0u; index < sizeof(pps_outputs) / sizeof(pps_outputs[0]);
+         index++) {
+        if (pps_outputs[index].pin == pin) {
+            return (uint8_t)((raw_word(cpu, pps_outputs[index].address) >>
+                              pps_outputs[index].shift) &
+                             0x003fu);
+        }
+    }
+    return 0u;
 }
 
 static bool pps_physical_input_enabled(const Dspic33* cpu, uint8_t pin) {
@@ -5840,17 +5855,152 @@ static void qei_apply_filtered_inputs(Dspic33* cpu, uint8_t channel) {
 static void qei_set_physical_input(Dspic33* cpu, uint8_t channel, uint8_t input,
                                    bool high) {
     uint8_t bit = (uint8_t)(1u << input);
+    uint8_t values = cpu->qei_inputs[channel];
+    values = high ? (uint8_t)(values | bit) : (uint8_t)(values & ~bit);
+    cpu->qei_inputs[channel] = values;
     uint16_t io_control = raw_word(cpu, (uint16_t)(qei_bases[channel] + 2u));
-    if (high) {
-        cpu->qei_inputs[channel] |= bit;
-    } else {
-        cpu->qei_inputs[channel] &= (uint8_t)~bit;
-    }
     if ((io_control & QEI_IO_FILTER_ENABLE) == 0u &&
         !cpu->io.qei.pmd_disabled[channel]) {
-        cpu->io.qei.filtered_inputs[channel] = cpu->qei_inputs[channel];
+        cpu->io.qei.filtered_inputs[channel] = values;
         qei_apply_filtered_inputs(cpu, channel);
     }
+}
+
+static void qei_set_physical_inputs(Dspic33* cpu, uint8_t channel, uint8_t values) {
+    uint16_t io_control = raw_word(cpu, (uint16_t)(qei_bases[channel] + 2u));
+    cpu->qei_inputs[channel] = values;
+    if ((io_control & QEI_IO_FILTER_ENABLE) == 0u &&
+        !cpu->io.qei.pmd_disabled[channel]) {
+        cpu->io.qei.filtered_inputs[channel] = values;
+        qei_apply_filtered_inputs(cpu, channel);
+    }
+}
+
+static bool qei_compare_output_value(const Dspic33* cpu, uint8_t channel, bool* high) {
+    uint16_t io_control;
+    uint8_t mode;
+    int32_t position;
+    int32_t greater_equal;
+    int32_t less_equal;
+    if (channel >= DSPIC33_QEI_COUNT || high == NULL ||
+        cpu->io.qei.pmd_disabled[channel]) {
+        return false;
+    }
+    io_control = raw_word(cpu, (uint16_t)(qei_bases[channel] + 2u));
+    mode = (uint8_t)((io_control & QEI_IO_OUTPUT_MASK) >> QEI_IO_OUTPUT_SHIFT);
+    position = (int32_t)qei_read_counter(cpu, channel, QEI_POSITION_LOW);
+    greater_equal = (int32_t)qei_read_counter(cpu, channel, QEI_GREATER_EQUAL_LOW);
+    less_equal = (int32_t)qei_read_counter(cpu, channel, QEI_LESS_EQUAL_LOW);
+    *high = (mode == 1u && position >= greater_equal) ||
+            (mode == 2u && position <= less_equal) ||
+            (mode == 3u && (position >= greater_equal || position <= less_equal));
+    return true;
+}
+
+static bool qei_pps_output_mapped(const Dspic33* cpu, uint8_t channel) {
+    uint8_t function = (uint8_t)(47u + channel);
+    for (size_t index = 0u; index < sizeof(pps_outputs) / sizeof(pps_outputs[0]);
+         index++) {
+        if (pps_output_function(cpu, pps_outputs[index].pin) == function) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool qei_output_high_at(uint8_t mode, uint32_t position, uint32_t greater_equal,
+                               uint32_t less_equal) {
+    int32_t signed_position = (int32_t)position;
+    int32_t signed_greater_equal = (int32_t)greater_equal;
+    int32_t signed_less_equal = (int32_t)less_equal;
+    return (mode == 1u && signed_position >= signed_greater_equal) ||
+           (mode == 2u && signed_position <= signed_less_equal) ||
+           (mode == 3u && (signed_position >= signed_greater_equal ||
+                           signed_position <= signed_less_equal));
+}
+
+static uint64_t qei_output_transition_ticks(const Dspic33* cpu, uint8_t channel,
+                                            int8_t direction) {
+    uint16_t base = qei_bases[channel];
+    uint8_t mode =
+        (uint8_t)((raw_word(cpu, (uint16_t)(base + 2u)) & QEI_IO_OUTPUT_MASK) >>
+                  QEI_IO_OUTPUT_SHIFT);
+    uint32_t position = qei_read_counter(cpu, channel, QEI_POSITION_LOW);
+    uint32_t greater_equal = qei_read_counter(cpu, channel, QEI_GREATER_EQUAL_LOW);
+    uint32_t less_equal = qei_read_counter(cpu, channel, QEI_LESS_EQUAL_LOW);
+    uint32_t candidates[] = {greater_equal,   greater_equal - 1u, less_equal,
+                             less_equal + 1u, 0x80000000u,        0x7fffffffu};
+    bool current = qei_output_high_at(mode, position, greater_equal, less_equal);
+    uint64_t boundary = UINT64_MAX;
+    for (size_t index = 0u; index < sizeof(candidates) / sizeof(candidates[0]);
+         index++) {
+        uint32_t distance =
+            direction > 0 ? candidates[index] - position : position - candidates[index];
+        uint64_t ticks = distance == 0u ? UINT64_C(1) << 32u : distance;
+        if (ticks < boundary &&
+            qei_output_high_at(mode, candidates[index], greater_equal, less_equal) !=
+                current) {
+            boundary = ticks;
+        }
+    }
+    return boundary;
+}
+
+static uint64_t qei_boundary_cycles(const Dspic33* cpu, uint64_t limit) {
+    uint64_t boundary = limit;
+    for (uint8_t channel = 0u; channel < DSPIC33_QEI_COUNT; channel++) {
+        uint16_t base = qei_bases[channel];
+        uint16_t control = raw_word(cpu, base);
+        uint16_t io_control = raw_word(cpu, (uint16_t)(base + 2u));
+        uint8_t logical = cpu->io.qei.logical_inputs[channel];
+        bool gate_allows =
+            (control & QEI_CONTROL_GATE_ENABLE) == 0u || (logical & 2u) != 0u;
+        if (!qei_pps_output_mapped(cpu, channel) ||
+            (io_control & QEI_IO_OUTPUT_MASK) == 0u) {
+            continue;
+        }
+        if ((io_control & QEI_IO_FILTER_ENABLE) != 0u &&
+            qei_filter_clock_enabled(cpu, channel) &&
+            cpu->io.qei.filtered_inputs[channel] != cpu->qei_inputs[channel]) {
+            uint64_t filter_cycles =
+                qei_filter_divider(io_control) - cpu->io.qei.filter_fraction[channel];
+            if (filter_cycles < boundary) {
+                boundary = filter_cycles;
+            }
+        }
+        if (qei_clock_enabled(cpu, channel) &&
+            (control & QEI_CONTROL_COUNT_MODE_MASK) == 3u && gate_allows) {
+            uint64_t ticks = qei_output_transition_ticks(
+                cpu, channel, (control & QEI_CONTROL_DIRECTION_INVERT) != 0u ? -1 : 1);
+            uint64_t divider = qei_divider(control);
+            if (ticks != UINT64_MAX && ticks <= UINT64_MAX / divider) {
+                uint64_t cycles =
+                    ticks * divider - cpu->io.qei.counter_fraction[channel];
+                if (cycles < boundary) {
+                    boundary = cycles;
+                }
+            }
+        }
+    }
+    return boundary;
+}
+
+static bool qei_pps_output_value(const Dspic33* cpu, uint8_t port, uint8_t bit,
+                                 bool* high) {
+    for (size_t index = 0u; index < sizeof(pps_pins) / sizeof(pps_pins[0]); index++) {
+        if (pps_pins[index].port == port && pps_pins[index].bit == bit) {
+            uint8_t function = pps_output_function(cpu, pps_pins[index].pin);
+            if (function == 47u || function == 48u) {
+                uint8_t channel = (uint8_t)(function - 47u);
+                if ((raw_word(cpu, (uint16_t)(qei_bases[channel] + 2u)) &
+                     QEI_IO_OUTPUT_MASK) != 0u) {
+                    return qei_compare_output_value(cpu, channel, high);
+                }
+            }
+            return false;
+        }
+    }
+    return false;
 }
 
 static void qei_filter_ticks(Dspic33* cpu, uint8_t channel, uint64_t ticks) {
@@ -5958,8 +6108,21 @@ static void qei_advance_channel(Dspic33* cpu, uint8_t channel, uint64_t cycles) 
 
 static void advance_qei(Dspic33* cpu, uint64_t cycles) {
     uint8_t channel;
+    bool output_changed = false;
     for (channel = 0u; channel < DSPIC33_QEI_COUNT; channel++) {
+        bool before = false;
+        bool before_valid = qei_pps_output_mapped(cpu, channel) &&
+                            qei_compare_output_value(cpu, channel, &before);
         qei_advance_channel(cpu, channel, cycles);
+        if (before_valid) {
+            bool after = false;
+            output_changed =
+                output_changed ||
+                (qei_compare_output_value(cpu, channel, &after) && before != after);
+        }
+    }
+    if (output_changed) {
+        refresh_physical_pin_inputs(cpu);
     }
 }
 
@@ -5987,12 +6150,24 @@ static void run_qei(Dspic33* cpu, uint16_t source, uint32_t value) {
                     }
                 }
             }
+            if (qei_pps_output_mapped(cpu, channel)) {
+                refresh_physical_pin_inputs(cpu);
+            }
         }
         return;
     }
     if (source < DSPIC33_QEI_COUNT * 4u) {
-        qei_set_physical_input(cpu, (uint8_t)(source / 4u), (uint8_t)(source % 4u),
-                               value != 0u);
+        uint8_t channel = (uint8_t)(source / 4u);
+        bool before = false;
+        bool mapped = qei_pps_output_mapped(cpu, channel);
+        bool before_valid = mapped && qei_compare_output_value(cpu, channel, &before);
+        qei_set_physical_input(cpu, channel, (uint8_t)(source % 4u), value != 0u);
+        if (before_valid) {
+            bool after = false;
+            if (qei_compare_output_value(cpu, channel, &after) && before != after) {
+                refresh_physical_pin_inputs(cpu);
+            }
+        }
     }
 }
 
@@ -13344,6 +13519,7 @@ bool dspic33_device_advance_instruction(Dspic33* cpu, uint64_t cpu_cycles,
         for (;;) {
             uint64_t next_cycle = target;
             uint64_t timer_boundary;
+            uint64_t qei_boundary;
             if (cpu->events.count == 0u || cpu->events.items[0].paused ||
                 cpu->events.items[0].cycle > target) {
                 next_cycle = target;
@@ -13352,6 +13528,10 @@ bool dspic33_device_advance_instruction(Dspic33* cpu, uint64_t cpu_cycles,
             }
             timer_boundary =
                 timer_boundary_cycles(cpu, next_cycle - cpu->device_cycles);
+            qei_boundary = qei_boundary_cycles(cpu, timer_boundary);
+            if (qei_boundary < timer_boundary) {
+                timer_boundary = qei_boundary;
+            }
             if (timer_boundary != 0u) {
                 advance_device_cycles(cpu, timer_boundary);
                 continue;
@@ -15375,6 +15555,13 @@ static uint16_t gpio_pin_values(const Dspic33* cpu, uint8_t port) {
         uint16_t bit = (uint16_t)(1u << pin);
         if (pwm_pin_value(cpu, port, pin, &high)) {
             values = high ? (uint16_t)(values | bit) : (uint16_t)(values & ~bit);
+        } else if (qei_pps_output_value(cpu, port, pin, &high)) {
+            if (high && (open_drain & bit) != 0u) {
+                values = (external & bit) != 0u ? (uint16_t)(values | bit)
+                                                : (uint16_t)(values & ~bit);
+            } else {
+                values = high ? (uint16_t)(values | bit) : (uint16_t)(values & ~bit);
+            }
         }
     }
     if (port == 2u && oscillator_pin_owned(cpu)) {
@@ -15564,7 +15751,46 @@ static void refresh_input_capture_pps_inputs(Dspic33* cpu) {
     }
 }
 
+static void refresh_qei_pps_inputs(Dspic33* cpu) {
+    for (uint8_t channel = 0u; channel < DSPIC33_QEI_COUNT; channel++) {
+        uint8_t values = cpu->qei_inputs[channel];
+        uint8_t affected = 0u;
+        for (uint8_t input = 0u; input < 4u; input++) {
+            uint8_t mask = (uint8_t)(1u << input);
+            uint16_t mapping = raw_word(cpu, qei_pps_registers[channel][input / 2u]);
+            uint8_t selection = (uint8_t)((mapping >> ((input & 1u) * 8u)) & 0x007fu);
+            bool previous_qualified = (cpu->io.qei.pps_qualified[channel] & mask) != 0u;
+            bool high = false;
+            bool qualified =
+                selection != 0u && pps_physical_input_high(cpu, selection, &high);
+            bool reconfigured =
+                selection != cpu->io.qei.pps_selection[channel][input] ||
+                qualified != previous_qualified;
+            cpu->io.qei.pps_selection[channel][input] = selection;
+            if (qualified) {
+                cpu->io.qei.pps_qualified[channel] |= mask;
+            } else {
+                cpu->io.qei.pps_qualified[channel] &= (uint8_t)~mask;
+            }
+            if (reconfigured) {
+                if (qualified || previous_qualified) {
+                    affected |= mask;
+                    values = qualified && high ? (uint8_t)(values | mask)
+                                               : (uint8_t)(values & ~mask);
+                }
+            } else if (qualified) {
+                affected |= mask;
+                values = high ? (uint8_t)(values | mask) : (uint8_t)(values & ~mask);
+            }
+        }
+        if (affected != 0u && values != cpu->qei_inputs[channel]) {
+            qei_set_physical_inputs(cpu, channel, values);
+        }
+    }
+}
+
 static void refresh_physical_pin_inputs(Dspic33* cpu) {
+    refresh_qei_pps_inputs(cpu);
     refresh_gpio_change_notification(cpu);
     refresh_external_interrupts(cpu);
     refresh_timer_inputs(cpu);
@@ -16288,24 +16514,7 @@ bool dspic33_qei_input(Dspic33* cpu, uint8_t channel, Dspic33QeiInput input, boo
 }
 
 bool dspic33_qei_compare_output(const Dspic33* cpu, uint8_t channel, bool* high) {
-    uint16_t io_control;
-    uint8_t mode;
-    int32_t position;
-    int32_t greater_equal;
-    int32_t less_equal;
-    if (channel >= DSPIC33_QEI_COUNT || high == NULL ||
-        cpu->io.qei.pmd_disabled[channel]) {
-        return false;
-    }
-    io_control = raw_word(cpu, (uint16_t)(qei_bases[channel] + 2u));
-    mode = (uint8_t)((io_control & QEI_IO_OUTPUT_MASK) >> QEI_IO_OUTPUT_SHIFT);
-    position = (int32_t)qei_read_counter(cpu, channel, QEI_POSITION_LOW);
-    greater_equal = (int32_t)qei_read_counter(cpu, channel, QEI_GREATER_EQUAL_LOW);
-    less_equal = (int32_t)qei_read_counter(cpu, channel, QEI_LESS_EQUAL_LOW);
-    *high = (mode == 1u && position >= greater_equal) ||
-            (mode == 2u && position <= less_equal) ||
-            (mode == 3u && (position >= greater_equal || position <= less_equal));
-    return true;
+    return qei_compare_output_value(cpu, channel, high);
 }
 
 void dspic33_dci_input(Dspic33* cpu, uint16_t value) { cpu->io.dci.input = value; }
@@ -16798,6 +17007,9 @@ void dspic33_device_reset(Dspic33* cpu) {
     size_t index;
     memcpy(gpio, cpu->io.gpio, sizeof(gpio));
     memcpy(gpio_driven, cpu->io.gpio_driven, sizeof(gpio_driven));
+    for (size_t channel = 0u; channel < DSPIC33_QEI_COUNT; channel++) {
+        cpu->qei_inputs[channel] &= (uint8_t)~cpu->io.qei.pps_qualified[channel];
+    }
     memset(&cpu->io, 0, sizeof(cpu->io));
     cpu->io.dci.bcg_paused = true;
     cpu->io.comparator.reference[DSPIC33_COMPARATOR_REFERENCE_AVDD] = 3300u;
