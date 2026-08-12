@@ -85,11 +85,28 @@ static void select_window(Dspic33* cpu, uint8_t channel, bool filter) {
                        filter ? (uint16_t)(control | 1u) : (uint16_t)(control & ~1u));
 }
 
-static void set_mode(Dspic33* cpu, uint8_t channel, uint8_t mode) {
+static uint64_t mode_transition_cycles(Dspic33* cpu, uint8_t channel) {
+    uint16_t base = bases[channel];
+    uint16_t config1 = dspic33_read_word(cpu, (uint16_t)(base + 0x10u));
+    uint16_t config2 = dspic33_read_word(cpu, (uint16_t)(base + 0x12u));
+    uint16_t control = dspic33_read_word(cpu, base);
+    uint64_t prescaler = (config1 & 0x003fu) + 1u;
+    uint64_t quanta = 1u + (config2 & 7u) + 1u + ((config2 >> 3u) & 7u) + 1u +
+                      ((config2 >> 8u) & 7u) + 1u;
+    uint64_t clock_divisor = (control & 0x0800u) != 0u ? 2u : 1u;
+    return 11u * prescaler * quanta * clock_divisor;
+}
+
+static void request_mode(Dspic33* cpu, uint8_t channel, uint8_t mode) {
     uint16_t base = bases[channel];
     uint16_t control = dspic33_read_word(cpu, base);
     control = (uint16_t)((control & ~0x0700u) | ((uint16_t)mode << 8u));
     dspic33_write_word(cpu, base, control);
+}
+
+static void set_mode(Dspic33* cpu, uint8_t channel, uint8_t mode) {
+    request_mode(cpu, channel, mode);
+    dspic33_device_advance(cpu, mode_transition_cycles(cpu, channel));
 }
 
 static void configure_filter(Dspic33* cpu, uint8_t channel, uint8_t filter,
@@ -282,7 +299,10 @@ static void register_access_cases(CanConformance* state, Dspic33* cpu) {
 
         dspic33_write_word(
             cpu, base, (uint16_t)((dspic33_read_word(cpu, base) & ~0x07e0u) | 0x02e0u));
-        expect(state, (dspic33_read_word(cpu, base) & 0x07e0u) == 0x0240u,
+        expect(state,
+               (dspic33_read_word(cpu, base) & 0x07e0u) == 0x0280u &&
+                   dspic33_device_advance(cpu, mode_transition_cycles(cpu, channel)) &&
+                   (dspic33_read_word(cpu, base) & 0x07e0u) == 0x0240u,
                "requested mode controls operating mode");
         dspic33_write_word(cpu, base,
                            (uint16_t)(dspic33_read_word(cpu, base) | 0x00a0u));
@@ -1738,6 +1758,58 @@ static void bus_off_recovery_cases(CanConformance* state, Dspic33* cpu) {
     }
 }
 
+static void error_counter_recovery_cases(CanConformance* state, Dspic33* cpu) {
+    for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint16_t base = bases[channel];
+        uint32_t memory = (uint32_t)(0xe000u + channel * 0x100u);
+        Dspic33CanFrame input = frame(0x234u, false, false, 1u, 0x5au);
+        dspic33_reset(cpu, 0u);
+        configure_receive(cpu, channel, memory, 4u, 0u);
+        configure_filter(cpu, channel, 0u, 0x234u, false, 0x7ffu, true, 0u, 0u);
+        enable_filter(cpu, channel, 1u);
+        select_window(cpu, channel, false);
+        set_mode(cpu, channel, 0u);
+        expect(state,
+               dspic33_can_error(cpu, channel, false, 1u, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   dspic33_can_receive(cpu, channel, &input, 0u) &&
+                   dspic33_device_advance(cpu, 32u) &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0eu)) & 0x00ffu) == 0u,
+               "successful CAN reception decrements REC below error-passive");
+
+        dspic33_reset(cpu, 0u);
+        configure_receive(cpu, channel, memory, 4u, 0u);
+        configure_filter(cpu, channel, 0u, 0x234u, false, 0x7ffu, true, 0u, 0u);
+        enable_filter(cpu, channel, 1u);
+        select_window(cpu, channel, false);
+        set_mode(cpu, channel, 0u);
+        expect(state,
+               dspic33_can_error(cpu, channel, false, 128u, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   dspic33_can_receive(cpu, channel, &input, 0u) &&
+                   dspic33_device_advance(cpu, 32u) &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0eu)) & 0x00ffu) ==
+                       127u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x0800u) == 0u,
+               "successful CAN reception leaves error-passive in the documented range");
+
+        dspic33_reset(cpu, 0u);
+        configure_receive(cpu, channel, memory, 4u, 0u);
+        configure_filter(cpu, channel, 0u, 0x234u, false, 0x7ffu, true, 0u, 0u);
+        enable_filter(cpu, channel, 1u);
+        select_window(cpu, channel, false);
+        set_mode(cpu, channel, 0u);
+        bool prepared = dspic33_can_error(cpu, channel, false, 5u, 0u) &&
+                        dspic33_device_advance(cpu, 0u);
+        set_mode(cpu, channel, 3u);
+        expect(state,
+               prepared && dspic33_can_receive(cpu, channel, &input, 0u) &&
+                   dspic33_device_advance(cpu, 32u) &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0eu)) & 0x00ffu) == 5u,
+               "listen-only CAN reception freezes REC");
+    }
+}
+
 static void receive_pps_cases(CanConformance* state, Dspic33* cpu) {
     expect(state, !dspic33_can_input_pin(cpu, 63u, true, 0u),
            "CAN input rejects non-remappable pin");
@@ -2018,6 +2090,99 @@ static void mode_and_power_cases(CanConformance* state, Dspic33* cpu) {
         expect(state, (dspic33_read_word(cpu, 0x040au) & 0x0040u) != 0u,
                "enabled CAN wake filter raises wake flag");
     }
+}
+
+static void mode_transition_cases(CanConformance* state, Dspic33* cpu) {
+    uint64_t cycles;
+    dspic33_reset(cpu, 0u);
+    cycles = mode_transition_cycles(cpu, 0u);
+    request_mode(cpu, 0u, 0u);
+    expect(state, (dspic33_read_word(cpu, 0x0400u) & 0x07e0u) == 0x0080u,
+           "CAN mode request preserves the active mode before bus idle");
+    expect(state,
+           dspic33_device_advance(cpu, cycles - 1u) &&
+               (dspic33_read_word(cpu, 0x0400u) & 0x00e0u) == 0x0080u,
+           "CAN mode request remains pending before 11 recessive bits");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) &&
+               (dspic33_read_word(cpu, 0x0400u) & 0x00e0u) == 0u,
+           "CAN mode request completes after 11 recessive bits");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_write_word(cpu, 0x06d4u, 64u);
+    request_mode(cpu, 0u, 0u);
+    expect(state,
+           dspic33_device_advance(cpu, cycles - 1u) &&
+               dspic33_can_input_pin(cpu, 64u, false, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               dspic33_can_input_pin(cpu, 64u, true, 0u) &&
+               dspic33_device_advance(cpu, 0u) && dspic33_device_advance(cpu, 1u) &&
+               (dspic33_read_word(cpu, 0x0400u) & 0x00e0u) == 0x0080u,
+           "dominant CAN input restarts the mode idle boundary");
+    expect(state,
+           dspic33_device_advance(cpu, cycles - 1u) &&
+               (dspic33_read_word(cpu, 0x0400u) & 0x00e0u) == 0u,
+           "CAN mode transition completes after the restarted idle boundary");
+
+    request_mode(cpu, 0u, 3u);
+    request_mode(cpu, 0u, 2u);
+    expect(state,
+           dspic33_device_advance(cpu, cycles) &&
+               (dspic33_read_word(cpu, 0x0400u) & 0x07e0u) == 0x0240u,
+           "new CAN mode request supersedes a pending transition");
+
+    Dspic33 copy;
+    expect(state, dspic33_initialize(&copy), "initialize pending CAN mode copy");
+    request_mode(cpu, 0u, 3u);
+    expect(state, dspic33_copy(&copy, cpu), "copy pending CAN mode transition");
+    expect(state,
+           dspic33_device_advance(cpu, cycles) &&
+               dspic33_device_advance(&copy, cycles) &&
+               (dspic33_read_word(cpu, 0x0400u) & 0x00e0u) == 0x0060u &&
+               (dspic33_read_word(&copy, 0x0400u) & 0x00e0u) == 0x0060u,
+           "copy preserves pending CAN mode transition phase");
+    dspic33_destroy(&copy);
+
+    dspic33_reset(cpu, 0u);
+    request_mode(cpu, 0u, 0u);
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_device_advance(cpu, cycles) &&
+               (dspic33_read_word(cpu, 0x0400u) & 0x07e0u) == 0x0480u &&
+               cpu->events.count == 0u,
+           "reset cancels a pending CAN mode transition");
+
+    dspic33_reset(cpu, 0u);
+    cpu->device_cycles = UINT64_MAX;
+    request_mode(cpu, 0u, 0u);
+    expect(state,
+           cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR && cpu->events.count == 0u &&
+               (dspic33_read_word(cpu, 0x0400u) & 0x07e0u) == 0x0080u,
+           "CAN mode schedule overflow leaves the request pending");
+
+    dspic33_reset(cpu, 0u);
+    configure_transmit(cpu, 0u, 0xde00u);
+    Dspic33CanFrame input = frame(0x234u, false, false, 1u, 0x5au);
+    write_transmit_frame(cpu, 0xde00u, &input);
+    select_window(cpu, 0u, false);
+    dspic33_write_word(cpu, 0x0410u, 0u);
+    dspic33_write_word(cpu, 0x0412u, 0u);
+    set_mode(cpu, 0u, 0u);
+    dspic33_write_word(cpu, 0x0430u, 0x008bu);
+    expect(state, dspic33_device_advance(cpu, 8u) && (cpu->io.can_tx_on_bus & 1u) != 0u,
+           "CAN mode transition test reaches an active frame");
+    request_mode(cpu, 0u, 4u);
+    expect(state,
+           dspic33_device_advance(cpu, cycles) &&
+               (dspic33_read_word(cpu, 0x0400u) & 0x00e0u) == 0u &&
+               (cpu->io.can_tx_on_bus & 1u) != 0u,
+           "CAN mode transition waits for the active frame");
+    expect(state,
+           dspic33_device_advance(cpu, 256u) &&
+               (dspic33_read_word(cpu, 0x0400u) & 0x00e0u) == 0x0080u,
+           "CAN mode transition completes after the active frame and idle boundary");
 }
 
 static void physical_debug_mode_cases(CanConformance* state, Dspic33* cpu) {
@@ -2551,15 +2716,17 @@ int main(void) {
     transmit_error_variant_cases(&state, &cpu);
     receive_error_cases(&state, &cpu);
     bus_off_recovery_cases(&state, &cpu);
+    error_counter_recovery_cases(&state, &cpu);
     receive_pps_qualification_cases(&state, &cpu);
     priority_and_abort_cases(&state, &cpu);
     mode_and_power_cases(&state, &cpu);
+    mode_transition_cases(&state, &cpu);
     physical_debug_mode_cases(&state, &cpu);
     capture_timestamp_cases(&state, &cpu);
     interrupt_and_error_cases(&state, &cpu);
     invalid_message_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
-    expect(&state, state.cases == 1462699u, "CAN assertion accounting");
+    expect(&state, state.cases == 1462719u, "CAN assertion accounting");
     report_sfr_side_effect_coverage(
         "can", can_sfr_side_effect_coverage,
         SFR_SIDE_EFFECT_COVERAGE_COUNT(can_sfr_side_effect_coverage),

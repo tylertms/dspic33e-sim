@@ -549,6 +549,7 @@ typedef struct {
     uint64_t can_tx_error_start_cycle[DSPIC33_CAN_COUNT];
     uint64_t can_rx_error_start_cycle[DSPIC33_CAN_COUNT];
     uint16_t can_bus_off_recessive_bits[DSPIC33_CAN_COUNT];
+    uint16_t can_mode_generation[DSPIC33_CAN_COUNT];
     uint16_t adc[DSPIC33_ADC_CHANNEL_COUNT];
     uint16_t adc_latched[DSPIC33_ADC_COUNT][4];
     uint16_t adc_generation[DSPIC33_ADC_COUNT];

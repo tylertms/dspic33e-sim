@@ -559,8 +559,12 @@ enum {
     CAN_EVENT_TRANSMIT_SAMPLE = 17u,
     CAN_EVENT_RECEIVE_ERROR_START = 18u,
     CAN_EVENT_RECEIVE_ERROR_FINISH = 19u,
+    CAN_EVENT_MODE_TRANSITION = 20u,
+    CAN_EVENT_RECEIVE_SUCCESS = 21u,
     CAN_EVENT_TRANSMIT_ERROR = 0x00000100u,
     CAN_EVENT_PIN_HIGH = 0x00000200u,
+    CAN_EVENT_MODE_SHIFT = 8u,
+    CAN_EVENT_MODE_GENERATION_SHIFT = 11u,
     CAN_EVENT_ERROR_COUNT_SHIFT = 16u,
     USB_OTGIR = 0x0488u,
     USB_OTGIE = 0x048au,
@@ -10997,6 +11001,15 @@ static bool can_serial_receive_enabled(const Dspic33* cpu, uint8_t channel) {
             mode == CAN_MODE_LISTEN_ALL);
 }
 
+static bool can_schedule_mode_transition(Dspic33* cpu, uint8_t channel, uint8_t mode) {
+    uint32_t value = CAN_EVENT_MODE_TRANSITION |
+                     ((uint32_t)mode << CAN_EVENT_MODE_SHIFT) |
+                     ((uint32_t)cpu->io.can_mode_generation[channel]
+                      << CAN_EVENT_MODE_GENERATION_SHIFT);
+    return dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, value,
+                            11u * can_bit_cycles(cpu, channel));
+}
+
 static void can_remove_transmit_events(Dspic33* cpu, uint8_t channel);
 static void can_error_event(Dspic33* cpu, uint8_t channel, uint32_t value);
 static void can_invalid_event(Dspic33* cpu, uint8_t channel);
@@ -11095,6 +11108,18 @@ static void can_receive_error(Dspic33* cpu, uint8_t channel,
     }
 }
 
+static void can_receive_success(Dspic33* cpu, uint8_t channel) {
+    uint16_t address = (uint16_t)(can_bases[channel] + 0x0eu);
+    uint16_t counts = raw_word(cpu, address);
+    uint8_t receive = (uint8_t)counts;
+    if (can_mode(cpu, channel) == CAN_MODE_LISTEN || receive == 0u) {
+        return;
+    }
+    receive = receive > 127u ? 127u : (uint8_t)(receive - 1u);
+    raw_write_word(cpu, address, (uint16_t)((counts & 0xff00u) | receive));
+    can_refresh_error_status(cpu, channel);
+}
+
 static bool can_bus_off_input(Dspic33* cpu, uint8_t channel, bool high) {
     uint16_t status_address = (uint16_t)(can_bases[channel] + 0x0au);
     uint16_t status = raw_word(cpu, status_address);
@@ -11133,6 +11158,15 @@ static void can_receive_pin_level(Dspic33* cpu, uint8_t pin, bool high) {
             cpu->io.can_rx_pin_high |= bit;
         } else {
             cpu->io.can_rx_pin_high &= (uint8_t)~bit;
+        }
+        uint8_t requested_mode =
+            (uint8_t)((raw_word(cpu, can_bases[channel]) & CAN_MODE_MASK) >>
+                      CAN_MODE_SHIFT);
+        if (!high && requested_mode != can_mode(cpu, channel)) {
+            cpu->io.can_mode_generation[channel]++;
+            if (!can_schedule_mode_transition(cpu, channel, requested_mode)) {
+                cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+            }
         }
         if (can_bus_off_input(cpu, channel, high)) {
             continue;
@@ -11199,6 +11233,7 @@ static void can_receive_sample(Dspic33* cpu, uint8_t channel) {
         if ((cpu->io.can_tx_on_bus & bit) != 0u) {
             return;
         }
+        can_receive_success(cpu, channel);
         if (!can_queue_push(&cpu->io.can_rx[channel], &frame) ||
             !dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_START,
                               0u) ||
@@ -11253,6 +11288,45 @@ static void can_receive_error_start(Dspic33* cpu, uint8_t channel) {
 
 static void can_receive_error_finish(Dspic33* cpu, uint8_t channel) {
     cpu->io.can_rx_error_active &= (uint8_t)~(uint8_t)(1u << channel);
+}
+
+static void can_mode_transition(Dspic33* cpu, uint8_t channel, uint32_t value) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    uint8_t mode = (uint8_t)((value >> CAN_EVENT_MODE_SHIFT) & 7u);
+    uint16_t generation = (uint16_t)(value >> CAN_EVENT_MODE_GENERATION_SHIFT);
+    uint16_t control = raw_word(cpu, can_bases[channel]);
+    uint8_t requested = (uint8_t)((control & CAN_MODE_MASK) >> CAN_MODE_SHIFT);
+    if (generation != cpu->io.can_mode_generation[channel] || mode != requested ||
+        mode == can_mode(cpu, channel)) {
+        return;
+    }
+    if (!can_power_enabled(cpu, channel) || (cpu->io.can_rx_pin_high & bit) == 0u ||
+        ((cpu->io.can_tx_busy | cpu->io.can_rx_busy | cpu->io.can_rx_serial_active |
+          cpu->io.can_tx_error_active | cpu->io.can_rx_error_active |
+          cpu->io.can_rx_ack) &
+         bit) != 0u) {
+        cpu->io.can_mode_generation[channel]++;
+        if (!can_schedule_mode_transition(cpu, channel, mode)) {
+            cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+        }
+        return;
+    }
+    raw_write_word(cpu, can_bases[channel],
+                   (uint16_t)((control & ~0x00e0u) | ((uint16_t)mode << 5u)));
+    if (mode == CAN_MODE_CONFIGURATION) {
+        raw_write_word(cpu, (uint16_t)(can_bases[channel] + 0x0eu), 0u);
+        raw_write_word(
+            cpu, (uint16_t)(can_bases[channel] + 0x0au),
+            (uint16_t)(raw_word(cpu, (uint16_t)(can_bases[channel] + 0x0au)) &
+                       0x00ffu));
+        can_refresh_error_status(cpu, channel);
+    }
+    if (mode == CAN_MODE_NORMAL || mode == CAN_MODE_LOOPBACK) {
+        if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_START,
+                              0u)) {
+            cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+        }
+    }
 }
 
 static void can_refresh_error_status(Dspic33* cpu, uint8_t channel) {
@@ -11342,6 +11416,11 @@ static void can_receive_start(Dspic33* cpu, uint8_t channel) {
     cpu->io.can_rx_word[channel] = 0u;
     cpu->io.can_rx_busy |= bit;
     dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_WORD, 0u);
+}
+
+static void can_receive_success_start(Dspic33* cpu, uint8_t channel) {
+    can_receive_success(cpu, channel);
+    can_receive_start(cpu, channel);
 }
 
 static void can_receive_word(Dspic33* cpu, uint8_t channel) {
@@ -11621,6 +11700,12 @@ static void run_can(Dspic33* cpu, uint8_t channel, uint32_t value) {
         break;
     case CAN_EVENT_RECEIVE_ERROR_FINISH:
         can_receive_error_finish(cpu, channel);
+        break;
+    case CAN_EVENT_MODE_TRANSITION:
+        can_mode_transition(cpu, channel, value);
+        break;
+    case CAN_EVENT_RECEIVE_SUCCESS:
+        can_receive_success_start(cpu, channel);
         break;
     case CAN_EVENT_ERROR:
         can_error_event(cpu, channel, value);
@@ -14379,15 +14464,17 @@ static void update_can_register(Dspic33* cpu, uint16_t address, uint16_t previou
         if (offset == 0u) {
             uint16_t control = raw_word(cpu, base);
             uint16_t mode = (uint16_t)((control & CAN_MODE_MASK) >> CAN_MODE_SHIFT);
-            control = (uint16_t)((control & ~0x00e0u) | (mode << 5u));
+            uint16_t active = (uint16_t)((previous >> 5u) & 7u);
+            uint16_t prior_request =
+                (uint16_t)((previous & CAN_MODE_MASK) >> CAN_MODE_SHIFT);
+            control = (uint16_t)((control & ~0x00e0u) | (active << 5u));
             raw_write_word(cpu, base, control);
-            if (mode == CAN_MODE_CONFIGURATION &&
-                ((previous >> 5u) & 7u) != CAN_MODE_CONFIGURATION) {
-                raw_write_word(cpu, (uint16_t)(base + 0x0eu), 0u);
-                raw_write_word(
-                    cpu, (uint16_t)(base + 0x0au),
-                    (uint16_t)(raw_word(cpu, (uint16_t)(base + 0x0au)) & 0x00ffu));
-                can_refresh_error_status(cpu, channel);
+            if (mode != prior_request) {
+                cpu->io.can_mode_generation[channel]++;
+                if (mode != active &&
+                    !can_schedule_mode_transition(cpu, channel, (uint8_t)mode)) {
+                    cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+                }
             }
             if ((control & CAN_ABORT_ALL) != 0u) {
                 can_abort_transmissions(cpu, channel);
@@ -16042,7 +16129,7 @@ bool dspic33_can_receive(Dspic33* cpu, uint8_t channel, const Dspic33CanFrame* f
            (!frame->extended ? frame->identifier <= 0x7ffu
                              : frame->identifier <= 0x1fffffffu) &&
            can_queue_push(&cpu->io.can_rx[channel], frame) &&
-           dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_START,
+           dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_SUCCESS,
                             delay);
 }
 
