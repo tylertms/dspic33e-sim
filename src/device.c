@@ -508,6 +508,7 @@ enum {
     SPI_SELECT_ACTIVE = 0x00000001u,
     CAN_WINDOW = 0x0001u,
     CAN_CAPTURE = 0x0008u,
+    CAN_WAKE_FILTER = 0x4000u,
     CAN_MODE_MASK = 0x0700u,
     CAN_MODE_SHIFT = 8u,
     CAN_MODE_NORMAL = 0u,
@@ -546,6 +547,7 @@ enum {
     CAN_EVENT_ERROR = 7u,
     CAN_EVENT_TRANSMIT_BUS_FINISH = 8u,
     CAN_EVENT_KIND_MASK = 0x000000ffu,
+    CAN_EVENT_CAPTURE_RELEASE = 9u,
     CAN_EVENT_TRANSMIT_ERROR = 0x00000100u,
     CAN_EVENT_ERROR_COUNT_SHIFT = 16u,
     USB_OTGIR = 0x0488u,
@@ -2678,10 +2680,20 @@ static bool pps_physical_input_enabled(const Dspic33* cpu, uint8_t pin) {
             (raw_word(cpu, gpio_analog_addresses[mapping->port]) & bit) == 0u);
 }
 
+static bool can_capture_enabled(const Dspic33* cpu) {
+    for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        if ((raw_word(cpu, can_bases[channel]) & CAN_CAPTURE) != 0u) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void input_capture_pps_source(Dspic33* cpu, uint8_t source, bool high) {
     uint8_t channel;
     for (channel = 0u; channel < DSPIC33_INPUT_CAPTURE_COUNT; channel++) {
-        if (input_capture_pps_pin(cpu, channel) == source) {
+        if (input_capture_pps_pin(cpu, channel) == source &&
+            (channel != 1u || !can_capture_enabled(cpu))) {
             input_capture_level(cpu, channel, high);
         }
     }
@@ -10769,8 +10781,7 @@ static uint16_t can_frame_bit_count(const Dspic33CanFrame* frame) {
     return (uint16_t)(stuffed + 13u);
 }
 
-static uint64_t can_frame_cycles(const Dspic33* cpu, uint8_t channel,
-                                 const Dspic33CanFrame* frame) {
+static uint64_t can_bit_cycles(const Dspic33* cpu, uint8_t channel) {
     uint16_t config1 = raw_word(cpu, (uint16_t)(can_bases[channel] + 0x10u));
     uint16_t config2 = raw_word(cpu, (uint16_t)(can_bases[channel] + 0x12u));
     uint16_t control = raw_word(cpu, can_bases[channel]);
@@ -10778,7 +10789,24 @@ static uint64_t can_frame_cycles(const Dspic33* cpu, uint8_t channel,
     uint64_t quanta = 1u + (config2 & 7u) + 1u + ((config2 >> 3u) & 7u) + 1u +
                       ((config2 >> 8u) & 7u) + 1u;
     uint64_t clock_divisor = (control & 0x0800u) != 0u ? 2u : 1u;
-    return (uint64_t)can_frame_bit_count(frame) * prescaler * quanta * clock_divisor;
+    return prescaler * quanta * clock_divisor;
+}
+
+static uint64_t can_frame_cycles(const Dspic33* cpu, uint8_t channel,
+                                 const Dspic33CanFrame* frame) {
+    return (uint64_t)can_frame_bit_count(frame) * can_bit_cycles(cpu, channel);
+}
+
+static void can_capture_received_frame(Dspic33* cpu, uint8_t channel) {
+    if ((raw_word(cpu, can_bases[channel]) & CAN_CAPTURE) == 0u) {
+        return;
+    }
+    input_capture_level(cpu, 1u, true);
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_CAPTURE_RELEASE,
+                          can_bit_cycles(cpu, channel))) {
+        input_capture_level(cpu, 1u, false);
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    }
 }
 
 static void can_refresh_error_status(Dspic33* cpu, uint8_t channel) {
@@ -10820,7 +10848,10 @@ static void can_receive_start(Dspic33* cpu, uint8_t channel) {
         return;
     }
     if (cpu->power_state == DSPIC33_POWER_SLEEP) {
-        can_raise_event(cpu, channel, CAN_INTERRUPT_WAKE, 0u, 0u);
+        if ((raw_word(cpu, (uint16_t)(can_bases[channel] + 0x12u)) & CAN_WAKE_FILTER) !=
+            0u) {
+            can_raise_event(cpu, channel, CAN_INTERRUPT_WAKE, 0u, 0u);
+        }
         return;
     }
     if (!can_power_enabled(cpu, channel) ||
@@ -10828,6 +10859,7 @@ static void can_receive_start(Dspic33* cpu, uint8_t channel) {
         can_mode(cpu, channel) == CAN_MODE_CONFIGURATION) {
         return;
     }
+    can_capture_received_frame(cpu, channel);
     if (can_mode(cpu, channel) == CAN_MODE_LISTEN_ALL) {
         bool fifo;
         bool transmit;
@@ -11049,6 +11081,9 @@ static void run_can(Dspic33* cpu, uint8_t channel, uint32_t value) {
         break;
     case CAN_EVENT_TRANSMIT_BUS_FINISH:
         can_transmit_bus_finish(cpu, channel);
+        break;
+    case CAN_EVENT_CAPTURE_RELEASE:
+        input_capture_level(cpu, 1u, false);
         break;
     case CAN_EVENT_ERROR:
         can_error_event(cpu, channel, value);

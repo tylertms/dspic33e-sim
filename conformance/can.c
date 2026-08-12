@@ -1217,9 +1217,90 @@ static void mode_and_power_cases(CanConformance* state, Dspic33* cpu) {
         expect(state,
                dspic33_can_receive(cpu, 0u, &input, 0u) &&
                    dspic33_device_advance(cpu, 1u),
-               "sleep wake schedule");
+               "unfiltered sleep activity schedule");
+        expect(state, (dspic33_read_word(cpu, 0x040au) & 0x0040u) == 0u,
+               "disabled CAN wake filter rejects sleep activity");
+    }
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0412u, 0x4000u);
+    dspic33_write_word(cpu, 0x040cu, 0x0040u);
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    {
+        Dspic33CanFrame input = frame(0x234u, false, false, 1u, 0u);
+        expect(state,
+               dspic33_can_receive(cpu, 0u, &input, 0u) &&
+                   dspic33_device_advance(cpu, 1u),
+               "filtered sleep wake schedule");
         expect(state, (dspic33_read_word(cpu, 0x040au) & 0x0040u) != 0u,
-               "sleep wake flag");
+               "enabled CAN wake filter raises wake flag");
+    }
+}
+
+static void capture_timestamp_cases(CanConformance* state, Dspic33* cpu) {
+    for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint16_t base = bases[channel];
+        uint32_t memory = (uint32_t)(0xc800u + channel * 0x100u);
+        Dspic33CanFrame input = frame(0x345u, false, false, 1u, 0x5au);
+        dspic33_reset(cpu, 0u);
+        configure_receive(cpu, channel, memory, 4u, 0u);
+        configure_filter(cpu, channel, 0u, 0x345u, false, 0x7ffu, true, 0u, 0u);
+        enable_filter(cpu, channel, 1u);
+        select_window(cpu, channel, false);
+        dspic33_write_word(cpu, (uint16_t)(base + 0x10u), 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 0x12u), 0u);
+        set_mode(cpu, channel, 0u);
+        dspic33_write_word(cpu, 0x0148u, 0u);
+        dspic33_write_word(cpu, 0x014au, 0u);
+        dspic33_write_word(cpu, 0x0148u, 0x1c03u);
+        dspic33_write_word(cpu, base,
+                           (uint16_t)(dspic33_read_word(cpu, base) | 0x0008u));
+        expect(state,
+               dspic33_can_receive(cpu, channel, &input, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   (cpu->io.input_capture.input_high & 2u) != 0u,
+               "CAN timestamp pulse starts after frame acceptance");
+        expect(state,
+               dspic33_device_advance(cpu, 3u) &&
+                   (cpu->io.input_capture.input_high & 2u) != 0u,
+               "CAN timestamp pulse remains high before one bit time");
+        expect(state,
+               dspic33_device_advance(cpu, 1u) &&
+                   cpu->io.input_capture.fifo[1].count == 1u &&
+                   (cpu->io.input_capture.input_high & 2u) == 0u,
+               "CAN timestamp pulse clears after one bit time");
+        dspic33_write_word(cpu, 0x06aeu, 0x4000u);
+        expect(state,
+               dspic33_input_capture_pin(cpu, 64u, false, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   dspic33_input_capture_pin(cpu, 64u, true, 0u) &&
+                   dspic33_device_advance(cpu, 1u),
+               "IC2 pin edge advances while CAN capture is selected");
+        expect(state, cpu->io.input_capture.fifo[1].count == 1u,
+               "CANCAP disconnects the physical IC2 pin");
+        dspic33_write_word(cpu, base,
+                           (uint16_t)(dspic33_read_word(cpu, base) & ~0x0008u));
+        expect(state,
+               dspic33_input_capture_pin(cpu, 64u, false, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   dspic33_input_capture_pin(cpu, 64u, true, 0u) &&
+                   dspic33_device_advance(cpu, 1u),
+               "IC2 pin edge advances after CAN capture is cleared");
+        expect(state, cpu->io.input_capture.fifo[1].count == 2u,
+               "clearing CANCAP restores the physical IC2 pin");
+
+        dspic33_reset(cpu, 0u);
+        configure_receive(cpu, channel, memory, 4u, 0u);
+        configure_filter(cpu, channel, 0u, 0x345u, false, 0x7ffu, true, 0u, 0u);
+        enable_filter(cpu, channel, 1u);
+        select_window(cpu, channel, false);
+        set_mode(cpu, channel, 0u);
+        dspic33_write_word(cpu, 0x0148u, 0x1c03u);
+        expect(state,
+               dspic33_can_receive(cpu, channel, &input, 0u) &&
+                   dspic33_device_advance(cpu, 32u),
+               "disabled CAN timestamp receive schedule");
+        expect(state, cpu->io.input_capture.fifo[1].count == 0u,
+               "CANCAP clear preserves the IC2 pin source");
     }
 }
 
@@ -1521,9 +1602,10 @@ int main(void) {
     transmit_abort_timing_cases(&state, &cpu);
     priority_and_abort_cases(&state, &cpu);
     mode_and_power_cases(&state, &cpu);
+    capture_timestamp_cases(&state, &cpu);
     interrupt_and_error_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
-    expect(&state, state.cases == 1462534u, "CAN assertion accounting");
+    expect(&state, state.cases == 1462554u, "CAN assertion accounting");
     report_sfr_side_effect_coverage(
         "can", can_sfr_side_effect_coverage,
         SFR_SIDE_EFFECT_COVERAGE_COUNT(can_sfr_side_effect_coverage),
