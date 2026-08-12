@@ -476,6 +476,53 @@ static void trigger_cases(AdcConformance* state, Dspic33* cpu) {
            "next auto conversion clears state");
 }
 
+static void timer_trigger_cases(AdcConformance* state, Dspic33* cpu) {
+    static const uint8_t modules[] = {0u, 1u};
+    static const uint16_t counters[] = {0x010au, 0x0118u};
+    static const uint16_t periods[] = {0x010eu, 0x011cu};
+    static const uint16_t controls_16[] = {0x0112u, 0x0120u};
+    static const uint16_t low_counters[] = {0x0106u, 0x0114u};
+    static const uint16_t low_periods[] = {0x010cu, 0x011au};
+    static const uint16_t low_controls[] = {0x0110u, 0x011eu};
+    static const uint8_t sources[] = {2u, 4u};
+    uint8_t index;
+    for (index = 0u; index < 2u; index++) {
+        uint8_t module = modules[index];
+        dspic33_reset(cpu, 0u);
+        set_input(cpu, 0u, 400u);
+        configure_manual(cpu, module, (uint16_t)(sources[index] << 4u), 0u, 0u);
+        dspic33_write_word(
+            cpu, controls[module],
+            (uint16_t)(dspic33_read_word(cpu, controls[module]) | 0x0002u));
+        dspic33_write_word(cpu, counters[index], 0u);
+        dspic33_write_word(cpu, periods[index], 1u);
+        dspic33_write_word(cpu, controls_16[index], 0x8000u);
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "Type C timer period triggers matching ADC");
+        expect(state, (dspic33_read_word(cpu, controls[module]) & 0x0002u) == 0u,
+               "Type C timer trigger ends ADC sampling");
+        finish_conversion(cpu, module);
+        expect(state, dspic33_read_word(cpu, buffers[module]) == 100u,
+               "Type C timer trigger completes ADC conversion");
+
+        dspic33_reset(cpu, 0u);
+        set_input(cpu, 0u, 400u);
+        configure_manual(cpu, module, (uint16_t)(sources[index] << 4u), 0u, 0u);
+        dspic33_write_word(
+            cpu, controls[module],
+            (uint16_t)(dspic33_read_word(cpu, controls[module]) | 0x0002u));
+        dspic33_write_word(cpu, low_counters[index], 0u);
+        dspic33_write_word(cpu, counters[index], 0u);
+        dspic33_write_word(cpu, low_periods[index], 1u);
+        dspic33_write_word(cpu, periods[index], 0u);
+        dspic33_write_word(cpu, low_controls[index], 0x8008u);
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "paired Type C timer period triggers matching ADC");
+        expect(state, (dspic33_read_word(cpu, controls[module]) & 0x0002u) == 0u,
+               "paired timer trigger ends ADC sampling");
+    }
+}
+
 static void dma_cases(AdcConformance* state, Dspic33* cpu) {
     static const uint8_t scan_channels[] = {0u,  6u,  8u,  9u,  10u,
                                             11u, 12u, 13u, 14u, 15u};
@@ -659,6 +706,7 @@ int main(void) {
     threshold_cases(&state, &cpu);
     dma_interrupt_rate_cases(&state, &cpu);
     trigger_cases(&state, &cpu);
+    timer_trigger_cases(&state, &cpu);
     dma_cases(&state, &cpu);
     power_cases(&state, &cpu);
     boundary_cases(&state, &cpu);

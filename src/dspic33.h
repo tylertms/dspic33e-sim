@@ -59,6 +59,8 @@ typedef enum {
     DSPIC33_EVENT_INTERRUPT,
     DSPIC33_EVENT_TIMER,
     DSPIC33_EVENT_TIMER_GATE,
+    DSPIC33_EVENT_TIMER_INTERRUPT,
+    DSPIC33_EVENT_TIMER_PMD,
     DSPIC33_EVENT_DMA,
     DSPIC33_EVENT_ADC,
     DSPIC33_EVENT_PWM_FAULT,
@@ -581,7 +583,12 @@ typedef struct {
     uint16_t timer_enabled;
     uint16_t timer_gate;
     uint16_t timer_external_started;
-    uint16_t timer_interrupt_pending;
+    uint16_t timer_pin_levels;
+    uint16_t timer_pin_qualified;
+    uint16_t timer_pmd_generation[5];
+    uint16_t timer_pmd_disabled;
+    uint16_t timer_instruction_ratio;
+    bool timer_instruction_active;
     uint16_t dma_index[DSPIC33_DMA_COUNT];
     uint16_t dma_generation[DSPIC33_DMA_COUNT];
     uint32_t dma_start_a[DSPIC33_DMA_COUNT];

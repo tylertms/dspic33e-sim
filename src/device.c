@@ -14,6 +14,9 @@ static void start_automatic_oscillator_switch(Dspic33* cpu, uint8_t source);
 static void reset_main_oscillator(Dspic33* cpu);
 static void refresh_gpio_change_notification(Dspic33* cpu);
 static void refresh_external_interrupts(Dspic33* cpu);
+static void refresh_timer_inputs(Dspic33* cpu);
+static void run_timer_pmd(Dspic33* cpu, uint16_t timer, uint32_t value);
+static void output_compare_fault_pin_input(Dspic33* cpu, uint8_t pin, bool high);
 static void output_compare_pulse_source(Dspic33* cpu, uint8_t source);
 static void output_compare_update_power_state(Dspic33* cpu);
 static void output_compare_raise(Dspic33* cpu, uint8_t channel);
@@ -151,6 +154,8 @@ enum {
     TIMER_32_BIT = 0x0008u,
     TIMER_SYNC = 0x0004u,
     TIMER_EXTERNAL = 0x0002u,
+    TIMER_EVENT_PMD_DISABLED = 0x00000001u,
+    TIMER_EVENT_PMD_GENERATION_SHIFT = 1u,
     DMA_CHANNEL_BASE = 0x0b00u,
     DMA_CHANNEL_STRIDE = 0x0010u,
     DMA_CON_CHEN = 0x8000u,
@@ -2634,6 +2639,8 @@ static void run_input_capture(Dspic33* cpu, uint16_t source, uint32_t value) {
         if (pps_physical_input_enabled(cpu, (uint8_t)source)) {
             input_capture_pps_source(cpu, (uint8_t)source,
                                      (value & INPUT_CAPTURE_EVENT_HIGH) != 0u);
+            output_compare_fault_pin_input(cpu, (uint8_t)source,
+                                           (value & INPUT_CAPTURE_EVENT_HIGH) != 0u);
         }
         return;
     }
@@ -3283,6 +3290,7 @@ static void output_compare_fault_pin_input(Dspic33* cpu, uint8_t pin, bool high)
     cpu->io.gpio_driven[mapping->port] |= bit;
     refresh_gpio_change_notification(cpu);
     refresh_external_interrupts(cpu);
+    refresh_timer_inputs(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
 }
 
@@ -4534,6 +4542,7 @@ static void comparator_set_output(Dspic33* cpu, uint8_t comparator, bool high) {
     raw_write_word(cpu, base, control);
     comparator_refresh_status(cpu);
     refresh_external_interrupts(cpu);
+    refresh_timer_inputs(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
     if (rising) {
         input_capture_pulse_source(
@@ -10294,6 +10303,19 @@ static bool timer_power_enabled(const Dspic33* cpu, uint8_t timer, bool external
     return external && timer == 0u && (control & TIMER_SYNC) == 0u;
 }
 
+static bool timer_pmd_disabled(const Dspic33* cpu, uint8_t timer) {
+    uint16_t mask = (uint16_t)(1u << timer);
+    if (timer >= 5u) {
+        return false;
+    }
+    if (timer_is_paired_high(cpu, timer)) {
+        mask |= (uint16_t)(1u << (timer - 1u));
+    } else if (timer_pair_enabled(cpu, timer)) {
+        mask |= (uint16_t)(1u << (timer + 1u));
+    }
+    return (cpu->io.timer_pmd_disabled & mask) != 0u;
+}
+
 typedef struct {
     uint64_t value;
     uint64_t matches;
@@ -10340,8 +10362,19 @@ static void signal_timer_period(Dspic33* cpu, uint8_t timer, uint64_t matches,
         if (timer >= 1u && timer <= 4u) {
             dspic33_dma_request(cpu, timer_irqs[timer], 0u, 0u);
         }
+        if (timer == 2u) {
+            dspic33_adc_trigger(cpu, 0u, 2u, 0u);
+        } else if (timer == 4u) {
+            dspic33_adc_trigger(cpu, 1u, 4u, 0u);
+        }
         if (!gated) {
-            cpu->io.timer_interrupt_pending |= (uint16_t)(1u << timer);
+            uint64_t delay = cpu->io.timer_instruction_active
+                                 ? cpu->io.timer_instruction_ratio
+                                 : dspic33_device_instruction_cycles(cpu, 1u);
+            if (!dspic33_schedule(cpu, DSPIC33_EVENT_TIMER_INTERRUPT, timer, 0u,
+                                  delay)) {
+                cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+            }
         }
     }
 }
@@ -10483,8 +10516,8 @@ static void pulse_timer(Dspic33* cpu, uint8_t timer, uint32_t pulses) {
     }
     bit = (uint16_t)(1u << timer);
     control = raw_word(cpu, timer_controls[timer]);
-    if ((cpu->io.timer_enabled & bit) == 0u || (control & TIMER_EXTERNAL) == 0u ||
-        !timer_power_enabled(cpu, timer, true)) {
+    if (timer_pmd_disabled(cpu, timer) || (cpu->io.timer_enabled & bit) == 0u ||
+        (control & TIMER_EXTERNAL) == 0u || !timer_power_enabled(cpu, timer, true)) {
         return;
     }
     if ((timer == 0u || timer_is_type_b(timer)) &&
@@ -10511,7 +10544,8 @@ static void set_timer_gate(Dspic33* cpu, uint8_t timer, bool high) {
         cpu->io.timer_gate &= (uint16_t)~bit;
     }
     control = raw_word(cpu, timer_controls[timer]);
-    if (previous && !high && (cpu->io.timer_enabled & bit) != 0u &&
+    if (!timer_pmd_disabled(cpu, timer) && previous && !high &&
+        (cpu->io.timer_enabled & bit) != 0u &&
         (control & (TIMER_GATE | TIMER_EXTERNAL)) == TIMER_GATE &&
         timer_power_enabled(cpu, timer, false)) {
         uint8_t interrupt_timer =
@@ -11238,6 +11272,12 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
     case DSPIC33_EVENT_TIMER_GATE:
         set_timer_gate(cpu, (uint8_t)event->source, event->value != 0u);
         break;
+    case DSPIC33_EVENT_TIMER_INTERRUPT:
+        dspic33_raise_interrupt(cpu, timer_irqs[event->source]);
+        break;
+    case DSPIC33_EVENT_TIMER_PMD:
+        run_timer_pmd(cpu, event->source, event->value);
+        break;
     case DSPIC33_EVENT_DMA:
         run_dma(cpu, event->source, event->value);
         break;
@@ -11340,19 +11380,6 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
     }
 }
 
-static void raise_pending_timer_interrupts(Dspic33* cpu) {
-    uint16_t pending = cpu->io.timer_interrupt_pending;
-    uint8_t timer = 0u;
-    cpu->io.timer_interrupt_pending = 0u;
-    while (pending != 0u) {
-        if ((pending & 1u) != 0u) {
-            dspic33_raise_interrupt(cpu, timer_irqs[timer]);
-        }
-        pending >>= 1u;
-        timer++;
-    }
-}
-
 static void advance_timers(Dspic33* cpu, uint64_t cycles) {
     uint16_t enabled = cpu->io.timer_enabled;
     uint16_t synchronization_sources = 0u;
@@ -11362,7 +11389,8 @@ static void advance_timers(Dspic33* cpu, uint64_t cycles) {
             uint16_t control = raw_word(cpu, timer_controls[timer]);
             bool gated = (control & TIMER_GATE) != 0u;
             bool gate_high = (cpu->io.timer_gate & (uint16_t)(1u << timer)) != 0u;
-            if (!timer_is_paired_high(cpu, timer) && (control & TIMER_EXTERNAL) == 0u &&
+            if (!timer_pmd_disabled(cpu, timer) && !timer_is_paired_high(cpu, timer) &&
+                (control & TIMER_EXTERNAL) == 0u &&
                 timer_power_enabled(cpu, timer, false) && (!gated || gate_high)) {
                 clock_timer(cpu, timer, cycles, &synchronization_sources, false);
             }
@@ -11373,10 +11401,10 @@ static void advance_timers(Dspic33* cpu, uint64_t cycles) {
     pulse_timer_synchronization_sources(cpu, &synchronization_sources);
 }
 
-static uint64_t timer_sync_boundary_cycles(const Dspic33* cpu, uint64_t limit) {
+static uint64_t timer_boundary_cycles(const Dspic33* cpu, uint64_t limit) {
     uint64_t boundary = limit;
     uint8_t timer;
-    for (timer = 0u; timer < 5u; timer++) {
+    for (timer = 0u; timer < DSPIC33_TIMER_COUNT; timer++) {
         uint16_t bit = (uint16_t)(1u << timer);
         uint16_t control = raw_word(cpu, timer_controls[timer]);
         uint64_t ticks;
@@ -11384,15 +11412,15 @@ static uint64_t timer_sync_boundary_cycles(const Dspic33* cpu, uint64_t limit) {
         uint32_t prescale;
         bool gated = (control & TIMER_GATE) != 0u;
         bool gate_high = (cpu->io.timer_gate & bit) != 0u;
-        if ((cpu->io.timer_enabled & bit) == 0u || timer_is_paired_high(cpu, timer) ||
-            (control & TIMER_EXTERNAL) != 0u ||
+        if (timer_pmd_disabled(cpu, timer) || (cpu->io.timer_enabled & bit) == 0u ||
+            timer_is_paired_high(cpu, timer) || (control & TIMER_EXTERNAL) != 0u ||
             !timer_power_enabled(cpu, timer, false) || (gated && !gate_high)) {
             continue;
         }
-        {
+        ticks = timer_ticks_until_period(cpu, timer);
+        if (timer < 5u) {
             uint8_t signal_timer =
                 timer_pair_enabled(cpu, timer) ? (uint8_t)(timer + 1u) : timer;
-            uint8_t source = (uint8_t)(INPUT_CAPTURE_SYNC_TIMER_FIRST + signal_timer);
             uint64_t clock_boundary = output_compare_clock_boundary_ticks(cpu, timer);
             if (signal_timer != timer && signal_timer < 5u) {
                 uint64_t high_boundary =
@@ -11400,11 +11428,6 @@ static uint64_t timer_sync_boundary_cycles(const Dspic33* cpu, uint64_t limit) {
                 if (high_boundary < clock_boundary) {
                     clock_boundary = high_boundary;
                 }
-            }
-            ticks = UINT64_MAX;
-            if (signal_timer < 5u && (input_capture_source_awaited(cpu, source) ||
-                                      output_compare_source_awaited(cpu, source))) {
-                ticks = timer_ticks_until_period(cpu, timer);
             }
             if (clock_boundary < ticks) {
                 ticks = clock_boundary;
@@ -11456,9 +11479,11 @@ bool dspic33_device_advance_instruction(Dspic33* cpu, uint64_t cpu_cycles,
         return false;
     }
     cpu->cycles += cpu_cycles;
-    if (cpu_cycles != 0u) {
-        raise_pending_timer_interrupts(cpu);
-    }
+    cpu->io.timer_instruction_ratio =
+        cpu_cycles != 0u && device_cycles / cpu_cycles <= UINT16_MAX
+            ? (uint16_t)(device_cycles / cpu_cycles)
+            : 1u;
+    cpu->io.timer_instruction_active = true;
     if (cpu->disicnt > cpu_cycles) {
         cpu->disicnt = (uint16_t)(cpu->disicnt - cpu_cycles);
     } else {
@@ -11476,7 +11501,7 @@ bool dspic33_device_advance_instruction(Dspic33* cpu, uint64_t cpu_cycles,
                 next_cycle = cpu->events.items[0].cycle;
             }
             timer_boundary =
-                timer_sync_boundary_cycles(cpu, next_cycle - cpu->device_cycles);
+                timer_boundary_cycles(cpu, next_cycle - cpu->device_cycles);
             if (timer_boundary != 0u) {
                 advance_device_cycles(cpu, timer_boundary);
                 continue;
@@ -11490,6 +11515,7 @@ bool dspic33_device_advance_instruction(Dspic33* cpu, uint64_t cpu_cycles,
                 Dspic33Event event = event_pop(&cpu->events);
                 process_event(cpu, &event);
                 if (cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR) {
+                    cpu->io.timer_instruction_active = false;
                     return false;
                 }
             }
@@ -11506,6 +11532,7 @@ bool dspic33_device_advance_instruction(Dspic33* cpu, uint64_t cpu_cycles,
         complete_nvm_event(cpu);
         remove_nvm_events(cpu);
     }
+    cpu->io.timer_instruction_active = false;
     return true;
 }
 
@@ -11518,9 +11545,23 @@ bool dspic33_device_advance_nvm(Dspic33* cpu) {
         cpu, 1u, dspic33_device_instruction_cycles(cpu, 1u));
 }
 
-static void update_timer_register(Dspic33* cpu, uint16_t address) {
+static void update_timer_register(Dspic33* cpu, uint16_t address, uint16_t previous) {
     uint8_t timer;
+    if (address == timer_registers[0] &&
+        (raw_word(cpu, timer_controls[0]) & (TIMER_ON | TIMER_SYNC | TIMER_EXTERNAL)) ==
+            (TIMER_ON | TIMER_SYNC | TIMER_EXTERNAL)) {
+        raw_write_word(cpu, address, previous);
+        return;
+    }
     for (timer = 0u; timer < DSPIC33_TIMER_COUNT; timer++) {
+        if (timer_pmd_disabled(cpu, timer) &&
+            (address == timer_controls[timer] || address == timer_registers[timer] ||
+             address == timer_periods[timer] ||
+             (timer_is_type_b(timer) &&
+              address == timer_holding_registers[timer / 2u]))) {
+            raw_write_word(cpu, address, previous);
+            return;
+        }
         if ((address & 0xfffeu) == timer_controls[timer]) {
             uint16_t bit = (uint16_t)(1u << timer);
             if ((raw_word(cpu, timer_controls[timer]) & TIMER_ON) != 0u) {
@@ -11540,6 +11581,53 @@ static void update_timer_register(Dspic33* cpu, uint16_t address) {
                 raw_write_word(cpu, timer_registers[timer + 1u],
                                raw_word(cpu, timer_holding_registers[timer / 2u]));
             }
+            return;
+        }
+    }
+}
+
+static void run_timer_pmd(Dspic33* cpu, uint16_t timer, uint32_t value) {
+    uint16_t generation = (uint16_t)(value >> TIMER_EVENT_PMD_GENERATION_SHIFT);
+    uint16_t mask = (uint16_t)(1u << timer);
+    if (generation != cpu->io.timer_pmd_generation[timer]) {
+        return;
+    }
+    if ((value & TIMER_EVENT_PMD_DISABLED) != 0u) {
+        cpu->io.timer_pmd_disabled |= mask;
+    } else {
+        cpu->io.timer_pmd_disabled &= (uint16_t)~mask;
+    }
+}
+
+static void update_timer_pmd(Dspic33* cpu, uint16_t address, uint16_t previous) {
+    uint16_t current;
+    uint16_t changed;
+    uint8_t timer;
+    if (address != 0x0760u) {
+        return;
+    }
+    current = raw_word(cpu, address);
+    changed = (uint16_t)((previous ^ current) & 0xf800u);
+    for (timer = 0u; timer < 5u; timer++) {
+        uint16_t register_mask = (uint16_t)(0x0800u << timer);
+        if ((changed & register_mask) == 0u) {
+            continue;
+        }
+        cpu->io.timer_pmd_generation[timer]++;
+        if (!dspic33_schedule(
+                cpu, DSPIC33_EVENT_TIMER_PMD, timer,
+                ((uint32_t)cpu->io.timer_pmd_generation[timer]
+                 << TIMER_EVENT_PMD_GENERATION_SHIFT) |
+                    ((current & register_mask) != 0u ? TIMER_EVENT_PMD_DISABLED : 0u),
+                dspic33_device_instruction_cycles(cpu, 1u))) {
+            uint8_t invalidate;
+            raw_write_word(cpu, address, previous);
+            for (invalidate = 0u; invalidate < 5u; invalidate++) {
+                if ((changed & (uint16_t)(0x0800u << invalidate)) != 0u) {
+                    cpu->io.timer_pmd_generation[invalidate]++;
+                }
+            }
+            cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
             return;
         }
     }
@@ -12190,6 +12278,7 @@ void dspic33_device_reset_restored(Dspic33* cpu) {
     pps_capture_shadow(cpu);
     refresh_gpio_change_notification(cpu);
     refresh_external_interrupts(cpu);
+    refresh_timer_inputs(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
     dci_refresh_pps_inputs(cpu);
     dspic33_i2c_refresh_pins(cpu);
@@ -13060,6 +13149,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     }
     update_input_capture_pmd(cpu, base, previous);
     update_output_compare_pmd(cpu, base, previous);
+    update_timer_pmd(cpu, base, previous);
     if (base == 0x0740u && (cpu->configuration[10u] & 0x80u) == 0u &&
         (previous & 0x0020u) == 0u && (raw_word(cpu, base) & 0x0020u) != 0u) {
         cpu->watchdog.ticks = 0u;
@@ -13111,7 +13201,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
                        (uint16_t)((control & ~REFERENCE_CLOCK_DIVISOR) |
                                   (previous & REFERENCE_CLOCK_DIVISOR)));
     }
-    update_timer_register(cpu, base);
+    update_timer_register(cpu, base, previous);
     update_adc_register(cpu, base, previous, requested);
     update_pwm_register(cpu, base, previous);
     update_spi_register(cpu, base, previous, requested);
@@ -13142,6 +13232,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     }
     refresh_gpio_change_notification(cpu);
     refresh_external_interrupts(cpu);
+    refresh_timer_inputs(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
     dci_refresh_pps_inputs(cpu);
     dspic33_i2c_refresh_pins(cpu);
@@ -13283,6 +13374,64 @@ static void refresh_external_interrupts(Dspic33* cpu) {
     }
 }
 
+static uint8_t timer_input_selection(const Dspic33* cpu, uint8_t timer) {
+    if (timer == 0u) {
+        return 62u;
+    }
+    uint16_t mapping = raw_word(cpu, (uint16_t)(0x06a6u + ((timer - 1u) / 2u) * 2u));
+    return (timer & 1u) != 0u ? (uint8_t)(mapping & 0x007fu)
+                              : (uint8_t)((mapping >> 8u) & 0x007fu);
+}
+
+static bool timer_input_level(const Dspic33* cpu, uint8_t selection, bool* high) {
+    const Dspic33PpsPin* mapping;
+    uint16_t bit;
+    if (selection == 0u) {
+        *high = false;
+        return true;
+    }
+    mapping = pps_pin(selection);
+    if (mapping == NULL || !pps_physical_input_enabled(cpu, selection)) {
+        return false;
+    }
+    bit = (uint16_t)(1u << mapping->bit);
+    *high = (gpio_pin_values(cpu, mapping->port) & bit) != 0u;
+    return true;
+}
+
+static void refresh_timer_inputs(Dspic33* cpu) {
+    uint8_t timer;
+    for (timer = 0u; timer < DSPIC33_TIMER_COUNT; timer++) {
+        uint16_t bit = (uint16_t)(1u << timer);
+        bool previous_high = (cpu->io.timer_pin_levels & bit) != 0u;
+        bool previous_qualified = (cpu->io.timer_pin_qualified & bit) != 0u;
+        bool high = false;
+        bool qualified =
+            timer_input_level(cpu, timer_input_selection(cpu, timer), &high);
+        if (high) {
+            cpu->io.timer_pin_levels |= bit;
+        } else {
+            cpu->io.timer_pin_levels &= (uint16_t)~bit;
+        }
+        if (qualified) {
+            cpu->io.timer_pin_qualified |= bit;
+        } else {
+            cpu->io.timer_pin_qualified &= (uint16_t)~bit;
+        }
+        if (previous_qualified && qualified && !previous_high && high) {
+            pulse_timer(cpu, timer, 1u);
+        }
+        if (previous_qualified && qualified && previous_high && !high) {
+            set_timer_gate(cpu, timer, false);
+        }
+        if (qualified && (!previous_qualified || high != previous_high)) {
+            if (high) {
+                set_timer_gate(cpu, timer, true);
+            }
+        }
+    }
+}
+
 static void acknowledge_gpio_change_notification(Dspic33* cpu, uint8_t port,
                                                  uint16_t values) {
     cpu->io.gpio_cn_reference[port] = values;
@@ -13297,6 +13446,14 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
     uint8_t timer;
     if (address == 0x0741u) {
         return (uint8_t)(value & ~0x08u);
+    }
+    for (timer = 0u; timer < 5u; timer++) {
+        if (timer_pmd_disabled(cpu, timer) &&
+            (base == timer_controls[timer] || base == timer_registers[timer] ||
+             base == timer_periods[timer] ||
+             (timer_is_type_b(timer) && base == timer_holding_registers[timer / 2u]))) {
+            return 0u;
+        }
     }
     if (address >= INPUT_CAPTURE_BASE &&
         address <
@@ -14013,6 +14170,7 @@ bool dspic33_gpio_drive(Dspic33* cpu, uint8_t port, uint16_t value, uint16_t mas
     cpu->io.gpio_driven[port] |= selected;
     refresh_gpio_change_notification(cpu);
     refresh_external_interrupts(cpu);
+    refresh_timer_inputs(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
     dci_refresh_pps_inputs(cpu);
     dspic33_i2c_refresh_pins(cpu);
@@ -14026,6 +14184,7 @@ bool dspic33_gpio_release(Dspic33* cpu, uint8_t port, uint16_t mask) {
     cpu->io.gpio_driven[port] &= (uint16_t)~(mask & gpio_port_masks[port]);
     refresh_gpio_change_notification(cpu);
     refresh_external_interrupts(cpu);
+    refresh_timer_inputs(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
     dci_refresh_pps_inputs(cpu);
     dspic33_i2c_refresh_pins(cpu);
