@@ -1112,6 +1112,7 @@ static void b1_frame_output_cases(SpiConformance* state, Dspic33* cpu, Dspic33* 
     static const uint8_t frame_functions[DSPIC33_SPI_COUNT] = {7u, 10u, 33u, 36u};
     uint8_t channel;
     bool high = false;
+    bool data = false;
     for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
         uint16_t base = bases[channel];
         uint8_t bit = (uint8_t)(1u << channel);
@@ -1146,9 +1147,15 @@ static void b1_frame_output_cases(SpiConformance* state, Dspic33* cpu, Dspic33* 
                                     ? (high == (polarity == 0u) &&
                                        (cpu->io.spi_frame_active & bit) == 0u &&
                                        (cpu->io.spi_frame_output_pending & bit) != 0u)
-                                    : (high && ((cpu->io.spi_frame_active & bit) !=
-                                                0u) == (polarity != 0u))),
+                                    : (high == (polarity == 0u) &&
+                                       (cpu->io.spi_frame_active & bit) == 0u &&
+                                       (cpu->io.spi_frame_output_pending & bit) != 0u)),
                            "B1 framed master waits for the transmit edge");
+                    if (master == 0u) {
+                        expect(state,
+                               dspic33_spi_data_output(cpu, channel, &data) && data,
+                               "B1 slave transfer preloads its first data bit");
+                    }
                     if (master != 0u) {
                         uint64_t cycles = transfer_cycles(control);
                         uint64_t clock = cycles / 16u;
@@ -1180,10 +1187,39 @@ static void b1_frame_output_cases(SpiConformance* state, Dspic33* cpu, Dspic33* 
                                    "coincident data transfer reaches completion");
                         }
                     } else {
+                        bool data_high = (received & 0x8000u) != 0u;
                         expect(state,
-                               dspic33_spi_receive(cpu, channel, received, 1u) &&
-                                   dspic33_device_advance(cpu, 1u),
-                               "B1 slave framed master transfer completes");
+                               dspic33_spi_pin_input(cpu, channel, true, data_high,
+                                                     false) &&
+                                   dspic33_spi_frame_output(cpu, channel, &high) &&
+                                   high &&
+                                   ((cpu->io.spi_frame_active & bit) != 0u) ==
+                                       (polarity != 0u) &&
+                                   (cpu->io.spi_frame_output_pending & bit) == 0u &&
+                                   (cpu->io.spi_frame_output_clear_pending & bit) != 0u,
+                               "slave frame pulse begins on the transmit edge");
+                        expect(state,
+                               dspic33_spi_pin_input(cpu, channel, false, data_high,
+                                                     false) &&
+                                   dspic33_spi_frame_output(cpu, channel, &high) &&
+                                   high && cpu->io.spi_pin_bits[channel] == 0u,
+                               "slave frame pulse lasts one full serial clock");
+                        expect(state,
+                               dspic33_spi_pin_input(cpu, channel, true, data_high,
+                                                     false) &&
+                                   dspic33_spi_frame_output(cpu, channel, &high) &&
+                                   high == (polarity == 0u) &&
+                                   (cpu->io.spi_frame_active & bit) == 0u &&
+                                   (cpu->io.spi_frame_output_clear_pending & bit) == 0u,
+                               "slave data begins after the frame pulse");
+                        dspic33_spi_pin_input(cpu, channel, false, data_high, false);
+                        for (uint8_t index = 1u; index < 16u; index++) {
+                            data_high =
+                                (received & (uint16_t)(1u << (15u - index))) != 0u;
+                            dspic33_spi_pin_input(cpu, channel, true, data_high, false);
+                            dspic33_spi_pin_input(cpu, channel, false, data_high,
+                                                  false);
+                        }
                     }
                     expect(state,
                            dspic33_spi_frame_output(cpu, channel, &high) &&
@@ -1195,6 +1231,36 @@ static void b1_frame_output_cases(SpiConformance* state, Dspic33* cpu, Dspic33* 
                 }
             }
         }
+
+        dspic33_reset(cpu, 0u);
+        configure_spi(cpu, channel, 0x0400u, 0xa002u, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 8u), 0xf100u);
+        dspic33_spi_pin_input(cpu, channel, true, true, false);
+        expect(state, dspic33_copy(copy, cpu), "copy active slave frame pulse");
+        dspic33_spi_pin_input(cpu, channel, false, true, false);
+        dspic33_spi_pin_input(cpu, channel, true, true, false);
+        expect(state,
+               dspic33_spi_frame_output(cpu, channel, &high) && !high &&
+                   dspic33_spi_frame_output(copy, channel, &high) && high,
+               "copied slave frame pulse advances independently");
+        dspic33_spi_pin_input(copy, channel, false, true, false);
+        dspic33_spi_pin_input(copy, channel, true, true, false);
+        expect(state,
+               dspic33_spi_frame_output(copy, channel, &high) && !high &&
+                   copy->io.spi_frame_output_clear_pending == 0u,
+               "copied slave frame pulse retains its remaining edge");
+
+        dspic33_reset(cpu, 0u);
+        configure_spi(cpu, channel, 0x0400u, 0xa002u, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 8u), 0xf200u);
+        dspic33_spi_pin_input(cpu, channel, true, true, false);
+        dspic33_write_word(cpu, (uint16_t)(base + 4u), 0u);
+        expect(state,
+               cpu->io.spi_frame_active == 0u &&
+                   cpu->io.spi_frame_output_pending == 0u &&
+                   cpu->io.spi_frame_output_clear_pending == 0u &&
+                   !dspic33_spi_frame_output(cpu, channel, &high),
+               "slave frame reconfiguration cancels every pulse state");
 
         dspic33_reset(cpu, 0u);
         configure_spi(cpu, channel, 0x043bu, 0xa000u, 0u);
@@ -1228,6 +1294,69 @@ static void b1_frame_output_cases(SpiConformance* state, Dspic33* cpu, Dspic33* 
                    dspic33_spi_frame_pin(cpu, 64u, &high) && high,
                "mapped B1 active-low frame remains inactive after transfer");
     }
+
+    for (uint8_t clock_mode = 0u; clock_mode < 4u; clock_mode++) {
+        uint16_t control = (uint16_t)(((clock_mode & 1u) != 0u ? 0x0100u : 0u) |
+                                      ((clock_mode & 2u) != 0u ? 0x0040u : 0u));
+        bool sample_high = ((control & 0x0100u) != 0u) != ((control & 0x0040u) != 0u);
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, 0x0680u, 5u);
+        dspic33_spi_pin_input(cpu, 0u, sample_high, false, false);
+        configure_spi(cpu, 0u, control, 0xa002u, 0u);
+        dspic33_write_word(cpu, 0x0248u, 0xa5u);
+        expect(state,
+               dspic33_spi_data_output(cpu, 0u, &data) && data &&
+                   dspic33_spi_pin(cpu, 64u, &data) && data,
+               "eight-bit slave preloads its first physical data bit");
+        dspic33_spi_pin_input(cpu, 0u, !sample_high, true, false);
+        expect(state,
+               dspic33_spi_frame_output(cpu, 0u, &high) && high &&
+                   (cpu->io.spi_frame_output_clear_pending & 1u) != 0u,
+               "eight-bit slave frame starts on every transmit-edge mode");
+        dspic33_spi_pin_input(cpu, 0u, sample_high, true, false);
+        expect(state,
+               dspic33_spi_frame_output(cpu, 0u, &high) && high &&
+                   cpu->io.spi_pin_bits[0] == 0u,
+               "eight-bit slave frame spans one clock in every edge mode");
+        dspic33_spi_pin_input(cpu, 0u, !sample_high, true, false);
+        dspic33_spi_pin_input(cpu, 0u, sample_high, true, false);
+        dspic33_spi_pin_input(cpu, 0u, !sample_high, true, false);
+        expect(state,
+               dspic33_spi_data_output(cpu, 0u, &data) && !data &&
+                   dspic33_spi_pin(cpu, 64u, &data) && !data,
+               "slave data advances on the transmit edge after its first sample");
+        dspic33_spi_pin_input(cpu, 0u, sample_high, true, false);
+        for (uint8_t index = 2u; index < 8u; index++) {
+            dspic33_spi_pin_input(cpu, 0u, !sample_high, true, false);
+            dspic33_spi_pin_input(cpu, 0u, sample_high, true, false);
+        }
+        expect(state,
+               dspic33_spi_frame_output(cpu, 0u, &high) && !high &&
+                   dspic33_read_word(cpu, 0x0248u) == 0xffu &&
+                   (cpu->io.spi_busy & 1u) == 0u,
+               "eight-bit slave data follows its frame in every edge mode");
+    }
+
+    dspic33_reset(cpu, 0u);
+    configure_spi(cpu, 0u, 0x0800u, 0xa002u, 0u);
+    dspic33_write_word(cpu, 0x0248u, 0xa5u);
+    expect(state,
+           !dspic33_spi_data_output(cpu, 0u, &data) &&
+               dspic33_spi_frame_output(cpu, 0u, &high) && !high,
+           "disabled slave data output releases without disabling its frame output");
+
+    dspic33_reset(cpu, 0u);
+    configure_spi(cpu, 0u, 0x0400u, 0xa002u, 0u);
+    dspic33_write_word(cpu, 0x0248u, 0xa55au);
+    dspic33_spi_pin_input(cpu, 0u, true, true, false);
+    dspic33_load_program_word(cpu, 0u, 0xfe0000u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->software_reset_count == 1u &&
+               cpu->io.spi_frame_active == 0u &&
+               cpu->io.spi_frame_output_pending == 0u &&
+               cpu->io.spi_frame_output_clear_pending == 0u &&
+               cpu->io.spi_pin_output_started == 0u,
+           "warm reset clears active slave frame and data output state");
 
     dspic33_reset(cpu, 0u);
     configure_spi(cpu, 0u, 0x043bu, 0xa000u, 0u);
@@ -1583,7 +1712,7 @@ int main(void) {
         dma_cases(&state, &cpu);
         copy_and_reset_cases(&state, &cpu, &copy);
     }
-    expect(&state, state.cases == 3263u, "SPI assertion accounting");
+    expect(&state, state.cases == 3349u, "SPI assertion accounting");
     if (copy_initialized) {
         dspic33_destroy(&copy);
     }
