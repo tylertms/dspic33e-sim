@@ -2332,8 +2332,8 @@ static void repeat_exception_cases(ProcessorConformance* state, Dspic33* cpu) {
         expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
                "execute B1 signed double divide overflow");
     }
-    expect(state, cpu->w[0] == 0u && cpu->w[1] == 0u && (cpu->sr & 0x000fu) == 0x0002u,
-           "B1 signed double divide overflow leaves OV clear");
+    expect(state, cpu->w[0] == 0u && cpu->w[1] == 0u && (cpu->sr & 0x000au) == 0x0002u,
+           "B1 affected signed double divide preserves defined flags");
 
     reset_processor_conformance(cpu, 0x200u);
     load_instruction(state, cpu, 0x200u, 0x090011u);
@@ -2449,6 +2449,30 @@ static void repeat_exception_cases(ProcessorConformance* state, Dspic33* cpu) {
                cpu->repeat_active != 0u && cpu->repeat_pc == 0x202u &&
                cpu->rcount == 2u && (cpu->sr & 0x0010u) != 0u,
            "interrupt RETFIE restores repeat state");
+}
+
+static void standalone_divide_zero_cases(ProcessorConformance* state, Dspic33* cpu) {
+    static const uint32_t divide_opcodes[] = {OPCODE_DIV_SW_W2_W3, OPCODE_DIV_SD_W4_W3,
+                                              OPCODE_DIV_UW_W2_W3, OPCODE_DIV_UD_W4_W3,
+                                              OPCODE_DIVF_W2_W3};
+    size_t index;
+
+    for (index = 0u; index < sizeof(divide_opcodes) / sizeof(divide_opcodes[0]);
+         index++) {
+        reset_processor_conformance(cpu, 0x0200u);
+        load_instruction(state, cpu, 0x0200u, divide_opcodes[index]);
+        cpu->w[0] = 0xaaaau;
+        cpu->w[1] = 0xbbbbu;
+        cpu->w[2] = 0x2222u;
+        cpu->w[3] = 0u;
+        cpu->w[4] = 0x4444u;
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+                   (dspic33_read_word(cpu, 0x08c0u) & 0x0050u) == 0x0050u &&
+                   cpu->w[0] == 0xaaaau && cpu->w[1] == 0xbbbbu &&
+                   pending_trap(cpu, 4u) != NULL,
+               "standalone divide by zero latches first-cycle math error");
+    }
 }
 
 static void repeat_interrupt_cases(ProcessorConformance* state, Dspic33* cpu) {
@@ -6553,6 +6577,116 @@ static void system_control_value_cases(ProcessorConformance* state, Dspic33* cpu
                dspic33_step(cpu) == DSPIC33_RUNNING && cpu->watchdog.ticks == 0u &&
                cpu->sr == 0x010fu,
            "CLRWDT clears watchdog state and preserves status");
+}
+
+static bool documented_divide_encoding_valid(uint32_t opcode) {
+    uint8_t family = (uint8_t)(opcode >> 16u);
+    uint8_t divisor = (uint8_t)(opcode & 0x0fu);
+
+    if (family == 0xd9u) {
+        return (opcode & 0x0087f0u) == 0u;
+    }
+    if (divisor < 2u) {
+        return false;
+    }
+    if (family != 0xd8u || (opcode & 0x000030u) != 0u) {
+        return false;
+    }
+    uint8_t high = (uint8_t)((opcode >> 11u) & 0x0fu);
+    uint8_t low = (uint8_t)((opcode >> 7u) & 0x0fu);
+    if ((opcode & 0x000040u) == 0u) {
+        return high == 0u;
+    }
+    return (low & 1u) == 0u && high == low + 1u;
+}
+
+static bool run_legal_divide_matrix_case(Dspic33* cpu, uint32_t opcode) {
+    bool unsigned_divide = (opcode & 0x008000u) != 0u;
+    bool double_word = (opcode & 0x000040u) != 0u;
+    bool fractional = (opcode & 0xff0000u) == 0xd90000u;
+    uint8_t high = (uint8_t)((opcode >> 11u) & 0x0fu);
+    uint8_t low = (uint8_t)((opcode >> 7u) & 0x0fu);
+    uint8_t divisor_register = (uint8_t)(opcode & 0x0fu);
+    int64_t quotient;
+    int64_t remainder;
+    bool overflow;
+    uint8_t reg;
+
+    reset_processor_conformance(cpu, 0x0200u);
+    for (reg = 0u; reg < 16u; reg++) {
+        dspic33_set_working_register(cpu, reg, (uint16_t)(0x0100u + reg));
+    }
+    if (fractional) {
+        dspic33_set_working_register(cpu, high, 0x1000u);
+        dspic33_set_working_register(cpu, divisor_register, 0x4000u);
+        quotient =
+            (int64_t)(int16_t)cpu->w[high] * 32768 / (int16_t)cpu->w[divisor_register];
+        remainder =
+            (int64_t)(int16_t)cpu->w[high] * 32768 % (int16_t)cpu->w[divisor_register];
+        overflow = quotient < INT16_MIN || quotient > INT16_MAX;
+    } else if (double_word) {
+        dspic33_set_working_register(cpu, low, 0x1234u);
+        dspic33_set_working_register(cpu, high, 0u);
+        dspic33_set_working_register(cpu, divisor_register, 17u);
+        if (unsigned_divide) {
+            uint32_t dividend = ((uint32_t)cpu->w[high] << 16u) | cpu->w[low];
+            quotient = dividend / cpu->w[divisor_register];
+            remainder = dividend % cpu->w[divisor_register];
+            overflow = quotient > UINT16_MAX;
+        } else {
+            int32_t dividend = (int32_t)(((uint32_t)cpu->w[high] << 16u) | cpu->w[low]);
+            quotient = (int64_t)dividend / (int16_t)cpu->w[divisor_register];
+            remainder = (int64_t)dividend % (int16_t)cpu->w[divisor_register];
+            overflow = quotient < INT16_MIN || quotient > INT16_MAX;
+        }
+    } else {
+        dspic33_set_working_register(cpu, low, 0x1234u);
+        dspic33_set_working_register(cpu, divisor_register, 17u);
+        if (unsigned_divide) {
+            quotient = cpu->w[low] / cpu->w[divisor_register];
+            remainder = cpu->w[low] % cpu->w[divisor_register];
+        } else {
+            quotient = (int16_t)cpu->w[low] / (int16_t)cpu->w[divisor_register];
+            remainder = (int16_t)cpu->w[low] % (int16_t)cpu->w[divisor_register];
+        }
+        overflow = quotient < INT16_MIN || quotient > UINT16_MAX;
+    }
+    if (!dspic33_load_program_word(cpu, 0x0200u, 0x090011u) ||
+        !dspic33_load_program_word(cpu, 0x0202u, opcode) ||
+        dspic33_step(cpu) != DSPIC33_RUNNING) {
+        return false;
+    }
+    while (cpu->repeat_active != 0u) {
+        if (dspic33_step(cpu) != DSPIC33_RUNNING) {
+            return false;
+        }
+    }
+    uint16_t expected_status =
+        (uint16_t)((remainder == 0 ? 0x0002u : 0u) | (remainder < 0 ? 0x0008u : 0u) |
+                   (overflow ? 0x0004u : 0u));
+    return (overflow ||
+            (cpu->w[0] == (uint16_t)quotient && cpu->w[1] == (uint16_t)remainder)) &&
+           (cpu->sr & 0x000eu) == expected_status && cpu->pc == 0x0204u &&
+           cpu->cycles == 19u && !cpu->illegal_reset && cpu->unsupported_opcode == 0u;
+}
+
+static void divide_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu) {
+    uint32_t opcode;
+    uint32_t legal = 0u;
+    uint32_t illegal = 0u;
+
+    for (opcode = 0xd80000u; opcode <= 0xd9ffffu; opcode++) {
+        if (documented_divide_encoding_valid(opcode)) {
+            expect_dsp_matrix_case(state, run_legal_divide_matrix_case(cpu, opcode),
+                                   opcode, "legal divide encoding and result");
+            legal++;
+        } else {
+            run_invalid_binary_matrix_case(state, cpu, opcode);
+            illegal++;
+        }
+    }
+    expect(state, legal == 928u, "divide legal encoding matrix is exhaustive");
+    expect(state, illegal == 130144u, "divide illegal encoding matrix is exhaustive");
 }
 
 static void general_arithmetic_encoding_matrix_cases(ProcessorConformance* state,
@@ -10943,6 +11077,7 @@ int main(void) {
         simultaneous_trap_case(&state, &cpu);
         earlier_deadline_case(&state, &cpu);
         repeat_exception_cases(&state, &cpu);
+        standalone_divide_zero_cases(&state, &cpu);
         repeat_interrupt_cases(&state, &cpu);
         nested_do_interrupt_erratum_cases(&state, &cpu);
         instruction_cycle_cases(&state, &cpu);
@@ -10975,6 +11110,7 @@ int main(void) {
         table_operand_lifecycle_cases(&state, &cpu);
         system_encoding_matrix_cases(&state, &cpu);
         system_control_value_cases(&state, &cpu);
+        divide_encoding_matrix_cases(&state, &cpu);
         arithmetic_encoding_matrix_cases(&state, &cpu);
         shift_encoding_matrix_cases(&state, &cpu);
         byte_extension_encoding_matrix_cases(&state, &cpu);

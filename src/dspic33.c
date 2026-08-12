@@ -2034,6 +2034,27 @@ static bool system_encoding_valid(uint32_t opcode) {
            ((opcode >> 10u) & 3u) != 3u;
 }
 
+static bool divide_encoding_valid(uint32_t opcode) {
+    uint8_t family = (uint8_t)(opcode >> 16u);
+    uint8_t divisor = (uint8_t)(opcode & 0x0fu);
+
+    if (family == 0xd9u) {
+        return (opcode & 0x0087f0u) == 0u;
+    }
+    if (divisor < 2u) {
+        return false;
+    }
+    if (family != 0xd8u || (opcode & 0x000030u) != 0u) {
+        return false;
+    }
+    uint8_t high = (uint8_t)((opcode >> 11u) & 0x0fu);
+    uint8_t low = (uint8_t)((opcode >> 7u) & 0x0fu);
+    if ((opcode & 0x000040u) == 0u) {
+        return high == 0u;
+    }
+    return (low & 1u) == 0u && high == low + 1u;
+}
+
 static void push_program_counter(Dspic33* cpu, uint32_t address) {
     uint16_t low = (uint16_t)(address & 0xfffeu);
     low |= (uint16_t)((cpu->corcon >> 2u) & 1u);
@@ -3106,7 +3127,7 @@ static bool execute_divide(Dspic33* cpu, uint32_t opcode) {
     int64_t remainder;
     int64_t quotient;
     if (divisor == 0u) {
-        if (cpu->repeat_active != 0u && cpu->rcount == 17u) {
+        if (cpu->repeat_active == 0u || cpu->rcount == 17u) {
             dspic33_device_latch_math_error(cpu, 0x0040u);
         }
         return true;
@@ -3153,7 +3174,7 @@ static bool execute_fractional_divide(Dspic33* cpu, uint32_t opcode) {
     int32_t remainder;
     bool overflow;
     if (divisor == 0) {
-        if (cpu->repeat_active != 0u && cpu->rcount == 17u) {
+        if (cpu->repeat_active == 0u || cpu->rcount == 17u) {
             dspic33_device_latch_math_error(cpu, 0x0040u);
         }
         return true;
@@ -3653,9 +3674,17 @@ static bool execute(Dspic33* cpu, uint32_t opcode) {
         return execute_compare_control(cpu, opcode);
     }
     if ((opcode & 0xff0000u) == 0xd80000u) {
+        if (!divide_encoding_valid(opcode)) {
+            perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+            return true;
+        }
         return execute_divide(cpu, opcode);
     }
     if ((opcode & 0xff0000u) == 0xd90000u) {
+        if (!divide_encoding_valid(opcode)) {
+            perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
+            return true;
+        }
         return execute_fractional_divide(cpu, opcode);
     }
     if ((opcode & 0xff0000u) == 0xdd0000u) {
