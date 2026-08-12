@@ -1235,6 +1235,65 @@ static void b1_frame_output_cases(SpiConformance* state, Dspic33* cpu, Dspic33* 
            "reset and invalid access release B1 frame output");
 }
 
+static void master_frame_slave_cases(SpiConformance* state, Dspic33* cpu) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
+        uint8_t polarity;
+        for (polarity = 0u; polarity < 2u; polarity++) {
+            bool active = polarity != 0u;
+            uint8_t mode16;
+            for (mode16 = 0u; mode16 < 2u; mode16++) {
+                uint16_t control = (uint16_t)(0x003bu | ((uint16_t)mode16 << 10u));
+                uint16_t control2 = (uint16_t)(0xc000u | ((uint16_t)polarity << 13u));
+                uint16_t transmitted = mode16 != 0u ? 0xa55au : 0x005au;
+                uint64_t cycles = transfer_cycles(control);
+                bool clock;
+
+                dspic33_reset(cpu, 0u);
+                configure_spi(cpu, channel, control, control2, 0u);
+                dspic33_spi_pin_input(cpu, channel, false, false, !active);
+                dspic33_write_word(cpu, (uint16_t)(bases[channel] + 8u), transmitted);
+                expect(state,
+                       (cpu->io.spi_busy & (uint8_t)(1u << channel)) == 0u &&
+                           cpu->io.spi_tx_fifo[channel].count == 1u &&
+                           dspic33_spi_clock_output(cpu, channel, &clock),
+                       "master framed slave waits with free-running clock");
+                dspic33_spi_pin_input(cpu, channel, false, false, active);
+                expect(state,
+                       dspic33_device_advance(cpu, 1u) &&
+                           (cpu->io.spi_busy & (uint8_t)(1u << channel)) == 0u,
+                       "master framed slave samples pulse before transmitting");
+                dspic33_spi_pin_input(cpu, channel, false, false, !active);
+                expect(state,
+                       dspic33_device_advance(cpu, 1u) &&
+                           (cpu->io.spi_busy & (uint8_t)(1u << channel)) != 0u,
+                       "sampled frame pulse starts transfer on next transmit edge");
+                expect(state,
+                       dspic33_device_advance(cpu, cycles) &&
+                           dspic33_read_word(cpu, (uint16_t)(bases[channel] + 8u)) ==
+                               0u &&
+                           !interrupt_flag(cpu, irqs[channel]),
+                       "master framed slave completes after full data frame");
+                expect(state, transfer_interrupt_after_cycle(cpu, irqs[channel]),
+                       "master framed slave retains interrupt latency");
+            }
+
+            dspic33_reset(cpu, 0u);
+            configure_spi(cpu, channel, 0x003bu,
+                          (uint16_t)(0xc000u | ((uint16_t)polarity << 13u)), 0u);
+            dspic33_spi_pin_input(cpu, channel, false, false, !active);
+            dspic33_write_word(cpu, (uint16_t)(bases[channel] + 8u), 0x00a5u);
+            dspic33_spi_pin_input(cpu, channel, false, false, active);
+            dspic33_spi_pin_input(cpu, channel, false, false, !active);
+            expect(state,
+                   dspic33_device_advance(cpu, 2u) &&
+                       (cpu->io.spi_busy & (uint8_t)(1u << channel)) == 0u &&
+                       cpu->io.spi_tx_fifo[channel].count == 1u,
+                   "frame pulse released before sample edge is ignored");
+        }
+    }
+}
+
 static void clock_and_power_cases(SpiConformance* state, Dspic33* cpu) {
     uint8_t channel;
     for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
@@ -1451,12 +1510,13 @@ int main(void) {
         mode_transition_cases(&state, &cpu);
         selection_and_frame_cases(&state, &cpu);
         b1_frame_output_cases(&state, &cpu, &copy);
+        master_frame_slave_cases(&state, &cpu);
         clock_and_power_cases(&state, &cpu);
         pmd_cases(&state, &cpu);
         dma_cases(&state, &cpu);
         copy_and_reset_cases(&state, &cpu, &copy);
     }
-    expect(&state, state.cases == 3141u, "SPI assertion accounting");
+    expect(&state, state.cases == 3229u, "SPI assertion accounting");
     if (copy_initialized) {
         dspic33_destroy(&copy);
     }
