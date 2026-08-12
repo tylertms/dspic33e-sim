@@ -33,6 +33,7 @@ static void dci_discard_internal_events(Dspic33* cpu);
 static void dci_update_power_state(Dspic33* cpu);
 static void dma_update_power_state(Dspic33* cpu);
 static void dci_refresh_pps_inputs(Dspic33* cpu);
+static void spi_refresh_pps_inputs(Dspic33* cpu);
 static void comparator_update_filter_power(Dspic33* cpu);
 static void comparator_evaluate_all(Dspic33* cpu);
 static uint64_t spi_transfer_cycles(const Dspic33* cpu, uint8_t channel);
@@ -8468,6 +8469,35 @@ static bool spi_selected(const Dspic33* cpu, uint8_t channel) {
     return !required || (cpu->io.spi_selected & (uint8_t)(1u << channel)) != 0u;
 }
 
+static bool spi_pps_input_high(const Dspic33* cpu, uint8_t selection) {
+    const Dspic33PpsPin* mapping = pps_pin(selection);
+    uint16_t bit;
+    if (mapping == NULL || !pps_physical_input_enabled(cpu, selection)) {
+        return false;
+    }
+    bit = (uint16_t)(1u << mapping->bit);
+    return (gpio_pin_values(cpu, mapping->port) & bit) != 0u;
+}
+
+static void spi_refresh_pps_inputs(Dspic33* cpu) {
+    static const uint8_t channels[] = {0u, 2u, 3u};
+    static const uint16_t input_registers[] = {0x06c8u, 0x06dau, 0x06deu};
+    static const uint16_t select_registers[] = {0x06cau, 0x06dcu, 0x06e0u};
+    size_t index;
+    for (index = 0u; index < sizeof(channels) / sizeof(channels[0]); index++) {
+        uint16_t inputs = raw_word(cpu, input_registers[index]);
+        uint16_t select = raw_word(cpu, select_registers[index]);
+        uint8_t channel = channels[index];
+        if (inputs == 0u && select == 0u) {
+            continue;
+        }
+        bool data_high = spi_pps_input_high(cpu, (uint8_t)(inputs & 0x007fu));
+        bool clock_high = spi_pps_input_high(cpu, (uint8_t)((inputs >> 8u) & 0x007fu));
+        bool select_high = spi_pps_input_high(cpu, (uint8_t)(select & 0x007fu));
+        dspic33_spi_pin_input(cpu, channel, clock_high, data_high, select_high);
+    }
+}
+
 static uint64_t spi_transfer_cycles(const Dspic33* cpu, uint8_t channel) {
     static const uint8_t primary[] = {64u, 16u, 4u, 1u};
     uint16_t control = raw_word(cpu, (uint16_t)(spi_bases[channel] + 2u));
@@ -9963,6 +9993,7 @@ static void refresh_pwm_pins(Dspic33* cpu) {
     refresh_timer_inputs(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
     dci_refresh_pps_inputs(cpu);
+    spi_refresh_pps_inputs(cpu);
     dspic33_i2c_refresh_pins(cpu);
     refresh_pwm_inputs(cpu);
 }
@@ -12148,6 +12179,7 @@ static void run_adc_pmd(Dspic33* cpu, uint16_t module, uint32_t value) {
     refresh_timer_inputs(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
     dci_refresh_pps_inputs(cpu);
+    spi_refresh_pps_inputs(cpu);
     dspic33_i2c_refresh_pins(cpu);
 }
 
@@ -12867,6 +12899,7 @@ void dspic33_device_reset_restored(Dspic33* cpu) {
     output_compare_refresh_fault_pps_inputs(cpu);
     refresh_pwm_inputs(cpu);
     dci_refresh_pps_inputs(cpu);
+    spi_refresh_pps_inputs(cpu);
     dspic33_i2c_refresh_pins(cpu);
 }
 
@@ -13870,6 +13903,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     output_compare_refresh_fault_pps_inputs(cpu);
     refresh_pwm_inputs(cpu);
     dci_refresh_pps_inputs(cpu);
+    spi_refresh_pps_inputs(cpu);
     dspic33_i2c_refresh_pins(cpu);
 }
 
@@ -14950,6 +14984,7 @@ bool dspic33_gpio_drive(Dspic33* cpu, uint8_t port, uint16_t value, uint16_t mas
     output_compare_refresh_fault_pps_inputs(cpu);
     refresh_pwm_inputs(cpu);
     dci_refresh_pps_inputs(cpu);
+    spi_refresh_pps_inputs(cpu);
     dspic33_i2c_refresh_pins(cpu);
     return true;
 }
@@ -14965,6 +15000,7 @@ bool dspic33_gpio_release(Dspic33* cpu, uint8_t port, uint16_t mask) {
     output_compare_refresh_fault_pps_inputs(cpu);
     refresh_pwm_inputs(cpu);
     dci_refresh_pps_inputs(cpu);
+    spi_refresh_pps_inputs(cpu);
     dspic33_i2c_refresh_pins(cpu);
     return true;
 }

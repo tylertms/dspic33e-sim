@@ -62,6 +62,21 @@ static void configure_spi(Dspic33* cpu, uint8_t channel, uint16_t control,
                        (uint16_t)(0x8000u | ((uint16_t)interrupt_mode << 2u)));
 }
 
+static bool drive_pps_spi_word(Dspic33* cpu, uint16_t value, uint8_t width,
+                               uint16_t data_mask, uint16_t clock_mask) {
+    uint8_t index;
+    for (index = 0u; index < width; index++) {
+        uint16_t data =
+            (value & (uint16_t)(1u << (width - index - 1u))) != 0u ? data_mask : 0u;
+        if (!dspic33_gpio_drive(cpu, 3u, data, data_mask) ||
+            !dspic33_gpio_drive(cpu, 3u, clock_mask, clock_mask) ||
+            !dspic33_gpio_drive(cpu, 3u, 0u, clock_mask)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static uint16_t dma_base(uint8_t channel) {
     return (uint16_t)(0x0b00u + channel * 0x10u);
 }
@@ -345,6 +360,99 @@ static void physical_slave_input_cases(SpiConformance* state, Dspic33* cpu,
            cpu->io.spi_pin_bits[0] == 0u && cpu->io.spi_pin_receive[0] == 0u &&
                cpu->io.spi_pin_clock_high == 0u && cpu->io.spi_pin_select_high == 0u,
            "reset clears physical slave state");
+}
+
+static void pps_slave_input_cases(SpiConformance* state, Dspic33* cpu) {
+    static const uint8_t channels[] = {0u, 2u, 3u};
+    static const uint16_t input_registers[] = {0x06c8u, 0x06dau, 0x06deu};
+    static const uint16_t select_registers[] = {0x06cau, 0x06dcu, 0x06e0u};
+    size_t channel_index;
+    for (channel_index = 0u; channel_index < sizeof(channels) / sizeof(channels[0]);
+         channel_index++) {
+        uint8_t mode16;
+        for (mode16 = 0u; mode16 < 2u; mode16++) {
+            uint8_t channel = channels[channel_index];
+            uint16_t base = bases[channel];
+            uint16_t control = (uint16_t)(0x019bu | ((uint16_t)mode16 << 10u));
+            uint16_t received = mode16 != 0u ? 0xa55au : 0x005au;
+            uint8_t width = mode16 != 0u ? 16u : 8u;
+
+            dspic33_reset(cpu, 0u);
+            dspic33_write_word(cpu, 0x0e3eu,
+                               (uint16_t)(dspic33_read_word(cpu, 0x0e3eu) & ~0x0007u));
+            dspic33_write_word(cpu, 0x0e30u,
+                               (uint16_t)(dspic33_read_word(cpu, 0x0e30u) | 0x0007u));
+            dspic33_gpio_drive(cpu, 3u, 0x0004u, 0x0007u);
+            dspic33_write_word(cpu, input_registers[channel_index], 0x4140u);
+            dspic33_write_word(cpu, select_registers[channel_index], 66u);
+            configure_spi(cpu, channel, control, 0u, 0u);
+            expect(state,
+                   dspic33_gpio_drive(cpu, 3u, 0u, 0x0004u) &&
+                       drive_pps_spi_word(cpu, received, width, 0x0001u, 0x0002u) &&
+                       interrupt_flag(cpu, irqs[channel]) &&
+                       dspic33_read_word(cpu, (uint16_t)(base + 8u)) == received,
+                   "mapped PPS slave receives serial input");
+        }
+    }
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e3eu,
+                       (uint16_t)(dspic33_read_word(cpu, 0x0e3eu) & ~0x005fu));
+    dspic33_write_word(cpu, 0x0e30u,
+                       (uint16_t)(dspic33_read_word(cpu, 0x0e30u) | 0x005fu));
+    dspic33_gpio_drive(cpu, 3u, 0u, 0x005fu);
+    dspic33_write_word(cpu, 0x06c8u, 0x4640u);
+    configure_spi(cpu, 0u, 0x011bu, 0u, 0u);
+    expect(state, !interrupt_flag(cpu, irqs[0]) && cpu->io.spi_pin_bits[0] == 0u,
+           "PPS slave starts without a sampled edge");
+    dspic33_write_word(cpu, 0x0e3eu,
+                       (uint16_t)(dspic33_read_word(cpu, 0x0e3eu) | 0x0040u));
+    expect(state, (dspic33_read_word(cpu, 0x0e3eu) & 0x0040u) != 0u,
+           "PPS slave clock pin enters analog mode");
+    expect(state, drive_pps_spi_word(cpu, 0x00a5u, 8u, 0x0001u, 0x0040u),
+           "drive analog PPS slave input");
+    expect(state, !interrupt_flag(cpu, irqs[0]),
+           "analog PPS clock suppresses slave interrupt");
+    expect(state, cpu->io.spi_pin_bits[0] == 0u,
+           "analog PPS clock suppresses sampled bits");
+    dspic33_write_word(cpu, 0x0e3eu,
+                       (uint16_t)(dspic33_read_word(cpu, 0x0e3eu) & ~0x0040u));
+    expect(state,
+           drive_pps_spi_word(cpu, 0x00a5u, 8u, 0x0001u, 0x0040u) &&
+               interrupt_flag(cpu, irqs[0]) && dspic33_read_word(cpu, 0x0248u) == 0xa5u,
+           "digital PPS clock restores slave input");
+
+    clear_interrupt(cpu, irqs[0]);
+    dspic33_write_word(cpu, 0x0e30u,
+                       (uint16_t)(dspic33_read_word(cpu, 0x0e30u) & ~0x0040u));
+    expect(state,
+           drive_pps_spi_word(cpu, 0x005au, 8u, 0x0001u, 0x0040u) &&
+               !interrupt_flag(cpu, irqs[0]),
+           "output-configured PPS clock suppresses slave input");
+    dspic33_write_word(cpu, 0x0e30u,
+                       (uint16_t)(dspic33_read_word(cpu, 0x0e30u) | 0x0040u));
+    expect(state,
+           drive_pps_spi_word(cpu, 0x005au, 8u, 0x0001u, 0x0040u) &&
+               interrupt_flag(cpu, irqs[0]) && dspic33_read_word(cpu, 0x0248u) == 0x5au,
+           "input-configured PPS clock restores slave input");
+
+    clear_interrupt(cpu, irqs[0]);
+    dspic33_write_word(cpu, 0x06c8u, 0x4443u);
+    expect(state,
+           drive_pps_spi_word(cpu, 0x00ffu, 8u, 0x0001u, 0x0002u) &&
+               !interrupt_flag(cpu, irqs[0]),
+           "live PPS remap releases old slave inputs");
+    expect(state,
+           drive_pps_spi_word(cpu, 0x003cu, 8u, 0x0008u, 0x0010u) &&
+               interrupt_flag(cpu, irqs[0]) && dspic33_read_word(cpu, 0x0248u) == 0x3cu,
+           "live PPS remap selects new slave inputs");
+
+    clear_interrupt(cpu, irqs[0]);
+    dspic33_write_word(cpu, 0x06c8u, 0x0201u);
+    expect(state,
+           drive_pps_spi_word(cpu, 0x00ffu, 8u, 0x0008u, 0x0010u) &&
+               !interrupt_flag(cpu, irqs[0]),
+           "B1 virtual PPS sources do not drive SPI input");
 }
 
 static void timing_matrix_cases(SpiConformance* state, Dspic33* cpu) {
@@ -1044,6 +1152,7 @@ int main(void) {
         transmit_output_cases(&state, &cpu);
         receive_only_cases(&state, &cpu);
         physical_slave_input_cases(&state, &cpu, &copy);
+        pps_slave_input_cases(&state, &cpu);
         timing_matrix_cases(&state, &cpu);
         standard_buffer_cases(&state, &cpu);
         enhanced_fifo_cases(&state, &cpu);
@@ -1056,7 +1165,7 @@ int main(void) {
         dma_cases(&state, &cpu);
         copy_and_reset_cases(&state, &cpu, &copy);
     }
-    expect(&state, state.cases == 2942u, "SPI assertion accounting");
+    expect(&state, state.cases == 2959u, "SPI assertion accounting");
     if (copy_initialized) {
         dspic33_destroy(&copy);
     }
