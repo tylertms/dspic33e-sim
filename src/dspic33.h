@@ -546,12 +546,17 @@ typedef struct {
     uint8_t can_tx_retry_wait;
     uint8_t can_tx_error_active;
     uint8_t can_rx_error_active;
+    uint8_t can_intermission_active;
+    uint8_t can_overload_active;
     uint64_t can_tx_error_start_cycle[DSPIC33_CAN_COUNT];
     uint64_t can_rx_error_start_cycle[DSPIC33_CAN_COUNT];
+    uint64_t can_overload_start_cycle[DSPIC33_CAN_COUNT];
     uint16_t can_bus_off_recessive_bits[DSPIC33_CAN_COUNT];
     uint16_t can_mode_generation[DSPIC33_CAN_COUNT];
     uint16_t can_resync_count[DSPIC33_CAN_COUNT];
+    uint16_t can_intermission_generation[DSPIC33_CAN_COUNT];
     int64_t can_tx_phase_adjustment[DSPIC33_CAN_COUNT];
+    uint8_t can_overload_count[DSPIC33_CAN_COUNT];
     uint8_t can_rx_sample_high[DSPIC33_CAN_COUNT];
     uint8_t can_tx_sample_high[DSPIC33_CAN_COUNT];
     uint16_t adc[DSPIC33_ADC_CHANNEL_COUNT];

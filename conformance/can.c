@@ -1417,6 +1417,84 @@ static void resynchronization_cases(CanConformance* state, Dspic33* cpu) {
            "two-TQ CAN resynchronization reaches its adjusted sample point");
 }
 
+static bool drive_can_to_intermission(Dspic33* cpu) {
+    for (uint16_t bit = 0u; bit < 160u; bit++) {
+        bool transmit_high;
+        bool acknowledge_high;
+        if ((cpu->io.can_intermission_active & 2u) != 0u) {
+            return true;
+        }
+        if (!dspic33_can_pin(cpu, 64u, &transmit_high) ||
+            !dspic33_can_pin(cpu, 65u, &acknowledge_high) ||
+            !dspic33_can_input_pin(cpu, 66u, transmit_high && acknowledge_high, 0u) ||
+            !dspic33_can_input_pin(cpu, 64u, transmit_high && acknowledge_high, 0u) ||
+            !dspic33_device_advance(cpu, 4u)) {
+            return false;
+        }
+    }
+    return false;
+}
+
+static void overload_frame_cases(CanConformance* state, Dspic33* cpu) {
+    Dspic33CanFrame input = frame(0x365u, false, false, 1u, 0xa0u);
+    bool high;
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_write_word(cpu, 0x0680u, 0x0f0eu);
+    dspic33_write_word(cpu, 0x06d4u, 0x4042u);
+    configure_receive(cpu, 1u, 0xda00u, 4u, 0u);
+    configure_filter(cpu, 1u, 0u, input.identifier, false, 0x7ffu, true, 0u, 0u);
+    enable_filter(cpu, 1u, 1u);
+    configure_transmit(cpu, 0u, 0xd800u);
+    write_transmit_frame(cpu, 0xd800u, &input);
+    select_window(cpu, 0u, false);
+    select_window(cpu, 1u, false);
+    dspic33_write_word(cpu, 0x0410u, 0u);
+    dspic33_write_word(cpu, 0x0412u, 0u);
+    dspic33_write_word(cpu, 0x0510u, 0u);
+    dspic33_write_word(cpu, 0x0512u, 0u);
+    set_mode(cpu, 0u, 0u);
+    set_mode(cpu, 1u, 0u);
+    dspic33_write_word(cpu, 0x0430u, 0x008bu);
+    expect(state, dspic33_device_advance(cpu, 8u),
+           "CAN overload source reaches the bus");
+    expect(state, drive_can_to_intermission(cpu),
+           "valid CAN frame reaches Intermission");
+    expect(state, cpu->io.can_rx_serial_count[1] != 0u,
+           "valid CAN serial frame completes before Intermission");
+    expect(state,
+           dspic33_can_input_pin(cpu, 64u, false, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               dspic33_can_input_pin(cpu, 64u, true, 0u) &&
+               dspic33_device_advance(cpu, 0u) && dspic33_can_pin(cpu, 65u, &high) &&
+               !high && cpu->io.can_overload_count[1] == 1u,
+           "dominant Intermission edge starts a CAN overload flag");
+    expect(state,
+           dspic33_device_advance(cpu, 23u) && dspic33_can_pin(cpu, 65u, &high) &&
+               !high,
+           "CAN overload flag remains dominant for six bits");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && dspic33_can_pin(cpu, 65u, &high) && high,
+           "CAN overload delimiter becomes recessive after six bits");
+    expect(state,
+           dspic33_device_advance(cpu, 32u) &&
+               (cpu->io.can_intermission_active & 2u) != 0u,
+           "CAN overload delimiter is followed by Intermission");
+    expect(
+        state,
+        dspic33_can_input_pin(cpu, 64u, false, 0u) && dspic33_device_advance(cpu, 0u) &&
+            dspic33_can_input_pin(cpu, 64u, true, 0u) &&
+            dspic33_device_advance(cpu, 56u) && cpu->io.can_overload_count[1] == 2u &&
+            (cpu->io.can_intermission_active & 2u) != 0u,
+        "CAN permits two sequential overload frames");
+    expect(state,
+           dspic33_can_input_pin(cpu, 64u, false, 0u) &&
+               dspic33_device_advance(cpu, 0u) && dspic33_can_pin(cpu, 65u, &high) &&
+               high && (cpu->io.can_overload_active & 2u) == 0u,
+           "CAN suppresses a third sequential overload frame");
+}
+
 static bool drive_shared_can_bus(Dspic33* can1, Dspic33* can2, uint8_t active_channel,
                                  uint64_t bit_cycles) {
     uint16_t count = 0u;
@@ -2840,11 +2918,17 @@ static void copy_and_reset_cases(CanConformance* state, Dspic33* cpu) {
                cpu->io.can_rx_physical_active == 0u && cpu->io.can_rx_ack == 0u &&
                cpu->io.can_tx_retry_wait == 0u && cpu->io.can_tx_error_active == 0u &&
                cpu->io.can_rx_error_active == 0u &&
+               cpu->io.can_intermission_active == 0u &&
+               cpu->io.can_overload_active == 0u &&
                cpu->io.can_bus_off_recessive_bits[0] == 0u &&
                cpu->io.can_bus_off_recessive_bits[1] == 0u &&
                cpu->io.can_resync_count[0] == 0u && cpu->io.can_resync_count[1] == 0u &&
+               cpu->io.can_intermission_generation[0] == 0u &&
+               cpu->io.can_intermission_generation[1] == 0u &&
                cpu->io.can_tx_phase_adjustment[0] == 0 &&
                cpu->io.can_tx_phase_adjustment[1] == 0 &&
+               cpu->io.can_overload_count[0] == 0u &&
+               cpu->io.can_overload_count[1] == 0u &&
                cpu->io.can_rx_sample_high[0] == 0u &&
                cpu->io.can_rx_sample_high[1] == 0u &&
                cpu->io.can_tx_sample_high[0] == 0u &&
@@ -2883,6 +2967,7 @@ int main(void) {
     receive_pps_cases(&state, &cpu);
     triple_sample_cases(&state, &cpu);
     resynchronization_cases(&state, &cpu);
+    overload_frame_cases(&state, &cpu);
     arbitration_field_cases(&state, &cpu);
     arbitration_cases(&state, &cpu);
     acknowledge_error_cases(&state, &cpu);
@@ -2899,7 +2984,7 @@ int main(void) {
     interrupt_and_error_cases(&state, &cpu);
     invalid_message_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
-    expect(&state, state.cases == 1462738u, "CAN assertion accounting");
+    expect(&state, state.cases == 1462747u, "CAN assertion accounting");
     report_sfr_side_effect_coverage(
         "can", can_sfr_side_effect_coverage,
         SFR_SIDE_EFFECT_COVERAGE_COUNT(can_sfr_side_effect_coverage),

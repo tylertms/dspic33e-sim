@@ -565,11 +565,14 @@ enum {
     CAN_EVENT_RECEIVE_SAMPLE_SECOND = 23u,
     CAN_EVENT_TRANSMIT_SAMPLE_FIRST = 24u,
     CAN_EVENT_TRANSMIT_SAMPLE_SECOND = 25u,
+    CAN_EVENT_INTERMISSION_FINISH = 26u,
+    CAN_EVENT_OVERLOAD_FINISH = 27u,
     CAN_EVENT_TRANSMIT_ERROR = 0x00000100u,
     CAN_EVENT_PIN_HIGH = 0x00000200u,
     CAN_EVENT_MODE_SHIFT = 8u,
     CAN_EVENT_MODE_GENERATION_SHIFT = 11u,
     CAN_EVENT_ERROR_COUNT_SHIFT = 16u,
+    CAN_EVENT_GENERATION_SHIFT = 16u,
     USB_OTGIR = 0x0488u,
     USB_OTGIE = 0x048au,
     USB_OTGSTAT = 0x048cu,
@@ -11154,7 +11157,8 @@ static void can_transmit_error(Dspic33* cpu, uint8_t channel) {
 
 static void can_monitor_transmit_sample(Dspic33* cpu, uint8_t channel, bool bus_high) {
     uint8_t bit = (uint8_t)(1u << channel);
-    if ((cpu->io.can_tx_on_bus & bit) == 0u) {
+    if ((cpu->io.can_tx_on_bus & bit) == 0u ||
+        (cpu->io.can_overload_active & bit) != 0u) {
         return;
     }
     Dspic33CanFrame frame = can_decode_frame(cpu->io.can_tx_words[channel]);
@@ -11250,6 +11254,58 @@ static bool can_bus_off_input(Dspic33* cpu, uint8_t channel, bool high) {
     return true;
 }
 
+static bool can_schedule_intermission(Dspic33* cpu, uint8_t channel) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    uint32_t value = CAN_EVENT_INTERMISSION_FINISH |
+                     ((uint32_t)cpu->io.can_intermission_generation[channel]
+                      << CAN_EVENT_GENERATION_SHIFT);
+    cpu->io.can_intermission_active |= bit;
+    return dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, value,
+                            3u * can_bit_cycles(cpu, channel));
+}
+
+static void can_start_overload(Dspic33* cpu, uint8_t channel) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    if (cpu->io.can_overload_count[channel] >= 2u) {
+        return;
+    }
+    cpu->io.can_intermission_generation[channel]++;
+    cpu->io.can_intermission_active &= (uint8_t)~bit;
+    cpu->io.can_overload_active |= bit;
+    cpu->io.can_overload_start_cycle[channel] = cpu->device_cycles;
+    cpu->io.can_overload_count[channel]++;
+    uint32_t value = CAN_EVENT_OVERLOAD_FINISH |
+                     ((uint32_t)cpu->io.can_intermission_generation[channel]
+                      << CAN_EVENT_GENERATION_SHIFT);
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, value,
+                          14u * can_bit_cycles(cpu, channel))) {
+        cpu->io.can_overload_active &= (uint8_t)~bit;
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    }
+}
+
+static void can_intermission_finish(Dspic33* cpu, uint8_t channel, uint32_t value) {
+    uint16_t generation = (uint16_t)(value >> CAN_EVENT_GENERATION_SHIFT);
+    if (generation != cpu->io.can_intermission_generation[channel]) {
+        return;
+    }
+    cpu->io.can_intermission_active &= (uint8_t)~(uint8_t)(1u << channel);
+    cpu->io.can_overload_count[channel] = 0u;
+}
+
+static void can_overload_finish(Dspic33* cpu, uint8_t channel, uint32_t value) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    uint16_t generation = (uint16_t)(value >> CAN_EVENT_GENERATION_SHIFT);
+    if (generation != cpu->io.can_intermission_generation[channel]) {
+        return;
+    }
+    cpu->io.can_overload_active &= (uint8_t)~bit;
+    if (!can_schedule_intermission(cpu, channel)) {
+        cpu->io.can_intermission_active &= (uint8_t)~bit;
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    }
+}
+
 static void can_receive_pin_level(Dspic33* cpu, uint8_t pin, bool high) {
     for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
         uint8_t bit = (uint8_t)(1u << channel);
@@ -11274,6 +11330,10 @@ static void can_receive_pin_level(Dspic33* cpu, uint8_t pin, bool high) {
             }
         }
         if (can_bus_off_input(cpu, channel, high)) {
+            continue;
+        }
+        if (previous && !high && (cpu->io.can_intermission_active & bit) != 0u) {
+            can_start_overload(cpu, channel);
             continue;
         }
         if (previous && !high && cpu->power_state == DSPIC33_POWER_SLEEP &&
@@ -11339,6 +11399,13 @@ static void can_receive_sample(Dspic33* cpu, uint8_t channel, bool bus_high) {
     }
     if (result == CAN_SERIAL_VALID) {
         cpu->io.can_rx_serial_active &= (uint8_t)~bit;
+        cpu->io.can_intermission_generation[channel]++;
+        cpu->io.can_overload_count[channel] = 0u;
+        if (!can_schedule_intermission(cpu, channel)) {
+            cpu->io.can_intermission_active &= (uint8_t)~bit;
+            cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+            return;
+        }
         if ((cpu->io.can_tx_on_bus & bit) != 0u) {
             return;
         }
@@ -11930,6 +11997,12 @@ static void run_can(Dspic33* cpu, uint8_t channel, uint32_t value) {
         break;
     case CAN_EVENT_MODE_TRANSITION:
         can_mode_transition(cpu, channel, value);
+        break;
+    case CAN_EVENT_INTERMISSION_FINISH:
+        can_intermission_finish(cpu, channel, value);
+        break;
+    case CAN_EVENT_OVERLOAD_FINISH:
+        can_overload_finish(cpu, channel, value);
         break;
     case CAN_EVENT_RECEIVE_SUCCESS:
         can_receive_success_start(cpu, channel);
@@ -16429,6 +16502,13 @@ bool dspic33_can_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
         *high = (raw_word(cpu, (uint16_t)(can_bases[channel] + 0x0au)) &
                  CAN_RECEIVE_PASSIVE) != 0u ||
                 index >= 6u;
+        return true;
+    }
+    if ((cpu->io.can_overload_active & (uint8_t)(1u << channel)) != 0u) {
+        uint64_t index =
+            (cpu->device_cycles - cpu->io.can_overload_start_cycle[channel]) /
+            can_bit_cycles(cpu, channel);
+        *high = index >= 6u;
         return true;
     }
     if ((cpu->io.can_rx_ack & (uint8_t)(1u << channel)) != 0u) {
