@@ -561,6 +561,10 @@ enum {
     CAN_EVENT_RECEIVE_ERROR_FINISH = 19u,
     CAN_EVENT_MODE_TRANSITION = 20u,
     CAN_EVENT_RECEIVE_SUCCESS = 21u,
+    CAN_EVENT_RECEIVE_SAMPLE_FIRST = 22u,
+    CAN_EVENT_RECEIVE_SAMPLE_SECOND = 23u,
+    CAN_EVENT_TRANSMIT_SAMPLE_FIRST = 24u,
+    CAN_EVENT_TRANSMIT_SAMPLE_SECOND = 25u,
     CAN_EVENT_TRANSMIT_ERROR = 0x00000100u,
     CAN_EVENT_PIN_HIGH = 0x00000200u,
     CAN_EVENT_MODE_SHIFT = 8u,
@@ -10986,6 +10990,18 @@ static uint64_t can_sample_cycles(const Dspic33* cpu, uint8_t channel) {
     return prescaler * quanta * clock_divisor;
 }
 
+static uint64_t can_time_quantum(const Dspic33* cpu, uint8_t channel) {
+    uint16_t config1 = raw_word(cpu, (uint16_t)(can_bases[channel] + 0x10u));
+    uint16_t control = raw_word(cpu, can_bases[channel]);
+    uint64_t prescaler = (config1 & 0x003fu) + 1u;
+    uint64_t clock_divisor = (control & 0x0800u) != 0u ? 2u : 1u;
+    return prescaler * clock_divisor;
+}
+
+static bool can_triple_sample(const Dspic33* cpu, uint8_t channel) {
+    return (raw_word(cpu, (uint16_t)(can_bases[channel] + 0x12u)) & 0x0040u) != 0u;
+}
+
 static uint8_t can_receive_pps_pin(const Dspic33* cpu, uint8_t channel) {
     uint16_t mapping = raw_word(cpu, 0x06d4u);
     return channel == 0u ? (uint8_t)(mapping & 0x007fu)
@@ -11014,6 +11030,25 @@ static void can_remove_transmit_events(Dspic33* cpu, uint8_t channel);
 static void can_error_event(Dspic33* cpu, uint8_t channel, uint32_t value);
 static void can_invalid_event(Dspic33* cpu, uint8_t channel);
 static void can_refresh_error_status(Dspic33* cpu, uint8_t channel);
+
+static bool can_schedule_receive_sample(Dspic33* cpu, uint8_t channel, uint64_t delay) {
+    uint32_t event = can_triple_sample(cpu, channel) ? CAN_EVENT_RECEIVE_SAMPLE_FIRST
+                                                     : CAN_EVENT_RECEIVE_SAMPLE;
+    return dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, event, delay);
+}
+
+static uint64_t can_first_sample_delay(const Dspic33* cpu, uint8_t channel) {
+    uint64_t delay = can_sample_cycles(cpu, channel);
+    return can_triple_sample(cpu, channel) ? delay - 2u * can_time_quantum(cpu, channel)
+                                           : delay;
+}
+
+static bool can_schedule_transmit_sample(Dspic33* cpu, uint8_t channel,
+                                         uint64_t delay) {
+    uint32_t event = can_triple_sample(cpu, channel) ? CAN_EVENT_TRANSMIT_SAMPLE_FIRST
+                                                     : CAN_EVENT_TRANSMIT_SAMPLE;
+    return dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, event, delay);
+}
 
 static void can_lose_arbitration(Dspic33* cpu, uint8_t channel) {
     uint8_t bit = (uint8_t)(1u << channel);
@@ -11184,9 +11219,9 @@ static void can_receive_pin_level(Dspic33* cpu, uint8_t pin, bool high) {
             can_serial_receive_enabled(cpu, channel)) {
             cpu->io.can_rx_serial_active |= bit;
             cpu->io.can_rx_serial_count[channel] = 0u;
-            if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel,
-                                  CAN_EVENT_RECEIVE_SAMPLE,
-                                  can_sample_cycles(cpu, channel))) {
+            cpu->io.can_rx_sample_high[channel] = 0u;
+            if (!can_schedule_receive_sample(cpu, channel,
+                                             can_first_sample_delay(cpu, channel))) {
                 cpu->io.can_rx_serial_active &= (uint8_t)~bit;
                 cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
             }
@@ -11194,7 +11229,7 @@ static void can_receive_pin_level(Dspic33* cpu, uint8_t pin, bool high) {
     }
 }
 
-static void can_receive_sample(Dspic33* cpu, uint8_t channel) {
+static void can_receive_sample(Dspic33* cpu, uint8_t channel, bool bus_high) {
     uint8_t bit = (uint8_t)(1u << channel);
     Dspic33CanFrame frame;
     Dspic33CanSerialResult result;
@@ -11211,7 +11246,7 @@ static void can_receive_sample(Dspic33* cpu, uint8_t channel) {
         can_invalid_event(cpu, channel);
         return;
     }
-    cpu->io.can_rx_serial_bits[channel][count] = (cpu->io.can_rx_pin_high & bit) != 0u;
+    cpu->io.can_rx_serial_bits[channel][count] = bus_high;
     cpu->io.can_rx_serial_count[channel]++;
     result = can_decode_serial(cpu, channel, &frame, &tail_start);
     if (result == CAN_SERIAL_INCOMPLETE && tail_start != 0u &&
@@ -11249,11 +11284,54 @@ static void can_receive_sample(Dspic33* cpu, uint8_t channel) {
         can_receive_error(cpu, channel, &frame);
         return;
     }
-    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_SAMPLE,
-                          can_bit_cycles(cpu, channel))) {
+    uint64_t delay = can_bit_cycles(cpu, channel);
+    if (can_triple_sample(cpu, channel)) {
+        delay -= 2u * can_time_quantum(cpu, channel);
+    }
+    if (!can_schedule_receive_sample(cpu, channel, delay)) {
         cpu->io.can_rx_serial_active &= (uint8_t)~bit;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
+}
+
+static void can_receive_sample_first(Dspic33* cpu, uint8_t channel) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    if ((cpu->io.can_rx_serial_active & bit) == 0u) {
+        return;
+    }
+    cpu->io.can_rx_sample_high[channel] =
+        (cpu->io.can_rx_pin_high & bit) != 0u ? 1u : 0u;
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel,
+                          CAN_EVENT_RECEIVE_SAMPLE_SECOND,
+                          can_time_quantum(cpu, channel))) {
+        cpu->io.can_rx_serial_active &= (uint8_t)~bit;
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    }
+}
+
+static void can_receive_sample_second(Dspic33* cpu, uint8_t channel) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    if ((cpu->io.can_rx_serial_active & bit) == 0u) {
+        return;
+    }
+    if ((cpu->io.can_rx_pin_high & bit) != 0u) {
+        cpu->io.can_rx_sample_high[channel]++;
+    }
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_SAMPLE,
+                          can_time_quantum(cpu, channel))) {
+        cpu->io.can_rx_serial_active &= (uint8_t)~bit;
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    }
+}
+
+static void can_receive_sample_final(Dspic33* cpu, uint8_t channel) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    uint8_t high = cpu->io.can_rx_sample_high[channel];
+    if ((cpu->io.can_rx_pin_high & bit) != 0u) {
+        high++;
+    }
+    cpu->io.can_rx_sample_high[channel] = 0u;
+    can_receive_sample(cpu, channel, high >= 2u);
 }
 
 static void can_ack_start(Dspic33* cpu, uint8_t channel) {
@@ -11555,8 +11633,8 @@ static void can_transmit_finish(Dspic33* cpu, uint8_t channel) {
     if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel,
                           CAN_EVENT_TRANSMIT_BUS_FINISH,
                           can_frame_cycles(cpu, channel, &frame)) ||
-        !dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_SAMPLE,
-                          can_sample_cycles(cpu, channel))) {
+        !can_schedule_transmit_sample(cpu, channel,
+                                      can_first_sample_delay(cpu, channel))) {
         can_remove_transmit_events(cpu, channel);
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
         cpu->io.can_tx_on_bus &= (uint8_t)~bit;
@@ -11564,23 +11642,69 @@ static void can_transmit_finish(Dspic33* cpu, uint8_t channel) {
     }
 }
 
-static void can_transmit_sample(Dspic33* cpu, uint8_t channel) {
+static void can_transmit_sample(Dspic33* cpu, uint8_t channel, bool bus_high) {
     uint8_t bit = (uint8_t)(1u << channel);
     if ((cpu->io.can_tx_on_bus & bit) == 0u) {
         return;
     }
     if ((cpu->io.can_rx_physical_active & bit) != 0u) {
-        can_monitor_transmit_sample(cpu, channel,
-                                    (cpu->io.can_rx_pin_high & bit) != 0u);
+        can_monitor_transmit_sample(cpu, channel, bus_high);
+    }
+    uint64_t delay = can_bit_cycles(cpu, channel);
+    if (can_triple_sample(cpu, channel)) {
+        delay -= 2u * can_time_quantum(cpu, channel);
     }
     if ((cpu->io.can_tx_on_bus & bit) != 0u &&
-        !dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_SAMPLE,
-                          can_bit_cycles(cpu, channel))) {
+        !can_schedule_transmit_sample(cpu, channel, delay)) {
         can_remove_transmit_events(cpu, channel);
         cpu->io.can_tx_on_bus &= (uint8_t)~bit;
         cpu->io.can_tx_busy &= (uint8_t)~bit;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
+}
+
+static void can_transmit_sample_first(Dspic33* cpu, uint8_t channel) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    if ((cpu->io.can_tx_on_bus & bit) == 0u) {
+        return;
+    }
+    cpu->io.can_tx_sample_high[channel] =
+        (cpu->io.can_rx_pin_high & bit) != 0u ? 1u : 0u;
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel,
+                          CAN_EVENT_TRANSMIT_SAMPLE_SECOND,
+                          can_time_quantum(cpu, channel))) {
+        can_remove_transmit_events(cpu, channel);
+        cpu->io.can_tx_on_bus &= (uint8_t)~bit;
+        cpu->io.can_tx_busy &= (uint8_t)~bit;
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    }
+}
+
+static void can_transmit_sample_second(Dspic33* cpu, uint8_t channel) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    if ((cpu->io.can_tx_on_bus & bit) == 0u) {
+        return;
+    }
+    if ((cpu->io.can_rx_pin_high & bit) != 0u) {
+        cpu->io.can_tx_sample_high[channel]++;
+    }
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_SAMPLE,
+                          can_time_quantum(cpu, channel))) {
+        can_remove_transmit_events(cpu, channel);
+        cpu->io.can_tx_on_bus &= (uint8_t)~bit;
+        cpu->io.can_tx_busy &= (uint8_t)~bit;
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+    }
+}
+
+static void can_transmit_sample_final(Dspic33* cpu, uint8_t channel) {
+    uint8_t bit = (uint8_t)(1u << channel);
+    uint8_t high = cpu->io.can_tx_sample_high[channel];
+    if ((cpu->io.can_rx_pin_high & bit) != 0u) {
+        high++;
+    }
+    cpu->io.can_tx_sample_high[channel] = 0u;
+    can_transmit_sample(cpu, channel, high >= 2u);
 }
 
 static void can_transmit_retry(Dspic33* cpu, uint8_t channel) {
@@ -11678,7 +11802,19 @@ static void run_can(Dspic33* cpu, uint8_t channel, uint32_t value) {
         can_invalid_event(cpu, channel);
         break;
     case CAN_EVENT_RECEIVE_SAMPLE:
-        can_receive_sample(cpu, channel);
+        if (can_triple_sample(cpu, channel)) {
+            can_receive_sample_final(cpu, channel);
+        } else {
+            can_receive_sample(cpu, channel,
+                               (cpu->io.can_rx_pin_high & (uint8_t)(1u << channel)) !=
+                                   0u);
+        }
+        break;
+    case CAN_EVENT_RECEIVE_SAMPLE_FIRST:
+        can_receive_sample_first(cpu, channel);
+        break;
+    case CAN_EVENT_RECEIVE_SAMPLE_SECOND:
+        can_receive_sample_second(cpu, channel);
         break;
     case CAN_EVENT_ACK_START:
         can_ack_start(cpu, channel);
@@ -11693,7 +11829,19 @@ static void run_can(Dspic33* cpu, uint8_t channel, uint32_t value) {
         can_transmit_error_start(cpu, channel);
         break;
     case CAN_EVENT_TRANSMIT_SAMPLE:
-        can_transmit_sample(cpu, channel);
+        if (can_triple_sample(cpu, channel)) {
+            can_transmit_sample_final(cpu, channel);
+        } else {
+            can_transmit_sample(cpu, channel,
+                                (cpu->io.can_rx_pin_high & (uint8_t)(1u << channel)) !=
+                                    0u);
+        }
+        break;
+    case CAN_EVENT_TRANSMIT_SAMPLE_FIRST:
+        can_transmit_sample_first(cpu, channel);
+        break;
+    case CAN_EVENT_TRANSMIT_SAMPLE_SECOND:
+        can_transmit_sample_second(cpu, channel);
         break;
     case CAN_EVENT_RECEIVE_ERROR_START:
         can_receive_error_start(cpu, channel);
@@ -14361,7 +14509,9 @@ static void can_remove_transmit_events(Dspic33* cpu, uint8_t channel) {
              kind != CAN_EVENT_TRANSMIT_BUS_FINISH &&
              kind != CAN_EVENT_TRANSMIT_RETRY &&
              kind != CAN_EVENT_TRANSMIT_ERROR_START &&
-             kind != CAN_EVENT_TRANSMIT_SAMPLE)) {
+             kind != CAN_EVENT_TRANSMIT_SAMPLE &&
+             kind != CAN_EVENT_TRANSMIT_SAMPLE_FIRST &&
+             kind != CAN_EVENT_TRANSMIT_SAMPLE_SECOND)) {
             cpu->events.items[destination++] = *event;
         }
     }

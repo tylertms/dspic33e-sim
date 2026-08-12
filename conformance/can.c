@@ -1281,6 +1281,96 @@ static bool bridge_can_pins(Dspic33* cpu, uint8_t transmit_channel, uint8_t pin,
     return bit != 0u && bit < 160u && dspic33_device_advance(cpu, 32u);
 }
 
+static bool bridge_can_with_final_sample_glitch(
+    Dspic33* cpu, uint8_t transmit_channel, uint8_t transmit_pin,
+    uint8_t acknowledge_pin, uint8_t transmit_receive_pin, uint8_t receive_pin,
+    bool glitch_transmitter, bool* acknowledge_observed) {
+    uint16_t bit = 0u;
+    while ((cpu->io.can_tx_on_bus & (uint8_t)(1u << transmit_channel)) != 0u &&
+           bit < 160u) {
+        bool transmit_high;
+        bool acknowledge_high;
+        bool bus_high;
+        if (dspic33_can_pin(cpu, acknowledge_pin, &acknowledge_high) &&
+            !acknowledge_high) {
+            *acknowledge_observed = true;
+        }
+        if (!dspic33_can_pin(cpu, transmit_pin, &transmit_high)) {
+            return false;
+        }
+        bus_high = transmit_high && acknowledge_high;
+        if (!dspic33_can_input_pin(cpu, transmit_receive_pin, bus_high, 0u) ||
+            !dspic33_can_input_pin(cpu, receive_pin, bus_high, 0u) ||
+            !dspic33_device_advance(cpu, 2u)) {
+            return false;
+        }
+        if (bit == 0u &&
+            !dspic33_can_input_pin(
+                cpu, glitch_transmitter ? transmit_receive_pin : receive_pin, !bus_high,
+                0u)) {
+            return false;
+        }
+        if (!dspic33_device_advance(cpu, 1u) ||
+            !dspic33_can_input_pin(
+                cpu, glitch_transmitter ? transmit_receive_pin : receive_pin, bus_high,
+                0u) ||
+            !dspic33_device_advance(cpu, 1u)) {
+            return false;
+        }
+        bit++;
+    }
+    return bit != 0u && bit < 160u && dspic33_device_advance(cpu, 32u);
+}
+
+static void triple_sample_cases(CanConformance* state, Dspic33* cpu) {
+    for (uint8_t glitch_transmitter = 0u; glitch_transmitter < 2u;
+         glitch_transmitter++) {
+        Dspic33CanFrame input =
+            frame((uint32_t)(0x360u + glitch_transmitter), false, false, 2u,
+                  (uint8_t)(0x80u + glitch_transmitter * 0x10u));
+        Dspic33CanFrame output;
+        bool acknowledge_observed = false;
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+        dspic33_write_word(cpu, 0x0e3eu, 0u);
+        dspic33_write_word(cpu, 0x0680u, 0x0f0eu);
+        dspic33_write_word(cpu, 0x06d4u, 0x4042u);
+        configure_receive(cpu, 1u, 0xda00u, 4u, 0u);
+        configure_filter(cpu, 1u, 0u, input.identifier, false, 0x7ffu, true, 0u, 0u);
+        enable_filter(cpu, 1u, 1u);
+        configure_transmit(cpu, 0u, 0xd800u);
+        write_transmit_frame(cpu, 0xd800u, &input);
+        select_window(cpu, 0u, false);
+        select_window(cpu, 1u, false);
+        dspic33_write_word(cpu, 0x0410u, 0u);
+        dspic33_write_word(cpu, 0x0412u, glitch_transmitter != 0u ? 0x0040u : 0u);
+        dspic33_write_word(cpu, 0x0510u, 0u);
+        dspic33_write_word(cpu, 0x0512u, glitch_transmitter == 0u ? 0x0040u : 0u);
+        set_mode(cpu, 0u, 0u);
+        set_mode(cpu, 1u, 0u);
+        dspic33_write_word(cpu, 0x0430u, 0x008bu);
+        expect(state,
+               dspic33_device_advance(cpu, 8u) &&
+                   bridge_can_with_final_sample_glitch(cpu, 0u, 64u, 65u, 66u, 64u,
+                                                       glitch_transmitter != 0u,
+                                                       &acknowledge_observed),
+               "CAN triple-sample bridge tolerates one final-sample glitch");
+        expect(state,
+               receive_full(cpu, 1u, 0u) &&
+                   (dspic33_read_word(cpu, 0x050eu) & 0x00ffu) == 0u &&
+                   memory_word(cpu, 0xda00u) == (uint16_t)(input.identifier << 2u) &&
+                   (uint8_t)memory_word(cpu, 0xda06u) == input.data[0] &&
+                   (uint8_t)(memory_word(cpu, 0xda06u) >> 8u) == input.data[1],
+               "CAN triple-sample receiver uses the majority value");
+        expect(state,
+               acknowledge_observed && dspic33_can_transmit(cpu, 0u, &output) &&
+                   output.identifier == input.identifier &&
+                   (dspic33_read_word(cpu, 0x040eu) >> 8u) == 0u &&
+                   (dspic33_read_word(cpu, 0x0430u) & 0x0018u) == 0u,
+               "CAN triple-sample transmitter uses the majority value");
+    }
+}
+
 static bool drive_shared_can_bus(Dspic33* can1, Dspic33* can2, uint8_t active_channel,
                                  uint64_t bit_cycles) {
     uint16_t count = 0u;
@@ -2666,6 +2756,26 @@ static void copy_and_reset_cases(CanConformance* state, Dspic33* cpu) {
                copy.io.can_rx_serial_count[0] == 2u &&
                cpu->io.can_rx_serial_bits[0][1] == copy.io.can_rx_serial_bits[0][1],
            "copy preserves CAN serial receive phase");
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_write_word(cpu, 0x06d4u, 64u);
+    dspic33_write_word(cpu, 0x0412u, 0x0040u);
+    set_mode(cpu, 0u, 0u);
+    expect(state,
+           dspic33_can_input_pin(cpu, 64u, false, 0u) &&
+               dspic33_can_input_pin(cpu, 64u, true, 0u) &&
+               dspic33_device_advance(cpu, 1u) && cpu->io.can_rx_sample_high[0] == 1u &&
+               cpu->io.can_rx_serial_count[0] == 0u,
+           "copy reaches the first CAN majority sample");
+    expect(state, dspic33_copy(&copy, cpu) && copy.io.can_rx_sample_high[0] == 1u,
+           "copy preserves partial CAN majority state");
+    expect(state,
+           dspic33_can_input_pin(cpu, 64u, false, 0u) &&
+               dspic33_can_input_pin(&copy, 64u, false, 0u) &&
+               dspic33_device_advance(cpu, 1u) && dspic33_device_advance(&copy, 1u) &&
+               cpu->io.can_rx_sample_high[0] == copy.io.can_rx_sample_high[0],
+           "copied CAN majority samples advance together");
     dspic33_destroy(&copy);
     dspic33_reset(cpu, 0u);
     expect(state,
@@ -2677,7 +2787,11 @@ static void copy_and_reset_cases(CanConformance* state, Dspic33* cpu) {
                cpu->io.can_tx_retry_wait == 0u && cpu->io.can_tx_error_active == 0u &&
                cpu->io.can_rx_error_active == 0u &&
                cpu->io.can_bus_off_recessive_bits[0] == 0u &&
-               cpu->io.can_bus_off_recessive_bits[1] == 0u,
+               cpu->io.can_bus_off_recessive_bits[1] == 0u &&
+               cpu->io.can_rx_sample_high[0] == 0u &&
+               cpu->io.can_rx_sample_high[1] == 0u &&
+               cpu->io.can_tx_sample_high[0] == 0u &&
+               cpu->io.can_tx_sample_high[1] == 0u,
            "reset clears CAN runtime");
 }
 
@@ -2710,6 +2824,7 @@ int main(void) {
     transmit_abort_timing_cases(&state, &cpu);
     transmit_pps_cases(&state, &cpu);
     receive_pps_cases(&state, &cpu);
+    triple_sample_cases(&state, &cpu);
     arbitration_field_cases(&state, &cpu);
     arbitration_cases(&state, &cpu);
     acknowledge_error_cases(&state, &cpu);
@@ -2726,7 +2841,7 @@ int main(void) {
     interrupt_and_error_cases(&state, &cpu);
     invalid_message_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
-    expect(&state, state.cases == 1462719u, "CAN assertion accounting");
+    expect(&state, state.cases == 1462728u, "CAN assertion accounting");
     report_sfr_side_effect_coverage(
         "can", can_sfr_side_effect_coverage,
         SFR_SIDE_EFFECT_COVERAGE_COUNT(can_sfr_side_effect_coverage),
