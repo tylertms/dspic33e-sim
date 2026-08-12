@@ -10877,6 +10877,7 @@ static Dspic33CanSerialResult can_decode_serial(const Dspic33* cpu, uint8_t chan
     bool extended = false;
     bool remote = false;
     uint8_t length = 0u;
+    memset(frame, 0, sizeof(*frame));
     *tail_start = 0u;
     while (serial_index < serial_count) {
         bool bit = cpu->io.can_rx_serial_bits[channel][serial_index++] != 0u;
@@ -10936,6 +10937,20 @@ static Dspic33CanSerialResult can_decode_serial(const Dspic33* cpu, uint8_t chan
     if (expected == 0u || raw_count < expected || expect_stuff) {
         return CAN_SERIAL_INCOMPLETE;
     }
+    frame->extended = extended;
+    frame->remote = remote;
+    frame->length = length;
+    if (extended) {
+        frame->identifier =
+            (can_serial_value(raw, 1u, 11u) << 18u) | can_serial_value(raw, 14u, 18u);
+    } else {
+        frame->identifier = can_serial_value(raw, 1u, 11u);
+    }
+    uint16_t data_index = extended ? 39u : 19u;
+    for (uint8_t index = 0u; index < length && !remote; index++) {
+        frame->data[index] =
+            (uint8_t)can_serial_value(raw, data_index + index * 8u, 8u);
+    }
     *tail_start = serial_index;
     uint16_t crc_index = (uint16_t)(expected - 15u);
     if (can_crc(raw, (uint8_t)crc_index) !=
@@ -10953,21 +10968,6 @@ static Dspic33CanSerialResult can_decode_serial(const Dspic33* cpu, uint8_t chan
         if (!cpu->io.can_rx_serial_bits[channel][serial_index + index]) {
             return CAN_SERIAL_INVALID;
         }
-    }
-    memset(frame, 0, sizeof(*frame));
-    frame->extended = extended;
-    frame->remote = remote;
-    frame->length = length;
-    if (extended) {
-        frame->identifier =
-            (can_serial_value(raw, 1u, 11u) << 18u) | can_serial_value(raw, 14u, 18u);
-    } else {
-        frame->identifier = can_serial_value(raw, 1u, 11u);
-    }
-    uint16_t data_index = extended ? 39u : 19u;
-    for (uint8_t index = 0u; index < length && !remote; index++) {
-        frame->data[index] =
-            (uint8_t)can_serial_value(raw, data_index + index * 8u, 8u);
     }
     return CAN_SERIAL_VALID;
 }
@@ -11070,11 +11070,23 @@ static void can_monitor_transmit_sample(Dspic33* cpu, uint8_t channel, bool bus_
     }
 }
 
-static void can_receive_error(Dspic33* cpu, uint8_t channel) {
+static void can_receive_error(Dspic33* cpu, uint8_t channel,
+                              const Dspic33CanFrame* frame) {
     uint8_t bit = (uint8_t)(1u << channel);
+    uint8_t mode = can_mode(cpu, channel);
     uint64_t remaining = can_bit_cycles(cpu, channel) - can_sample_cycles(cpu, channel);
     cpu->io.can_rx_serial_active &= (uint8_t)~bit;
     can_invalid_event(cpu, channel);
+    if (mode == CAN_MODE_LISTEN) {
+        return;
+    }
+    if (mode == CAN_MODE_LISTEN_ALL &&
+        (!can_queue_push(&cpu->io.can_rx[channel], frame) ||
+         !dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_START,
+                           0u))) {
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+        return;
+    }
     can_error_event(cpu, channel,
                     CAN_EVENT_ERROR | (1u << CAN_EVENT_ERROR_COUNT_SHIFT));
     if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel,
@@ -11171,7 +11183,8 @@ static void can_receive_sample(Dspic33* cpu, uint8_t channel) {
     if (result == CAN_SERIAL_INCOMPLETE && tail_start != 0u &&
         cpu->io.can_rx_serial_count[channel] == tail_start + 1u &&
         cpu->io.can_rx_serial_bits[channel][tail_start] != 0u &&
-        (cpu->io.can_tx_on_bus & bit) == 0u) {
+        (cpu->io.can_tx_on_bus & bit) == 0u &&
+        can_mode(cpu, channel) != CAN_MODE_LISTEN) {
         uint64_t bit_cycles = can_bit_cycles(cpu, channel);
         uint64_t sample_cycles = can_sample_cycles(cpu, channel);
         if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_ACK_START,
@@ -11198,7 +11211,7 @@ static void can_receive_sample(Dspic33* cpu, uint8_t channel) {
         return;
     }
     if (result == CAN_SERIAL_INVALID) {
-        can_receive_error(cpu, channel);
+        can_receive_error(cpu, channel, &frame);
         return;
     }
     if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_SAMPLE,
@@ -11210,7 +11223,8 @@ static void can_receive_sample(Dspic33* cpu, uint8_t channel) {
 
 static void can_ack_start(Dspic33* cpu, uint8_t channel) {
     uint8_t bit = (uint8_t)(1u << channel);
-    if (!can_serial_receive_enabled(cpu, channel)) {
+    if (!can_serial_receive_enabled(cpu, channel) ||
+        can_mode(cpu, channel) == CAN_MODE_LISTEN) {
         return;
     }
     cpu->io.can_rx_ack |= bit;

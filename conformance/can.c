@@ -2020,6 +2020,77 @@ static void mode_and_power_cases(CanConformance* state, Dspic33* cpu) {
     }
 }
 
+static void physical_debug_mode_cases(CanConformance* state, Dspic33* cpu) {
+    for (uint8_t mode = 3u; mode <= 7u; mode += 4u) {
+        Dspic33CanFrame input = frame(0x234u, false, false, 1u, 0x5au);
+        bool acknowledge_observed = false;
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+        dspic33_write_word(cpu, 0x0e3eu, 0u);
+        dspic33_write_word(cpu, 0x0680u, 0x0f0eu);
+        dspic33_write_word(cpu, 0x06d4u, 0x4000u);
+        configure_transmit(cpu, 0u, 0xde00u);
+        configure_receive(cpu, 1u, 0xdc00u, 4u, 0u);
+        configure_filter(cpu, 1u, 0u, 0x234u, false, 0x7ffu, true, 0u, 0u);
+        enable_filter(cpu, 1u, 1u);
+        write_transmit_frame(cpu, 0xde00u, &input);
+        select_window(cpu, 0u, false);
+        select_window(cpu, 1u, false);
+        dspic33_write_word(cpu, 0x0410u, 0u);
+        dspic33_write_word(cpu, 0x0412u, 0u);
+        dspic33_write_word(cpu, 0x0510u, 0u);
+        dspic33_write_word(cpu, 0x0512u, 0u);
+        set_mode(cpu, 0u, 0u);
+        set_mode(cpu, 1u, mode);
+        dspic33_write_word(cpu, 0x0430u, 0x008bu);
+        expect(state,
+               dspic33_device_advance(cpu, 8u) &&
+                   bridge_can_pins(cpu, 0u, 64u, 65u, 4u, -1, &acknowledge_observed),
+               "CAN debug receive mode advances a valid physical frame");
+        expect(state,
+               receive_full(cpu, 1u, 0u) &&
+                   (dspic33_read_word(cpu, 0x050eu) & 0x00ffu) == 0u &&
+                   (cpu->io.can_rx_error_active & 2u) == 0u,
+               "CAN debug receive mode accepts a valid physical frame");
+        expect(state, acknowledge_observed == (mode == 7u),
+               "CAN listen-only mode suppresses physical acknowledgement");
+
+        acknowledge_observed = false;
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+        dspic33_write_word(cpu, 0x0e3eu, 0u);
+        dspic33_write_word(cpu, 0x0680u, 0x0f0eu);
+        dspic33_write_word(cpu, 0x06d4u, 0x4000u);
+        configure_transmit(cpu, 0u, 0xde00u);
+        configure_receive(cpu, 1u, 0xdc00u, 4u, 0u);
+        configure_filter(cpu, 1u, 0u, 0x234u, false, 0x7ffu, true, 0u, 0u);
+        enable_filter(cpu, 1u, 1u);
+        write_transmit_frame(cpu, 0xde00u, &input);
+        select_window(cpu, 0u, false);
+        select_window(cpu, 1u, false);
+        dspic33_write_word(cpu, 0x0410u, 0u);
+        dspic33_write_word(cpu, 0x0412u, 0u);
+        dspic33_write_word(cpu, 0x0510u, 0u);
+        dspic33_write_word(cpu, 0x0512u, 0u);
+        set_mode(cpu, 0u, 0u);
+        set_mode(cpu, 1u, mode);
+        dspic33_write_word(cpu, 0x0430u, 0x008bu);
+        expect(state,
+               dspic33_device_advance(cpu, 8u) &&
+                   bridge_can_pins(cpu, 0u, 64u, 65u, 4u, 30, &acknowledge_observed),
+               "CAN debug receive mode advances an invalid physical frame");
+        expect(state,
+               (dspic33_read_word(cpu, 0x050au) & 0x0080u) != 0u &&
+                   (receive_full(cpu, 1u, 0u) == (mode == 7u)),
+               "CAN listen-all mode transfers an invalid physical frame");
+        expect(state,
+               mode == 7u ||
+                   ((dspic33_read_word(cpu, 0x050eu) & 0x00ffu) == 0u &&
+                    (cpu->io.can_rx_error_active & 2u) == 0u && !acknowledge_observed),
+               "CAN listen-only mode freezes counters and suppresses error output");
+    }
+}
+
 static void capture_timestamp_cases(CanConformance* state, Dspic33* cpu) {
     for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
         uint16_t base = bases[channel];
@@ -2483,11 +2554,12 @@ int main(void) {
     receive_pps_qualification_cases(&state, &cpu);
     priority_and_abort_cases(&state, &cpu);
     mode_and_power_cases(&state, &cpu);
+    physical_debug_mode_cases(&state, &cpu);
     capture_timestamp_cases(&state, &cpu);
     interrupt_and_error_cases(&state, &cpu);
     invalid_message_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
-    expect(&state, state.cases == 1462687u, "CAN assertion accounting");
+    expect(&state, state.cases == 1462699u, "CAN assertion accounting");
     report_sfr_side_effect_coverage(
         "can", can_sfr_side_effect_coverage,
         SFR_SIDE_EFFECT_COVERAGE_COUNT(can_sfr_side_effect_coverage),
