@@ -22,6 +22,7 @@ static void adc_begin_sampling(Dspic33* cpu, uint8_t module);
 static void run_pwm_pmd(Dspic33* cpu, uint16_t source, uint32_t value);
 static void refresh_pwm_inputs(Dspic33* cpu);
 static void refresh_pwm_pins(Dspic33* cpu);
+static void usb_update_power_state(Dspic33* cpu);
 static bool interrupt_enabled(const Dspic33* cpu, uint16_t irq);
 static void output_compare_fault_pin_input(Dspic33* cpu, uint8_t pin, bool high);
 static void output_compare_pulse_source(Dspic33* cpu, uint8_t source);
@@ -602,6 +603,10 @@ enum {
     USB_ERROR_PID = 0x0001u,
     USB_IRQ = 86u,
     USB_FRAME_CYCLES = 60000u,
+    USB_PMD_ADDRESS = 0x0766u,
+    USB_PMD = 0x0001u,
+    USB_PMD_EVENT_DISABLED = 0x00000001u,
+    USB_PMD_EVENT_GENERATION_SHIFT = 1u,
     ADC_ON = 0x8000u,
     ADC_STOP_IDLE = 0x2000u,
     ADC_BUFFER_ORDER = 0x1000u,
@@ -1697,6 +1702,7 @@ void dspic33_device_power_state_changed(Dspic33* cpu) {
     comparator_update_filter_power(cpu);
     comparator_evaluate_all(cpu);
     adc_update_power_state(cpu);
+    usb_update_power_state(cpu);
     refresh_pwm_pins(cpu);
     dspic33_i2c_refresh_pins(cpu);
 }
@@ -11142,8 +11148,7 @@ static void usb_clear_endpoint_stalls(Dspic33* cpu, uint8_t endpoint) {
 
 static bool usb_device_active(const Dspic33* cpu) {
     uint16_t control = raw_word(cpu, USB_CON);
-    return (raw_word(cpu, 0x0766u) & 1u) == 0u &&
-           (raw_word(cpu, USB_PWRC) & USB_POWER) != 0u &&
+    return !cpu->io.usb_pmd_disabled && (raw_word(cpu, USB_PWRC) & USB_POWER) != 0u &&
            (raw_word(cpu, USB_PWRC) & USB_SUSPEND) == 0u &&
            (control & (USB_ENABLE | USB_HOST_ENABLE | USB_PACKET_DISABLE)) ==
                USB_ENABLE;
@@ -11413,6 +11418,7 @@ static void usb_run_bus_event(Dspic33* cpu, Dspic33UsbBusEvent event, uint16_t v
                        (uint16_t)(raw_word(cpu, USB_IR) | USB_RESUME_INTERRUPT));
         raw_write_word(cpu, USB_OTGIR, (uint16_t)(raw_word(cpu, USB_OTGIR) | 0x0010u));
         usb_refresh_interrupt(cpu);
+        usb_update_power_state(cpu);
         break;
     case DSPIC33_USB_BUS_ATTACH:
         raw_write_word(cpu, USB_OTGSTAT,
@@ -11453,13 +11459,104 @@ static void usb_run_bus_event(Dspic33* cpu, Dspic33UsbBusEvent event, uint16_t v
     }
 }
 
+static bool usb_clock_available(const Dspic33* cpu) {
+    return !cpu->io.usb_pmd_disabled && (raw_word(cpu, USB_PWRC) & USB_SUSPEND) == 0u &&
+           cpu->power_state != DSPIC33_POWER_SLEEP &&
+           (cpu->power_state != DSPIC33_POWER_IDLE ||
+            (raw_word(cpu, USB_CNFG1) & 0x0010u) == 0u);
+}
+
+static bool usb_sof_event(const Dspic33* cpu, const Dspic33Event* event) {
+    const Dspic33UsbPending* pending;
+    if (event->type != DSPIC33_EVENT_USB ||
+        event->source >= DSPIC33_USB_PENDING_COUNT) {
+        return false;
+    }
+    pending = &cpu->io.usb_pending[event->source];
+    return pending->active && pending->bus_event &&
+           pending->event == DSPIC33_USB_BUS_SOF;
+}
+
+static void usb_pause_sof_events(Dspic33* cpu) {
+    size_t index;
+    for (index = 0u; index < cpu->events.count; index++) {
+        Dspic33Event* event = &cpu->events.items[index];
+        if (!usb_sof_event(cpu, event) || event->paused) {
+            continue;
+        }
+        event->paused_remaining =
+            event->cycle > cpu->device_cycles ? event->cycle - cpu->device_cycles : 0u;
+        event->paused = true;
+    }
+    dspic33_reorder_events(cpu);
+}
+
+static void usb_resume_sof_events(Dspic33* cpu) {
+    size_t index;
+    bool changed = false;
+    for (index = 0u; index < cpu->events.count; index++) {
+        Dspic33Event* event = &cpu->events.items[index];
+        if (!usb_sof_event(cpu, event) || !event->paused) {
+            continue;
+        }
+        if (event->paused_remaining > UINT64_MAX - cpu->device_cycles) {
+            cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+            continue;
+        }
+        event->cycle = cpu->device_cycles + event->paused_remaining;
+        event->paused_remaining = 0u;
+        event->paused = false;
+        changed = true;
+    }
+    if (changed) {
+        dspic33_reorder_events(cpu);
+    }
+}
+
+static void usb_update_power_state(Dspic33* cpu) {
+    if (usb_clock_available(cpu)) {
+        usb_resume_sof_events(cpu);
+    } else {
+        usb_pause_sof_events(cpu);
+    }
+}
+
+static void run_usb_pmd(Dspic33* cpu, uint32_t value) {
+    uint16_t generation = (uint16_t)(value >> USB_PMD_EVENT_GENERATION_SHIFT);
+    if (generation != cpu->io.usb_pmd_generation) {
+        return;
+    }
+    cpu->io.usb_pmd_disabled = (value & USB_PMD_EVENT_DISABLED) != 0u;
+    usb_update_power_state(cpu);
+}
+
 static void run_usb(Dspic33* cpu, uint16_t slot) {
     Dspic33UsbPending* pending;
+    bool power_stopped;
     if (slot >= DSPIC33_USB_PENDING_COUNT) {
         return;
     }
     pending = &cpu->io.usb_pending[slot];
     if (!pending->active) {
+        return;
+    }
+    power_stopped = cpu->power_state == DSPIC33_POWER_SLEEP ||
+                    (cpu->power_state == DSPIC33_POWER_IDLE &&
+                     (raw_word(cpu, USB_CNFG1) & 0x0010u) != 0u);
+    if (cpu->io.usb_pmd_disabled || power_stopped) {
+        if (!cpu->io.usb_pmd_disabled && pending->bus_event &&
+            pending->event == DSPIC33_USB_BUS_RESUME) {
+            raw_write_word(cpu, USB_OTGIR,
+                           (uint16_t)(raw_word(cpu, USB_OTGIR) | 0x0010u));
+            usb_refresh_interrupt(cpu);
+        }
+        pending->active = false;
+        return;
+    }
+    if ((raw_word(cpu, USB_PWRC) & USB_SUSPEND) != 0u &&
+        ((pending->bus_event && pending->event != DSPIC33_USB_BUS_RESUME) ||
+         (!pending->bus_event && (raw_word(cpu, USB_CON) & USB_HOST_ENABLE) != 0u))) {
+        pending->active = false;
         return;
     }
     if (pending->bus_event) {
@@ -11643,6 +11740,9 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
         break;
     case DSPIC33_EVENT_USB:
         run_usb(cpu, event->source);
+        break;
+    case DSPIC33_EVENT_USB_PMD:
+        run_usb_pmd(cpu, event->value);
         break;
     case DSPIC33_EVENT_CRC:
         if (event->source == CRC_EVENT_PMD_SOURCE) {
@@ -13256,8 +13356,7 @@ static void usb_start_host_token(Dspic33* cpu) {
     packet.low_speed = (raw_word(cpu, USB_ADDR) & 0x0080u) != 0u;
     packet.endpoint = (uint8_t)(token & 0x0fu);
     packet.pid = (uint8_t)((token >> 4u) & 0x0fu);
-    if ((raw_word(cpu, 0x0766u) & 1u) != 0u ||
-        (raw_word(cpu, USB_PWRC) & USB_POWER) == 0u ||
+    if (cpu->io.usb_pmd_disabled || (raw_word(cpu, USB_PWRC) & USB_POWER) == 0u ||
         (raw_word(cpu, USB_CON) & USB_HOST_ENABLE) == 0u ||
         (raw_word(cpu, USB_CON) & USB_TOKEN_BUSY) != 0u ||
         (packet.pid != DSPIC33_USB_PID_OUT && packet.pid != DSPIC33_USB_PID_IN &&
@@ -13331,6 +13430,8 @@ static void update_usb_register(Dspic33* cpu, uint16_t address, uint16_t previou
     if (address == USB_PWRC) {
         if ((previous & USB_POWER) != 0u && (current & USB_POWER) == 0u) {
             usb_reset_registers(cpu);
+        } else {
+            usb_update_power_state(cpu);
         }
         return;
     }
@@ -13363,6 +13464,10 @@ static void update_usb_register(Dspic33* cpu, uint16_t address, uint16_t previou
         usb_start_host_token(cpu);
         return;
     }
+    if (address == USB_CNFG1) {
+        usb_update_power_state(cpu);
+        return;
+    }
     if (address == USB_EIE || address == USB_IE || address == USB_OTGIE) {
         usb_refresh_interrupt(cpu);
         return;
@@ -13371,6 +13476,31 @@ static void update_usb_register(Dspic33* cpu, uint16_t address, uint16_t previou
         (requested & USB_ENDPOINT_STALL) == 0u) {
         raw_write_word(cpu, address,
                        (uint16_t)(raw_word(cpu, address) & ~USB_ENDPOINT_STALL));
+    }
+}
+
+static bool usb_register_address(uint16_t address) {
+    return (address >= USB_OTGIR && address <= USB_PWRC) ||
+           (address >= USB_IR && address < USB_EP0 + DSPIC33_USB_ENDPOINT_COUNT * 2u) ||
+           address == USB_PWMRRS || address == USB_PWMCON;
+}
+
+static void update_usb_pmd(Dspic33* cpu, uint16_t address, uint16_t previous) {
+    bool disabled;
+    if (address != USB_PMD_ADDRESS ||
+        ((previous ^ raw_word(cpu, address)) & USB_PMD) == 0u) {
+        return;
+    }
+    disabled = (raw_word(cpu, address) & USB_PMD) != 0u;
+    cpu->io.usb_pmd_generation++;
+    if (!dspic33_schedule(
+            cpu, DSPIC33_EVENT_USB_PMD, 0u,
+            ((uint32_t)cpu->io.usb_pmd_generation << USB_PMD_EVENT_GENERATION_SHIFT) |
+                (disabled ? USB_PMD_EVENT_DISABLED : 0u),
+            dspic33_device_instruction_cycles(cpu, 1u))) {
+        raw_write_word(cpu, address, previous);
+        cpu->io.usb_pmd_generation++;
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
 }
 
@@ -13584,6 +13714,10 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     if (dspic33_i2c_write_register(cpu, address, previous, requested)) {
         return;
     }
+    if (cpu->io.usb_pmd_disabled && usb_register_address(base)) {
+        raw_write_word(cpu, base, previous);
+        return;
+    }
     for (channel = 0u; channel < DSPIC33_ADC_COUNT; channel++) {
         if (adc_pmd_disabled(cpu, channel) && adc_module_address(base, channel)) {
             raw_write_word(cpu, base, previous);
@@ -13617,6 +13751,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     update_timer_pmd(cpu, base, previous);
     update_adc_pmd(cpu, base, previous);
     update_pwm_pmd(cpu, base, previous);
+    update_usb_pmd(cpu, base, previous);
     if (base == 0x0740u && (cpu->configuration[10u] & 0x80u) == 0u &&
         (previous & 0x0020u) == 0u && (raw_word(cpu, base) & 0x0020u) != 0u) {
         cpu->watchdog.ticks = 0u;
@@ -13947,6 +14082,9 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
         if (adc_pmd_disabled(cpu, channel) && adc_module_address(base, channel)) {
             return 0u;
         }
+    }
+    if (cpu->io.usb_pmd_disabled && usb_register_address(base)) {
+        return 0u;
     }
     if (pwm_address_inaccessible(cpu, base)) {
         return 0u;

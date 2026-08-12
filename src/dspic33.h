@@ -75,6 +75,7 @@ typedef enum {
     DSPIC33_EVENT_I2C,
     DSPIC33_EVENT_CAN,
     DSPIC33_EVENT_USB,
+    DSPIC33_EVENT_USB_PMD,
     DSPIC33_EVENT_NVM,
     DSPIC33_EVENT_CRC,
     DSPIC33_EVENT_PMP,
@@ -651,6 +652,8 @@ typedef struct {
     bool usb_host_pending;
     bool usb_host_attached;
     bool usb_bus_idle;
+    bool usb_pmd_disabled;
+    uint16_t usb_pmd_generation;
     uint32_t auxiliary_pll_generation;
 } Dspic33Io;
 

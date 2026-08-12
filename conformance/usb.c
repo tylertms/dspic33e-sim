@@ -49,7 +49,13 @@ enum {
     BUFFER = 0x8000u,
     USB_IRQ = 86u,
     USB_INTERRUPT_PRIORITY = 3u,
-    USB_VECTOR_ADDRESS = 0x1200u
+    USB_VECTOR_ADDRESS = 0x1200u,
+    USB_PMD_ADDRESS = 0x0766u,
+    USB_PMD = 0x0001u,
+    USB_FRAME_CYCLES = 60000u,
+    CLKDIV = 0x0744u,
+    OPCODE_MOV_W0_INDIRECT_W1 = 0x780880u,
+    OPCODE_RESET = 0xfe0000u
 };
 
 static void expect(UsbConformance* state, bool condition, const char* name) {
@@ -501,12 +507,11 @@ static void boundary_and_order_cases(UsbConformance* state, Dspic33* cpu) {
            "USB suspend timeout");
     configure_device(cpu);
     write_descriptor(cpu, 1u, 1u, 0u, 0x0088u, 0u, BUFFER);
-    dspic33_write_word(cpu, 0x0766u, 1u);
+    dspic33_write_word(cpu, USB_PMD_ADDRESS, USB_PMD);
     expect(state,
-           dspic33_usb_request(cpu, 1u, 0u) && dspic33_device_advance(cpu, 0u) &&
-               dspic33_usb_transmit(cpu, &packet) &&
-               packet.handshake == DSPIC33_USB_HANDSHAKE_TIMEOUT,
-           "USB peripheral disable timeout");
+           dspic33_device_advance(cpu, 1u) && dspic33_usb_request(cpu, 1u, 0u) &&
+               dspic33_device_advance(cpu, 0u) && !dspic33_usb_transmit(cpu, &packet),
+           "USB peripheral disable drops bus token");
     dspic33_reset(cpu, 0u);
     for (index = 0u; index < DSPIC33_USB_PENDING_COUNT; index++) {
         expect(state, dspic33_usb_request(cpu, 0u, index),
@@ -991,6 +996,233 @@ static void host_cases(UsbConformance* state, Dspic33* cpu) {
            "USB host recurring SOF");
 }
 
+static void pmd_cases(UsbConformance* state, Dspic33* cpu) {
+    Dspic33 copy;
+    Dspic33UsbPacket packet;
+    uint64_t device_cycles;
+    bool initialized;
+
+    configure_device(cpu);
+    dspic33_write_word(cpu, ADDR, 5u);
+    dspic33_write_word(cpu, USB_PMD_ADDRESS, USB_PMD);
+    dspic33_write_word(cpu, ADDR, 6u);
+    expect(state, !cpu->io.usb_pmd_disabled && dspic33_read_word(cpu, ADDR) == 6u,
+           "USB PMD waits one instruction cycle");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && cpu->io.usb_pmd_disabled &&
+               dspic33_read_word(cpu, ADDR) == 0u,
+           "USB PMD disables register access");
+    dspic33_write_word(cpu, ADDR, 7u);
+    expect(state, memory_word(cpu, ADDR) == 6u, "USB PMD ignores register writes");
+    dspic33_write_word(cpu, USB_PMD_ADDRESS, 0u);
+    expect(state, dspic33_read_word(cpu, ADDR) == 0u,
+           "USB PMD enable waits one instruction cycle");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && !cpu->io.usb_pmd_disabled &&
+               dspic33_read_word(cpu, ADDR) == 6u,
+           "USB PMD enable restores preserved registers");
+
+    configure_device(cpu);
+    dspic33_write_word(cpu, CLKDIV, 0x3800u);
+    dspic33_write_word(cpu, USB_PMD_ADDRESS, USB_PMD);
+    expect(state, dspic33_device_advance(cpu, 7u) && !cpu->io.usb_pmd_disabled,
+           "DOZE scales USB PMD instruction boundary");
+    expect(state, dspic33_device_advance(cpu, 1u) && cpu->io.usb_pmd_disabled,
+           "USB PMD completes at divided instruction boundary");
+
+    configure_device(cpu);
+    dspic33_write_word(cpu, CLKDIV, 0x3800u);
+    expect(state, dspic33_load_program_word(cpu, 0u, OPCODE_MOV_W0_INDIRECT_W1),
+           "load stepped USB PMD write");
+    dspic33_set_working_register(cpu, 0u, USB_PMD);
+    dspic33_set_working_register(cpu, 1u, USB_PMD_ADDRESS);
+    cpu->pc = 0u;
+    device_cycles = cpu->device_cycles;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->io.usb_pmd_disabled &&
+               cpu->device_cycles - device_cycles == 8u && cpu->events.count == 0u,
+           "stepped USB PMD write completes after one divided instruction");
+
+    configure_device(cpu);
+    dspic33_write_word(cpu, USB_PMD_ADDRESS, USB_PMD);
+    dspic33_write_word(cpu, USB_PMD_ADDRESS, 0u);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && !cpu->io.usb_pmd_disabled &&
+               cpu->events.count == 0u,
+           "new USB PMD request invalidates stale transition");
+
+    configure_device(cpu);
+    cpu->io.usb_pmd_generation = 0x7fffu;
+    dspic33_write_word(cpu, USB_PMD_ADDRESS, USB_PMD);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && cpu->io.usb_pmd_disabled &&
+               cpu->io.usb_pmd_generation == 0x8000u && cpu->events.count == 0u,
+           "USB PMD transition crosses high generation bit");
+
+    configure_device(cpu);
+    cpu->device_cycles = UINT64_MAX;
+    dspic33_write_word(cpu, USB_PMD_ADDRESS, USB_PMD);
+    expect(state,
+           cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR &&
+               dspic33_read_word(cpu, USB_PMD_ADDRESS) == 0u &&
+               !cpu->io.usb_pmd_disabled && cpu->events.count == 0u,
+           "USB PMD scheduling failure rolls back request");
+
+    configure_device(cpu);
+    dspic33_write_word(cpu, USB_PMD_ADDRESS, USB_PMD);
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "establish USB PMD disable for missed event");
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_RESET, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u) && (memory_word(cpu, IR) & 1u) == 0u &&
+               cpu->events.count == 0u,
+           "USB PMD drops external bus events");
+    dspic33_write_word(cpu, USB_PMD_ADDRESS, 0u);
+    dspic33_device_advance(cpu, 1u);
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_RESET, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               (dspic33_read_word(cpu, IR) & 1u) != 0u,
+           "re-enabled USB accepts new bus events");
+
+    configure_host(cpu);
+    dspic33_write_word(cpu, CON, 9u);
+    expect(state, cpu->events.count == 1u, "USB host schedules SOF clock");
+    dspic33_device_advance(cpu, 10u);
+    dspic33_write_word(cpu, USB_PMD_ADDRESS, USB_PMD);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && cpu->io.usb_pmd_disabled &&
+               cpu->events.count == 1u && cpu->events.items[0].paused,
+           "USB PMD stops internal SOF clock");
+    expect(state,
+           dspic33_device_advance(cpu, USB_FRAME_CYCLES) &&
+               memory_word(cpu, FRML) == 0u,
+           "USB frame counter freezes while PMD disabled");
+    dspic33_write_word(cpu, USB_PMD_ADDRESS, 0u);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && !cpu->io.usb_pmd_disabled &&
+               cpu->events.count == 1u,
+           "USB PMD enable restarts host SOF clock");
+    expect(state,
+           dspic33_device_advance(cpu, USB_FRAME_CYCLES) &&
+               dspic33_read_word(cpu, FRML) == 1u,
+           "USB host SOF resumes after PMD enable");
+
+    configure_device(cpu);
+    dspic33_write_word(cpu, USB_PMD_ADDRESS, USB_PMD);
+    expect(state, dspic33_device_advance(cpu, 1u), "establish USB PMD state for copy");
+    initialized = dspic33_initialize(&copy);
+    expect(state, initialized, "initialize USB PMD copy");
+    if (initialized) {
+        expect(state, dspic33_copy(&copy, cpu), "copy USB PMD state");
+        expect(state,
+               copy.io.usb_pmd_disabled == cpu->io.usb_pmd_disabled &&
+                   copy.io.usb_pmd_generation == cpu->io.usb_pmd_generation,
+               "USB PMD lifecycle survives copy");
+        dspic33_destroy(&copy);
+    }
+    expect(state, dspic33_load_program_word(cpu, 0u, OPCODE_RESET),
+           "load warm reset for USB PMD");
+    cpu->pc = 0u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && !cpu->io.usb_pmd_disabled &&
+               dspic33_read_word(cpu, USB_PMD_ADDRESS) == 0u,
+           "warm reset clears USB PMD lifecycle");
+    dspic33_reset(cpu, 0u);
+    expect(state, !cpu->io.usb_pmd_disabled && cpu->io.usb_pmd_generation == 0u,
+           "power-on reset clears USB PMD lifecycle");
+
+    configure_device(cpu);
+    write_descriptor(cpu, 1u, 1u, 0u, 0x0088u, 0u, BUFFER);
+    dspic33_write_word(cpu, USB_PMD_ADDRESS, USB_PMD);
+    dspic33_device_advance(cpu, 1u);
+    expect(state,
+           dspic33_usb_request(cpu, 1u, 0u) && dspic33_device_advance(cpu, 0u) &&
+               !dspic33_usb_transmit(cpu, &packet),
+           "disabled USB produces no device response");
+}
+
+static void power_cases(UsbConformance* state, Dspic33* cpu) {
+    configure_host(cpu);
+    dspic33_write_word(cpu, CON, 9u);
+    cpu->power_state = DSPIC33_POWER_IDLE;
+    dspic33_device_power_state_changed(cpu);
+    expect(state,
+           dspic33_device_advance(cpu, USB_FRAME_CYCLES) &&
+               dspic33_read_word(cpu, FRML) == 1u,
+           "USB continues in Idle when USBSIDL is clear");
+
+    configure_host(cpu);
+    dspic33_write_word(cpu, CON, 9u);
+    dspic33_write_word(cpu, CNFG1, 0x0010u);
+    cpu->power_state = DSPIC33_POWER_IDLE;
+    dspic33_device_power_state_changed(cpu);
+    expect(state,
+           cpu->events.count == 1u && cpu->events.items[0].paused &&
+               dspic33_device_advance(cpu, USB_FRAME_CYCLES) &&
+               memory_word(cpu, FRML) == 0u,
+           "USBSIDL gates the USB clock in Idle");
+    cpu->power_state = DSPIC33_POWER_ACTIVE;
+    dspic33_device_power_state_changed(cpu);
+    expect(state,
+           dspic33_device_advance(cpu, USB_FRAME_CYCLES) &&
+               dspic33_read_word(cpu, FRML) == 1u,
+           "USB resumes retained SOF phase after Idle");
+
+    configure_device(cpu);
+    dspic33_write_word(cpu, OTGIE, 0x0010u);
+    dspic33_write_word(cpu, CNFG1, 0x0010u);
+    enable_usb_interrupt(cpu);
+    cpu->power_state = DSPIC33_POWER_IDLE;
+    dspic33_device_power_state_changed(cpu);
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_RESUME, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               (memory_word(cpu, OTGIR) & 0x0010u) != 0u &&
+               interrupt_flag(cpu, USB_IRQ),
+           "USB activity interrupt operates while stopped in Idle");
+    expect(state,
+           dspic33_device_wake(cpu) && cpu->last_interrupt == USB_IRQ &&
+               cpu->pc == USB_VECTOR_ADDRESS,
+           "USB activity wakes stopped Idle mode");
+
+    configure_device(cpu);
+    dspic33_write_word(cpu, OTGIE, 0x0010u);
+    dspic33_write_word(cpu, PWRC, 0x0013u);
+    enable_usb_interrupt(cpu);
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    dspic33_device_power_state_changed(cpu);
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_RESUME, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               (memory_word(cpu, OTGIR) & 0x0010u) != 0u &&
+               (memory_word(cpu, PWRC) & 0x0002u) != 0u,
+           "suspended USB detects activity in Sleep");
+    expect(state,
+           dspic33_device_wake(cpu) && cpu->last_interrupt == USB_IRQ &&
+               cpu->pc == USB_VECTOR_ADDRESS,
+           "USB activity wakes Sleep mode");
+
+    configure_host(cpu);
+    dspic33_write_word(cpu, CON, 9u);
+    dspic33_device_advance(cpu, 10u);
+    dspic33_write_word(cpu, PWRC, 3u);
+    expect(state,
+           cpu->events.count == 1u && cpu->events.items[0].paused &&
+               dspic33_device_advance(cpu, USB_FRAME_CYCLES) &&
+               memory_word(cpu, FRML) == 0u,
+           "USB Suspend gates the host frame clock");
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_RESUME, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               (dspic33_read_word(cpu, PWRC) & 2u) == 0u,
+           "USB resume leaves Suspend state");
+    expect(state,
+           dspic33_device_advance(cpu, USB_FRAME_CYCLES) &&
+               dspic33_read_word(cpu, FRML) == 1u,
+           "USB frame clock resumes after Suspend");
+}
+
 static void copy_and_reset_cases(UsbConformance* state, Dspic33* cpu) {
     Dspic33 copy;
     Dspic33UsbPacket first;
@@ -1054,6 +1286,8 @@ int main(void) {
     idle_rearm_cases(&state, &cpu);
     host_interrupt_cases(&state, &cpu);
     host_cases(&state, &cpu);
+    pmd_cases(&state, &cpu);
+    power_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
     report_sfr_side_effect_coverage(
         "usb", usb_sfr_side_effect_coverage,
