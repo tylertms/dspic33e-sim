@@ -643,6 +643,26 @@ static void lifecycle_cases(InputCaptureConformance* state, Dspic33* cpu) {
            "copy retains capture state and event");
 
     dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, 3u, 0u, 1u);
+    dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_write_word(cpu, 0x06aeu, 64u);
+    configure_capture(cpu, 0u, 0u, false);
+    expect(state,
+           cpu->io.input_capture.pps_qualified == 1u &&
+               cpu->io.input_capture.pps_selection[0] == 64u,
+           "mapped physical capture baselines its current level");
+    expect(state, dspic33_copy(&copy, cpu),
+           "copy preserves mapped physical capture state");
+    expect(state,
+           dspic33_gpio_drive(cpu, 3u, 1u, 1u) &&
+               dspic33_gpio_drive(&copy, 3u, 1u, 1u) &&
+               dspic33_device_advance(cpu, 1u) && dspic33_device_advance(&copy, 1u) &&
+               cpu->io.input_capture.fifo[0].count == 1u &&
+               copy.io.input_capture.fifo[0].count == 1u,
+           "copied physical mappings capture the same later edge");
+
+    dspic33_reset(cpu, 0u);
     configure_capture(cpu, 0u, 0u, false);
     expect(state, dspic33_input_capture_input(cpu, 0u, true, 0u),
            "queue capture before disable");

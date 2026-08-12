@@ -228,11 +228,13 @@ typedef struct {
     uint16_t generation[DSPIC33_INPUT_CAPTURE_COUNT];
     uint16_t pmd_generation[DSPIC33_INPUT_CAPTURE_COUNT];
     uint16_t input_high;
+    uint16_t pps_qualified;
     uint16_t pmd_disabled;
     uint16_t sync_output_high;
     uint16_t sync_reset_pending;
     uint8_t interrupt_count[DSPIC33_INPUT_CAPTURE_COUNT];
     uint8_t prescaler_count[DSPIC33_INPUT_CAPTURE_COUNT];
+    uint8_t pps_selection[DSPIC33_INPUT_CAPTURE_COUNT];
 } Dspic33InputCapture;
 
 typedef struct {

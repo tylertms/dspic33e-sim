@@ -15,6 +15,7 @@ static void reset_main_oscillator(Dspic33* cpu);
 static void refresh_gpio_change_notification(Dspic33* cpu);
 static void refresh_external_interrupts(Dspic33* cpu);
 static void refresh_timer_inputs(Dspic33* cpu);
+static void refresh_input_capture_pps_inputs(Dspic33* cpu);
 static void run_timer_pmd(Dspic33* cpu, uint16_t timer, uint32_t value);
 static void run_adc_pmd(Dspic33* cpu, uint16_t module, uint32_t value);
 static void adc_update_power_state(Dspic33* cpu);
@@ -24,7 +25,6 @@ static void refresh_pwm_inputs(Dspic33* cpu);
 static void refresh_pwm_pins(Dspic33* cpu);
 static void usb_update_power_state(Dspic33* cpu);
 static bool interrupt_enabled(const Dspic33* cpu, uint16_t irq);
-static void output_compare_fault_pin_input(Dspic33* cpu, uint8_t pin, bool high);
 static void output_compare_pulse_source(Dspic33* cpu, uint8_t source);
 static void output_compare_update_power_state(Dspic33* cpu);
 static void output_compare_raise(Dspic33* cpu, uint8_t channel);
@@ -34,6 +34,7 @@ static void dci_update_power_state(Dspic33* cpu);
 static void dma_update_power_state(Dspic33* cpu);
 static void dci_refresh_pps_inputs(Dspic33* cpu);
 static void spi_refresh_pps_inputs(Dspic33* cpu);
+static void refresh_can_pps_inputs(Dspic33* cpu);
 static void can_invalid_event(Dspic33* cpu, uint8_t channel);
 static void spi_update_power_state(Dspic33* cpu);
 static void comparator_update_filter_power(Dspic33* cpu);
@@ -43,6 +44,8 @@ static uint8_t dci_pps_selection(const Dspic33* cpu, uint16_t address, uint8_t s
 static bool dci_pps_input_high(const Dspic33* cpu, uint8_t selection);
 static uint16_t gpio_pin_values(const Dspic33* cpu, uint8_t port);
 static bool pwm_pin_value(const Dspic33* cpu, uint8_t port, uint8_t pin, bool* high);
+static void refresh_physical_pin_inputs(Dspic33* cpu);
+static void apply_physical_pin_level(Dspic33* cpu, uint8_t pin, bool high);
 
 static const uint16_t timer_registers[DSPIC33_TIMER_COUNT] = {
     0x0100u, 0x0106u, 0x010au, 0x0114u, 0x0118u, 0x0122u, 0x0126u, 0x0130u, 0x0134u};
@@ -2742,25 +2745,11 @@ static bool can_capture_enabled(const Dspic33* cpu) {
     return false;
 }
 
-static void input_capture_pps_source(Dspic33* cpu, uint8_t source, bool high) {
-    uint8_t channel;
-    for (channel = 0u; channel < DSPIC33_INPUT_CAPTURE_COUNT; channel++) {
-        if (input_capture_pps_pin(cpu, channel) == source &&
-            (channel != 1u || !can_capture_enabled(cpu))) {
-            input_capture_level(cpu, channel, high);
-        }
-    }
-}
-
 static void run_input_capture(Dspic33* cpu, uint16_t source, uint32_t value) {
     uint32_t kind = value & INPUT_CAPTURE_EVENT_KIND_MASK;
     if (kind == INPUT_CAPTURE_EVENT_PIN) {
-        if (pps_physical_input_enabled(cpu, (uint8_t)source)) {
-            input_capture_pps_source(cpu, (uint8_t)source,
-                                     (value & INPUT_CAPTURE_EVENT_HIGH) != 0u);
-            output_compare_fault_pin_input(cpu, (uint8_t)source,
-                                           (value & INPUT_CAPTURE_EVENT_HIGH) != 0u);
-        }
+        apply_physical_pin_level(cpu, (uint8_t)source,
+                                 (value & INPUT_CAPTURE_EVENT_HIGH) != 0u);
         return;
     }
     if (source >= DSPIC33_INPUT_CAPTURE_COUNT) {
@@ -3387,22 +3376,6 @@ static void output_compare_refresh_fault_pps_inputs(Dspic33* cpu) {
             output_compare_set_fault_input(cpu, source, high);
         }
     }
-}
-
-static void output_compare_fault_pin_input(Dspic33* cpu, uint8_t pin, bool high) {
-    const Dspic33PpsPin* mapping = pps_pin(pin);
-    uint16_t bit;
-    if (mapping == NULL) {
-        return;
-    }
-    bit = (uint16_t)(1u << mapping->bit);
-    cpu->io.gpio[mapping->port] =
-        (uint16_t)((cpu->io.gpio[mapping->port] & ~bit) | (high ? bit : 0u));
-    cpu->io.gpio_driven[mapping->port] |= bit;
-    refresh_gpio_change_notification(cpu);
-    refresh_external_interrupts(cpu);
-    refresh_timer_inputs(cpu);
-    output_compare_refresh_fault_pps_inputs(cpu);
 }
 
 static void output_compare_abort(Dspic33* cpu, uint8_t channel) {
@@ -10360,16 +10333,7 @@ static void refresh_pwm_inputs(Dspic33* cpu) {
     cpu->io.pwm_refreshing_inputs = false;
 }
 
-static void refresh_pwm_pins(Dspic33* cpu) {
-    refresh_gpio_change_notification(cpu);
-    refresh_external_interrupts(cpu);
-    refresh_timer_inputs(cpu);
-    output_compare_refresh_fault_pps_inputs(cpu);
-    dci_refresh_pps_inputs(cpu);
-    spi_refresh_pps_inputs(cpu);
-    dspic33_i2c_refresh_pins(cpu);
-    refresh_pwm_inputs(cpu);
-}
+static void refresh_pwm_pins(Dspic33* cpu) { refresh_physical_pin_inputs(cpu); }
 
 static void run_pwm_pmd(Dspic33* cpu, uint16_t source, uint32_t value) {
     uint16_t generation;
@@ -11313,13 +11277,6 @@ static void can_overload_finish(Dspic33* cpu, uint8_t channel, uint32_t value) {
 }
 
 static void can_receive_pin_level(Dspic33* cpu, uint8_t pin, bool high) {
-    const Dspic33PpsPin* mapping = pps_pin(pin);
-    if (mapping != NULL) {
-        uint16_t mask = (uint16_t)(1u << mapping->bit);
-        cpu->io.gpio[mapping->port] =
-            (uint16_t)((cpu->io.gpio[mapping->port] & ~mask) | (high ? mask : 0u));
-        cpu->io.gpio_driven[mapping->port] |= mask;
-    }
     for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
         uint8_t bit = (uint8_t)(1u << channel);
         bool previous = (cpu->io.can_rx_pin_high & bit) != 0u;
@@ -11940,7 +11897,7 @@ static void can_invalid_event(Dspic33* cpu, uint8_t channel) {
 static void run_can(Dspic33* cpu, uint8_t channel, uint32_t value) {
     uint32_t kind = value & CAN_EVENT_KIND_MASK;
     if (kind == CAN_EVENT_RECEIVE_PIN) {
-        can_receive_pin_level(cpu, channel, (value & CAN_EVENT_PIN_HIGH) != 0u);
+        apply_physical_pin_level(cpu, channel, (value & CAN_EVENT_PIN_HIGH) != 0u);
         return;
     }
     if (channel >= DSPIC33_CAN_COUNT) {
@@ -13241,9 +13198,9 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
         break;
     case DSPIC33_EVENT_OUTPUT_COMPARE_FAULT:
         if ((event->value & OUTPUT_COMPARE_FAULT_EVENT_PIN) != 0u) {
-            output_compare_fault_pin_input(
-                cpu, (uint8_t)event->source,
-                (event->value & OUTPUT_COMPARE_FAULT_EVENT_HIGH) != 0u);
+            apply_physical_pin_level(cpu, (uint8_t)event->source,
+                                     (event->value & OUTPUT_COMPARE_FAULT_EVENT_HIGH) !=
+                                         0u);
         } else {
             output_compare_fault_input(
                 cpu, (uint8_t)event->source,
@@ -13580,13 +13537,7 @@ static void run_adc_pmd(Dspic33* cpu, uint16_t module, uint32_t value) {
         cpu->io.adc_pmd_disabled &= (uint8_t)~bit;
     }
     adc_reset_module(cpu, (uint8_t)module);
-    refresh_gpio_change_notification(cpu);
-    refresh_external_interrupts(cpu);
-    refresh_timer_inputs(cpu);
-    output_compare_refresh_fault_pps_inputs(cpu);
-    dci_refresh_pps_inputs(cpu);
-    spi_refresh_pps_inputs(cpu);
-    dspic33_i2c_refresh_pins(cpu);
+    refresh_physical_pin_inputs(cpu);
 }
 
 static void update_adc_pmd(Dspic33* cpu, uint16_t address, uint16_t previous) {
@@ -14316,15 +14267,7 @@ void dspic33_device_power_on_reset(Dspic33* cpu) {
 
 void dspic33_device_reset_restored(Dspic33* cpu) {
     pps_capture_shadow(cpu);
-    refresh_gpio_change_notification(cpu);
-    refresh_external_interrupts(cpu);
-    refresh_timer_inputs(cpu);
-    output_compare_refresh_fault_pps_inputs(cpu);
-    refresh_pwm_inputs(cpu);
-    dci_refresh_pps_inputs(cpu);
-    spi_refresh_pps_inputs(cpu);
-    refresh_can_pps_inputs(cpu);
-    dspic33_i2c_refresh_pins(cpu);
+    refresh_physical_pin_inputs(cpu);
 }
 
 void dspic33_device_brown_out_reset(Dspic33* cpu) {
@@ -15376,14 +15319,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
             update_dma_request(cpu, channel, previous);
         }
     }
-    refresh_gpio_change_notification(cpu);
-    refresh_external_interrupts(cpu);
-    refresh_timer_inputs(cpu);
-    output_compare_refresh_fault_pps_inputs(cpu);
-    refresh_pwm_inputs(cpu);
-    dci_refresh_pps_inputs(cpu);
-    spi_refresh_pps_inputs(cpu);
-    dspic33_i2c_refresh_pins(cpu);
+    refresh_physical_pin_inputs(cpu);
 }
 
 static bool oscillator_pin_owned(const Dspic33* cpu) {
@@ -15597,6 +15533,60 @@ static void refresh_timer_inputs(Dspic33* cpu) {
             }
         }
     }
+}
+
+static void refresh_input_capture_pps_inputs(Dspic33* cpu) {
+    for (uint8_t channel = 0u; channel < DSPIC33_INPUT_CAPTURE_COUNT; channel++) {
+        uint16_t bit = (uint16_t)(1u << channel);
+        uint8_t selection = input_capture_pps_pin(cpu, channel);
+        bool previous_qualified = (cpu->io.input_capture.pps_qualified & bit) != 0u;
+        bool high = false;
+        bool qualified = selection != 0u &&
+                         (channel != 1u || !can_capture_enabled(cpu)) &&
+                         pps_physical_input_high(cpu, selection, &high);
+        bool reconfigured = selection != cpu->io.input_capture.pps_selection[channel] ||
+                            qualified != previous_qualified;
+        cpu->io.input_capture.pps_selection[channel] = selection;
+        if (qualified) {
+            cpu->io.input_capture.pps_qualified |= bit;
+        } else {
+            cpu->io.input_capture.pps_qualified &= (uint16_t)~bit;
+        }
+        if (reconfigured) {
+            if (qualified && high) {
+                cpu->io.input_capture.input_high |= bit;
+            } else if (qualified) {
+                cpu->io.input_capture.input_high &= (uint16_t)~bit;
+            }
+        } else if (qualified) {
+            input_capture_level(cpu, channel, high);
+        }
+    }
+}
+
+static void refresh_physical_pin_inputs(Dspic33* cpu) {
+    refresh_gpio_change_notification(cpu);
+    refresh_external_interrupts(cpu);
+    refresh_timer_inputs(cpu);
+    refresh_input_capture_pps_inputs(cpu);
+    output_compare_refresh_fault_pps_inputs(cpu);
+    refresh_pwm_inputs(cpu);
+    dci_refresh_pps_inputs(cpu);
+    spi_refresh_pps_inputs(cpu);
+    refresh_can_pps_inputs(cpu);
+    dspic33_i2c_refresh_pins(cpu);
+}
+
+static void apply_physical_pin_level(Dspic33* cpu, uint8_t pin, bool high) {
+    const Dspic33PpsPin* mapping = pps_pin(pin);
+    if (mapping == NULL) {
+        return;
+    }
+    uint16_t bit = (uint16_t)(1u << mapping->bit);
+    cpu->io.gpio[mapping->port] =
+        (uint16_t)((cpu->io.gpio[mapping->port] & ~bit) | (high ? bit : 0u));
+    cpu->io.gpio_driven[mapping->port] |= bit;
+    refresh_physical_pin_inputs(cpu);
 }
 
 static void acknowledge_gpio_change_notification(Dspic33* cpu, uint8_t port,
@@ -16706,15 +16696,7 @@ bool dspic33_gpio_drive(Dspic33* cpu, uint8_t port, uint16_t value, uint16_t mas
     cpu->io.gpio[port] =
         (uint16_t)((cpu->io.gpio[port] & ~selected) | (value & selected));
     cpu->io.gpio_driven[port] |= selected;
-    refresh_gpio_change_notification(cpu);
-    refresh_external_interrupts(cpu);
-    refresh_timer_inputs(cpu);
-    output_compare_refresh_fault_pps_inputs(cpu);
-    refresh_pwm_inputs(cpu);
-    dci_refresh_pps_inputs(cpu);
-    spi_refresh_pps_inputs(cpu);
-    refresh_can_pps_inputs(cpu);
-    dspic33_i2c_refresh_pins(cpu);
+    refresh_physical_pin_inputs(cpu);
     return true;
 }
 
@@ -16723,15 +16705,7 @@ bool dspic33_gpio_release(Dspic33* cpu, uint8_t port, uint16_t mask) {
         return false;
     }
     cpu->io.gpio_driven[port] &= (uint16_t)~(mask & gpio_port_masks[port]);
-    refresh_gpio_change_notification(cpu);
-    refresh_external_interrupts(cpu);
-    refresh_timer_inputs(cpu);
-    output_compare_refresh_fault_pps_inputs(cpu);
-    refresh_pwm_inputs(cpu);
-    dci_refresh_pps_inputs(cpu);
-    spi_refresh_pps_inputs(cpu);
-    refresh_can_pps_inputs(cpu);
-    dspic33_i2c_refresh_pins(cpu);
+    refresh_physical_pin_inputs(cpu);
     return true;
 }
 

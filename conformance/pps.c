@@ -265,6 +265,45 @@ static void source_cases(PpsConformance* state, Dspic33* cpu) {
            "B1 comparator virtual source requires physical pin remapping");
 }
 
+static void physical_fanout_cases(PpsConformance* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, 3u, 0u, 1u);
+    dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_write_word(cpu, 0x06aeu, 64u);
+    configure_capture(cpu);
+    expect(state,
+           dspic33_gpio_drive(cpu, 3u, 1u, 1u) && dspic33_device_advance(cpu, 1u),
+           "GPIO transition fans out to a mapped capture input");
+    expect(state, cpu->io.input_capture.fifo[0].count == 1u,
+           "GPIO fanout captures the shared physical edge");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, 3u, 0u, 1u);
+    dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_write_word(cpu, 0x06aeu, 64u);
+    configure_capture(cpu);
+    expect(state,
+           dspic33_can_input_pin(cpu, 64u, true, 0u) && dspic33_device_advance(cpu, 1u),
+           "CAN pin stimulus fans out to a mapped capture input");
+    expect(state, cpu->io.input_capture.fifo[0].count == 1u,
+           "CAN pin fanout captures the shared physical edge");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_gpio_drive(cpu, 3u, 0u, 1u);
+    dspic33_write_word(cpu, 0x0e30u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_write_word(cpu, 0x06aeu, 64u);
+    configure_capture(cpu);
+    expect(state,
+           dspic33_output_compare_fault_pin(cpu, 64u, true, 0u) &&
+               dspic33_device_advance(cpu, 1u),
+           "fault pin stimulus fans out to a mapped capture input");
+    expect(state, cpu->io.input_capture.fifo[0].count == 1u,
+           "fault pin fanout captures the shared physical edge");
+}
+
 static void output_cases(PpsConformance* state, Dspic33* cpu) {
     size_t index;
     bool high;
@@ -383,10 +422,11 @@ int main(void) {
     }
     register_cases(&state, &source);
     source_cases(&state, &source);
+    physical_fanout_cases(&state, &source);
     output_cases(&state, &source);
     protection_cases(&state, &source);
     lifecycle_cases(&state, &source, &copy);
-    expect(&state, state.cases == 324u, "PPS assertion arithmetic");
+    expect(&state, state.cases == 330u, "PPS assertion arithmetic");
     printf("[pps-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);
     dspic33_destroy(&copy);
