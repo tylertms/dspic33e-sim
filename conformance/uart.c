@@ -29,6 +29,10 @@ static const uint16_t pmd_addresses[DSPIC33_UART_COUNT] = {0x0760u, 0x0760u, 0x0
                                                            0x0766u};
 static const uint16_t pmd_masks[DSPIC33_UART_COUNT] = {0x0020u, 0x0040u, 0x0008u,
                                                        0x0020u};
+static const uint16_t pps_registers[DSPIC33_UART_COUNT] = {0x06c4u, 0x06c6u, 0x06d6u,
+                                                           0x06d8u};
+static const uint8_t tx_functions[DSPIC33_UART_COUNT] = {1u, 3u, 27u, 29u};
+static const uint8_t rts_functions[DSPIC33_UART_COUNT] = {2u, 4u, 28u, 30u};
 
 static void expect(UartConformance* state, bool condition, const char* name) {
     state->cases++;
@@ -109,6 +113,50 @@ static uint16_t memory_word(Dspic33* cpu, uint32_t address) {
 static void write_memory_word(Dspic33* cpu, uint32_t address, uint16_t value) {
     cpu->data[address] = (uint8_t)value;
     cpu->data[address + 1u] = (uint8_t)(value >> 8u);
+}
+
+static bool frame_parity(uint16_t value, uint8_t bits, Dspic33UartParity parity) {
+    bool odd = false;
+    uint8_t bit;
+    for (bit = 0u; bit < bits; bit++) {
+        odd = odd != ((value & (uint16_t)(1u << bit)) != 0u);
+    }
+    return parity == DSPIC33_UART_PARITY_EVEN ? odd : !odd;
+}
+
+static bool drive_uart_level(Dspic33* cpu, bool logical, bool inverted,
+                             uint64_t cycles) {
+    bool physical = logical != inverted;
+    return dspic33_gpio_drive(cpu, 3u, physical ? 1u : 0u, 1u) &&
+           dspic33_device_advance(cpu, cycles);
+}
+
+static bool drive_uart_frame(Dspic33* cpu, uint16_t mode, uint16_t baud,
+                             uint16_t value) {
+    uint8_t bits = mode_data_bits(mode);
+    Dspic33UartParity parity = mode_parity(mode);
+    uint64_t cycles = ((uint64_t)baud + 1u) * ((mode & 8u) != 0u ? 4u : 16u);
+    bool inverted = (mode & 0x0010u) != 0u;
+    uint8_t bit;
+    if (!drive_uart_level(cpu, false, inverted, cycles)) {
+        return false;
+    }
+    for (bit = 0u; bit < bits; bit++) {
+        if (!drive_uart_level(cpu, (value & (uint16_t)(1u << bit)) != 0u, inverted,
+                              cycles)) {
+            return false;
+        }
+    }
+    if (parity != DSPIC33_UART_PARITY_NONE &&
+        !drive_uart_level(cpu, frame_parity(value, bits, parity), inverted, cycles)) {
+        return false;
+    }
+    for (bit = 0u; bit < ((mode & 1u) != 0u ? 2u : 1u); bit++) {
+        if (!drive_uart_level(cpu, true, inverted, cycles)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 static void register_cases(UartConformance* state, Dspic33* cpu) {
@@ -714,6 +762,174 @@ static void dma_cases(UartConformance* state, Dspic33* cpu) {
     }
 }
 
+static void physical_pps_cases(UartConformance* state, Dspic33* cpu) {
+    static const uint16_t receive_modes[] = {0x8000u, 0x8012u, 0x800cu, 0x801fu};
+    static const uint16_t receive_values[] = {0x00a5u, 0x003cu, 0x005au, 0x0155u};
+    uint8_t channel;
+    bool high = false;
+    for (channel = 0u; channel < DSPIC33_UART_COUNT; channel++) {
+        uint16_t mode = receive_modes[channel];
+        uint16_t value = receive_values[channel];
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, 0x0e3eu, 0u);
+        expect(state, dspic33_gpio_drive(cpu, 3u, 1u, 1u),
+               "UART PPS drive receive idle");
+        dspic33_write_word(cpu, pps_registers[channel], 64u);
+        configure(cpu, channel, mode, 0u, (uint16_t)channel);
+        expect(state, drive_uart_level(cpu, true, (mode & 0x0010u) != 0u, 0u),
+               "UART PPS establish receive idle");
+        expect(state, drive_uart_frame(cpu, mode, (uint16_t)channel, value),
+               "UART PPS receive frame timing");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(bases[channel] + 6u)) == value,
+               "UART PPS receive frame value");
+        expect(state, interrupt_flag(cpu, receive_irqs[channel]),
+               "UART PPS receive interrupt");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, 0x0680u, tx_functions[channel]);
+        configure(cpu, channel, 0x8000u, 0x0400u, 0u);
+        expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && high,
+               "UART PPS transmit idle high");
+        dspic33_write_word(cpu, (uint16_t)(bases[channel] + 4u), 0x00a5u);
+        expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && !high,
+               "UART PPS transmit start bit");
+        expect(state,
+               dspic33_device_advance(cpu, 16u) &&
+                   dspic33_gpio_pin(cpu, 3u, 0u, &high) && high,
+               "UART PPS transmit first data bit");
+        expect(state,
+               dspic33_device_advance(cpu, 16u) &&
+                   dspic33_gpio_pin(cpu, 3u, 0u, &high) && !high,
+               "UART PPS transmit second data bit");
+        expect(state,
+               dspic33_device_advance(cpu, 128u) &&
+                   dspic33_gpio_pin(cpu, 3u, 0u, &high) && high,
+               "UART PPS transmit stop and idle");
+    }
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_gpio_drive(cpu, 3u, 2u, 2u);
+    dspic33_write_word(cpu, pps_registers[0], (uint16_t)(65u << 8u));
+    dspic33_write_word(cpu, 0x0680u, tx_functions[0]);
+    configure(cpu, 0u, 0x8200u, 0x0400u, 0u);
+    dspic33_write_word(cpu, (uint16_t)(bases[0] + 4u), 0x55u);
+    expect(state,
+           dspic33_device_advance(cpu, 160u) &&
+               !dspic33_uart_transmit(cpu, 0u, &(Dspic33UartFrame){0}),
+           "UART PPS high CTS blocks transmit");
+    expect(state,
+           dspic33_gpio_drive(cpu, 3u, 0u, 2u) && dspic33_device_advance(cpu, 160u),
+           "UART PPS low CTS starts transmit");
+    {
+        Dspic33UartFrame output;
+        expect(state, dspic33_uart_transmit(cpu, 0u, &output) && output.value == 0x55u,
+               "UART PPS CTS completed value");
+    }
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0680u, rts_functions[0]);
+    configure(cpu, 0u, 0x8100u, 0u, 0u);
+    expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && !high,
+           "UART PPS flow RTS ready low");
+    dspic33_write_word(cpu, bases[0], 0x8900u);
+    expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && high,
+           "UART PPS simplex RTS empty high");
+    dspic33_write_word(cpu, (uint16_t)(bases[0] + 2u), 0x0400u);
+    dspic33_write_word(cpu, (uint16_t)(bases[0] + 4u), 0x33u);
+    expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && !high,
+           "UART PPS simplex RTS active low");
+}
+
+static void physical_lifecycle_cases(UartConformance* state, Dspic33* cpu) {
+    Dspic33 copy;
+    bool high = false;
+    bool initialized;
+    uint16_t mode = 0x8000u;
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_gpio_drive(cpu, 3u, 1u, 1u);
+    dspic33_write_word(cpu, pps_registers[0], 64u);
+    configure(cpu, 0u, 0x8080u, 0u, 0u);
+    clear_interrupt(cpu, receive_irqs[0]);
+    expect(state,
+           dspic33_gpio_drive(cpu, 3u, 0u, 1u) &&
+               interrupt_flag(cpu, receive_irqs[0]) &&
+               (dspic33_read_word(cpu, bases[0]) & 0x0080u) != 0u,
+           "UART PPS wake falling edge interrupts without clearing WAKE");
+    expect(state,
+           dspic33_gpio_drive(cpu, 3u, 1u, 1u) &&
+               (dspic33_read_word(cpu, bases[0]) & 0x0080u) == 0u &&
+               (dspic33_read_word(cpu, (uint16_t)(bases[0] + 2u)) & 1u) == 0u,
+           "UART PPS wake rising edge clears WAKE without receiving character");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0680u, tx_functions[0]);
+    dspic33_gpio_drive(cpu, 3u, 0u, 1u);
+    dspic33_write_word(cpu, 0x0e36u, 1u);
+    configure(cpu, 0u, mode, 0x0400u, 0u);
+    expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && !high,
+           "UART PPS open-drain idle releases to external low");
+    expect(state,
+           dspic33_gpio_drive(cpu, 3u, 1u, 1u) &&
+               dspic33_gpio_pin(cpu, 3u, 0u, &high) && high,
+           "UART PPS open-drain idle follows external high");
+    dspic33_write_word(cpu, 0x0680u, 0u);
+    dspic33_write_word(cpu, 0x0e36u, 0u);
+    dspic33_write_word(cpu, 0x0e34u, 0u);
+    dspic33_write_word(cpu, 0x0e30u, 0u);
+    expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && !high,
+           "UART PPS remap releases pin to GPIO latch");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0680u, tx_functions[0]);
+    dspic33_gpio_drive(cpu, 3u, 1u, 1u);
+    configure(cpu, 0u, mode, 0x0400u, 0u);
+    dspic33_write_word(cpu, (uint16_t)(bases[0] + 4u), 0u);
+    expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && !high,
+           "UART PPS active transmit before PMD");
+    dspic33_write_word(cpu, pmd_addresses[0], pmd_masks[0]);
+    expect(state,
+           dspic33_gpio_pin(cpu, 3u, 0u, &high) && high && cpu->io.uart_tx_active == 0u,
+           "UART PPS PMD aborts transmit and releases idle");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0680u, tx_functions[0]);
+    configure(cpu, 0u, mode, 0x0400u, 0u);
+    dspic33_write_word(cpu, (uint16_t)(bases[0] + 4u), 0x01u);
+    initialized = dspic33_initialize(&copy);
+    expect(state, initialized && dspic33_copy(&copy, cpu),
+           "UART PPS copy active transmit");
+    if (initialized) {
+        bool source_high = false;
+        bool copy_high = false;
+        expect(state,
+               dspic33_device_advance(cpu, 16u) && dspic33_device_advance(&copy, 16u) &&
+                   dspic33_gpio_pin(cpu, 3u, 0u, &source_high) &&
+                   dspic33_gpio_pin(&copy, 3u, 0u, &copy_high) &&
+                   source_high == copy_high,
+               "UART PPS copied transmit phase matches");
+        dspic33_destroy(&copy);
+    }
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0680u, tx_functions[0]);
+    configure(cpu, 0u, 0x9000u, 0x0400u, 0u);
+    dspic33_write_word(cpu, (uint16_t)(bases[0] + 4u), 0u);
+    expect(state,
+           dspic33_device_advance(cpu, 6u) && dspic33_gpio_pin(cpu, 3u, 0u, &high) &&
+               !high,
+           "UART PPS IrDA zero before pulse");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && dspic33_gpio_pin(cpu, 3u, 0u, &high) &&
+               high,
+           "UART PPS IrDA zero pulse begins");
+    expect(state,
+           dspic33_device_advance(cpu, 3u) && dspic33_gpio_pin(cpu, 3u, 0u, &high) &&
+               !high,
+           "UART PPS IrDA zero pulse ends");
+}
+
 static void disable_copy_and_api_cases(UartConformance* state, Dspic33* cpu) {
     Dspic33 copy;
     Dspic33UartFrame frame;
@@ -790,6 +1006,8 @@ int main(void) {
         b1_transmit_pointer_cases(&state, &cpu);
         cts_cases(&state, &cpu);
         dma_cases(&state, &cpu);
+        physical_pps_cases(&state, &cpu);
+        physical_lifecycle_cases(&state, &cpu);
         disable_copy_and_api_cases(&state, &cpu);
         dspic33_destroy(&cpu);
     }
