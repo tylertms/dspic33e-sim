@@ -4036,10 +4036,14 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
     uint16_t timer_gate = cpu->io.timer_gate;
     uint8_t pwm_dead_time_inputs = cpu->io.pwm_dead_time_inputs;
     uint8_t pwm_sync_inputs = cpu->io.pwm_sync_inputs;
+    uint8_t pwm_dead_time_direct = cpu->io.pwm_dead_time_direct;
+    uint8_t pwm_sync_direct = cpu->io.pwm_sync_direct;
     uint8_t output_compare_fault_inputs = cpu->io.output_compare.fault_inputs;
     uint8_t output_compare_fault_direct_mask = cpu->io.output_compare.fault_direct_mask;
     uint32_t pwm_fault_inputs = cpu->io.pwm_fault_inputs;
     uint32_t pwm_current_limit_inputs = cpu->io.pwm_current_limit_inputs;
+    uint32_t pwm_fault_direct = cpu->io.pwm_fault_direct;
+    uint32_t pwm_current_limit_direct = cpu->io.pwm_current_limit_direct;
     bool usb_host_attached = cpu->io.usb_host_attached;
     bool async_events_enabled = cpu->async_events_enabled;
     bool stop_on_trap = cpu->stop_on_trap;
@@ -4126,13 +4130,19 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
     cpu->io.uart_cts = uart_cts;
     cpu->io.spi_selected = spi_selected;
     cpu->io.timer_gate = timer_gate;
-    cpu->io.pwm_dead_time_inputs = pwm_dead_time_inputs;
-    cpu->io.pwm_sync_inputs = pwm_sync_inputs;
+    cpu->io.pwm_dead_time_direct = pwm_dead_time_direct;
+    cpu->io.pwm_sync_direct = pwm_sync_direct;
+    cpu->io.pwm_dead_time_inputs =
+        (uint8_t)(pwm_dead_time_inputs & pwm_dead_time_direct);
+    cpu->io.pwm_sync_inputs = (uint8_t)(pwm_sync_inputs & pwm_sync_direct);
     cpu->io.output_compare.fault_direct_mask = output_compare_fault_direct_mask;
     cpu->io.output_compare.fault_inputs =
         (uint8_t)(output_compare_fault_inputs & output_compare_fault_direct_mask);
-    cpu->io.pwm_fault_inputs = pwm_fault_inputs;
-    cpu->io.pwm_current_limit_inputs = pwm_current_limit_inputs;
+    cpu->io.pwm_fault_direct = pwm_fault_direct;
+    cpu->io.pwm_current_limit_direct = pwm_current_limit_direct;
+    cpu->io.pwm_fault_inputs = pwm_fault_inputs & pwm_fault_direct;
+    cpu->io.pwm_current_limit_inputs =
+        pwm_current_limit_inputs & pwm_current_limit_direct;
     cpu->io.usb_host_attached = usb_host_attached;
     cpu->instructions = instructions;
     cpu->cycles = cycles;

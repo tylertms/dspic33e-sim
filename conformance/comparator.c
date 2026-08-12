@@ -882,6 +882,7 @@ static void set_mask_source(Dspic33* cpu, uint8_t selection, bool high) {
         cpu->io.pwm[output] = high ? 1u : 0u;
     } else {
         uint32_t bit = (uint32_t)1u << (selection == 14u ? 1u : 3u);
+        cpu->io.pwm_fault_direct |= bit;
         if (high) {
             cpu->io.pwm_fault_inputs |= bit;
         } else {

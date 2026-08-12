@@ -33,6 +33,27 @@ static bool interrupt_flag(Dspic33* cpu, uint8_t irq) {
     return (dspic33_read_word(cpu, address) & (uint16_t)(1u << (irq % 16u))) != 0u;
 }
 
+static bool gpio_pin_is(const Dspic33* cpu, uint8_t port, uint8_t bit, bool expected) {
+    bool high;
+    return dspic33_gpio_pin(cpu, port, bit, &high) && high == expected;
+}
+
+static void configure_interrupt(Dspic33* cpu, uint8_t generator, uint16_t vector) {
+    uint8_t irq = irqs[generator];
+    uint16_t enable = (uint16_t)(0x0820u + (irq / 16u) * 2u);
+    uint16_t priority = (uint16_t)(0x0840u + (irq / 4u) * 2u);
+    uint16_t shift = (uint16_t)((irq % 4u) * 4u);
+    dspic33_write_word(
+        cpu, enable,
+        (uint16_t)(dspic33_read_word(cpu, enable) | (uint16_t)(1u << (irq % 16u))));
+    dspic33_write_word(
+        cpu, priority,
+        (uint16_t)((dspic33_read_word(cpu, priority) & ~(uint16_t)(7u << shift)) |
+                   (uint16_t)(3u << shift)));
+    cpu->program[(0x0014u + irq * 2u) / 2u] = vector;
+    cpu->w[15] = 0x1800u;
+}
+
 static void configure_generator(Dspic33* cpu, uint8_t generator, uint16_t mode,
                                 uint16_t period, uint16_t duty, uint16_t control) {
     uint16_t address = base(generator);
@@ -955,6 +976,325 @@ static void chop_and_power_cases(PwmConformance* state, Dspic33* cpu) {
     expect(state, cpu->io.pwm_master_counter[0] == 5u, "PWM stops in sleep");
 }
 
+static void pmd_cases(PwmConformance* state, Dspic33* cpu) {
+    Dspic33 copy;
+    bool initialized;
+    uint8_t generator;
+    for (generator = 0u; generator < DSPIC33_PWM_COUNT; generator++) {
+        uint16_t address = base(generator);
+        uint16_t pmd = (uint16_t)(0x0100u << generator);
+        uint16_t counter;
+        dspic33_reset(cpu, 0u);
+        configure_generator(cpu, generator, 0x0400u, 15u, 7u, 0x0080u);
+        enable_pwm(cpu, 0u);
+        dspic33_device_advance(cpu, 2u);
+        dspic33_write_word(cpu, 0x076au, pmd);
+        expect(state, cpu->io.pwm_pmd_disabled == 0u,
+               "generator PMD waits one instruction cycle");
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "advance generator PMD disable boundary");
+        expect(state,
+               cpu->io.pwm_pmd_disabled == (uint8_t)(2u << generator) &&
+                   dspic33_read_word(cpu, address) == 0u &&
+                   !dspic33_pwm_output(cpu, generator, true),
+               "generator PMD disables access and output");
+        counter = cpu->io.pwm_counter[generator][0];
+        dspic33_write_word(cpu, (uint16_t)(address + 6u), 1u);
+        dspic33_device_advance(cpu, 3u);
+        expect(state, cpu->io.pwm_counter[generator][0] == counter,
+               "generator PMD freezes timing state");
+        dspic33_write_word(cpu, 0x076au, 0u);
+        expect(state, dspic33_device_advance(cpu, 1u),
+               "advance generator PMD enable boundary");
+        expect(state,
+               cpu->io.pwm_pmd_disabled == 0u &&
+                   dspic33_read_word(cpu, (uint16_t)(address + 6u)) == 7u,
+               "generator PMD preserves registers across disable");
+    }
+
+    dspic33_reset(cpu, 0u);
+    configure_generator(cpu, 0u, 0x0400u, 15u, 7u, 0x0080u);
+    enable_pwm(cpu, 0u);
+    dspic33_device_advance(cpu, 2u);
+    dspic33_write_word(cpu, 0x0760u, 0x0200u);
+    expect(state, dspic33_device_advance(cpu, 1u),
+           "advance global PWM PMD disable boundary");
+    expect(state,
+           cpu->io.pwm_pmd_disabled == 1u && dspic33_read_word(cpu, 0x0c00u) == 0u &&
+               !dspic33_pwm_output(cpu, 0u, true),
+           "global PWM PMD disables complete module");
+    {
+        uint16_t counter = cpu->io.pwm_master_counter[0];
+        dspic33_device_advance(cpu, 3u);
+        expect(state, cpu->io.pwm_master_counter[0] == counter,
+               "global PWM PMD freezes master time base");
+    }
+    dspic33_write_word(cpu, 0x0760u, 0u);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && cpu->io.pwm_pmd_disabled == 0u &&
+               dspic33_read_word(cpu, 0x0c00u) == 0x8000u,
+           "global PWM PMD enable restores preserved registers");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0744u, 0x3800u);
+    dspic33_write_word(cpu, 0x0760u, 0x0200u);
+    expect(state, dspic33_device_advance(cpu, 7u) && cpu->io.pwm_pmd_disabled == 0u,
+           "DOZE scales PWM PMD instruction boundary");
+    expect(state, dspic33_device_advance(cpu, 1u) && cpu->io.pwm_pmd_disabled == 1u,
+           "PWM PMD completes at divided instruction boundary");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0760u, 0x0200u);
+    dspic33_write_word(cpu, 0x0760u, 0u);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && cpu->io.pwm_pmd_disabled == 0u &&
+               cpu->events.count == 0u,
+           "new PWM PMD request invalidates stale transition");
+
+    dspic33_reset(cpu, 0u);
+    cpu->io.pwm_pmd_generation[0] = 0x7fffu;
+    dspic33_write_word(cpu, 0x0760u, 0x0200u);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) &&
+               cpu->io.pwm_pmd_generation[0] == 0x8000u &&
+               cpu->io.pwm_pmd_disabled == 1u && cpu->events.count == 0u,
+           "PWM PMD transition crosses high generation bit");
+
+    dspic33_reset(cpu, 0u);
+    cpu->device_cycles = UINT64_MAX;
+    dspic33_write_word(cpu, 0x0760u, 0x0200u);
+    expect(state,
+           cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR &&
+               dspic33_read_word(cpu, 0x0760u) == 0u &&
+               cpu->io.pwm_pmd_disabled == 0u && cpu->events.count == 0u,
+           "PWM PMD scheduling failure rolls back request");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0760u, 0x0200u);
+    dspic33_write_word(cpu, 0x076au, 0x3f00u);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && cpu->io.pwm_pmd_disabled == 0x7fu &&
+               cpu->events.count == 0u,
+           "global and generator PWM PMD transitions are independent");
+    initialized = dspic33_initialize(&copy);
+    expect(state, initialized, "initialize PWM PMD copy");
+    if (initialized) {
+        expect(state, dspic33_copy(&copy, cpu), "copy PWM PMD state");
+        expect(state,
+               copy.io.pwm_pmd_disabled == cpu->io.pwm_pmd_disabled &&
+                   copy.io.pwm_pmd_generation[6] == cpu->io.pwm_pmd_generation[6],
+               "PWM PMD state survives copy");
+        dspic33_destroy(&copy);
+    }
+    cpu->program[0x0200u / 2u] = 0xfe0000u;
+    cpu->pc = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->io.pwm_pmd_disabled == 0u,
+           "warm reset clears PWM PMD effective state");
+    dspic33_reset(cpu, 0u);
+    expect(state, cpu->io.pwm_pmd_disabled == 0u && cpu->io.pwm_pmd_generation[0] == 0u,
+           "power-on reset clears PWM PMD lifecycle");
+}
+
+static void pin_cases(PwmConformance* state, Dspic33* cpu) {
+    static const uint8_t ports[DSPIC33_PWM_COUNT] = {4u, 4u, 4u, 4u, 2u, 2u};
+    static const uint8_t low_pins[DSPIC33_PWM_COUNT] = {0u, 2u, 4u, 6u, 1u, 3u};
+    static const uint8_t high_pins[DSPIC33_PWM_COUNT] = {1u, 3u, 5u, 7u, 2u, 4u};
+    bool high;
+    uint8_t generator;
+    for (generator = 0u; generator < DSPIC33_PWM_COUNT; generator++) {
+        dspic33_reset(cpu, 0u);
+        configure_generator(cpu, generator, 0u, 7u, 3u, 0x0080u);
+        enable_pwm(cpu, 0u);
+        expect(state,
+               gpio_pin_is(cpu, ports[generator], high_pins[generator], true) &&
+                   gpio_pin_is(cpu, ports[generator], low_pins[generator], false),
+               "dedicated PWM pins expose generator output");
+        dspic33_device_advance(cpu, 4u);
+        expect(state,
+               gpio_pin_is(cpu, ports[generator], high_pins[generator], false) &&
+                   gpio_pin_is(cpu, ports[generator], low_pins[generator], true),
+               "dedicated PWM pins follow waveform transition");
+        dspic33_write_word(cpu, 0x076au, (uint16_t)(0x0100u << generator));
+        dspic33_device_advance(cpu, 1u);
+        expect(state,
+               gpio_pin_is(cpu, ports[generator], high_pins[generator], false) &&
+                   gpio_pin_is(cpu, ports[generator], low_pins[generator], false),
+               "generator PMD releases dedicated PWM pins to GPIO");
+    }
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e40u, 0xfffcu);
+    dspic33_write_word(cpu, 0x0e44u, 1u);
+    configure_generator(cpu, 0u, 0u, 7u, 3u, 0x0080u);
+    enable_pwm(cpu, 0u);
+    expect(state, gpio_pin_is(cpu, 4u, 0u, false), "PWM owns pin over GPIO latch");
+    dspic33_write_word(cpu, 0x0c00u, 0u);
+    expect(state, gpio_pin_is(cpu, 4u, 0u, true), "disabled PWM returns pin to GPIO");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e40u, 0xfffcu);
+    dspic33_write_word(cpu, 0x0e44u, 1u);
+    configure_generator(cpu, 0u, 0u, 7u, 3u, 0x0080u);
+    enable_pwm(cpu, 0x2000u);
+    cpu->power_state = DSPIC33_POWER_IDLE;
+    dspic33_device_power_state_changed(cpu);
+    expect(state, gpio_pin_is(cpu, 4u, 0u, true),
+           "stopped-idle PWM returns pin to GPIO");
+    expect(state, dspic33_read_word(cpu, 0x0c26u) == 0u,
+           "stopped-idle PWM registers are inaccessible");
+    dspic33_write_word(cpu, 0x0c26u, 6u);
+    cpu->power_state = DSPIC33_POWER_ACTIVE;
+    dspic33_device_power_state_changed(cpu);
+    expect(state, dspic33_read_word(cpu, 0x0c26u) == 3u,
+           "stopped-idle PWM register write is ignored");
+    enable_pwm(cpu, 0u);
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    dspic33_device_power_state_changed(cpu);
+    expect(state, gpio_pin_is(cpu, 4u, 0u, false),
+           "sleep preserves PWM pin ownership and frozen output");
+
+    for (generator = 0u; generator < 7u; generator++) {
+        uint16_t register_address =
+            generator < 4u ? (uint16_t)(0x06b8u + (generator / 2u) * 2u)
+                           : (uint16_t)(0x06f4u + ((generator - 4u) / 2u) * 2u);
+        uint8_t shift = (generator & 1u) != 0u ? 8u : 0u;
+        dspic33_reset(cpu, 0u);
+        configure_generator(cpu, 0u, 0x0400u, 7u, 7u, 0x0080u);
+        dspic33_write_word(cpu, 0x0c24u, (uint16_t)((generator << 3u) | 1u));
+        dspic33_write_word(cpu, register_address, (uint16_t)(64u << shift));
+        enable_pwm(cpu, 0u);
+        expect(state, dspic33_gpio_drive(cpu, 3u, 1u, 1u),
+               "drive mapped PWM fault pin");
+        expect(state,
+               (cpu->io.pwm_fault_inputs & ((uint32_t)1u << generator)) != 0u &&
+                   !dspic33_pwm_output(cpu, 0u, true),
+               "mapped PWM fault pin controls generator");
+    }
+
+    for (generator = 0u; generator < DSPIC33_PWM_COUNT; generator++) {
+        static const uint16_t addresses[DSPIC33_PWM_COUNT] = {
+            0x06ecu, 0x06eeu, 0x06eeu, 0x06f0u, 0x06f0u, 0x06f2u};
+        static const uint8_t shifts[DSPIC33_PWM_COUNT] = {8u, 0u, 8u, 0u, 8u, 0u};
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, addresses[generator],
+                           (uint16_t)(64u << shifts[generator]));
+        expect(state, dspic33_gpio_drive(cpu, 3u, 1u, 1u),
+               "drive mapped dead-time compensation pin");
+        expect(state, (cpu->io.pwm_dead_time_inputs & (uint8_t)(1u << generator)) != 0u,
+               "mapped dead-time compensation pin updates input");
+    }
+
+    for (generator = 0u; generator < 2u; generator++) {
+        uint16_t address = generator == 0u ? 0x06eau : 0x06ecu;
+        uint8_t shift = generator == 0u ? 8u : 0u;
+        dspic33_reset(cpu, 0u);
+        configure_generator(cpu, 0u, 0x0400u, 15u, 7u, 0x0080u);
+        enable_pwm(cpu, (uint16_t)(0x0080u | (generator << 4u)));
+        dspic33_device_advance(cpu, 3u);
+        dspic33_write_word(cpu, address, (uint16_t)(64u << shift));
+        expect(state, dspic33_gpio_drive(cpu, 3u, 1u, 1u),
+               "drive mapped PWM synchronization pin");
+        expect(state, cpu->io.pwm_master_counter[0] == 0u,
+               "mapped PWM synchronization pin resets time base");
+    }
+
+    for (generator = 0u; generator < DSPIC33_COMPARATOR_COUNT; generator++) {
+        dspic33_reset(cpu, 0u);
+        configure_generator(cpu, 0u, 0x0400u, 7u, 7u, 0x0080u);
+        dspic33_write_word(cpu, 0x0c24u, (uint16_t)(((8u + generator) << 3u) | 1u));
+        enable_pwm(cpu, 0u);
+        dspic33_write_word(cpu, (uint16_t)(0x0a84u + generator * 8u), 0x8000u);
+        expect(state,
+               dspic33_comparator_input(cpu, generator,
+                                        DSPIC33_COMPARATOR_INPUT_POSITIVE, 200u, 0u) &&
+                   dspic33_comparator_input(
+                       cpu, generator, DSPIC33_COMPARATOR_INPUT_NEGATIVE_2, 100u, 0u) &&
+                   dspic33_device_advance(cpu, 0u),
+               "drive comparator-selected PWM fault source");
+        expect(state,
+               (cpu->io.pwm_fault_inputs &
+                ((uint32_t)1u << (uint8_t)(8u + generator))) != 0u &&
+                   !dspic33_pwm_output(cpu, 0u, true),
+               "comparator output controls PWM fault source directly");
+    }
+
+    dspic33_reset(cpu, 0u);
+    configure_generator(cpu, 0u, 0x0400u, 7u, 7u, 0x0080u);
+    dspic33_write_word(cpu, 0x06b8u, 1u);
+    dspic33_write_word(cpu, 0x0c24u, 1u);
+    enable_pwm(cpu, 0u);
+    dspic33_write_word(cpu, 0x0a84u, 0x8000u);
+    expect(state,
+           dspic33_comparator_input(cpu, 0u, DSPIC33_COMPARATOR_INPUT_POSITIVE, 200u,
+                                    0u) &&
+               dspic33_comparator_input(cpu, 0u, DSPIC33_COMPARATOR_INPUT_NEGATIVE_2,
+                                        100u, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               (cpu->io.pwm_fault_inputs & 1u) == 0u &&
+               dspic33_pwm_output(cpu, 0u, true),
+           "B1 virtual comparator remap does not reach PWM fault input");
+
+    dspic33_reset(cpu, 0u);
+    configure_generator(cpu, 0u, 0x0400u, 7u, 7u, 0x1080u);
+    dspic33_write_word(cpu, 0x0c24u, 1u);
+    dspic33_write_word(cpu, 0x06b8u, 64u);
+    configure_interrupt(cpu, 0u, 0x0300u);
+    cpu->program[0x0300u / 2u] = 0u;
+    enable_pwm(cpu, 0u);
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    dspic33_device_power_state_changed(cpu);
+    expect(state,
+           dspic33_gpio_drive(cpu, 3u, 1u, 1u) && !dspic33_pwm_output(cpu, 0u, true) &&
+               interrupt_flag(cpu, irqs[0]),
+           "physical PWM fault remains asynchronous in Sleep");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               cpu->power_state == DSPIC33_POWER_ACTIVE &&
+               cpu->last_interrupt == irqs[0] && cpu->pc == 0x0302u,
+           "physical PWM fault wakes and executes generator interrupt");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0c02u, 1u);
+    dspic33_write_word(cpu, 0x0c04u, 31u);
+    dspic33_write_word(cpu, 0x0c0eu, 0x0100u);
+    dspic33_write_word(cpu, 0x0c10u, 1u);
+    dspic33_write_word(cpu, 0x0c12u, 31u);
+    dspic33_write_word(cpu, 0x0680u, 0x2e2du);
+    enable_pwm(cpu, 0x0100u);
+    expect(state,
+           dspic33_pwm_sync_pin(cpu, 64u, &high) && !high &&
+               dspic33_pwm_sync_pin(cpu, 65u, &high) && !high,
+           "PPS exposes inactive primary and secondary PWM sync outputs");
+    dspic33_device_advance(cpu, 32u);
+    expect(state,
+           dspic33_pwm_sync_pin(cpu, 64u, &high) && high &&
+               dspic33_pwm_sync_pin(cpu, 65u, &high) && high,
+           "PPS exposes primary and secondary PWM sync pulses");
+    dspic33_write_word(cpu, 0x0e40u, 0xffffu);
+    dspic33_write_word(cpu, 0x0e4eu, 0xffffu);
+    dspic33_write_word(cpu, 0x0688u, 0x2d00u);
+    expect(state, dspic33_pwm_sync_pin(cpu, 80u, &high) && high,
+           "PWM sync PPS output overrides TRIS and analog configuration");
+    dspic33_write_word(cpu, 0x0680u, 0u);
+    expect(state, !dspic33_pwm_sync_pin(cpu, 64u, &high),
+           "null PPS function disconnects PWM sync output");
+    expect(state, !dspic33_pwm_sync_pin(cpu, 63u, &high),
+           "PWM sync output rejects unavailable PPS pin");
+    dspic33_write_word(cpu, 0x0760u, 0x0200u);
+    dspic33_device_advance(cpu, 1u);
+    expect(state, !dspic33_pwm_sync_pin(cpu, 80u, &high),
+           "global PWM PMD releases remappable sync output");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0680u, 0x002du);
+    dspic33_write_word(cpu, 0x0c00u, 0x2100u);
+    cpu->power_state = DSPIC33_POWER_IDLE;
+    dspic33_device_power_state_changed(cpu);
+    expect(state, !dspic33_pwm_sync_pin(cpu, 64u, &high),
+           "stopped-idle PWM releases remappable sync output");
+}
+
 static void boundary_cases(PwmConformance* state, Dspic33* cpu) {
     Dspic33 copy;
     bool initialized;
@@ -994,6 +1334,38 @@ static void boundary_cases(PwmConformance* state, Dspic33* cpu) {
     expect(state, copy.io.pwm_master_counter[0] == cpu->io.pwm_master_counter[0],
            "advance copied PWM counter");
     dspic33_destroy(&copy);
+
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_pwm_fault(cpu, 2u, true, 0u) &&
+               dspic33_pwm_current_limit(cpu, 3u, true, 0u) &&
+               dspic33_pwm_dead_time(cpu, 0u, true, 0u) &&
+               dspic33_pwm_sync(cpu, 0u, true, 0u) && dspic33_device_advance(cpu, 0u),
+           "assert direct PWM inputs before warm reset");
+    cpu->program[0x0200u / 2u] = 0xfe0000u;
+    cpu->pc = 0x0200u;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "execute warm reset with direct PWM inputs");
+    expect(state,
+           cpu->io.pwm_fault_inputs == ((uint32_t)1u << 2u) &&
+               cpu->io.pwm_current_limit_inputs == ((uint32_t)1u << 3u) &&
+               cpu->io.pwm_dead_time_inputs == 1u && cpu->io.pwm_sync_inputs == 1u &&
+               cpu->io.pwm_fault_direct == ((uint32_t)1u << 2u) &&
+               cpu->io.pwm_current_limit_direct == ((uint32_t)1u << 3u) &&
+               cpu->io.pwm_dead_time_direct == 1u && cpu->io.pwm_sync_direct == 1u,
+           "warm reset preserves direct PWM input levels");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x06b8u, 64u);
+    expect(state,
+           dspic33_gpio_drive(cpu, 3u, 1u, 1u) && (cpu->io.pwm_fault_inputs & 1u) != 0u,
+           "assert mapped PWM fault before warm reset");
+    cpu->program[0x0200u / 2u] = 0xfe0000u;
+    cpu->pc = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               (cpu->io.pwm_fault_inputs & 1u) == 0u && cpu->io.pwm_fault_direct == 0u,
+           "warm reset recomputes PWM input from reset PPS routing");
 }
 
 int main(void) {
@@ -1017,6 +1389,8 @@ int main(void) {
     protection_cases(&state, &cpu);
     synchronization_cases(&state, &cpu);
     chop_and_power_cases(&state, &cpu);
+    pmd_cases(&state, &cpu);
+    pin_cases(&state, &cpu);
     boundary_cases(&state, &cpu);
     printf("[pwm-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);

@@ -7403,10 +7403,26 @@ static void write_direct_file_reference_result(Dspic33* cpu, uint16_t value,
 
 static bool direct_file_event_queues_match(const Dspic33* actual,
                                            const Dspic33* expected) {
-    return actual->events.count == expected->events.count &&
-           (actual->events.count == 0u ||
-            memcmp(actual->events.items, expected->events.items,
-                   actual->events.count * sizeof(*actual->events.items)) == 0);
+    size_t index;
+
+    if (actual->events.count != expected->events.count ||
+        actual->events.sequence != expected->events.sequence) {
+        return false;
+    }
+    for (index = 0u; index < actual->events.count; index++) {
+        const Dspic33Event* actual_event = &actual->events.items[index];
+        const Dspic33Event* expected_event = &expected->events.items[index];
+        if (actual_event->cycle != expected_event->cycle ||
+            actual_event->sequence != expected_event->sequence ||
+            actual_event->paused_remaining != expected_event->paused_remaining ||
+            actual_event->value != expected_event->value ||
+            actual_event->source != expected_event->source ||
+            actual_event->type != expected_event->type ||
+            actual_event->paused != expected_event->paused) {
+            return false;
+        }
+    }
+    return true;
 }
 
 static bool direct_file_io_states_match(const Dspic33* actual,
@@ -10793,6 +10809,10 @@ static void illegal_condition_reset_cases(ProcessorConformance* state, Dspic33* 
     cpu->io.pwm_sync_inputs = 0x02u;
     cpu->io.pwm_fault_inputs = 0x81234567u;
     cpu->io.pwm_current_limit_inputs = 0x89abcdefu;
+    cpu->io.pwm_dead_time_direct = 0x25u;
+    cpu->io.pwm_sync_direct = 0x02u;
+    cpu->io.pwm_fault_direct = 0x81234567u;
+    cpu->io.pwm_current_limit_direct = 0x89abcdefu;
     cpu->io.usb_host_attached = true;
     cpu->io.timer_enabled = 0xffffu;
     cpu->io.uart_rx_fifo[0].count = 1u;

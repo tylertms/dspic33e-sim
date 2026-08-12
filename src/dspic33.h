@@ -68,6 +68,7 @@ typedef enum {
     DSPIC33_EVENT_PWM_CURRENT_LIMIT,
     DSPIC33_EVENT_PWM_DEAD_TIME,
     DSPIC33_EVENT_PWM_SYNC,
+    DSPIC33_EVENT_PWM_PMD,
     DSPIC33_EVENT_UART,
     DSPIC33_EVENT_SPI,
     DSPIC33_EVENT_SPI_SELECT,
@@ -580,7 +581,14 @@ typedef struct {
     uint8_t pwm_period_update;
     uint8_t pwm_timing_update;
     uint8_t pwm_sync_inputs;
+    uint8_t pwm_pmd_disabled;
+    uint32_t pwm_fault_direct;
+    uint32_t pwm_current_limit_direct;
+    uint8_t pwm_dead_time_direct;
+    uint8_t pwm_sync_direct;
     bool pwm_batch_updating;
+    bool pwm_refreshing_inputs;
+    uint16_t pwm_pmd_generation[DSPIC33_PWM_COUNT + 1u];
     uint32_t pwm_fault_inputs;
     uint32_t pwm_current_limit_inputs;
     uint32_t pwm_fraction[2];
@@ -900,6 +908,7 @@ bool dspic33_pwm_current_limit(Dspic33* cpu, uint8_t source, bool high, uint64_t
 bool dspic33_pwm_dead_time(Dspic33* cpu, uint8_t generator, bool high, uint64_t delay);
 bool dspic33_pwm_sync(Dspic33* cpu, uint8_t input, bool high, uint64_t delay);
 bool dspic33_pwm_sync_output(const Dspic33* cpu, uint8_t time_base);
+bool dspic33_pwm_sync_pin(const Dspic33* cpu, uint8_t pin, bool* high);
 bool dspic33_pwm_output(const Dspic33* cpu, uint8_t generator, bool high);
 bool dspic33_can_receive(Dspic33* cpu, uint8_t channel, const Dspic33CanFrame* frame,
                          uint64_t delay);

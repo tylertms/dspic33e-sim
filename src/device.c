@@ -19,6 +19,9 @@ static void run_timer_pmd(Dspic33* cpu, uint16_t timer, uint32_t value);
 static void run_adc_pmd(Dspic33* cpu, uint16_t module, uint32_t value);
 static void adc_update_power_state(Dspic33* cpu);
 static void adc_begin_sampling(Dspic33* cpu, uint8_t module);
+static void run_pwm_pmd(Dspic33* cpu, uint16_t source, uint32_t value);
+static void refresh_pwm_inputs(Dspic33* cpu);
+static void refresh_pwm_pins(Dspic33* cpu);
 static bool interrupt_enabled(const Dspic33* cpu, uint16_t irq);
 static void output_compare_fault_pin_input(Dspic33* cpu, uint8_t pin, bool high);
 static void output_compare_pulse_source(Dspic33* cpu, uint8_t source);
@@ -35,6 +38,7 @@ static uint64_t spi_transfer_cycles(const Dspic33* cpu, uint8_t channel);
 static uint8_t dci_pps_selection(const Dspic33* cpu, uint16_t address, uint8_t shift);
 static bool dci_pps_input_high(const Dspic33* cpu, uint8_t selection);
 static uint16_t gpio_pin_values(const Dspic33* cpu, uint8_t port);
+static bool pwm_pin_value(const Dspic33* cpu, uint8_t port, uint8_t pin, bool* high);
 
 static const uint16_t timer_registers[DSPIC33_TIMER_COUNT] = {
     0x0100u, 0x0106u, 0x010au, 0x0114u, 0x0118u, 0x0122u, 0x0126u, 0x0130u, 0x0134u};
@@ -659,6 +663,8 @@ enum {
     PWM_CURRENT_LIMIT_MODE = 0x0100u,
     PWM_INPUT_HIGH = 0x00000001u,
     PWM_INPUT_KIND = 0x00000002u,
+    PWM_PMD_EVENT_DISABLED = 0x00000001u,
+    PWM_PMD_EVENT_GENERATION_SHIFT = 1u,
     QEI_CONTROL_ENABLE = 0x8000u,
     QEI_CONTROL_STOP_IDLE = 0x2000u,
     QEI_CONTROL_POSITION_MODE_MASK = 0x1c00u,
@@ -1691,6 +1697,7 @@ void dspic33_device_power_state_changed(Dspic33* cpu) {
     comparator_update_filter_power(cpu);
     comparator_evaluate_all(cpu);
     adc_update_power_state(cpu);
+    refresh_pwm_pins(cpu);
     dspic33_i2c_refresh_pins(cpu);
 }
 
@@ -4551,6 +4558,7 @@ static void comparator_set_output(Dspic33* cpu, uint8_t comparator, bool high) {
     refresh_external_interrupts(cpu);
     refresh_timer_inputs(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
+    refresh_pwm_inputs(cpu);
     if (rising) {
         input_capture_pulse_source(
             cpu, (uint8_t)(INPUT_CAPTURE_SYNC_COMPARATOR_FIRST + comparator));
@@ -9055,9 +9063,40 @@ static uint16_t pwm_register(const Dspic33* cpu, uint8_t generator, uint16_t off
     return raw_word(cpu, (uint16_t)(pwm_generator_base(generator) + offset));
 }
 
+static bool pwm_global_pmd_disabled(const Dspic33* cpu) {
+    return (cpu->io.pwm_pmd_disabled & 1u) != 0u;
+}
+
+static bool pwm_generator_pmd_disabled(const Dspic33* cpu, uint8_t generator) {
+    return pwm_global_pmd_disabled(cpu) ||
+           (cpu->io.pwm_pmd_disabled & (uint8_t)(2u << generator)) != 0u;
+}
+
+static bool pwm_address_pmd_disabled(const Dspic33* cpu, uint16_t address) {
+    if (address >= PWM_GLOBAL_BASE && address < PWM_GENERATOR_BASE) {
+        return pwm_global_pmd_disabled(cpu);
+    }
+    if (address >= PWM_GENERATOR_BASE &&
+        address < PWM_GENERATOR_BASE + DSPIC33_PWM_COUNT * PWM_GENERATOR_STRIDE) {
+        uint8_t generator =
+            (uint8_t)((address - PWM_GENERATOR_BASE) / PWM_GENERATOR_STRIDE);
+        return pwm_generator_pmd_disabled(cpu, generator);
+    }
+    return false;
+}
+
+static bool pwm_address_inaccessible(const Dspic33* cpu, uint16_t address) {
+    return pwm_address_pmd_disabled(cpu, address) ||
+           (cpu->power_state == DSPIC33_POWER_IDLE &&
+            (raw_word(cpu, PWM_GLOBAL_BASE) & PWM_STOP_IDLE) != 0u &&
+            address >= PWM_GLOBAL_BASE &&
+            address < PWM_GENERATOR_BASE + DSPIC33_PWM_COUNT * PWM_GENERATOR_STRIDE);
+}
+
 static bool pwm_power_enabled(const Dspic33* cpu) {
     uint16_t control = raw_word(cpu, PWM_GLOBAL_BASE);
-    if ((control & PWM_ENABLE) == 0u || cpu->power_state == DSPIC33_POWER_SLEEP) {
+    if (pwm_global_pmd_disabled(cpu) || (control & PWM_ENABLE) == 0u ||
+        cpu->power_state == DSPIC33_POWER_SLEEP) {
         return false;
     }
     return cpu->power_state != DSPIC33_POWER_IDLE || (control & PWM_STOP_IDLE) == 0u;
@@ -9576,7 +9615,7 @@ static void pwm_tick(Dspic33* cpu, uint8_t time_base, uint64_t cycle) {
         bool independent = (control & PWM_INDEPENDENT_TIME_BASE) != 0u;
         bool boundary;
         uint8_t master = (control & 0x0008u) != 0u ? 1u : 0u;
-        if (master != time_base) {
+        if (master != time_base || pwm_generator_pmd_disabled(cpu, generator)) {
             continue;
         }
         if (independent) {
@@ -9605,7 +9644,7 @@ static void pwm_tick(Dspic33* cpu, uint8_t time_base, uint64_t cycle) {
     for (generator = 0u; generator < DSPIC33_PWM_COUNT; generator++) {
         uint16_t control = pwm_register(cpu, generator, 0u);
         uint8_t master = (control & 0x0008u) != 0u ? 1u : 0u;
-        if (master != time_base) {
+        if (master != time_base || pwm_generator_pmd_disabled(cpu, generator)) {
             continue;
         }
         pwm_refresh_status(cpu, generator);
@@ -9613,6 +9652,7 @@ static void pwm_tick(Dspic33* cpu, uint8_t time_base, uint64_t cycle) {
     }
     cpu->io.pwm_batch_updating = false;
     comparator_evaluate_all(cpu);
+    refresh_pwm_pins(cpu);
 }
 
 static void advance_pwm(Dspic33* cpu, uint64_t cycles) {
@@ -9624,6 +9664,9 @@ static void advance_pwm(Dspic33* cpu, uint64_t cycles) {
     }
     subcycles = cycles * 2u;
     for (generator = 0u; generator < DSPIC33_PWM_COUNT; generator++) {
+        if (pwm_generator_pmd_disabled(cpu, generator)) {
+            continue;
+        }
         if (cpu->io.pwm_leb_ticks[generator] > subcycles) {
             cpu->io.pwm_leb_ticks[generator] =
                 (uint16_t)(cpu->io.pwm_leb_ticks[generator] - subcycles);
@@ -9666,6 +9709,9 @@ static void pwm_start(Dspic33* cpu) {
     for (generator = 0u; generator < DSPIC33_PWM_COUNT; generator++) {
         uint8_t bit = (uint8_t)(1u << generator);
         uint16_t fault = pwm_register(cpu, generator, 4u);
+        if (pwm_generator_pmd_disabled(cpu, generator)) {
+            continue;
+        }
         if (!pwm_fault_active(cpu, generator)) {
             cpu->io.pwm_fault_cycle &= (uint8_t)~bit;
             if ((cpu->io.pwm_fault_release & bit) != 0u) {
@@ -9693,6 +9739,9 @@ static void pwm_start(Dspic33* cpu) {
     }
     cpu->io.pwm_batch_updating = true;
     for (generator = 0u; generator < DSPIC33_PWM_COUNT; generator++) {
+        if (pwm_generator_pmd_disabled(cpu, generator)) {
+            continue;
+        }
         pwm_update_output(cpu, generator);
         if (pwm_register(cpu, generator, 0x12u) == 0u) {
             pwm_generator_match(cpu, generator);
@@ -9706,6 +9755,7 @@ static void pwm_start(Dspic33* cpu) {
     if (raw_word(cpu, PWM_GLOBAL_BASE + 0x14u) == 0u) {
         pwm_special_match(cpu, 1u);
     }
+    refresh_pwm_pins(cpu);
 }
 
 static void pwm_input_event(Dspic33* cpu, uint8_t source, bool high,
@@ -9731,7 +9781,8 @@ static void pwm_input_event(Dspic33* cpu, uint8_t source, bool high,
         bool active = current_limit ? pwm_current_limit_active(cpu, generator)
                                     : pwm_fault_active(cpu, generator);
         uint8_t generator_bit = (uint8_t)(1u << generator);
-        if (selected != source || pwm_state_blanked(cpu, generator, current_limit)) {
+        if (pwm_generator_pmd_disabled(cpu, generator) || selected != source ||
+            pwm_state_blanked(cpu, generator, current_limit)) {
             continue;
         }
         cpu->io.pwm_timing_update |= generator_bit;
@@ -9769,6 +9820,7 @@ static void pwm_input_event(Dspic33* cpu, uint8_t source, bool high,
         pwm_refresh_status(cpu, generator);
         pwm_update_output(cpu, generator);
     }
+    refresh_pwm_pins(cpu);
 }
 
 static void pwm_sync_event(Dspic33* cpu, uint8_t input, bool high) {
@@ -9806,6 +9858,144 @@ static void pwm_dead_time_event(Dspic33* cpu, uint8_t generator, bool high) {
     } else {
         cpu->io.pwm_timing_update |= bit;
     }
+}
+
+static uint8_t pwm_pps_selection(const Dspic33* cpu, uint16_t address, uint8_t shift) {
+    return (uint8_t)((raw_word(cpu, address) >> shift) & 0x007fu);
+}
+
+static bool pwm_pps_input_high(const Dspic33* cpu, uint8_t selection) {
+    const Dspic33PpsPin* mapping = pps_pin(selection);
+    uint16_t bit;
+    if (mapping == NULL || !pps_physical_input_enabled(cpu, selection)) {
+        return false;
+    }
+    bit = (uint16_t)(1u << mapping->bit);
+    return (gpio_pin_values(cpu, mapping->port) & bit) != 0u;
+}
+
+static void pwm_refresh_input(Dspic33* cpu, uint8_t source, bool high,
+                              bool current_limit) {
+    uint32_t bit = (uint32_t)1u << source;
+    uint32_t inputs =
+        current_limit ? cpu->io.pwm_current_limit_inputs : cpu->io.pwm_fault_inputs;
+    uint32_t direct =
+        current_limit ? cpu->io.pwm_current_limit_direct : cpu->io.pwm_fault_direct;
+    if ((direct & bit) == 0u && ((inputs & bit) != 0u) != high) {
+        pwm_input_event(cpu, source, high, current_limit);
+    }
+}
+
+static void refresh_pwm_inputs(Dspic33* cpu) {
+    static const uint16_t fault_addresses[7] = {0x06b8u, 0x06b8u, 0x06bau, 0x06bau,
+                                                0x06f4u, 0x06f4u, 0x06f6u};
+    static const uint8_t fault_shifts[7] = {0u, 8u, 0u, 8u, 0u, 8u, 0u};
+    static const uint16_t dead_time_addresses[DSPIC33_PWM_COUNT] = {
+        0x06ecu, 0x06eeu, 0x06eeu, 0x06f0u, 0x06f0u, 0x06f2u};
+    static const uint8_t dead_time_shifts[DSPIC33_PWM_COUNT] = {8u, 0u, 8u, 0u, 8u, 0u};
+    static const uint16_t sync_addresses[2] = {0x06eau, 0x06ecu};
+    static const uint8_t sync_shifts[2] = {8u, 0u};
+    uint8_t source;
+    if (cpu->io.pwm_refreshing_inputs) {
+        return;
+    }
+    cpu->io.pwm_refreshing_inputs = true;
+    for (source = 0u; source < 7u; source++) {
+        bool high = pwm_pps_input_high(
+            cpu, pwm_pps_selection(cpu, fault_addresses[source], fault_shifts[source]));
+        pwm_refresh_input(cpu, source, high, false);
+        pwm_refresh_input(cpu, source, high, true);
+    }
+    for (source = 0u; source < DSPIC33_COMPARATOR_COUNT; source++) {
+        bool high = (cpu->io.comparator.output_high & (uint8_t)(1u << source)) != 0u;
+        pwm_refresh_input(cpu, (uint8_t)(8u + source), high, false);
+        pwm_refresh_input(cpu, (uint8_t)(8u + source), high, true);
+    }
+    for (source = 0u; source < DSPIC33_PWM_COUNT; source++) {
+        uint8_t bit = (uint8_t)(1u << source);
+        bool high =
+            pwm_pps_input_high(cpu, pwm_pps_selection(cpu, dead_time_addresses[source],
+                                                      dead_time_shifts[source]));
+        if ((cpu->io.pwm_dead_time_direct & bit) == 0u &&
+            ((cpu->io.pwm_dead_time_inputs & bit) != 0u) != high) {
+            pwm_dead_time_event(cpu, source, high);
+        }
+    }
+    for (source = 0u; source < 2u; source++) {
+        uint8_t bit = (uint8_t)(1u << source);
+        bool high = pwm_pps_input_high(
+            cpu, pwm_pps_selection(cpu, sync_addresses[source], sync_shifts[source]));
+        if ((cpu->io.pwm_sync_direct & bit) == 0u &&
+            ((cpu->io.pwm_sync_inputs & bit) != 0u) != high) {
+            pwm_sync_event(cpu, source, high);
+        }
+    }
+    cpu->io.pwm_refreshing_inputs = false;
+}
+
+static void refresh_pwm_pins(Dspic33* cpu) {
+    refresh_gpio_change_notification(cpu);
+    refresh_external_interrupts(cpu);
+    refresh_timer_inputs(cpu);
+    output_compare_refresh_fault_pps_inputs(cpu);
+    dci_refresh_pps_inputs(cpu);
+    dspic33_i2c_refresh_pins(cpu);
+    refresh_pwm_inputs(cpu);
+}
+
+static void run_pwm_pmd(Dspic33* cpu, uint16_t source, uint32_t value) {
+    uint16_t generation;
+    uint8_t bit;
+    uint8_t generator;
+    if (source > DSPIC33_PWM_COUNT) {
+        return;
+    }
+    generation = (uint16_t)(value >> PWM_PMD_EVENT_GENERATION_SHIFT);
+    if (generation != cpu->io.pwm_pmd_generation[source]) {
+        return;
+    }
+    bit = (uint8_t)(1u << source);
+    if ((value & PWM_PMD_EVENT_DISABLED) != 0u) {
+        cpu->io.pwm_pmd_disabled |= bit;
+    } else {
+        cpu->io.pwm_pmd_disabled &= (uint8_t)~bit;
+    }
+    if ((raw_word(cpu, PWM_GLOBAL_BASE) & PWM_ENABLE) != 0u) {
+        cpu->io.pwm_batch_updating = true;
+        for (generator = 0u; generator < DSPIC33_PWM_COUNT; generator++) {
+            if (!pwm_generator_pmd_disabled(cpu, generator)) {
+                pwm_refresh_status(cpu, generator);
+                pwm_update_output(cpu, generator);
+            }
+        }
+        cpu->io.pwm_batch_updating = false;
+        comparator_evaluate_all(cpu);
+    }
+    refresh_pwm_pins(cpu);
+}
+
+static bool pwm_pin_value(const Dspic33* cpu, uint8_t port, uint8_t pin, bool* high) {
+    uint8_t generator;
+    bool high_output;
+    uint16_t io;
+    uint16_t control = raw_word(cpu, PWM_GLOBAL_BASE);
+    if (port == 4u && pin < 8u) {
+        generator = (uint8_t)(pin / 2u);
+        high_output = (pin & 1u) != 0u;
+    } else if (port == 2u && pin >= 1u && pin <= 4u) {
+        generator = (uint8_t)(4u + (pin - 1u) / 2u);
+        high_output = (pin & 1u) == 0u;
+    } else {
+        return false;
+    }
+    io = pwm_register(cpu, generator, 2u);
+    if ((control & PWM_ENABLE) == 0u || pwm_generator_pmd_disabled(cpu, generator) ||
+        (cpu->power_state == DSPIC33_POWER_IDLE && (control & PWM_STOP_IDLE) != 0u) ||
+        (io & (high_output ? PWM_PIN_HIGH : PWM_PIN_LOW)) == 0u) {
+        return false;
+    }
+    *high = cpu->io.pwm[generator * 2u + (high_output ? 0u : 1u)] != 0u;
+    return true;
 }
 
 static uint16_t can_filter_word(const Dspic33* cpu, uint8_t channel, uint16_t offset) {
@@ -11413,20 +11603,27 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
         run_adc_pmd(cpu, event->source, event->value);
         break;
     case DSPIC33_EVENT_PWM_FAULT:
+        cpu->io.pwm_fault_direct |= (uint32_t)1u << event->source;
         pwm_input_event(cpu, (uint8_t)event->source,
                         (event->value & PWM_INPUT_HIGH) != 0u, false);
         break;
     case DSPIC33_EVENT_PWM_CURRENT_LIMIT:
+        cpu->io.pwm_current_limit_direct |= (uint32_t)1u << event->source;
         pwm_input_event(cpu, (uint8_t)event->source,
                         (event->value & PWM_INPUT_HIGH) != 0u, true);
         break;
     case DSPIC33_EVENT_PWM_DEAD_TIME:
+        cpu->io.pwm_dead_time_direct |= (uint8_t)(1u << event->source);
         pwm_dead_time_event(cpu, (uint8_t)event->source,
                             (event->value & PWM_INPUT_HIGH) != 0u);
         break;
     case DSPIC33_EVENT_PWM_SYNC:
+        cpu->io.pwm_sync_direct |= (uint8_t)(1u << event->source);
         pwm_sync_event(cpu, (uint8_t)event->source,
                        (event->value & PWM_INPUT_HIGH) != 0u);
+        break;
+    case DSPIC33_EVENT_PWM_PMD:
+        run_pwm_pmd(cpu, event->source, event->value);
         break;
     case DSPIC33_EVENT_UART:
         run_uart(cpu, (uint8_t)event->source, event->value);
@@ -11921,6 +12118,53 @@ static void update_adc_register(Dspic33* cpu, uint16_t address, uint16_t previou
             }
         }
         return;
+    }
+}
+
+static void update_pwm_pmd(Dspic33* cpu, uint16_t address, uint16_t previous) {
+    uint16_t current;
+    uint16_t changed;
+    uint8_t first;
+    uint8_t count;
+    uint8_t index;
+    if (address == 0x0760u) {
+        current = raw_word(cpu, address);
+        changed = (uint16_t)((current ^ previous) & 0x0200u);
+        first = 0u;
+        count = 1u;
+    } else if (address == 0x076au) {
+        current = raw_word(cpu, address);
+        changed = (uint16_t)((current ^ previous) & 0x3f00u);
+        first = 1u;
+        count = DSPIC33_PWM_COUNT;
+    } else {
+        return;
+    }
+    for (index = 0u; index < count; index++) {
+        uint8_t source = (uint8_t)(first + index);
+        uint16_t mask = address == 0x0760u ? 0x0200u : (uint16_t)(0x0100u << index);
+        if ((changed & mask) == 0u) {
+            continue;
+        }
+        cpu->io.pwm_pmd_generation[source]++;
+        if (!dspic33_schedule(
+                cpu, DSPIC33_EVENT_PWM_PMD, source,
+                ((uint32_t)cpu->io.pwm_pmd_generation[source]
+                 << PWM_PMD_EVENT_GENERATION_SHIFT) |
+                    ((current & mask) != 0u ? PWM_PMD_EVENT_DISABLED : 0u),
+                dspic33_device_instruction_cycles(cpu, 1u))) {
+            uint8_t invalidate;
+            raw_write_word(cpu, address, previous);
+            for (invalidate = 0u; invalidate < count; invalidate++) {
+                uint16_t invalidate_mask =
+                    address == 0x0760u ? 0x0200u : (uint16_t)(0x0100u << invalidate);
+                if ((changed & invalidate_mask) != 0u) {
+                    cpu->io.pwm_pmd_generation[first + invalidate]++;
+                }
+            }
+            cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+            return;
+        }
     }
 }
 
@@ -12490,6 +12734,7 @@ void dspic33_device_reset_restored(Dspic33* cpu) {
     refresh_external_interrupts(cpu);
     refresh_timer_inputs(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
+    refresh_pwm_inputs(cpu);
     dci_refresh_pps_inputs(cpu);
     dspic33_i2c_refresh_pins(cpu);
 }
@@ -13345,6 +13590,10 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
             return;
         }
     }
+    if (pwm_address_inaccessible(cpu, base)) {
+        raw_write_word(cpu, base, previous);
+        return;
+    }
     if (register_write_mask(base, &writable) ||
         input_capture_register_write_mask(base, &writable) ||
         output_compare_register_write_mask(base, &writable) ||
@@ -13367,6 +13616,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     update_output_compare_pmd(cpu, base, previous);
     update_timer_pmd(cpu, base, previous);
     update_adc_pmd(cpu, base, previous);
+    update_pwm_pmd(cpu, base, previous);
     if (base == 0x0740u && (cpu->configuration[10u] & 0x80u) == 0u &&
         (previous & 0x0020u) == 0u && (raw_word(cpu, base) & 0x0020u) != 0u) {
         cpu->watchdog.ticks = 0u;
@@ -13451,6 +13701,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     refresh_external_interrupts(cpu);
     refresh_timer_inputs(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
+    refresh_pwm_inputs(cpu);
     dci_refresh_pps_inputs(cpu);
     dspic33_i2c_refresh_pins(cpu);
 }
@@ -13473,6 +13724,8 @@ static uint16_t gpio_pin_values(const Dspic33* cpu, uint8_t port) {
     }
     uint16_t external =
         (uint16_t)((cpu->io.gpio[port] & driven) | (pull_up & ~driven & ~pull_down));
+    uint16_t values;
+    uint8_t pin;
     if (port == 2u && (cpu->configuration[8u] & 0x04u) == 0u) {
         uint8_t source = oscillator_current_source(raw_word(cpu, OSCILLATOR_CONTROL));
         bool frc = source == 0u || source == 1u || source == 6u || source == 7u;
@@ -13486,9 +13739,17 @@ static uint16_t gpio_pin_values(const Dspic33* cpu, uint8_t port) {
     if (port == 6u && (raw_word(cpu, USB_CON) & USB_ENABLE) != 0u) {
         analog |= 0x000cu;
     }
-    return (uint16_t)(((external & inputs & ~analog) | (lat & ~inputs & ~open_drain) |
-                       (external & ~inputs & open_drain & lat)) &
-                      gpio_port_masks[port]);
+    values = (uint16_t)(((external & inputs & ~analog) | (lat & ~inputs & ~open_drain) |
+                         (external & ~inputs & open_drain & lat)) &
+                        gpio_port_masks[port]);
+    for (pin = 0u; pin < 16u; pin++) {
+        bool high;
+        uint16_t bit = (uint16_t)(1u << pin);
+        if (pwm_pin_value(cpu, port, pin, &high)) {
+            values = high ? (uint16_t)(values | bit) : (uint16_t)(values & ~bit);
+        }
+    }
+    return values;
 }
 
 static uint16_t gpio_change_notification_qualified(const Dspic33* cpu, uint8_t port) {
@@ -13686,6 +13947,9 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
         if (adc_pmd_disabled(cpu, channel) && adc_module_address(base, channel)) {
             return 0u;
         }
+    }
+    if (pwm_address_inaccessible(cpu, base)) {
+        return 0u;
     }
     if (address >= INPUT_CAPTURE_BASE &&
         address <
@@ -14232,7 +14496,7 @@ bool dspic33_pwm_sync(Dspic33* cpu, uint8_t input, bool high, uint64_t delay) {
 bool dspic33_pwm_sync_output(const Dspic33* cpu, uint8_t time_base) {
     uint16_t control;
     bool active;
-    if (time_base >= 2u) {
+    if (time_base >= 2u || pwm_global_pmd_disabled(cpu)) {
         return false;
     }
     control =
@@ -14244,9 +14508,44 @@ bool dspic33_pwm_sync_output(const Dspic33* cpu, uint8_t time_base) {
     return (control & 0x0200u) != 0u ? !active : active;
 }
 
+bool dspic33_pwm_sync_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
+    uint8_t function = 0u;
+    uint8_t time_base;
+    uint16_t control;
+    size_t index;
+    if (high == NULL || pwm_global_pmd_disabled(cpu)) {
+        return false;
+    }
+    control = raw_word(cpu, PWM_GLOBAL_BASE);
+    if (cpu->power_state == DSPIC33_POWER_IDLE && (control & PWM_STOP_IDLE) != 0u) {
+        return false;
+    }
+    for (index = 0u; index < sizeof(pps_outputs) / sizeof(pps_outputs[0]); index++) {
+        if (pps_outputs[index].pin == pin) {
+            function = (uint8_t)((raw_word(cpu, pps_outputs[index].address) >>
+                                  pps_outputs[index].shift) &
+                                 0x003fu);
+            break;
+        }
+    }
+    if (index == sizeof(pps_outputs) / sizeof(pps_outputs[0]) || function < 0x2du ||
+        function > 0x2eu) {
+        return false;
+    }
+    time_base = (uint8_t)(function - 0x2du);
+    control =
+        raw_word(cpu, (uint16_t)(PWM_GLOBAL_BASE + (time_base == 0u ? 0u : 0x0eu)));
+    if ((control & 0x0100u) == 0u) {
+        return false;
+    }
+    *high = dspic33_pwm_sync_output(cpu, time_base);
+    return true;
+}
+
 bool dspic33_pwm_output(const Dspic33* cpu, uint8_t generator, bool high) {
     uint8_t output = (uint8_t)(generator * 2u + (high ? 0u : 1u));
-    return generator < DSPIC33_PWM_COUNT && cpu->io.pwm[output] != 0u;
+    return generator < DSPIC33_PWM_COUNT &&
+           !pwm_generator_pmd_disabled(cpu, generator) && cpu->io.pwm[output] != 0u;
 }
 
 bool dspic33_can_receive(Dspic33* cpu, uint8_t channel, const Dspic33CanFrame* frame,
@@ -14404,6 +14703,7 @@ bool dspic33_gpio_drive(Dspic33* cpu, uint8_t port, uint16_t value, uint16_t mas
     refresh_external_interrupts(cpu);
     refresh_timer_inputs(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
+    refresh_pwm_inputs(cpu);
     dci_refresh_pps_inputs(cpu);
     dspic33_i2c_refresh_pins(cpu);
     return true;
@@ -14418,6 +14718,7 @@ bool dspic33_gpio_release(Dspic33* cpu, uint8_t port, uint16_t mask) {
     refresh_external_interrupts(cpu);
     refresh_timer_inputs(cpu);
     output_compare_refresh_fault_pps_inputs(cpu);
+    refresh_pwm_inputs(cpu);
     dci_refresh_pps_inputs(cpu);
     dspic33_i2c_refresh_pins(cpu);
     return true;
