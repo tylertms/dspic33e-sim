@@ -1574,6 +1574,18 @@ bool dspic33_i2c_respond(Dspic33* cpu, uint8_t channel, uint8_t value, bool ackn
     return response_push(&cpu->io.i2c_response[channel], &response);
 }
 
+bool dspic33_i2c_status(Dspic33* cpu, uint8_t channel, uint16_t status) {
+    const uint16_t hardware_status = 0x84c0u;
+    uint16_t value;
+    if (channel >= DSPIC33_I2C_COUNT || (status & (uint16_t)~hardware_status) != 0u) {
+        return false;
+    }
+    value = raw_word(cpu, (uint16_t)(bases[channel] + I2C_STAT));
+    raw_write_word(cpu, (uint16_t)(bases[channel] + I2C_STAT),
+                   (uint16_t)((value & ~hardware_status) | status));
+    return true;
+}
+
 bool dspic33_i2c_slave_start(Dspic33* cpu, uint8_t channel, uint16_t address, bool read,
                              bool ten_bit, uint64_t delay) {
     uint16_t payload;

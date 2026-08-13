@@ -941,6 +941,7 @@ bool dspic33_spi_frame_output(const Dspic33* cpu, uint8_t channel, bool* high);
 bool dspic33_spi_frame_pin(const Dspic33* cpu, uint8_t pin, bool* high);
 bool dspic33_i2c_respond(Dspic33* cpu, uint8_t channel, uint8_t value, bool acknowledge,
                          uint64_t delay);
+bool dspic33_i2c_status(Dspic33* cpu, uint8_t channel, uint16_t status);
 bool dspic33_i2c_slave_start(Dspic33* cpu, uint8_t channel, uint16_t address, bool read,
                              bool ten_bit, uint64_t delay);
 bool dspic33_i2c_slave_write(Dspic33* cpu, uint8_t channel, uint8_t value,
