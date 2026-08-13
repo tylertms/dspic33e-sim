@@ -39,6 +39,108 @@ static bool interrupt_range(const Dspic33* cpu, uint16_t count) {
     return true;
 }
 
+static size_t external_event_count(const Dspic33* cpu) {
+    size_t count = 0u;
+    size_t index;
+    for (index = 0u; index < cpu->events.count; index++) {
+        count += cpu->events.items[index].external ? 1u : 0u;
+    }
+    return count;
+}
+
+static size_t active_usb_pending_count(const Dspic33* cpu) {
+    size_t count = 0u;
+    size_t index;
+    for (index = 0u; index < DSPIC33_USB_PENDING_COUNT; index++) {
+        count += cpu->io.usb_pending[index].active ? 1u : 0u;
+    }
+    return count;
+}
+
+static bool single_external_event(const Dspic33* cpu, Dspic33EventType type) {
+    return cpu->events.count == 1u && cpu->events.items[0].external &&
+           cpu->events.items[0].type == type;
+}
+
+static void external_event_classification_cases(EventConformance* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_uart_receive(cpu, 0u, 0x5au, 1u) &&
+               single_external_event(cpu, DSPIC33_EVENT_UART),
+           "UART input event classified external");
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_spi_receive(cpu, 0u, 0x1234u, 1u) &&
+               single_external_event(cpu, DSPIC33_EVENT_SPI),
+           "SPI input event classified external");
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_i2c_slave_start(cpu, 0u, 0x42u, false, false, 1u) &&
+               single_external_event(cpu, DSPIC33_EVENT_I2C),
+           "I2C input event classified external");
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_pmp_slave_write(cpu, 0u, 0x5au, 1u) &&
+               single_external_event(cpu, DSPIC33_EVENT_PMP),
+           "PMP input event classified external");
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_input_capture_input(cpu, 0u, true, 1u) &&
+               single_external_event(cpu, DSPIC33_EVENT_INPUT_CAPTURE),
+           "input capture event classified external");
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_output_compare_fault(cpu, 0u, true, 1u) &&
+               single_external_event(cpu, DSPIC33_EVENT_OUTPUT_COMPARE_FAULT),
+           "output compare fault classified external");
+    dspic33_reset(cpu, 0u);
+    expect(
+        state,
+        dspic33_comparator_input(cpu, 0u, DSPIC33_COMPARATOR_INPUT_POSITIVE, 1u, 1u) &&
+            single_external_event(cpu, DSPIC33_EVENT_COMPARATOR),
+        "comparator input classified external");
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_rtcc_clock(cpu, 1u, 1u) &&
+               single_external_event(cpu, DSPIC33_EVENT_RTCC),
+           "RTCC clock event classified external");
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_qei_input(cpu, 0u, DSPIC33_QEI_PHASE_A, true, 1u) &&
+               single_external_event(cpu, DSPIC33_EVENT_QEI),
+           "QEI input event classified external");
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_dci_clock(cpu, 0x1234u, true, 1u) &&
+               single_external_event(cpu, DSPIC33_EVENT_DCI),
+           "DCI input event classified external");
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_timer_pulse(cpu, 0u, 1u, 1u) &&
+               single_external_event(cpu, DSPIC33_EVENT_TIMER),
+           "timer input event classified external");
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_adc_trigger(cpu, 0u, 1u, 1u) &&
+               single_external_event(cpu, DSPIC33_EVENT_ADC),
+           "ADC trigger event classified external");
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_pwm_fault(cpu, 0u, true, 1u) &&
+               single_external_event(cpu, DSPIC33_EVENT_PWM_FAULT),
+           "PWM input event classified external");
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_can_invalid(cpu, 0u, 1u) &&
+               single_external_event(cpu, DSPIC33_EVENT_CAN),
+           "CAN input event classified external");
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_usb_bus(cpu, DSPIC33_USB_BUS_ATTACH, 1u, 1u) &&
+               single_external_event(cpu, DSPIC33_EVENT_USB),
+           "USB input event classified external");
+}
+
 static void delayed_interrupt_cases(EventConformance* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     expect(state, cpu->events.count == 0u, "reset clears event queue");
@@ -195,6 +297,72 @@ static void copy_and_reset_cases(EventConformance* state, Dspic33* cpu, Dspic33*
     expect(state, cpu->events.sequence == 0u, "reset clears event sequence");
 }
 
+static void warm_reset_external_event_cases(EventConformance* state, Dspic33* cpu,
+                                            Dspic33* copy) {
+    uint64_t sequence;
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 9u, 0u, 5u) &&
+               dspic33_timer_gate(cpu, 0u, true, 7u),
+           "schedule internal and external reset events");
+    expect(state, external_event_count(cpu) == 1u, "external reset event classified");
+    expect(state, dspic33_device_advance(cpu, 2u), "advance before warm reset");
+    sequence = cpu->events.sequence;
+    dspic33_mclr_reset(cpu);
+    expect(state,
+           cpu->events.count == 1u && cpu->events.items[0].external &&
+               cpu->events.items[0].type == DSPIC33_EVENT_TIMER_GATE &&
+               cpu->events.items[0].cycle == 7u,
+           "warm reset retains only external event");
+    expect(state, cpu->events.sequence == sequence,
+           "warm reset retains event sequence epoch");
+    expect(state, dspic33_copy(copy, cpu) && copy->events.items[0].external,
+           "copy retains external event classification");
+    expect(state, dspic33_device_advance(cpu, 4u), "advance retained event early");
+    expect(state, (cpu->io.timer_gate & 1u) == 0u, "retained external event not early");
+    expect(state, !interrupt_flag(cpu, 9u), "warm reset cancels internal event");
+    expect(state, dspic33_device_advance(cpu, 1u), "dispatch retained external event");
+    expect(state, (cpu->io.timer_gate & 1u) != 0u,
+           "retained external event dispatched");
+}
+
+static void warm_reset_external_payload_cases(EventConformance* state, Dspic33* cpu) {
+    Dspic33CanFrame frame = {0u};
+    frame.identifier = 0x123u;
+    frame.length = 1u;
+    frame.data[0] = 0x5au;
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_can_receive(cpu, 0u, &frame, 8u) &&
+               dspic33_usb_bus(cpu, DSPIC33_USB_BUS_ATTACH, 1u, 9u) &&
+               dspic33_pmp_respond(cpu, 0x1234u, 10u) &&
+               dspic33_i2c_respond(cpu, 0u, 0x56u, true, 11u),
+           "schedule external payload queues");
+    expect(state,
+           cpu->io.can_rx[0].count == 1u && active_usb_pending_count(cpu) == 1u &&
+               cpu->io.pmp.input.count == 1u && cpu->io.i2c_response[0].count == 1u,
+           "external payload queues populated");
+    expect(state, external_event_count(cpu) == 2u,
+           "external payload events classified");
+    dspic33_mclr_reset(cpu);
+    expect(state,
+           cpu->io.can_rx[0].count == 1u && active_usb_pending_count(cpu) == 1u &&
+               cpu->io.pmp.input.count == 1u && cpu->io.i2c_response[0].count == 1u,
+           "warm reset retains external payload queues");
+    expect(state, cpu->events.count == 2u && external_event_count(cpu) == 2u,
+           "warm reset retains external payload events");
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           cpu->events.count == 0u && cpu->io.can_rx[0].count == 0u &&
+               active_usb_pending_count(cpu) == 0u && cpu->io.pmp.input.count == 0u &&
+               cpu->io.i2c_response[0].count == 0u,
+           "explicit processor reset clears external environment queue");
+    cpu->device_cycles = UINT64_MAX;
+    expect(state,
+           !dspic33_can_receive(cpu, 0u, &frame, 1u) && cpu->io.can_rx[0].count == 0u,
+           "failed external CAN scheduling rolls back payload queue");
+}
+
 int main(void) {
     EventConformance state = {0u, 0u, 0u};
     Dspic33 cpu;
@@ -211,6 +379,9 @@ int main(void) {
         paused_device_clock_cases(&state, &cpu);
         split_clock_domain_cases(&state, &cpu);
         copy_and_reset_cases(&state, &cpu, &copy);
+        external_event_classification_cases(&state, &cpu);
+        warm_reset_external_event_cases(&state, &cpu, &copy);
+        warm_reset_external_payload_cases(&state, &cpu);
     }
     if (copy_initialized) {
         dspic33_destroy(&copy);

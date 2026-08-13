@@ -848,7 +848,7 @@ enum {
 };
 
 static bool usb_schedule_bus_event(Dspic33* cpu, Dspic33UsbBusEvent event,
-                                   uint16_t value, uint64_t delay);
+                                   uint16_t value, uint64_t delay, bool external);
 
 static const Dspic33RegisterMask register_masks[] = {
     {0x0046u, 0xcfffu}, {0x0048u, 0xfffeu}, {0x004au, 0xfffeu}, {0x004cu, 0xfffeu},
@@ -7421,6 +7421,12 @@ static bool can_queue_pop(Dspic33CanQueue* queue, Dspic33CanFrame* frame) {
     return true;
 }
 
+static void can_queue_discard_last(Dspic33CanQueue* queue) {
+    if (queue->count != 0u) {
+        queue->count--;
+    }
+}
+
 static bool event_less(const Dspic33Event* left, const Dspic33Event* right) {
     bool left_dma_completion;
     bool right_dma_completion;
@@ -7458,8 +7464,8 @@ static bool event_reserve(Dspic33EventQueue* queue) {
     return true;
 }
 
-bool dspic33_schedule(Dspic33* cpu, Dspic33EventType type, uint16_t source,
-                      uint32_t value, uint64_t delay) {
+static bool schedule_event(Dspic33* cpu, Dspic33EventType type, uint16_t source,
+                           uint32_t value, uint64_t delay, bool external) {
     Dspic33Event event;
     size_t index;
     size_t parent;
@@ -7477,6 +7483,7 @@ bool dspic33_schedule(Dspic33* cpu, Dspic33EventType type, uint16_t source,
     event.source = source;
     event.type = type;
     event.paused = false;
+    event.external = external;
     index = cpu->events.count++;
     while (index != 0u) {
         parent = (index - 1u) / 2u;
@@ -7488,6 +7495,16 @@ bool dspic33_schedule(Dspic33* cpu, Dspic33EventType type, uint16_t source,
     }
     cpu->events.items[index] = event;
     return true;
+}
+
+bool dspic33_schedule(Dspic33* cpu, Dspic33EventType type, uint16_t source,
+                      uint32_t value, uint64_t delay) {
+    return schedule_event(cpu, type, source, value, delay, false);
+}
+
+bool dspic33_schedule_external(Dspic33* cpu, Dspic33EventType type, uint16_t source,
+                               uint32_t value, uint64_t delay) {
+    return schedule_event(cpu, type, source, value, delay, true);
 }
 
 void dspic33_reorder_events(Dspic33* cpu) {
@@ -13371,7 +13388,7 @@ static void usb_run_bus_event(Dspic33* cpu, Dspic33UsbBusEvent event, uint16_t v
             (raw_word(cpu, USB_CON) & (USB_HOST_ENABLE | USB_ENABLE)) ==
                 (USB_HOST_ENABLE | USB_ENABLE)) {
             usb_schedule_bus_event(cpu, DSPIC33_USB_BUS_SOF, UINT16_MAX,
-                                   USB_FRAME_CYCLES);
+                                   USB_FRAME_CYCLES, false);
         }
         break;
     case DSPIC33_USB_BUS_IDLE:
@@ -13705,7 +13722,8 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
                        (event->value & SPI_SELECT_ACTIVE) != 0u);
         break;
     case DSPIC33_EVENT_I2C:
-        dspic33_i2c_process_event(cpu, (uint8_t)event->source, event->value);
+        dspic33_i2c_process_event(cpu, (uint8_t)event->source, event->value,
+                                  event->external);
         break;
     case DSPIC33_EVENT_CAN:
         run_can(cpu, (uint8_t)event->source, event->value);
@@ -15506,7 +15524,7 @@ static void update_usb_register(Dspic33* cpu, uint16_t address, uint16_t previou
             (previous & (USB_HOST_ENABLE | USB_ENABLE)) !=
                 (USB_HOST_ENABLE | USB_ENABLE)) {
             usb_schedule_bus_event(cpu, DSPIC33_USB_BUS_SOF, UINT16_MAX,
-                                   USB_FRAME_CYCLES);
+                                   USB_FRAME_CYCLES, false);
         }
         return;
     }
@@ -16487,13 +16505,14 @@ bool dspic33_uart_receive_frame(Dspic33* cpu, uint8_t channel,
     if (frame->framing_error) {
         event_value |= UART_EVENT_FRAMING_ERROR;
     }
-    return dspic33_schedule(cpu, DSPIC33_EVENT_UART, channel, event_value, delay);
+    return dspic33_schedule_external(cpu, DSPIC33_EVENT_UART, channel, event_value,
+                                     delay);
 }
 
 bool dspic33_uart_set_cts(Dspic33* cpu, uint8_t channel, bool clear, uint64_t delay) {
     return channel < DSPIC33_UART_COUNT &&
-           dspic33_schedule(cpu, DSPIC33_EVENT_UART, channel,
-                            UART_EVENT_CTS | (clear ? 1u : 0u), delay);
+           dspic33_schedule_external(cpu, DSPIC33_EVENT_UART, channel,
+                                     UART_EVENT_CTS | (clear ? 1u : 0u), delay);
 }
 
 bool dspic33_uart_transmit(Dspic33* cpu, uint8_t channel, Dspic33UartFrame* frame) {
@@ -16504,14 +16523,14 @@ bool dspic33_uart_transmit(Dspic33* cpu, uint8_t channel, Dspic33UartFrame* fram
 bool dspic33_spi_receive(Dspic33* cpu, uint8_t channel, uint16_t value,
                          uint64_t delay) {
     return channel < DSPIC33_SPI_COUNT &&
-           dspic33_schedule(cpu, DSPIC33_EVENT_SPI, channel, SPI_EVENT_EXTERNAL | value,
-                            delay);
+           dspic33_schedule_external(cpu, DSPIC33_EVENT_SPI, channel,
+                                     SPI_EVENT_EXTERNAL | value, delay);
 }
 
 bool dspic33_spi_select(Dspic33* cpu, uint8_t channel, bool selected, uint64_t delay) {
     return channel < DSPIC33_SPI_COUNT &&
-           dspic33_schedule(cpu, DSPIC33_EVENT_SPI_SELECT, channel,
-                            selected ? SPI_SELECT_ACTIVE : 0u, delay);
+           dspic33_schedule_external(cpu, DSPIC33_EVENT_SPI_SELECT, channel,
+                                     selected ? SPI_SELECT_ACTIVE : 0u, delay);
 }
 
 bool dspic33_spi_pin_input(Dspic33* cpu, uint8_t channel, bool clock_high,
@@ -16839,29 +16858,30 @@ bool dspic33_pmp_respond(Dspic33* cpu, uint16_t value, uint64_t delay) {
 }
 
 bool dspic33_pmp_slave_read(Dspic33* cpu, uint8_t address, uint64_t delay) {
-    return address < 4u && dspic33_schedule(cpu, DSPIC33_EVENT_PMP,
-                                            PMP_EVENT_SLAVE_READ, address, delay);
+    return address < 4u &&
+           dspic33_schedule_external(cpu, DSPIC33_EVENT_PMP, PMP_EVENT_SLAVE_READ,
+                                     address, delay);
 }
 
 bool dspic33_pmp_slave_write(Dspic33* cpu, uint8_t address, uint8_t value,
                              uint64_t delay) {
     return address < 4u &&
-           dspic33_schedule(cpu, DSPIC33_EVENT_PMP, PMP_EVENT_SLAVE_WRITE,
-                            ((uint32_t)address << 8u) | value, delay);
+           dspic33_schedule_external(cpu, DSPIC33_EVENT_PMP, PMP_EVENT_SLAVE_WRITE,
+                                     ((uint32_t)address << 8u) | value, delay);
 }
 
 bool dspic33_input_capture_input(Dspic33* cpu, uint8_t channel, bool high,
                                  uint64_t delay) {
     return channel < DSPIC33_INPUT_CAPTURE_COUNT &&
-           dspic33_schedule(cpu, DSPIC33_EVENT_INPUT_CAPTURE, channel,
-                            INPUT_CAPTURE_EVENT_INPUT |
-                                (high ? INPUT_CAPTURE_EVENT_HIGH : 0u),
-                            delay);
+           dspic33_schedule_external(cpu, DSPIC33_EVENT_INPUT_CAPTURE, channel,
+                                     INPUT_CAPTURE_EVENT_INPUT |
+                                         (high ? INPUT_CAPTURE_EVENT_HIGH : 0u),
+                                     delay);
 }
 
 bool dspic33_input_capture_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t delay) {
     return pps_pin(pin) != NULL &&
-           dspic33_schedule(
+           dspic33_schedule_external(
                cpu, DSPIC33_EVENT_INPUT_CAPTURE, pin,
                INPUT_CAPTURE_EVENT_PIN | (high ? INPUT_CAPTURE_EVENT_HIGH : 0u), delay);
 }
@@ -16910,17 +16930,18 @@ bool dspic33_output_compare_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
 bool dspic33_output_compare_fault(Dspic33* cpu, uint8_t source, bool high,
                                   uint64_t delay) {
     return source < DSPIC33_OUTPUT_COMPARE_FAULT_COUNT &&
-           dspic33_schedule(cpu, DSPIC33_EVENT_OUTPUT_COMPARE_FAULT, source,
-                            high ? OUTPUT_COMPARE_FAULT_EVENT_HIGH : 0u, delay);
+           dspic33_schedule_external(cpu, DSPIC33_EVENT_OUTPUT_COMPARE_FAULT, source,
+                                     high ? OUTPUT_COMPARE_FAULT_EVENT_HIGH : 0u,
+                                     delay);
 }
 
 bool dspic33_output_compare_fault_pin(Dspic33* cpu, uint8_t pin, bool high,
                                       uint64_t delay) {
     return pps_pin(pin) != NULL &&
-           dspic33_schedule(cpu, DSPIC33_EVENT_OUTPUT_COMPARE_FAULT, pin,
-                            OUTPUT_COMPARE_FAULT_EVENT_PIN |
-                                (high ? OUTPUT_COMPARE_FAULT_EVENT_HIGH : 0u),
-                            delay);
+           dspic33_schedule_external(cpu, DSPIC33_EVENT_OUTPUT_COMPARE_FAULT, pin,
+                                     OUTPUT_COMPARE_FAULT_EVENT_PIN |
+                                         (high ? OUTPUT_COMPARE_FAULT_EVENT_HIGH : 0u),
+                                     delay);
 }
 
 bool dspic33_comparator_input(Dspic33* cpu, uint8_t comparator,
@@ -16932,15 +16953,16 @@ bool dspic33_comparator_input(Dspic33* cpu, uint8_t comparator,
         return false;
     }
     source = (uint16_t)(comparator * DSPIC33_COMPARATOR_INPUT_COUNT + input);
-    return dspic33_schedule(cpu, DSPIC33_EVENT_COMPARATOR, source, level, delay);
+    return dspic33_schedule_external(cpu, DSPIC33_EVENT_COMPARATOR, source, level,
+                                     delay);
 }
 
 bool dspic33_comparator_reference(Dspic33* cpu, Dspic33ComparatorReference reference,
                                   uint16_t level, uint64_t delay) {
     return reference < DSPIC33_COMPARATOR_REFERENCE_COUNT &&
-           dspic33_schedule(cpu, DSPIC33_EVENT_COMPARATOR,
-                            (uint16_t)(COMPARATOR_EVENT_REFERENCE_FIRST + reference),
-                            level, delay);
+           dspic33_schedule_external(
+               cpu, DSPIC33_EVENT_COMPARATOR,
+               (uint16_t)(COMPARATOR_EVENT_REFERENCE_FIRST + reference), level, delay);
 }
 
 bool dspic33_comparator_output(const Dspic33* cpu, uint8_t comparator, bool* high) {
@@ -16963,7 +16985,8 @@ bool dspic33_comparator_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
 }
 
 bool dspic33_rtcc_clock(Dspic33* cpu, uint32_t edges, uint64_t delay) {
-    return edges != 0u && dspic33_schedule(cpu, DSPIC33_EVENT_RTCC, 0u, edges, delay);
+    return edges != 0u &&
+           dspic33_schedule_external(cpu, DSPIC33_EVENT_RTCC, 0u, edges, delay);
 }
 
 bool dspic33_rtcc_output(const Dspic33* cpu, bool* high) {
@@ -16983,9 +17006,9 @@ bool dspic33_rtcc_output(const Dspic33* cpu, bool* high) {
 bool dspic33_qei_input(Dspic33* cpu, uint8_t channel, Dspic33QeiInput input, bool high,
                        uint64_t delay) {
     return channel < DSPIC33_QEI_COUNT && input <= DSPIC33_QEI_HOME &&
-           dspic33_schedule(cpu, DSPIC33_EVENT_QEI,
-                            (uint16_t)(channel * 4u + (uint8_t)input), high ? 1u : 0u,
-                            delay);
+           dspic33_schedule_external(cpu, DSPIC33_EVENT_QEI,
+                                     (uint16_t)(channel * 4u + (uint8_t)input),
+                                     high ? 1u : 0u, delay);
 }
 
 bool dspic33_qei_compare_output(const Dspic33* cpu, uint8_t channel, bool* high) {
@@ -16995,9 +17018,9 @@ bool dspic33_qei_compare_output(const Dspic33* cpu, uint8_t channel, bool* high)
 void dspic33_dci_input(Dspic33* cpu, uint16_t value) { cpu->io.dci.input = value; }
 
 bool dspic33_dci_clock(Dspic33* cpu, uint16_t value, bool frame_sync, uint64_t delay) {
-    return dspic33_schedule(cpu, DSPIC33_EVENT_DCI,
-                            frame_sync ? DCI_EVENT_EXTERNAL_FRAME : DCI_EVENT_EXTERNAL,
-                            value, delay);
+    return dspic33_schedule_external(
+        cpu, DSPIC33_EVENT_DCI,
+        frame_sync ? DCI_EVENT_EXTERNAL_FRAME : DCI_EVENT_EXTERNAL, value, delay);
 }
 
 bool dspic33_dci_transmit(Dspic33* cpu, Dspic33DciTransfer* transfer) {
@@ -17045,13 +17068,13 @@ bool dspic33_dci_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
 
 bool dspic33_timer_pulse(Dspic33* cpu, uint8_t timer, uint32_t pulses, uint64_t delay) {
     return timer < DSPIC33_TIMER_COUNT && pulses != 0u &&
-           dspic33_schedule(cpu, DSPIC33_EVENT_TIMER, timer, pulses, delay);
+           dspic33_schedule_external(cpu, DSPIC33_EVENT_TIMER, timer, pulses, delay);
 }
 
 bool dspic33_timer_gate(Dspic33* cpu, uint8_t timer, bool high, uint64_t delay) {
     return timer < DSPIC33_TIMER_COUNT &&
-           dspic33_schedule(cpu, DSPIC33_EVENT_TIMER_GATE, timer, high ? 1u : 0u,
-                            delay);
+           dspic33_schedule_external(cpu, DSPIC33_EVENT_TIMER_GATE, timer,
+                                     high ? 1u : 0u, delay);
 }
 
 bool dspic33_adc_trigger(Dspic33* cpu, uint8_t module, uint8_t source, uint64_t delay) {
@@ -17061,31 +17084,31 @@ bool dspic33_adc_trigger(Dspic33* cpu, uint8_t module, uint8_t source, uint64_t 
         return false;
     }
     value = source | ((uint32_t)UINT16_MAX << ADC_EVENT_GENERATION_SHIFT);
-    return dspic33_schedule(cpu, DSPIC33_EVENT_ADC, module, value, delay);
+    return dspic33_schedule_external(cpu, DSPIC33_EVENT_ADC, module, value, delay);
 }
 
 bool dspic33_pwm_fault(Dspic33* cpu, uint8_t source, bool high, uint64_t delay) {
     return source < DSPIC33_PWM_INPUT_COUNT &&
-           dspic33_schedule(cpu, DSPIC33_EVENT_PWM_FAULT, source,
-                            high ? PWM_INPUT_HIGH : 0u, delay);
+           dspic33_schedule_external(cpu, DSPIC33_EVENT_PWM_FAULT, source,
+                                     high ? PWM_INPUT_HIGH : 0u, delay);
 }
 
 bool dspic33_pwm_current_limit(Dspic33* cpu, uint8_t source, bool high,
                                uint64_t delay) {
     return source < DSPIC33_PWM_INPUT_COUNT &&
-           dspic33_schedule(cpu, DSPIC33_EVENT_PWM_CURRENT_LIMIT, source,
-                            high ? PWM_INPUT_HIGH : 0u, delay);
+           dspic33_schedule_external(cpu, DSPIC33_EVENT_PWM_CURRENT_LIMIT, source,
+                                     high ? PWM_INPUT_HIGH : 0u, delay);
 }
 
 bool dspic33_pwm_dead_time(Dspic33* cpu, uint8_t generator, bool high, uint64_t delay) {
     return generator < DSPIC33_PWM_COUNT &&
-           dspic33_schedule(cpu, DSPIC33_EVENT_PWM_DEAD_TIME, generator,
-                            high ? PWM_INPUT_HIGH : 0u, delay);
+           dspic33_schedule_external(cpu, DSPIC33_EVENT_PWM_DEAD_TIME, generator,
+                                     high ? PWM_INPUT_HIGH : 0u, delay);
 }
 
 bool dspic33_pwm_sync(Dspic33* cpu, uint8_t input, bool high, uint64_t delay) {
-    return input < 2u && dspic33_schedule(cpu, DSPIC33_EVENT_PWM_SYNC, input,
-                                          high ? PWM_INPUT_HIGH : 0u, delay);
+    return input < 2u && dspic33_schedule_external(cpu, DSPIC33_EVENT_PWM_SYNC, input,
+                                                   high ? PWM_INPUT_HIGH : 0u, delay);
 }
 
 bool dspic33_pwm_sync_output(const Dspic33* cpu, uint8_t time_base) {
@@ -17145,12 +17168,22 @@ bool dspic33_pwm_output(const Dspic33* cpu, uint8_t generator, bool high) {
 
 bool dspic33_can_receive(Dspic33* cpu, uint8_t channel, const Dspic33CanFrame* frame,
                          uint64_t delay) {
-    return channel < DSPIC33_CAN_COUNT && frame->length <= 8u &&
-           (!frame->extended ? frame->identifier <= 0x7ffu
-                             : frame->identifier <= 0x1fffffffu) &&
-           can_queue_push(&cpu->io.can_rx[channel], frame) &&
-           dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_SUCCESS,
-                            delay);
+    Dspic33CanQueue* queue;
+    if (channel >= DSPIC33_CAN_COUNT || frame->length > 8u ||
+        (!frame->extended ? frame->identifier > 0x7ffu
+                          : frame->identifier > 0x1fffffffu)) {
+        return false;
+    }
+    queue = &cpu->io.can_rx[channel];
+    if (!can_queue_push(queue, frame)) {
+        return false;
+    }
+    if (dspic33_schedule_external(cpu, DSPIC33_EVENT_CAN, channel,
+                                  CAN_EVENT_RECEIVE_SUCCESS, delay)) {
+        return true;
+    }
+    can_queue_discard_last(queue);
+    return false;
 }
 
 bool dspic33_can_error(Dspic33* cpu, uint8_t channel, bool transmit, uint8_t count,
@@ -17163,12 +17196,13 @@ bool dspic33_can_error(Dspic33* cpu, uint8_t channel, bool transmit, uint8_t cou
     if (transmit) {
         value |= CAN_EVENT_TRANSMIT_ERROR;
     }
-    return dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, value, delay);
+    return dspic33_schedule_external(cpu, DSPIC33_EVENT_CAN, channel, value, delay);
 }
 
 bool dspic33_can_invalid(Dspic33* cpu, uint8_t channel, uint64_t delay) {
     return channel < DSPIC33_CAN_COUNT &&
-           dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_INVALID, delay);
+           dspic33_schedule_external(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_INVALID,
+                                     delay);
 }
 
 bool dspic33_can_transmit(Dspic33* cpu, uint8_t channel, Dspic33CanFrame* frame) {
@@ -17252,19 +17286,23 @@ bool dspic33_can_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
 
 bool dspic33_can_input_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t delay) {
     return pps_pin(pin) != NULL &&
-           dspic33_schedule(cpu, DSPIC33_EVENT_CAN, pin,
-                            CAN_EVENT_RECEIVE_PIN | (high ? CAN_EVENT_PIN_HIGH : 0u),
-                            delay);
+           dspic33_schedule_external(
+               cpu, DSPIC33_EVENT_CAN, pin,
+               CAN_EVENT_RECEIVE_PIN | (high ? CAN_EVENT_PIN_HIGH : 0u), delay);
 }
 
 static bool usb_schedule_pending(Dspic33* cpu, const Dspic33UsbPending* pending,
-                                 uint64_t delay) {
+                                 uint64_t delay, bool external) {
     uint16_t slot;
     for (slot = 0u; slot < DSPIC33_USB_PENDING_COUNT; slot++) {
         if (!cpu->io.usb_pending[slot].active) {
             cpu->io.usb_pending[slot] = *pending;
             cpu->io.usb_pending[slot].active = true;
-            if (dspic33_schedule(cpu, DSPIC33_EVENT_USB, slot, 0u, delay)) {
+            bool scheduled =
+                external
+                    ? dspic33_schedule_external(cpu, DSPIC33_EVENT_USB, slot, 0u, delay)
+                    : dspic33_schedule(cpu, DSPIC33_EVENT_USB, slot, 0u, delay);
+            if (scheduled) {
                 return true;
             }
             cpu->io.usb_pending[slot].active = false;
@@ -17293,7 +17331,7 @@ static bool usb_schedule_token(Dspic33* cpu, uint8_t address, uint8_t endpoint,
     if (size != 0u) {
         memcpy(pending.packet.data, data, size);
     }
-    return usb_schedule_pending(cpu, &pending, delay);
+    return usb_schedule_pending(cpu, &pending, delay, true);
 }
 
 bool dspic33_usb_receive_toggle(Dspic33* cpu, uint8_t endpoint, const uint8_t* data,
@@ -17345,11 +17383,11 @@ bool dspic33_usb_host_response(Dspic33* cpu, Dspic33UsbHandshake handshake,
 
 bool dspic33_usb_bus(Dspic33* cpu, Dspic33UsbBusEvent event, uint16_t value,
                      uint64_t delay) {
-    return usb_schedule_bus_event(cpu, event, value, delay);
+    return usb_schedule_bus_event(cpu, event, value, delay, true);
 }
 
 static bool usb_schedule_bus_event(Dspic33* cpu, Dspic33UsbBusEvent event,
-                                   uint16_t value, uint64_t delay) {
+                                   uint16_t value, uint64_t delay, bool external) {
     Dspic33UsbPending pending;
     if (event > DSPIC33_USB_BUS_OTG_STATE) {
         return false;
@@ -17358,7 +17396,7 @@ static bool usb_schedule_bus_event(Dspic33* cpu, Dspic33UsbBusEvent event,
     pending.bus_event = true;
     pending.event = event;
     pending.value = value;
-    return usb_schedule_pending(cpu, &pending, delay);
+    return usb_schedule_pending(cpu, &pending, delay, external);
 }
 
 bool dspic33_usb_transmit(Dspic33* cpu, Dspic33UsbPacket* packet) {

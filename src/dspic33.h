@@ -98,6 +98,7 @@ typedef struct {
     uint16_t source;
     Dspic33EventType type;
     bool paused;
+    bool external;
 } Dspic33Event;
 
 typedef struct {
@@ -897,6 +898,8 @@ uint8_t dspic33_read_byte(Dspic33* cpu, uint32_t address);
 uint16_t dspic33_read_word(Dspic33* cpu, uint32_t address);
 bool dspic33_schedule(Dspic33* cpu, Dspic33EventType type, uint16_t source,
                       uint32_t value, uint64_t delay);
+bool dspic33_schedule_external(Dspic33* cpu, Dspic33EventType type, uint16_t source,
+                               uint32_t value, uint64_t delay);
 void dspic33_reorder_events(Dspic33* cpu);
 void dspic33_raise_interrupt(Dspic33* cpu, uint16_t irq);
 void dspic33_raise_oscillator_fail_trap(Dspic33* cpu);

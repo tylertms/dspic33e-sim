@@ -3997,6 +3997,83 @@ static void apply_master_clear_sfr_reset(Dspic33* cpu, const uint8_t* previous) 
     }
 }
 
+typedef struct {
+    Dspic33PmpResponseQueue pmp;
+    Dspic33I2cResponseQueue i2c[DSPIC33_I2C_COUNT];
+    Dspic33CanQueue can[DSPIC33_CAN_COUNT];
+    Dspic33UsbPending usb[DSPIC33_USB_PENDING_COUNT];
+} Dspic33ExternalQueues;
+
+static bool external_queues_pending(const Dspic33* cpu) {
+    size_t index;
+    if (cpu->io.pmp.input.count != 0u) {
+        return true;
+    }
+    for (index = 0u; index < DSPIC33_I2C_COUNT; index++) {
+        if (cpu->io.i2c_response[index].count != 0u) {
+            return true;
+        }
+    }
+    for (index = 0u; index < DSPIC33_CAN_COUNT; index++) {
+        if (cpu->io.can_rx[index].count != 0u) {
+            return true;
+        }
+    }
+    for (index = 0u; index < cpu->events.count; index++) {
+        const Dspic33Event* event = &cpu->events.items[index];
+        if (event->external && event->type == DSPIC33_EVENT_USB &&
+            event->source < DSPIC33_USB_PENDING_COUNT) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool capture_external_queues(const Dspic33* cpu,
+                                    Dspic33ExternalQueues** queues) {
+    size_t index;
+    *queues = NULL;
+    if (!external_queues_pending(cpu)) {
+        return true;
+    }
+    *queues = calloc(1u, sizeof(**queues));
+    if (*queues == NULL) {
+        return false;
+    }
+    (*queues)->pmp = cpu->io.pmp.input;
+    memcpy((*queues)->i2c, cpu->io.i2c_response, sizeof((*queues)->i2c));
+    memcpy((*queues)->can, cpu->io.can_rx, sizeof((*queues)->can));
+    for (index = 0u; index < cpu->events.count; index++) {
+        const Dspic33Event* event = &cpu->events.items[index];
+        if (event->external && event->type == DSPIC33_EVENT_USB &&
+            event->source < DSPIC33_USB_PENDING_COUNT) {
+            (*queues)->usb[event->source] = cpu->io.usb_pending[event->source];
+        }
+    }
+    return true;
+}
+
+static size_t retain_external_events(Dspic33* cpu) {
+    size_t input;
+    size_t output = 0u;
+    for (input = 0u; input < cpu->events.count; input++) {
+        if (cpu->events.items[input].external) {
+            cpu->events.items[output++] = cpu->events.items[input];
+        }
+    }
+    return output;
+}
+
+static void restore_external_queues(Dspic33* cpu, const Dspic33ExternalQueues* queues) {
+    if (queues == NULL) {
+        return;
+    }
+    cpu->io.pmp.input = queues->pmp;
+    memcpy(cpu->io.i2c_response, queues->i2c, sizeof(queues->i2c));
+    memcpy(cpu->io.can_rx, queues->can, sizeof(queues->can));
+    memcpy(cpu->io.usb_pending, queues->usb, sizeof(queues->usb));
+}
+
 static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind kind) {
     static const uint16_t preserved_addresses[] = {
         0x0626u, 0x0728u, 0x0742u, 0x0744u, 0x0746u, 0x0748u, 0x0758u, 0x075au,
@@ -4055,6 +4132,9 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
     bool oscillator_pending = false;
     uint32_t auxiliary_pll_generation = cpu->io.auxiliary_pll_generation;
     Dspic33Oscillator oscillator = cpu->oscillator;
+    Dspic33ExternalQueues* external_queues;
+    size_t external_event_count;
+    uint64_t event_sequence = cpu->events.sequence;
     size_t index;
     if (cpu->nvm.active) {
         if (!cpu->nvm.reset_pending) {
@@ -4065,6 +4145,10 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
         if (kind == DSPIC33_RESET_ILLEGAL) {
             cpu->illegal_reset = true;
         }
+        return;
+    }
+    if (!capture_external_queues(cpu, &external_queues)) {
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
         return;
     }
     for (index = 0u; index < cpu->events.count; index++) {
@@ -4106,6 +4190,7 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
         dci_receive[index] =
             (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[address + 1u] << 8u));
     }
+    external_event_count = retain_external_events(cpu);
     reset_processor(cpu, auxiliary_security_reset ? 0u : reset_entry, false);
     apply_master_clear_sfr_reset(cpu, previous_sfr);
     for (index = 0u;
@@ -4155,6 +4240,11 @@ static void perform_warm_reset(Dspic33* cpu, uint16_t cause, Dspic33ResetKind ki
     cpu->instructions = instructions;
     cpu->cycles = cycles;
     cpu->device_cycles = device_cycles;
+    cpu->events.count = external_event_count;
+    cpu->events.sequence = event_sequence;
+    dspic33_reorder_events(cpu);
+    restore_external_queues(cpu, external_queues);
+    free(external_queues);
     cpu->io.auxiliary_pll_generation = auxiliary_pll_generation;
     if (auxiliary_pll_pending &&
         !dspic33_schedule(cpu, DSPIC33_EVENT_AUX_PLL, 0u, auxiliary_pll_generation,

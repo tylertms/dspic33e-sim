@@ -327,10 +327,14 @@ static uint32_t internal_event_value(const Dspic33* cpu, uint8_t channel, uint8_
 }
 
 static bool schedule_event(Dspic33* cpu, uint8_t channel, uint32_t value,
-                           uint64_t delay) {
+                           uint64_t delay, bool external) {
     uint64_t sequence = cpu->events.sequence;
     Dspic33Event* event;
-    if (!dspic33_schedule(cpu, DSPIC33_EVENT_I2C, channel, value, delay)) {
+    bool scheduled =
+        external
+            ? dspic33_schedule_external(cpu, DSPIC33_EVENT_I2C, channel, value, delay)
+            : dspic33_schedule(cpu, DSPIC33_EVENT_I2C, channel, value, delay);
+    if (!scheduled) {
         return false;
     }
     event = scheduled_event(cpu, sequence);
@@ -352,17 +356,17 @@ static bool schedule_event(Dspic33* cpu, uint8_t channel, uint32_t value,
 static bool schedule_internal(Dspic33* cpu, uint8_t channel, uint8_t kind,
                               uint16_t payload, uint64_t delay) {
     bool scheduled = schedule_event(
-        cpu, channel, internal_event_value(cpu, channel, kind, payload), delay);
+        cpu, channel, internal_event_value(cpu, channel, kind, payload), delay, false);
     if (!scheduled) {
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
     return scheduled;
 }
 
-static bool schedule_external(Dspic33* cpu, uint8_t channel, uint8_t kind,
-                              uint16_t payload, uint64_t delay) {
-    return schedule_event(cpu, channel,
-                          ((uint32_t)kind << I2C_EVENT_KIND_SHIFT) | payload, delay);
+static bool schedule_external_event(Dspic33* cpu, uint8_t channel, uint8_t kind,
+                                    uint16_t payload, uint64_t delay) {
+    return schedule_event(
+        cpu, channel, ((uint32_t)kind << I2C_EVENT_KIND_SHIFT) | payload, delay, true);
 }
 
 static void raise_master(Dspic33* cpu, uint8_t channel) {
@@ -940,7 +944,8 @@ static void slave_start(Dspic33* cpu, uint8_t channel, uint16_t payload,
         raise_slave(cpu, channel);
     }
     if (ten_bit && acknowledge && schedule_ten_second &&
-        !schedule_external(cpu, channel, I2C_EVENT_SLAVE_TEN_SECOND, address, 1u)) {
+        !schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_TEN_SECOND, address,
+                                 1u)) {
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
 }
@@ -959,7 +964,7 @@ static void slave_ten_second(Dspic33* cpu, uint8_t channel, uint16_t address,
         return;
     }
     if ((control & I2C_SCLREL) == 0u) {
-        schedule_external(cpu, channel, I2C_EVENT_SLAVE_TEN_SECOND, address, 1u);
+        schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_TEN_SECOND, address, 1u);
         return;
     }
     if ((control & I2C_IPMIEN) == 0u &&
@@ -1038,7 +1043,7 @@ static void slave_write(Dspic33* cpu, uint8_t channel, uint8_t value, bool inter
         return;
     }
     if ((control & I2C_SCLREL) == 0u) {
-        schedule_external(cpu, channel, I2C_EVENT_SLAVE_WRITE, value, 1u);
+        schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_WRITE, value, 1u);
         return;
     }
     status |= I2C_DATA;
@@ -1073,8 +1078,8 @@ static void slave_read(Dspic33* cpu, uint8_t channel, bool acknowledge,
         return;
     }
     if ((control & I2C_SCLREL) == 0u) {
-        schedule_external(cpu, channel, I2C_EVENT_SLAVE_READ, acknowledge ? 1u : 0u,
-                          1u);
+        schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_READ,
+                                acknowledge ? 1u : 0u, 1u);
         return;
     }
     value = (uint8_t)raw_word(cpu, (uint16_t)(base + I2C_TRN));
@@ -1492,7 +1497,8 @@ bool dspic33_i2c_read_register(Dspic33* cpu, uint16_t address, uint8_t* value) {
     return true;
 }
 
-void dspic33_i2c_process_event(Dspic33* cpu, uint8_t channel, uint32_t value) {
+void dspic33_i2c_process_event(Dspic33* cpu, uint8_t channel, uint32_t value,
+                               bool external) {
     uint8_t kind = (uint8_t)(value >> I2C_EVENT_KIND_SHIFT);
     uint8_t generation = (uint8_t)(value >> I2C_EVENT_GENERATION_SHIFT);
     uint16_t payload = (uint16_t)(value & I2C_EVENT_PAYLOAD_MASK);
@@ -1522,7 +1528,7 @@ void dspic33_i2c_process_event(Dspic33* cpu, uint8_t channel, uint32_t value) {
     }
     if (cpu->power_state == DSPIC33_POWER_IDLE &&
         (raw_word(cpu, (uint16_t)(bases[channel] + I2C_CON)) & 0x2000u) != 0u) {
-        schedule_event(cpu, channel, value, 1u);
+        schedule_event(cpu, channel, value, 1u, external);
         return;
     }
     if (kind == I2C_EVENT_CONTROL) {
@@ -1578,35 +1584,35 @@ bool dspic33_i2c_slave_start(Dspic33* cpu, uint8_t channel, uint16_t address, bo
                 0u) {
             return false;
         }
-        return schedule_external(cpu, channel, I2C_EVENT_SLAVE_TEN_RESTART, address,
-                                 delay);
+        return schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_TEN_RESTART,
+                                       address, delay);
     }
     payload = (uint16_t)(address | (read ? I2C_EXTERNAL_READ : 0u) |
                          (ten_bit ? I2C_EXTERNAL_TEN_BIT : 0u));
-    return schedule_external(cpu, channel, I2C_EVENT_SLAVE_START, payload, delay);
+    return schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_START, payload, delay);
 }
 
 bool dspic33_i2c_slave_write(Dspic33* cpu, uint8_t channel, uint8_t value,
                              uint64_t delay) {
     return channel < DSPIC33_I2C_COUNT &&
-           schedule_external(cpu, channel, I2C_EVENT_SLAVE_WRITE, value, delay);
+           schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_WRITE, value, delay);
 }
 
 bool dspic33_i2c_slave_read(Dspic33* cpu, uint8_t channel, bool acknowledge,
                             uint64_t delay) {
     return channel < DSPIC33_I2C_COUNT &&
-           schedule_external(cpu, channel, I2C_EVENT_SLAVE_READ, acknowledge ? 1u : 0u,
-                             delay);
+           schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_READ,
+                                   acknowledge ? 1u : 0u, delay);
 }
 
 bool dspic33_i2c_slave_stop(Dspic33* cpu, uint8_t channel, uint64_t delay) {
     return channel < DSPIC33_I2C_COUNT &&
-           schedule_external(cpu, channel, I2C_EVENT_SLAVE_STOP, 0u, delay);
+           schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_STOP, 0u, delay);
 }
 
 bool dspic33_i2c_collision(Dspic33* cpu, uint8_t channel, uint64_t delay) {
     return channel < DSPIC33_I2C_COUNT &&
-           schedule_external(cpu, channel, I2C_EVENT_COLLISION, 0u, delay);
+           schedule_external_event(cpu, channel, I2C_EVENT_COLLISION, 0u, delay);
 }
 
 bool dspic33_i2c_transmit(Dspic33* cpu, uint8_t channel, Dspic33I2cTransfer* transfer) {

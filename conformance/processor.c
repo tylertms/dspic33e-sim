@@ -10860,8 +10860,10 @@ static void illegal_condition_reset_cases(ProcessorConformance* state, Dspic33* 
     expect(state,
            cpu->io.timer_enabled == 0u && cpu->io.uart_rx_fifo[0].count == 0u &&
                !cpu->io.usb_host_pending && !cpu->io.cpu_write_valid &&
-               cpu->events.count == 0u,
-           "warm reset clears peripheral execution state");
+               cpu->events.count == 1u && cpu->events.items[0].external &&
+               cpu->events.items[0].type == DSPIC33_EVENT_UART &&
+               cpu->events.items[0].cycle == 20u,
+           "warm reset clears internal peripheral execution state");
     expect(state, dspic33_initialize(&copy), "initialize illegal reset copy");
     expect(state, dspic33_copy(&copy, cpu), "copy illegal reset state");
     expect(state,
