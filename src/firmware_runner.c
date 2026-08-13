@@ -37,6 +37,8 @@ typedef struct {
     bool plan_only;
     bool summary_only;
     bool failures_only;
+    size_t matching_scenarios;
+    size_t matching_steps;
     size_t scenarios;
     size_t steps;
     size_t current_scenario;
@@ -395,14 +397,19 @@ static bool scenario_supports_native_runner(const JsonValue* scenario) {
     return false;
 }
 
-static bool scenario_selected(const Runner* runner, const JsonValue* scenario) {
+static bool scenario_matches(const Runner* runner, const JsonValue* scenario) {
     const char* id = json_string(json_get(scenario, "id"));
     const char* name = json_string(json_get(scenario, "name"));
     bool filter_matches =
         runner->scenario_filter == NULL ||
         (id != NULL && wildcard_matches(runner->scenario_filter, id)) ||
         (name != NULL && wildcard_matches(runner->scenario_filter, name));
-    return filter_matches && scenario_supports_native_runner(scenario) && id != NULL &&
+    return filter_matches && scenario_supports_native_runner(scenario) && id != NULL;
+}
+
+static bool scenario_selected(const Runner* runner, const JsonValue* scenario) {
+    const char* id = json_string(json_get(scenario, "id"));
+    return scenario_matches(runner, scenario) &&
            scenario_hash(id) % runner->shard_count == runner->shard_index;
 }
 
@@ -704,10 +711,12 @@ static bool count_scenario(const char* path, const JsonValue* scenario, void* co
     Runner* runner = context;
     size_t count;
     (void)path;
-    if (!scenario_selected(runner, scenario)) {
+    if (!scenario_matches(runner, scenario)) {
         return true;
     }
     count = scenario_step_count(runner, scenario);
+    runner->matching_scenarios++;
+    runner->matching_steps += count;
     if (count == 0u && runner->step_filter != NULL) {
         return true;
     }
@@ -715,6 +724,9 @@ static bool count_scenario(const char* path, const JsonValue* scenario, void* co
         snprintf(error, error_size, "scenario has no executable steps: %s",
                  json_string(json_get(scenario, "id")));
         return false;
+    }
+    if (!scenario_selected(runner, scenario)) {
+        return true;
     }
     runner->scenarios++;
     runner->steps += count;
@@ -3719,12 +3731,14 @@ static int run_firmware_runner(int argc, char** argv, Runner* runner) {
     }
     printf("[prepare] Counting streamed scenarios\n");
     fflush(stdout);
-    if (!stream_patterns(runner, count_scenario, error, sizeof(error)) ||
-        runner->scenarios == 0u) {
-        if (runner->scenarios == 0u) {
-            snprintf(error, sizeof(error),
-                     "no scenarios matched the requested filters");
-        }
+    if (!stream_patterns(runner, count_scenario, error, sizeof(error))) {
+        fprintf(stderr, "[error] %s\n", error);
+        json_free((JsonValue*)runner->suite);
+        return 1;
+    }
+    if (runner->matching_scenarios == 0u ||
+        (runner->step_filter != NULL && runner->matching_steps == 0u)) {
+        snprintf(error, sizeof(error), "no scenarios matched the requested filters");
         fprintf(stderr, "[error] %s\n", error);
         json_free((JsonValue*)runner->suite);
         return 1;
