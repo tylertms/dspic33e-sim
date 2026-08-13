@@ -659,6 +659,7 @@ typedef struct {
     uint16_t dma_forced_pending;
     uint16_t dma_peripheral_pending;
     uint16_t dma_active;
+    uint16_t dma_arbiter_waiting;
     uint16_t spi_shift[DSPIC33_SPI_COUNT];
     uint16_t spi_pin_receive[DSPIC33_SPI_COUNT];
     uint16_t spi_generation[DSPIC33_SPI_COUNT];
@@ -677,10 +678,13 @@ typedef struct {
     uint8_t spi_pin_input_enabled;
     uint8_t spi_pin_select_high;
     uint64_t cpu_write_cycle;
+    uint64_t cpu_write_instruction;
     uint32_t cpu_write_address;
     uint16_t cpu_write_previous;
     uint8_t cpu_write_width;
     bool cpu_write_valid;
+    bool cpu_write_rmw;
+    uint64_t cpu_bus_cycle;
     uint32_t cpu_read_address;
     uint8_t cpu_read_width;
     bool cpu_read_valid;
@@ -724,7 +728,8 @@ typedef enum {
     DSPIC33_UNSUPPORTED_INSTRUCTION,
     DSPIC33_PROGRAM_BOUNDS,
     DSPIC33_INSTRUCTION_LIMIT,
-    DSPIC33_EVENT_QUEUE_ERROR
+    DSPIC33_EVENT_QUEUE_ERROR,
+    DSPIC33_SILICON_RESULT_UNDEFINED
 } Dspic33StopReason;
 
 typedef enum {
@@ -756,6 +761,7 @@ typedef struct {
     bool active;
     bool auxiliary_origin;
     bool reset_pending;
+    bool stall_workaround;
 } Dspic33Nvm;
 
 typedef struct {
@@ -819,6 +825,15 @@ typedef struct {
     uint8_t nested_do_interrupt_priority;
     uint8_t nested_do_extra_decrement_depth;
     bool nested_do_interrupt_armed;
+    uint16_t flash_read_connecting_words;
+    bool flash_read_erratum_armed;
+    bool flash_read_erratum_candidate;
+    bool flash_read_connecting_ends_repeat;
+    bool instruction_rmw;
+    bool instruction_rmw_read_valid;
+    uint32_t instruction_rmw_read_address;
+    uint8_t instruction_rmw_read_width;
+    uint8_t* var_write_domains;
     uint64_t instructions;
     uint64_t cycles;
     uint64_t device_cycles;
@@ -852,6 +867,8 @@ typedef struct {
     bool address_error_accumulator_state_completed;
     bool address_error_control_state_completed;
     uint32_t sequential_program_hole_pc;
+    bool reset_occurred;
+    bool reset_instruction_timing;
     bool illegal_reset;
     bool reset_locked;
     bool stop_on_trap;
@@ -885,6 +902,7 @@ bool dspic33_load_program_word(Dspic33* cpu, uint32_t address, uint32_t word);
 bool dspic33_program_range_implemented(uint32_t address, uint32_t size);
 bool dspic33_codeguard_admit_program_flow(Dspic33* cpu, uint32_t origin,
                                           uint32_t target);
+void dspic33_cancel_flash_read_sequence(Dspic33* cpu);
 void dspic33_raise_program_vector_error(Dspic33* cpu, uint32_t return_pc);
 void dspic33_complete_nvm(Dspic33* cpu);
 bool dspic33_complete_nvm_reset(Dspic33* cpu);
@@ -935,6 +953,7 @@ bool dspic33_i2c_transmit(Dspic33* cpu, uint8_t channel, Dspic33I2cTransfer* tra
 bool dspic33_i2c_pin(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* high);
 bool dspic33_dma_request(Dspic33* cpu, uint8_t request, uint16_t indirect_address,
                          uint64_t delay);
+bool dspic33_cpu_rmw_matches(const Dspic33* cpu, uint32_t address, uint8_t width);
 bool dspic33_pmp_respond(Dspic33* cpu, uint16_t value, uint64_t delay);
 bool dspic33_pmp_transmit(Dspic33* cpu, Dspic33PmpTransfer* transfer);
 bool dspic33_pmp_slave_read(Dspic33* cpu, uint8_t address, uint64_t delay);

@@ -263,6 +263,8 @@ static bool execute_start_sequence(Dspic33* cpu, bool delayed_write) {
 }
 
 static bool start_operation(Dspic33* cpu, uint16_t operation, uint32_t address) {
+    dspic33_write_word(cpu, 0x08c2u,
+                       (uint16_t)(dspic33_read_word(cpu, 0x08c2u) & ~0x8000u));
     configure_operation(cpu, operation, address, true);
     if (!execute_start_sequence(cpu, false)) {
         return false;
@@ -272,6 +274,8 @@ static bool start_operation(Dspic33* cpu, uint16_t operation, uint32_t address) 
 
 static bool start_operation_from(Dspic33* cpu, uint16_t operation, uint32_t address,
                                  uint32_t execution_address) {
+    dspic33_write_word(cpu, 0x08c2u,
+                       (uint16_t)(dspic33_read_word(cpu, 0x08c2u) & ~0x8000u));
     configure_operation(cpu, operation, address, true);
     load_start_sequence_at(cpu, execution_address, false);
     if (!step_instructions(cpu, 5u)) {
@@ -1338,12 +1342,44 @@ static void stall_and_interrupt_cases(NvmConformance* state, Dspic33* cpu) {
            cpu->pc == NVM_SEQUENCE_BASE + 10u && cpu->instructions == 5u &&
                cpu->interrupt_count == 0u,
            "completion cycle defers interrupt service");
+    dspic33_write_word(cpu, 0x08c2u, 0x8000u);
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
            "post-completion instruction advances");
     expect(state, cpu->last_interrupt == NVM_IRQ && cpu->interrupt_count == 1u,
            "NVM interrupt serviced after stall");
     expect(state, cpu->pc == 0x0302u && cpu->instructions == 6u,
            "NVM vector instruction executes after service");
+}
+
+static void same_segment_stall_erratum_cases(NvmConformance* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    cpu->write_latches[0] = 0x00112233u;
+    configure_operation(cpu, 1u, 0x3400u, true);
+    dspic33_write_word(cpu, 0x08c2u, 0x8000u);
+    expect(state, execute_start_sequence(cpu, false) && cpu->nvm.active,
+           "same-segment RTSP starts without the documented interrupt workaround");
+    expect(state,
+           !cpu->nvm.stall_workaround &&
+               dspic33_step(cpu) == DSPIC33_SILICON_RESULT_UNDEFINED && cpu->nvm.active,
+           "B1 same-segment RTSP stall remains silicon-undefined with GIE enabled");
+
+    dspic33_reset(cpu, 0u);
+    cpu->write_latches[0] = 0x00445566u;
+    expect(state, start_operation(cpu, 1u, 0x3600u) && cpu->nvm.stall_workaround,
+           "same-segment RTSP captures the disabled-interrupt workaround");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && !cpu->nvm.active &&
+               program_word(cpu, 0x3600u) == 0x00445566u,
+           "disabled-interrupt workaround permits the documented RTSP stall");
+
+    dspic33_reset(cpu, 0u);
+    cpu->write_latches[0] = 0x000000fdu;
+    expect(state,
+           start_operation(cpu, 0u, DSPIC33_CONFIGURATION_BASE + 4u) && cpu->nvm.active,
+           "configuration-byte programming starts in the execution segment");
+    dspic33_write_word(cpu, 0x08c2u, 0x8000u);
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && !cpu->nvm.active,
+           "configuration-byte programming remains outside the RTSP stall erratum");
 }
 
 static void power_save_cases(NvmConformance* state, Dspic33* cpu) {
@@ -1442,6 +1478,7 @@ static void power_save_cases(NvmConformance* state, Dspic33* cpu) {
     expect(state, start_operation(cpu, 1u, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3800u),
            "interrupt-before-power-save operation starts");
     dspic33_load_program_word(cpu, cpu->pc, OPCODE_SLEEP);
+    dspic33_write_word(cpu, 0x08c2u, 0x8000u);
     dspic33_write_word(cpu, 0x0800u, 0x8000u);
     dspic33_write_word(cpu, 0x0820u, 0x8000u);
     dspic33_write_word(cpu, 0x0846u, 0x3000u);
@@ -1989,6 +2026,7 @@ static void codeguard_vector_flow_cases(NvmConformance* state, Dspic33* cpu) {
     dspic33_set_working_register(cpu, 15u, 0x1000u);
     dspic33_write_word(cpu, 0x0820u, 0x0001u);
     dspic33_write_word(cpu, 0x0840u, 0x0001u);
+    dspic33_write_word(cpu, 0x08c2u, 0x8000u);
     dspic33_raise_interrupt(cpu, 0u);
     uint64_t trap_count = cpu->trap_count;
     uint64_t reset_count = cpu->illegal_reset_count;
@@ -2123,11 +2161,12 @@ static void vector_segment_execution_cases(NvmConformance* state, Dspic33* cpu) 
     dspic33_set_working_register(cpu, 15u, 0x1000u);
     dspic33_raise_oscillator_fail_trap(cpu);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == 1u &&
-               cpu->trap_count == 2u && cpu->pc == handler &&
-               cpu->last_trap_return == 0x000102u && cpu->w[15] == 0x1008u &&
-               (dspic33_read_word(cpu, 0x08c0u) & 0x000au) == 0x000au,
-           "trap VFC into vector segment traps before execution");
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0u &&
+               cpu->trap_count == 1u && cpu->last_trap == UINT16_MAX &&
+               cpu->w[15] == 0x1000u && cpu->instructions == 0u && cpu->cycles == 0u &&
+               cpu->corcon == 0x0020u &&
+               (dspic33_read_word(cpu, 0x0740u) & 0x8000u) != 0u,
+           "lower-priority Address Error during hard-trap VFC causes conflict reset");
 
     for (index = 0u; index < sizeof(vector_opcodes) / sizeof(vector_opcodes[0]);
          index++) {
@@ -2388,6 +2427,7 @@ static void deferred_reset_cases(NvmConformance* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x5002u, 0x5aa5u);
     dspic33_write_word(cpu, 0x0820u, 0x0001u);
     dspic33_write_word(cpu, 0x0840u, 0x0001u);
+    dspic33_write_word(cpu, 0x08c2u, 0x8000u);
     dspic33_raise_interrupt(cpu, 0u);
     {
         uint64_t reset_count = cpu->illegal_reset_count;
@@ -2665,6 +2705,7 @@ int main(void) {
         auxiliary_access_and_execution_cases(&state, &cpu);
         auxiliary_nvm_cases(&state, &cpu);
         stall_and_interrupt_cases(&state, &cpu);
+        same_segment_stall_erratum_cases(&state, &cpu);
         power_save_cases(&state, &cpu);
         codeguard_cases(&state, &cpu);
         persistent_program_alias_cases(&state, &cpu);

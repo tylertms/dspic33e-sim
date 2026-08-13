@@ -5353,12 +5353,67 @@ static void do_stack_overflow_cases(ProcessorConformance* state, Dspic33* cpu) {
            "fifth nested DO sets DOOVR and retains its level-sensitive source");
 }
 
+static void prepare_nested_zero_do_case(ProcessorConformance* state, Dspic33* cpu,
+                                        uint16_t inner_count, bool first_outer_nop,
+                                        bool second_outer_nop, bool inner_nop) {
+    reset_processor_conformance(cpu, 0x200u);
+    load_instruction(state, cpu, 0x200u, 0x080001u);
+    load_instruction(state, cpu, 0x202u, 6u);
+    load_instruction(state, cpu, 0x204u,
+                     first_outer_nop ? OPCODE_NOP : OPCODE_INCREMENT_W2);
+    load_instruction(state, cpu, 0x206u,
+                     second_outer_nop ? OPCODE_NOP : OPCODE_INCREMENT_W2);
+    load_instruction(state, cpu, 0x208u, 0x080000u | inner_count);
+    load_instruction(state, cpu, 0x20au, 1u);
+    load_instruction(state, cpu, 0x20cu, inner_nop ? OPCODE_NOP : OPCODE_INCREMENT_W2);
+    load_instruction(state, cpu, 0x20eu, OPCODE_NOP);
+    load_instruction(state, cpu, 0x210u, OPCODE_NOP);
+    dspic33_step(cpu);
+    dspic33_step(cpu);
+    dspic33_step(cpu);
+}
+
+static void nested_zero_do_erratum_cases(ProcessorConformance* state, Dspic33* cpu) {
+    prepare_nested_zero_do_case(state, cpu, 0u, true, true, true);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x20cu &&
+               cpu->do_depth == 2u && cpu->do_count[1] == 0u,
+           "nested zero-count DO accepts the documented NOP workaround");
+
+    prepare_nested_zero_do_case(state, cpu, 0u, true, true, true);
+    load_instruction(state, cpu, 0x208u, OPCODE_DO_W0);
+    dspic33_set_working_register(cpu, 0u, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x20cu &&
+               cpu->do_depth == 2u && cpu->do_count[1] == 0u,
+           "nested zero-count register DO accepts the documented NOP workaround");
+
+    prepare_nested_zero_do_case(state, cpu, 1u, false, false, false);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x20cu &&
+               cpu->do_depth == 2u && cpu->do_count[1] == 1u,
+           "nested nonzero DO does not require the zero-count workaround");
+
+    prepare_nested_zero_do_case(state, cpu, 0u, false, true, true);
+    expect(state, dspic33_step(cpu) == DSPIC33_SILICON_RESULT_UNDEFINED,
+           "nested zero-count DO rejects a missing first outer NOP");
+
+    prepare_nested_zero_do_case(state, cpu, 0u, true, false, true);
+    expect(state, dspic33_step(cpu) == DSPIC33_SILICON_RESULT_UNDEFINED,
+           "nested zero-count DO rejects a missing second outer NOP");
+
+    prepare_nested_zero_do_case(state, cpu, 0u, true, true, false);
+    expect(state, dspic33_step(cpu) == DSPIC33_SILICON_RESULT_UNDEFINED,
+           "nested zero-count DO rejects a missing inner NOP");
+}
+
 static void loop_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu) {
     repeat_encoding_matrix_cases(state, cpu);
     do_encoding_matrix_cases(state, cpu);
     do_register_control_cases(state, cpu);
     do_early_termination_cases(state, cpu);
     do_stack_overflow_cases(state, cpu);
+    nested_zero_do_erratum_cases(state, cpu);
 }
 
 typedef enum {
@@ -7433,10 +7488,12 @@ static bool direct_file_io_states_match(const Dspic33* actual,
     memcpy(&actual_io, &actual->io, sizeof(actual_io));
     memcpy(&expected_io, &expected->io, sizeof(expected_io));
     actual_io.cpu_write_cycle = expected_io.cpu_write_cycle;
+    actual_io.cpu_write_instruction = expected_io.cpu_write_instruction;
     actual_io.cpu_write_address = expected_io.cpu_write_address;
     actual_io.cpu_write_previous = expected_io.cpu_write_previous;
     actual_io.cpu_write_width = expected_io.cpu_write_width;
     actual_io.cpu_write_valid = expected_io.cpu_write_valid;
+    actual_io.cpu_write_rmw = expected_io.cpu_write_rmw;
     actual_io.cpu_read_address = expected_io.cpu_read_address;
     actual_io.cpu_read_width = expected_io.cpu_read_width;
     actual_io.cpu_read_valid = expected_io.cpu_read_valid;
@@ -7454,12 +7511,14 @@ static bool direct_file_states_match(const Dspic33* actual, const Dspic33* expec
     actual_state.auxiliary_program = NULL;
     actual_state.persistent_program = NULL;
     actual_state.data = NULL;
+    actual_state.var_write_domains = NULL;
     actual_state.events.items = NULL;
     actual_state.events.capacity = 0u;
     expected_state.program = NULL;
     expected_state.auxiliary_program = NULL;
     expected_state.persistent_program = NULL;
     expected_state.data = NULL;
+    expected_state.var_write_domains = NULL;
     expected_state.events.items = NULL;
     expected_state.events.capacity = 0u;
     return memcmp(&actual_state, &expected_state, sizeof(actual_state)) == 0 &&
@@ -7534,6 +7593,8 @@ static uint16_t run_direct_file_reference(Dspic33* cpu, DirectFileOperation oper
         }
     }
     cpu->instruction_advancing = false;
+    cpu->io.cpu_bus_cycle = UINT64_MAX;
+    cpu->io.cpu_write_rmw = false;
     return value;
 }
 
@@ -7646,6 +7707,8 @@ static bool run_direct_file_odd_word_case(Dspic33* cpu, Dspic33* reference,
         dspic33_device_advance_instruction(reference, 1u, device_ratio);
     }
     reference->instruction_advancing = false;
+    reference->io.cpu_bus_cycle = UINT64_MAX;
+    reference->io.cpu_write_rmw = false;
     matches =
         dspic33_load_program_word(cpu, 0u, opcode) &&
         dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->last_trap == 1u &&
@@ -10762,6 +10825,212 @@ static void move_encoding_matrix_cases(ProcessorConformance* state, Dspic33* cpu
     file_move_encoding_matrix_cases(state, cpu);
 }
 
+static void prepare_flash_read_erratum_case(ProcessorConformance* state, Dspic33* cpu,
+                                            uint32_t start) {
+    reset_processor_conformance(cpu, start);
+    load_instruction(state, cpu, start, OPCODE_MOV_DOUBLE_W1_POST_INCREMENT_W2);
+    expect(state,
+           dspic33_load_program_word(cpu, 0x1000u, 0x001000u) &&
+               dspic33_load_program_word(cpu, 0x1002u, 0u),
+           "load B1 Flash-read erratum PSV MOV.D data");
+    dspic33_set_working_register(cpu, 1u, 0x9000u);
+    cpu->dsrpag = 0x0200u;
+    cpu->tblpag = 0u;
+}
+
+static void flash_read_erratum_cases(ProcessorConformance* state, Dspic33* cpu) {
+    static const uint32_t flash_read_pairs[][2] = {
+        {OPCODE_MOV_W1_W2, OPCODE_MOV_W1_W2},
+        {OPCODE_TBLRDL_W2_W3, OPCODE_MOV_W1_W2},
+    };
+    Dspic33 copy;
+    bool initialized;
+    size_t index;
+
+    prepare_flash_read_erratum_case(state, cpu, 0x200u);
+    load_instruction(state, cpu, 0x202u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x204u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x206u, OPCODE_TBLRDL_W2_W3);
+    load_instruction(state, cpu, 0x208u, OPCODE_TBLRDL_W2_W3);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_SILICON_RESULT_UNDEFINED,
+           "B1 back-to-back Flash-read sequence reports an undefined silicon result");
+
+    for (index = 0u; index < sizeof(flash_read_pairs) / sizeof(flash_read_pairs[0]);
+         index++) {
+        prepare_flash_read_erratum_case(state, cpu, 0x200u);
+        load_instruction(state, cpu, 0x202u, OPCODE_NOP);
+        load_instruction(state, cpu, 0x204u, OPCODE_NOP);
+        load_instruction(state, cpu, 0x206u, flash_read_pairs[index][0]);
+        load_instruction(state, cpu, 0x208u, flash_read_pairs[index][1]);
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+                   dspic33_step(cpu) == DSPIC33_RUNNING &&
+                   dspic33_step(cpu) == DSPIC33_RUNNING &&
+                   dspic33_step(cpu) == DSPIC33_RUNNING &&
+                   dspic33_step(cpu) == DSPIC33_SILICON_RESULT_UNDEFINED,
+               "B1 PSV and mixed back-to-back Flash reads share the erratum boundary");
+    }
+
+    prepare_flash_read_erratum_case(state, cpu, 0x200u);
+    load_instruction(state, cpu, 0x202u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x204u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x206u, OPCODE_TBLRDL_W2_W3);
+    load_instruction(state, cpu, 0x208u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x20au, OPCODE_TBLRDL_W2_W3);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING,
+           "separating Flash reads with a NOP applies the documented workaround");
+
+    prepare_flash_read_erratum_case(state, cpu, 0x200u);
+    load_instruction(state, cpu, 0x202u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x204u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x206u, 0x370000u);
+    load_instruction(state, cpu, 0x208u, OPCODE_TBLRDL_W2_W3);
+    load_instruction(state, cpu, 0x20au, OPCODE_TBLRDL_W2_W3);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING,
+           "BRA to the next instruction applies the documented flow workaround");
+
+    prepare_flash_read_erratum_case(state, cpu, 0x200u);
+    load_instruction(state, cpu, 0x202u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x204u, 0x090001u);
+    load_instruction(state, cpu, 0x206u, OPCODE_TBLRDL_W2_W3);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING,
+           "REPEAT-ended connecting code does not arm the B1 Flash-read erratum");
+
+    prepare_flash_read_erratum_case(state, cpu, 0x200u);
+    load_instruction(state, cpu, 0x202u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x204u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x206u, OPCODE_TBLRDL_W2_W3);
+    load_instruction(state, cpu, 0x208u, OPCODE_TBLRDL_W2_W3);
+    load_instruction(state, cpu, 0x0014u, 0x000300u);
+    load_instruction(state, cpu, 0x0300u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x0302u, OPCODE_RETFIE);
+    cpu->w[15] = 0x5000u;
+    dspic33_write_word(cpu, 0x0820u, 0x0001u);
+    dspic33_write_word(cpu, 0x0840u, 0x0001u);
+    dspic33_write_word(cpu, 0x08c2u, 0x8000u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING,
+           "B1 Flash-read connecting code reaches the interrupt boundary");
+    dspic33_raise_interrupt(cpu, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0302u &&
+               !cpu->flash_read_erratum_armed,
+           "interrupt vectoring cancels the B1 Flash-read sequence");
+    dspic33_write_word(cpu, 0x0800u, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0204u &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING,
+           "post-interrupt Flash reads execute outside the cancelled erratum sequence");
+
+    prepare_flash_read_erratum_case(state, cpu, 0x202u);
+    load_instruction(state, cpu, 0x204u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x206u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x208u, OPCODE_TBLRDL_W2_W3);
+    load_instruction(state, cpu, 0x20au, OPCODE_TBLRDL_W2_W3);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING,
+           "misaligned PSV MOV.D does not arm the B1 Flash-read erratum");
+
+    prepare_flash_read_erratum_case(state, cpu, 0x200u);
+    load_instruction(state, cpu, 0x202u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x204u, OPCODE_NOP);
+    load_instruction(state, cpu, 0x206u, OPCODE_TBLRDL_W2_W3);
+    load_instruction(state, cpu, 0x208u, OPCODE_TBLRDL_W2_W3);
+    expect(
+        state,
+        dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING &&
+            dspic33_step(cpu) == DSPIC33_RUNNING &&
+            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->flash_read_erratum_candidate,
+        "first qualifying Flash read arms the B1 erratum boundary");
+    initialized = dspic33_initialize(&copy);
+    expect(state, initialized, "initialize B1 Flash-read erratum copy");
+    if (initialized) {
+        expect(state, dspic33_copy(&copy, cpu), "copy armed B1 Flash-read state");
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_SILICON_RESULT_UNDEFINED &&
+                   dspic33_step(&copy) == DSPIC33_SILICON_RESULT_UNDEFINED,
+               "copied B1 Flash-read state retains the same sequence boundary");
+        dspic33_destroy(&copy);
+    }
+
+    dspic33_reset(cpu, 0x200u);
+    expect(state,
+           !cpu->flash_read_erratum_armed && !cpu->flash_read_erratum_candidate &&
+               cpu->flash_read_connecting_words == 0u &&
+               !cpu->flash_read_connecting_ends_repeat,
+           "reset clears B1 Flash-read sequence state");
+}
+
+static void do_flash_access_erratum_cases(ProcessorConformance* state, Dspic33* cpu) {
+    static const uint32_t opcodes[] = {
+        OPCODE_TBLRDL_W2_W3,
+        OPCODE_TBLWTL_W2_W3,
+        OPCODE_MOV_W1_W2,
+    };
+    size_t index;
+    for (index = 0u; index < sizeof(opcodes) / sizeof(opcodes[0]); index++) {
+        uint32_t boundary;
+        for (boundary = 0x0200u; boundary <= 0x0204u; boundary += 4u) {
+            reset_processor_conformance(cpu, boundary);
+            load_instruction(state, cpu, boundary, opcodes[index]);
+            cpu->do_depth = 1u;
+            cpu->do_start[0] = 0x0200u;
+            cpu->do_end[0] = 0x0204u;
+            cpu->do_count[0] = 1u;
+            cpu->dostart = 0x0200u;
+            cpu->doend = 0x0204u;
+            cpu->dcount = 1u;
+            dspic33_set_working_register(cpu, 1u, 0xc000u);
+            dspic33_set_working_register(cpu, 2u, 0u);
+            dspic33_set_working_register(cpu, 3u, 0x1357u);
+            cpu->dsrpag = 0x0200u;
+            expect(state, dspic33_step(cpu) == DSPIC33_SILICON_RESULT_UNDEFINED,
+                   "B1 DO boundary Flash access reports an undefined silicon result");
+        }
+    }
+
+    reset_processor_conformance(cpu, 0x0202u);
+    load_instruction(state, cpu, 0x0202u, OPCODE_TBLRDL_W2_W3);
+    cpu->do_depth = 1u;
+    cpu->do_start[0] = 0x0200u;
+    cpu->do_end[0] = 0x0204u;
+    cpu->do_count[0] = 1u;
+    cpu->dostart = 0x0200u;
+    cpu->doend = 0x0204u;
+    cpu->dcount = 1u;
+    dspic33_set_working_register(cpu, 2u, 0u);
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "Flash access inside a DO body remains defined away from both boundaries");
+}
+
 static void illegal_condition_reset_cases(ProcessorConformance* state, Dspic33* cpu) {
     static const uint16_t preserved_addresses[] = {
         0x0742u, 0x0744u, 0x0746u, 0x0748u, 0x0758u, 0x075au,
@@ -11174,6 +11443,8 @@ int main(void) {
         non_cpu_sfr_timing_cases(&state, &cpu);
         psv_timing_cases(&state, &cpu);
         psv_repeat_timing_cases(&state, &cpu);
+        flash_read_erratum_cases(&state, &cpu);
+        do_flash_access_erratum_cases(&state, &cpu);
         psv_program_hole_cases(&state, &cpu);
         address_register_dependency_cases(&state, &cpu);
         dsp_x_prefetch_page_cases(&state, &cpu);

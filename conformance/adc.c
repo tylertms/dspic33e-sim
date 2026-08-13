@@ -995,6 +995,46 @@ static void copy_cases(AdcConformance* state, Dspic33* cpu) {
     dspic33_destroy(&copy);
 }
 
+static void simultaneous_channel_erratum_cases(AdcConformance* state, Dspic33* cpu) {
+    uint8_t module;
+    uint8_t channel;
+    for (module = 0u; module < DSPIC33_ADC_COUNT; module++) {
+        for (channel = 0u; channel <= 3u; channel += 3u) {
+            dspic33_reset(cpu, 0u);
+            dspic33_write_word(cpu, controls[module], 0u);
+            dspic33_write_word(cpu, (uint16_t)(controls[module] + 2u), 0x0100u);
+            dspic33_write_word(cpu, (uint16_t)(controls[module] + 4u), 0x0102u);
+            dspic33_write_word(cpu, (uint16_t)(controls[module] + 8u), channel);
+            dspic33_write_word(cpu, (uint16_t)(controls[module] + 6u),
+                               channel == 3u ? 1u : 0u);
+            dspic33_write_word(cpu, controls[module], 0x8074u);
+            dspic33_device_advance(cpu, 3u);
+            expect(state,
+                   cpu->stop_reason == DSPIC33_SILICON_RESULT_UNDEFINED &&
+                       cpu->io.adc_latched_count[module] == 0u &&
+                       cpu->events.count == 0u,
+                   "B1 1.1 Msps CH0 and CH1 selection remains silicon-undefined");
+        }
+    }
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0322u, 0x0100u);
+    dspic33_write_word(cpu, 0x0324u, 0x0102u);
+    dspic33_write_word(cpu, 0x0326u, 1u);
+    dspic33_write_word(cpu, 0x0320u, 0x8074u);
+    dspic33_device_advance(cpu, 3u);
+    expect(state,
+           cpu->stop_reason == DSPIC33_RUNNING && cpu->io.adc_latched_count[0] == 2u,
+           "different sequential channels remain outside the B1 erratum boundary");
+
+    dspic33_reset(cpu, 0u);
+    configure_manual(cpu, 0u, 0x0008u, 0x0100u, 0u);
+    start_manual(cpu, 0u);
+    expect(state,
+           cpu->stop_reason == DSPIC33_RUNNING && cpu->io.adc_latched_count[0] == 2u,
+           "manual simultaneous conversion remains outside the 1.1 Msps boundary");
+}
+
 int main(void) {
     Dspic33 cpu;
     AdcConformance state = {0u, 0u, 0u};
@@ -1020,6 +1060,7 @@ int main(void) {
     pmd_cases(&state, &cpu);
     boundary_cases(&state, &cpu);
     analog_pin_cases(&state, &cpu);
+    simultaneous_channel_erratum_cases(&state, &cpu);
     copy_cases(&state, &cpu);
     report_sfr_side_effect_coverage(
         "adc", adc_sfr_side_effect_coverage,

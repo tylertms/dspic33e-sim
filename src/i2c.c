@@ -769,6 +769,10 @@ static void complete_control(Dspic33* cpu, uint8_t channel, uint16_t operation) 
     if (!module_enabled(cpu, channel) || (control & operation) == 0u) {
         return;
     }
+    if (operation == I2C_ACKEN && dspic33_cpu_rmw_matches(cpu, base + I2C_CON, 2u)) {
+        cpu->stop_reason = DSPIC33_SILICON_RESULT_UNDEFINED;
+        return;
+    }
     if (operation == I2C_RCEN) {
         uint64_t delay;
         if (response_wait(&cpu->io.i2c_response[channel], cpu->device_cycles, &delay)) {

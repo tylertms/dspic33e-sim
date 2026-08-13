@@ -25,7 +25,8 @@ enum {
     DMA_TEST_READ_PAD = 0x0290u,
     DMA_TEST_WRITE_PAD = 0x0298u,
     DMA_TEST_ALT_WRITE_PAD = 0x0904u,
-    DMA_TEST_BIDIRECTIONAL_PAD = 0x0608u
+    DMA_TEST_BIDIRECTIONAL_PAD = 0x0608u,
+    OPCODE_MOV_W1_POST_INCREMENT_W2 = 0x780131u
 };
 
 static const uint16_t readable_pads[] = {
@@ -730,6 +731,95 @@ static void stale_request_cases(DmaConformance* state, Dspic33* cpu) {
            "new generation transfers");
 }
 
+static void can_receive_arbiter_erratum_cases(DmaConformance* state, Dspic33* cpu) {
+    static const uint8_t requests[] = {34u, 55u};
+    size_t index;
+    for (index = 0u; index < sizeof(requests) / sizeof(requests[0]); index++) {
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, 0x3600u, 0x1357u);
+        configure_channel(cpu, 0u, 0x2001u, requests[index], 0u, 0u, DMA_TEST_WRITE_PAD,
+                          0u);
+        expect(state,
+               dspic33_dma_request(cpu, requests[index], 0u, 5u) &&
+                   cpu->io.dma_peripheral_pending == 1u,
+               "delayed CAN receive DMA transaction remains queued");
+        expect(state,
+               dspic33_dma_request(cpu, requests[index], 0u, 0u) &&
+                   cpu->stop_reason == DSPIC33_RUNNING,
+               "queued delay alone does not imply a DMA arbiter hold");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, 0x3600u, 0x1357u);
+        configure_channel(cpu, 0u, 0x2001u, requests[index], 0u, 0u, DMA_TEST_WRITE_PAD,
+                          0u);
+        dspic33_load_program_word(cpu, 0x0200u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+        cpu->pc = 0x0200u;
+        dspic33_set_working_register(cpu, 1u, 0x3800u);
+        dspic33_write_word(cpu, 0x3800u, 0x55aau);
+        {
+            bool queued = dspic33_dma_request(cpu, requests[index], 0x3600u, 1u);
+            Dspic33StopReason stepped = dspic33_step(cpu);
+            expect(state,
+                   queued && stepped == DSPIC33_RUNNING && cpu->w[2] == 0x55aau &&
+                       (cpu->io.dma_arbiter_waiting & 1u) != 0u,
+                   "CAN receive DMA transaction waits for the CPU bus master");
+        }
+        expect(state,
+               dspic33_dma_request(cpu, requests[index], 0xd000u, 0u) &&
+                   cpu->stop_reason == DSPIC33_SILICON_RESULT_UNDEFINED,
+               "B1 CAN receive request remains undefined after ordinary RAM wait");
+
+        cpu->stop_reason = DSPIC33_RUNNING;
+        dspic33_write_word(cpu, 0x0b00u, 0x2001u);
+        dspic33_write_word(cpu, 0x0b00u, 0xa001u);
+        expect(state,
+               (cpu->io.dma_arbiter_waiting & 1u) == 0u &&
+                   dspic33_dma_request(cpu, requests[index], 0u, 0u) &&
+                   cpu->stop_reason == DSPIC33_RUNNING,
+               "DMA disable and re-enable clears stale arbiter-wait history");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, 0x0058u, 0x0020u);
+        dspic33_write_word(cpu, 0x3600u, 0x1357u);
+        configure_channel(cpu, 0u, 0x2001u, requests[index], 0x3600u, 0u,
+                          DMA_TEST_WRITE_PAD, 0u);
+        dspic33_load_program_word(cpu, 0x0200u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+        cpu->pc = 0x0200u;
+        dspic33_set_working_register(cpu, 1u, 0x3800u);
+        dspic33_write_word(cpu, 0x3800u, 0x55aau);
+        expect(state,
+               dspic33_dma_request(cpu, requests[index], 0u, 1u) &&
+                   dspic33_step(cpu) == DSPIC33_RUNNING &&
+                   dspic33_dma_request(cpu, requests[index], 0u, 0u) &&
+                   cpu->stop_reason == DSPIC33_RUNNING,
+               "MSTRPR workaround excludes the B1 request-loss boundary");
+
+        dspic33_reset(cpu, 0u);
+        configure_channel(cpu, 0u, 0x0001u, requests[index], 0xd000u, 0u,
+                          DMA_TEST_WRITE_PAD, 0u);
+        dspic33_load_program_word(cpu, 0x0200u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+        cpu->pc = 0x0200u;
+        dspic33_set_working_register(cpu, 1u, 0x3800u);
+        dspic33_write_word(cpu, 0x3800u, 0x55aau);
+        expect(state,
+               dspic33_dma_request(cpu, requests[index], 0u, 1u) &&
+                   dspic33_step(cpu) == DSPIC33_RUNNING &&
+                   dspic33_dma_request(cpu, requests[index], 0u, 0u) &&
+                   cpu->stop_reason == DSPIC33_RUNNING,
+               "dual-port RAM workaround excludes the B1 request-loss boundary");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, 0x3600u, 0x1357u);
+        configure_channel(cpu, 0u, 0x2001u, requests[index], 0x3600u, 0u,
+                          DMA_TEST_WRITE_PAD, 0u);
+        expect(state,
+               dspic33_dma_request(cpu, requests[index], 0u, 0u) &&
+                   (dspic33_write_word(cpu, 0x3800u, 0x55aau), true) &&
+                   dspic33_device_advance(cpu, 0u) && cpu->io.dma_arbiter_waiting == 0u,
+               "external setup writes do not synthesize CPU bus contention");
+    }
+}
+
 static void power_and_lifecycle_cases(DmaConformance* state, Dspic33* cpu,
                                       Dspic33* copy) {
     uint64_t sleep_cycle;
@@ -918,6 +1008,7 @@ int main(void) {
         peripheral_collision_cases(&state, &cpu);
         memory_collision_cases(&state, &cpu);
         stale_request_cases(&state, &cpu);
+        can_receive_arbiter_erratum_cases(&state, &cpu);
         {
             Dspic33 copy;
             bool copy_initialized = dspic33_initialize(&copy);

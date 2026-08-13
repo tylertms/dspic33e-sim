@@ -602,17 +602,41 @@ static void transmit_mode_cases(UartConformance* state, Dspic33* cpu) {
         clear_interrupt(cpu, transmit_irqs[0]);
         dspic33_write_word(cpu, (uint16_t)(bases[0] + 4u), 0x3cu);
         expect(state,
-               interrupt_flag(cpu, transmit_irqs[0]) ==
-                   (interrupt_mode == 0u || interrupt_mode == 2u),
+               interrupt_mode == 1u
+                   ? cpu->stop_reason == DSPIC33_SILICON_RESULT_UNDEFINED
+                   : interrupt_flag(cpu, transmit_irqs[0]) ==
+                         (interrupt_mode == 0u || interrupt_mode == 2u),
                "transmit start interrupt mode");
         clear_interrupt(cpu, transmit_irqs[0]);
+        if (interrupt_mode == 1u) {
+            expect(state, cpu->events.count == 0u,
+                   "B1 final-character interrupt timing remains unspecified");
+            expect(state, !dspic33_uart_transmit(cpu, 0u, &output),
+                   "B1 unspecified transmit does not report an ideal frame");
+            continue;
+        }
         expect(state, dspic33_device_advance(cpu, 160u),
                "transmit interrupt completion advance");
-        expect(state, interrupt_flag(cpu, transmit_irqs[0]) == (interrupt_mode == 1u),
+        expect(state, !interrupt_flag(cpu, transmit_irqs[0]),
                "transmit completion interrupt mode");
         expect(state, dspic33_uart_transmit(cpu, 0u, &output),
                "transmit interrupt output");
     }
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, bases[0], 0x8000u);
+    dspic33_write_word(cpu, (uint16_t)(bases[0] + 2u), 0x2000u);
+    dspic33_write_word(cpu, (uint16_t)(bases[0] + 4u), 0x31u);
+    dspic33_write_word(cpu, (uint16_t)(bases[0] + 4u), 0x32u);
+    dspic33_write_word(cpu, (uint16_t)(bases[0] + 2u), 0x2400u);
+    expect(state,
+           cpu->stop_reason == DSPIC33_RUNNING && (cpu->io.uart_tx_active & 1u) != 0u &&
+               cpu->io.uart_tx_fifo[0].count == 1u,
+           "non-final UTXISEL character remains deterministic");
+    expect(state,
+           dspic33_device_advance(cpu, 160u) &&
+               cpu->stop_reason == DSPIC33_SILICON_RESULT_UNDEFINED,
+           "UTXISEL becomes unspecified when the final TSR character starts");
 
     dspic33_reset(cpu, 0u);
     configure(cpu, 0u, 0x9041u, 0x4400u, 0u);
@@ -1023,6 +1047,49 @@ static void disable_copy_and_api_cases(UartConformance* state, Dspic33* cpu) {
            "reset clears UART runtime and releases CTS");
 }
 
+static void break_rmw_erratum_cases(UartConformance* state, Dspic33* cpu) {
+    Dspic33UartFrame output;
+    uint16_t status = (uint16_t)(bases[0] + 2u);
+    dspic33_reset(cpu, 0x0200u);
+    configure(cpu, 0u, 0x8000u, 0x0c00u, 0u);
+    dspic33_write_word(cpu, (uint16_t)(bases[0] + 4u), 0u);
+    dspic33_device_advance(cpu, 223u);
+    dspic33_load_program_word(cpu, 0x0200u, 0xa80223u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_SILICON_RESULT_UNDEFINED &&
+               (dspic33_read_word(cpu, status) & 0x0800u) != 0u &&
+               dspic33_uart_transmit(cpu, 0u, &output),
+           "B1 UTXBRK clear concurrent with a UART status RMW remains undefined");
+
+    dspic33_reset(cpu, 0x0200u);
+    configure(cpu, 0u, 0x8000u, 0x0c00u, 0u);
+    dspic33_write_word(cpu, (uint16_t)(bases[0] + 4u), 0u);
+    dspic33_device_advance(cpu, 223u);
+    dspic33_load_program_word(cpu, 0x0200u, (uint32_t)(0xec2000u | status));
+    expect(state, dspic33_step(cpu) == DSPIC33_SILICON_RESULT_UNDEFINED,
+           "B1 UTXBRK clear detects non-bit RMW instructions");
+
+    dspic33_reset(cpu, 0x0200u);
+    configure(cpu, 0u, 0x8000u, 0x0c00u, 0u);
+    dspic33_write_word(cpu, (uint16_t)(bases[0] + 4u), 0u);
+    dspic33_device_advance(cpu, 223u);
+    cpu->w[0] = dspic33_read_word(cpu, status);
+    dspic33_load_program_word(cpu, 0x0200u, (uint32_t)(0x880000u | status / 2u));
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "plain MOV remains outside the UTXBRK RMW boundary");
+
+    dspic33_reset(cpu, 0x0200u);
+    configure(cpu, 0u, 0x8000u, 0x0c00u, 0u);
+    dspic33_write_word(cpu, (uint16_t)(bases[0] + 4u), 0u);
+    dspic33_device_advance(cpu, 223u);
+    dspic33_load_program_word(cpu, 0x0200u, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               (dspic33_read_word(cpu, status) & 0x0800u) == 0u &&
+               dspic33_uart_transmit(cpu, 0u, &output),
+           "UTXBRK clears normally without a concurrent UART status RMW");
+}
+
 int main(void) {
     UartConformance state = {0u, 0u, 0u};
     Dspic33 cpu;
@@ -1045,6 +1112,7 @@ int main(void) {
         physical_pps_cases(&state, &cpu);
         physical_lifecycle_cases(&state, &cpu);
         physical_auto_baud_cases(&state, &cpu);
+        break_rmw_erratum_cases(&state, &cpu);
         disable_copy_and_api_cases(&state, &cpu);
         dspic33_destroy(&cpu);
     }

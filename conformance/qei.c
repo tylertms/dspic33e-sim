@@ -27,6 +27,7 @@ enum {
     QEI_INDEX_MATCH_SHIFT = 8u,
     QEI_DIVIDER_SHIFT = 4u,
     QEI_GATE_ENABLE = 0x0004u,
+    QEI_DIRECTION_INVERT = 0x0008u,
     QEI_MODE_QUADRATURE = 0u,
     QEI_MODE_UP_DOWN = 1u,
     QEI_MODE_GATE = 2u,
@@ -94,6 +95,7 @@ static bool input(Dspic33* cpu, uint8_t channel, Dspic33QeiInput source, bool hi
 static void reset_qei(Dspic33* cpu) {
     uint8_t channel;
     uint8_t source;
+    dspic33_reset(cpu, 0u);
     for (channel = 0u; channel < DSPIC33_QEI_COUNT; channel++) {
         for (source = 0u; source < 4u; source++) {
             dspic33_qei_input(cpu, channel, (Dspic33QeiInput)source, false, 0u);
@@ -219,9 +221,9 @@ static void quadrature_cases(QeiConformance* state, Dspic33* cpu) {
                "QEI velocity follows quadrature count");
         expect(state,
                input(cpu, channel, DSPIC33_QEI_INDEX, true) &&
-                   (read_counter(cpu, (uint16_t)(base + 0x16u)) == 1u ||
-                    read_counter(cpu, (uint16_t)(base + 0x16u)) == UINT32_MAX),
-               "B1 quadrature Index counter stays within its direction ambiguity");
+                   cpu->stop_reason == DSPIC33_SILICON_RESULT_UNDEFINED,
+               "B1 positive-direction Index counter remains silicon-undefined");
+        cpu->stop_reason = DSPIC33_RUNNING;
         input(cpu, channel, DSPIC33_QEI_INDEX, false);
         expect(state,
                input(cpu, channel, DSPIC33_QEI_PHASE_B, true) &&
@@ -850,14 +852,16 @@ static void interrupt_compare_index_cases(QeiConformance* state, Dspic33* cpu) {
         write_counter(cpu, (uint16_t)(base + 6u), (uint16_t)(base + 0x0au), 9u);
         dspic33_write_word(cpu, status_address, QEI_STATUS_INDEX_ENABLE);
         dspic33_write_word(cpu, base,
-                           QEI_ENABLE | (1u << QEI_POSITION_MODE_SHIFT) |
-                               (3u << QEI_INDEX_MATCH_SHIFT));
-        expect(state,
-               input(cpu, channel, DSPIC33_QEI_INDEX, true) &&
-                   input(cpu, channel, DSPIC33_QEI_PHASE_A, true) &&
-                   read_counter(cpu, (uint16_t)(base + 6u)) == 10u &&
-                   (dspic33_read_word(cpu, status_address) & QEI_STATUS_INDEX) == 0u,
-               "QEI asserted Index waits for the programmed phase match");
+                           QEI_ENABLE | QEI_MODE_UP_DOWN |
+                               (1u << QEI_POSITION_MODE_SHIFT) |
+                               (3u << QEI_INDEX_MATCH_SHIFT) | QEI_DIRECTION_INVERT);
+        {
+            bool index_high = input(cpu, channel, DSPIC33_QEI_INDEX, true);
+            bool phase_high = input(cpu, channel, DSPIC33_QEI_PHASE_A, true);
+            uint16_t status = dspic33_read_word(cpu, status_address);
+            expect(state, index_high && phase_high && (status & QEI_STATUS_INDEX) == 0u,
+                   "QEI asserted Index waits for the programmed phase match");
+        }
         expect(state,
                input(cpu, channel, DSPIC33_QEI_PHASE_B, true) &&
                    read_counter(cpu, (uint16_t)(base + 6u)) == 0u &&
@@ -1592,6 +1596,39 @@ static void copy_cases(QeiConformance* state, Dspic33* cpu) {
     dspic33_destroy(&copy);
 }
 
+static void index_direction_erratum_cases(QeiConformance* state, Dspic33* cpu) {
+    uint8_t channel;
+    for (channel = 0u; channel < DSPIC33_QEI_COUNT; channel++) {
+        uint16_t base = bases[channel];
+        reset_qei(cpu);
+        set_open_comparison_window(cpu, base);
+        dspic33_write_word(cpu, base, QEI_ENABLE | (1u << QEI_INDEX_MATCH_SHIFT));
+        expect(state,
+               input(cpu, channel, DSPIC33_QEI_PHASE_A, true) &&
+                   cpu->io.qei.direction[channel] > 0 &&
+                   input(cpu, channel, DSPIC33_QEI_INDEX, true) &&
+                   cpu->stop_reason == DSPIC33_SILICON_RESULT_UNDEFINED,
+               "B1 positive-direction quadrature index remains silicon-undefined");
+
+        reset_qei(cpu);
+        set_open_comparison_window(cpu, base);
+        dspic33_write_word(cpu, base, QEI_ENABLE);
+        {
+            bool phase_changed = input(cpu, channel, DSPIC33_QEI_PHASE_B, true) &&
+                                 input(cpu, channel, DSPIC33_QEI_PHASE_A, true) &&
+                                 input(cpu, channel, DSPIC33_QEI_PHASE_B, false) &&
+                                 input(cpu, channel, DSPIC33_QEI_PHASE_A, false);
+            int8_t direction = cpu->io.qei.direction[channel];
+            bool index_changed = input(cpu, channel, DSPIC33_QEI_INDEX, true);
+            expect(
+                state,
+                phase_changed && direction < 0 && index_changed &&
+                    cpu->stop_reason == DSPIC33_RUNNING,
+                "negative-direction quadrature index remains outside the B1 erratum");
+        }
+    }
+}
+
 int main(void) {
     Dspic33 cpu;
     QeiConformance state = {0u, 0u, 0u};
@@ -1609,9 +1646,10 @@ int main(void) {
         power_lifecycle_cases(&state, &cpu);
         pps_cases(&state, &cpu);
         large_timer_advance_cases(&state, &cpu);
+        index_direction_erratum_cases(&state, &cpu);
         pmd_cases(&state, &cpu);
         copy_cases(&state, &cpu);
-        expect(&state, state.cases == 528u, "QEI assertion accounting");
+        expect(&state, state.cases == 532u, "QEI assertion accounting");
         dspic33_destroy(&cpu);
     }
     report_sfr_side_effect_coverage(

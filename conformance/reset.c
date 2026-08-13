@@ -29,7 +29,9 @@ enum {
     MOVE_KEY_55 = 0x200550u,
     MOVE_KEY_AA = 0x200aa0u,
     WRITE_NVM_KEY = 0x883970u,
-    SET_NVM_WRITE = 0xa8e729u
+    SET_NVM_WRITE = 0xa8e729u,
+    OPCODE_NOP = 0x000000u,
+    OPCODE_MOV_W1_POST_INCREMENT_W2 = 0x780131u
 };
 
 typedef struct {
@@ -294,6 +296,80 @@ static void reset_vector_cases(ResetConformance* state, Dspic33* cpu,
            "B1 protected auxiliary BOR enters security reset");
 }
 
+static void trap_conflict_cases(ResetConformance* state, Dspic33* cpu) {
+    uint64_t instructions;
+    uint64_t cycles;
+    dspic33_reset(cpu, 0u);
+    expect(state, configure_primary_frc_reset(cpu),
+           "configure primary trap conflict reset vector");
+    dspic33_reset(cpu, 0u);
+    dspic33_load_program_word(cpu, 0x0004u, 0x000300u);
+    dspic33_load_program_word(cpu, 0x0300u, OPCODE_NOP);
+    dspic33_set_working_register(cpu, 15u, 0x5000u);
+    dspic33_raise_oscillator_fail_trap(cpu);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == 0u &&
+               cpu->pc == 0x0302u && (cpu->corcon & 0x0008u) != 0u &&
+               (cpu->sr & 0x00e0u) == 0x00e0u,
+           "oscillator hard trap establishes priority fifteen");
+    instructions = cpu->instructions;
+    cycles = cpu->cycles;
+    dspic33_set_generic_hard_trap_source(cpu, true);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0u &&
+               (dspic33_read_word(cpu, RESET_CONTROL) & 0x8000u) != 0u &&
+               !cpu->illegal_reset && cpu->instructions == instructions &&
+               cpu->cycles == cycles && cpu->w[15] == 0x1000u,
+           "lower-priority hard trap causes conflict reset without continuation");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_load_program_word(cpu, 0x0008u, 0x000300u);
+    dspic33_load_program_word(cpu, 0x0004u, 0x000320u);
+    dspic33_load_program_word(cpu, 0x0300u, OPCODE_NOP);
+    dspic33_load_program_word(cpu, 0x0320u, OPCODE_NOP);
+    dspic33_set_working_register(cpu, 15u, 0x5000u);
+    dspic33_set_generic_hard_trap_source(cpu, true);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == 2u &&
+               cpu->pc == 0x0302u,
+           "generic hard trap establishes priority thirteen");
+    dspic33_raise_oscillator_fail_trap(cpu);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == 0u &&
+               cpu->pc == 0x0322u &&
+               (dspic33_read_word(cpu, RESET_CONTROL) & 0x8000u) == 0u,
+           "higher-priority hard trap nests without conflict reset");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3000u,
+                              0x00ffffffu);
+    expect(state,
+           start_nvm_pair(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3000u, 0x00123456u),
+           "start opposite-segment NVM operation before trap conflict");
+    cpu->corcon |= 0x0008u;
+    cpu->sr = (uint16_t)((cpu->sr & ~0x00e0u) | 0x00e0u);
+    dspic33_set_generic_hard_trap_source(cpu, true);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && !cpu->nvm.active &&
+               !cpu->nvm.reset_pending && cpu->pc == 0u &&
+               dspic33_read_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE +
+                                                  0x3000u) == 0x00123456u &&
+               (dspic33_read_word(cpu, RESET_CONTROL) & 0x8000u) != 0u,
+           "trap conflict reset follows active RTSP completion");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_load_program_word(cpu, 0x0200u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    dspic33_set_working_register(cpu, 1u, 0x1001u);
+    cpu->corcon |= 0x000cu;
+    cpu->sr = (uint16_t)((cpu->sr & ~0x00e0u) | 0x00e0u);
+    cpu->pc = 0x0200u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0u && cpu->cycles == 0u &&
+               cpu->corcon == 0x0020u &&
+               (dspic33_read_word(cpu, RESET_CONTROL) & 0x8000u) != 0u,
+           "direct lower-priority hard trap resets without stale state or timing");
+}
+
 int main(void) {
     Dspic33 source;
     Dspic33 copy;
@@ -308,7 +384,8 @@ int main(void) {
     nvm_reset_cases(&state, &source);
     copy_cases(&state, &source, &copy);
     reset_vector_cases(&state, &source, &copy);
-    expect(&state, state.cases == 41u, "reset assertion accounting");
+    trap_conflict_cases(&state, &source);
+    expect(&state, state.cases == 49u, "reset assertion accounting");
     printf("[reset-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);
     dspic33_destroy(&copy);

@@ -50,6 +50,7 @@ enum {
     OPCODE_MOV_W4_W3 = 0x780194u,
     OPCODE_MOV_DOUBLE_W4_W2 = 0xbe0114u,
     OPCODE_TBLRDL_W4_W3 = 0xba0194u,
+    OPCODE_BSET_DATA_0 = 0xa81200u,
     OPCODE_NOP = 0u,
     OPCODE_RESET = 0xfe0000u,
     OPCODE_RETFIE = 0x064000u
@@ -890,6 +891,51 @@ static void lifecycle_cases(InterruptControlConformance* state, Dspic33* source,
            "POR restores interrupt-control state");
 }
 
+static void variable_latency_erratum_cases(InterruptControlConformance* state,
+                                           Dspic33* source, Dspic33* copy) {
+    dspic33_reset(source, 0x0200u);
+    source->corcon |= 0x8000u;
+    source->w[15] = 0x2c00u;
+    dspic33_load_program_word(source, 0x0200u, OPCODE_BSET_DATA_0);
+    enable_interrupt(source, 0u, 1u, 0x6000u);
+    expect(state,
+           dspic33_step(source) == DSPIC33_RUNNING &&
+               dspic33_read_byte(source, 0x1200u) == 1u,
+           "VAR mode records a data-variable write outside an ISR");
+    source->program[0x6000u / 2u] = OPCODE_BSET_DATA_0;
+    expect(state, dspic33_copy(copy, source),
+           "copy preserves VAR write-domain history");
+    dspic33_raise_interrupt(source, 0u);
+    dspic33_raise_interrupt(copy, 0u);
+    expect(state,
+           dspic33_step(source) == DSPIC33_SILICON_RESULT_UNDEFINED &&
+               dspic33_step(copy) == DSPIC33_SILICON_RESULT_UNDEFINED,
+           "B1 shared VAR write across mainline and ISR remains silicon-undefined");
+
+    dspic33_reset(source, 0x0200u);
+    source->w[15] = 0x2c00u;
+    dspic33_load_program_word(source, 0x0200u, OPCODE_BSET_DATA_0);
+    enable_interrupt(source, 0u, 1u, 0x6000u);
+    expect(state, dspic33_step(source) == DSPIC33_RUNNING,
+           "fixed-latency mainline data write remains defined");
+    source->program[0x6000u / 2u] = OPCODE_BSET_DATA_0;
+    dspic33_raise_interrupt(source, 0u);
+    expect(state, dspic33_step(source) == DSPIC33_RUNNING,
+           "fixed-latency mode does not enter the VAR erratum boundary");
+
+    dspic33_reset(source, 0x0200u);
+    source->w[15] = 0x2c00u;
+    dspic33_load_program_word(source, 0x0200u, OPCODE_BSET_DATA_0);
+    enable_interrupt(source, 0u, 1u, 0x6000u);
+    expect(state, dspic33_step(source) == DSPIC33_RUNNING,
+           "pre-VAR mainline write remains defined");
+    source->corcon |= 0x8000u;
+    source->program[0x6000u / 2u] = OPCODE_BSET_DATA_0;
+    dspic33_raise_interrupt(source, 0u);
+    expect(state, dspic33_step(source) == DSPIC33_RUNNING,
+           "pre-VAR history does not contaminate variable-latency tracking");
+}
+
 int main(void) {
     Dspic33 source;
     Dspic33 copy;
@@ -909,8 +955,9 @@ int main(void) {
     interrupt_entry_overlap_cases(&state, &source, &copy);
     interrupt_entry_frame_timing_cases(&state, &source);
     priority_control_cases(&state, &source);
+    variable_latency_erratum_cases(&state, &source, &copy);
     lifecycle_cases(&state, &source, &copy);
-    expect(&state, state.cases == 137u, "interrupt-control assertion accounting");
+    expect(&state, state.cases == 144u, "interrupt-control assertion accounting");
     report_sfr_side_effect_coverage(
         "interrupt-control", interrupt_control_sfr_side_effect_coverage,
         SFR_SIDE_EFFECT_COVERAGE_COUNT(interrupt_control_sfr_side_effect_coverage),

@@ -2753,6 +2753,43 @@ static void slave_pin_address_policy_cases(I2cConformance* state, Dspic33* cpu) 
            "IPMI mode physically acknowledges an arbitrary address");
 }
 
+static void acknowledge_rmw_erratum_cases(I2cConformance* state, Dspic33* cpu) {
+    uint16_t control = (uint16_t)(bases[0] + 6u);
+    dspic33_reset(cpu, 0x0200u);
+    enable(cpu, 0u, 0u, 0u);
+    dspic33_write_word(cpu, control, 0x9010u);
+    dspic33_load_program_word(cpu, 0x0200u, 0xa8a206u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_SILICON_RESULT_UNDEFINED &&
+               (dspic33_read_word(cpu, control) & 0x0010u) != 0u,
+           "B1 ACKEN clear concurrent with an I2C control RMW remains undefined");
+
+    dspic33_reset(cpu, 0x0200u);
+    enable(cpu, 0u, 0u, 0u);
+    dspic33_write_word(cpu, control, 0x9010u);
+    dspic33_load_program_word(cpu, 0x0200u, (uint32_t)(0xec2000u | control));
+    expect(state, dspic33_step(cpu) == DSPIC33_SILICON_RESULT_UNDEFINED,
+           "B1 ACKEN clear detects non-bit RMW instructions");
+
+    dspic33_reset(cpu, 0x0200u);
+    enable(cpu, 0u, 0u, 0u);
+    dspic33_write_word(cpu, control, 0x9010u);
+    cpu->w[0] = dspic33_read_word(cpu, control);
+    dspic33_load_program_word(cpu, 0x0200u, (uint32_t)(0x880000u | control / 2u));
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "plain MOV remains outside the ACKEN RMW boundary");
+
+    dspic33_reset(cpu, 0x0200u);
+    enable(cpu, 0u, 0u, 0u);
+    dspic33_write_word(cpu, control, 0x9010u);
+    dspic33_load_program_word(cpu, 0x0200u, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_device_advance(cpu, 1u) &&
+               (dspic33_read_word(cpu, control) & 0x0010u) == 0u &&
+               interrupt_flag(cpu, master_irqs[0]),
+           "ACKEN clears normally without a concurrent I2C control RMW");
+}
+
 int main(void) {
     Dspic33 cpu;
     I2cConformance state = {0u, 0u, 0u};
@@ -2784,7 +2821,8 @@ int main(void) {
     slave_pin_lifecycle_cases(&state, &cpu);
     master_pin_collision_cases(&state, &cpu);
     slave_pin_address_policy_cases(&state, &cpu);
-    expect(&state, state.cases == 1184u, "I2C assertion arithmetic");
+    acknowledge_rmw_erratum_cases(&state, &cpu);
+    expect(&state, state.cases == 1188u, "I2C assertion arithmetic");
     dspic33_destroy(&cpu);
     report_sfr_side_effect_coverage(
         "i2c", i2c_sfr_side_effect_coverage,

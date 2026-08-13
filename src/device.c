@@ -5791,6 +5791,10 @@ static void qei_index_event(Dspic33* cpu, uint8_t channel, uint8_t logical) {
     }
     qei_raise_status(cpu, channel, QEI_STATUS_INDEX);
     if (count_mode < 2u) {
+        if (count_mode == 0u && cpu->io.qei.direction[channel] > 0) {
+            cpu->stop_reason = DSPIC33_SILICON_RESULT_UNDEFINED;
+            return;
+        }
         qei_update_index_counter(cpu, channel, qei_current_direction(cpu, channel));
     }
     if (mode == 4u && cpu->io.qei.home_index_count[channel] == 1u) {
@@ -7731,6 +7735,7 @@ static bool service_interrupt(Dspic33* cpu) {
     if (!select_interrupt(cpu, &best_irq, &best_priority)) {
         return false;
     }
+    dspic33_cancel_flash_read_sequence(cpu);
     origin = cpu->pc;
     target = dspic33_read_program_word(cpu, origin >= DSPIC33_AUXILIARY_PROGRAM_BASE
                                                 ? 0x007ffffau
@@ -7769,7 +7774,7 @@ static bool service_interrupt(Dspic33* cpu) {
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
         return true;
     }
-    if (cpu->illegal_reset) {
+    if (cpu->reset_occurred || cpu->nvm.reset_pending) {
         cpu->interrupt_entry_active = false;
         return true;
     }
@@ -7786,7 +7791,7 @@ static bool service_interrupt(Dspic33* cpu) {
         return true;
     }
     cpu->interrupt_entry_active = false;
-    if (cpu->illegal_reset) {
+    if (cpu->reset_occurred || cpu->nvm.reset_pending) {
         return true;
     }
     dspic33_check_stack_address(cpu, cpu->w[15], cpu->w[15] > 0xfffdu, 2u);
@@ -7824,7 +7829,7 @@ bool dspic33_device_wake(Dspic33* cpu) {
         if (interrupt_enabled(cpu, irq) && !interrupt_deferred(cpu, irq) &&
             interrupt_priority(cpu, irq) != 0u) {
             service_interrupt(cpu);
-            if (cpu->illegal_reset) {
+            if (cpu->reset_occurred || cpu->nvm.reset_pending) {
                 return true;
             }
             recover_from_doze(cpu);
@@ -7948,6 +7953,12 @@ static bool dma_write_cycle_matches(const Dspic33* cpu) {
     return cpu->io.cpu_write_valid && (cpu->io.cpu_write_cycle == cpu->cycles ||
                                        (cpu->io.cpu_write_cycle != UINT64_MAX &&
                                         cpu->io.cpu_write_cycle + 1u == cpu->cycles));
+}
+
+static bool dma_cpu_bus_busy(const Dspic33* cpu) {
+    return cpu->io.cpu_bus_cycle == cpu->cycles ||
+           (cpu->io.cpu_bus_cycle != UINT64_MAX &&
+            cpu->io.cpu_bus_cycle + 1u == cpu->cycles);
 }
 
 static bool dma_cpu_wrote_byte(const Dspic33* cpu, uint32_t address) {
@@ -8084,6 +8095,7 @@ static void dma_disable_channel(Dspic33* cpu, uint8_t channel, uint16_t control)
     cpu->io.dma_forced_pending &= (uint16_t)~bit;
     cpu->io.dma_peripheral_pending &= (uint16_t)~bit;
     cpu->io.dma_active &= (uint16_t)~bit;
+    cpu->io.dma_arbiter_waiting &= (uint16_t)~bit;
     dma_advance_generation(cpu, channel);
 }
 
@@ -8142,6 +8154,9 @@ static void complete_dma_transfer(Dspic33* cpu, uint8_t channel, uint32_t event_
     }
 }
 
+static bool dma_target_is_dual_port_ram(const Dspic33* cpu, uint8_t channel,
+                                        uint16_t indirect_address);
+
 static void run_dma(Dspic33* cpu, uint16_t source, uint32_t event_value) {
     uint16_t base;
     uint16_t bit;
@@ -8182,9 +8197,6 @@ static void run_dma(Dspic33* cpu, uint16_t source, uint32_t event_value) {
         }
         return;
     }
-    if (!forced) {
-        cpu->io.dma_peripheral_pending &= (uint16_t)~bit;
-    }
     control = raw_word(cpu, base);
     if ((control & DMA_CON_CHEN) == 0u || (raw_word(cpu, DMA_PWC) & bit) != 0u) {
         if (forced) {
@@ -8192,8 +8204,24 @@ static void run_dma(Dspic33* cpu, uint16_t source, uint32_t event_value) {
             raw_write_word(
                 cpu, (uint16_t)(base + 2u),
                 (uint16_t)(raw_word(cpu, (uint16_t)(base + 2u)) & ~DMA_REQ_FORCE));
+        } else {
+            cpu->io.dma_peripheral_pending &= (uint16_t)~bit;
+            cpu->io.dma_arbiter_waiting &= (uint16_t)~bit;
         }
         return;
+    }
+    if (!forced && dma_cpu_bus_busy(cpu) && (raw_word(cpu, 0x0058u) & 0x0020u) == 0u &&
+        !dma_target_is_dual_port_ram(cpu, channel, (uint16_t)event_value)) {
+        cpu->io.dma_arbiter_waiting |= bit;
+        if (!dspic33_schedule(cpu, DSPIC33_EVENT_DMA, source, event_value, 1u)) {
+            cpu->io.dma_peripheral_pending &= (uint16_t)~bit;
+            cpu->io.dma_arbiter_waiting &= (uint16_t)~bit;
+        }
+        return;
+    }
+    if (!forced) {
+        cpu->io.dma_peripheral_pending &= (uint16_t)~bit;
+        cpu->io.dma_arbiter_waiting &= (uint16_t)~bit;
     }
     pad = raw_word(cpu, (uint16_t)(base + 0x0cu));
     width = (control & DMA_CON_SIZE_BYTE) != 0u ? 1u : 2u;
@@ -8289,6 +8317,14 @@ static bool schedule_dma_channel(Dspic33* cpu, uint8_t channel,
         dma_update_power_state(cpu);
     }
     return true;
+}
+
+static bool dma_target_is_dual_port_ram(const Dspic33* cpu, uint8_t channel,
+                                        uint16_t indirect_address) {
+    uint16_t control = raw_word(cpu, dma_channel_base(channel));
+    uint8_t width = (control & DMA_CON_SIZE_BYTE) != 0u ? 1u : 2u;
+    uint32_t address = dma_transfer_address(cpu, channel, control, indirect_address);
+    return address >= 0xd000u && address + width <= 0xe000u;
 }
 
 static void dma_request_collision(Dspic33* cpu, uint8_t channel) {
@@ -8748,6 +8784,12 @@ static void uart_start_transmit(Dspic33* cpu, uint8_t channel) {
     }
     cpu->io.uart_tx_active |= bit;
     interrupt_mode = uart_transmit_interrupt_mode(cpu, channel);
+    if (!frame->break_signal && interrupt_mode == 1u &&
+        cpu->io.uart_tx_fifo[channel].count == 0u) {
+        uart_refresh_status(cpu, channel);
+        cpu->stop_reason = DSPIC33_SILICON_RESULT_UNDEFINED;
+        return;
+    }
     if (!frame->break_signal && interrupt_mode == 0u) {
         uart_raise_transmit(cpu, channel, true);
     } else if (!frame->break_signal && interrupt_mode == 2u &&
@@ -8836,6 +8878,10 @@ static void uart_transmit_complete(Dspic33* cpu, uint8_t channel, uint16_t gener
         uart_receive_complete(cpu, channel, &received);
     }
     if (frame.break_signal) {
+        if (dspic33_cpu_rmw_matches(cpu, uart_bases[channel] + 2u, 2u)) {
+            cpu->stop_reason = DSPIC33_SILICON_RESULT_UNDEFINED;
+            return;
+        }
         raw_write_word(cpu, (uint16_t)(uart_bases[channel] + 2u),
                        (uint16_t)(raw_word(cpu, (uint16_t)(uart_bases[channel] + 2u)) &
                                   ~UART_STATUS_BREAK));
@@ -9936,6 +9982,20 @@ static void adc_start_conversion(Dspic33* cpu, uint8_t module) {
     }
     count = adc_channel_count(cpu, module);
     mux_b = (cpu->io.adc_mux_b & (uint8_t)(1u << module)) != 0u;
+    if ((control & (ADC_12_BIT | ADC_SIMULTANEOUS | ADC_AUTO_SAMPLE |
+                    ADC_TRIGGER_MASK)) == (ADC_AUTO_SAMPLE | 0x0070u) &&
+        (control2 & ADC_CHANNELS_MASK) == 0x0100u &&
+        (adc_register(cpu, module, 4u) & 0x8000u) == 0u &&
+        ((adc_register(cpu, module, 4u) >> 8u) & 0x001fu) < 12u &&
+        (adc_register(cpu, module, 4u) & 0x00ffu) == 2u && count >= 2u) {
+        uint8_t channel0 = adc_positive_channel(cpu, module, 0u, mux_b);
+        uint8_t channel1 = adc_positive_channel(cpu, module, 1u, mux_b);
+        if (channel0 == channel1 && (channel0 == 0u || channel0 == 3u)) {
+            cpu->io.adc_latched_count[module] = 0u;
+            cpu->stop_reason = DSPIC33_SILICON_RESULT_UNDEFINED;
+            return;
+        }
+    }
     for (index = 0u; index < count; index++) {
         uint8_t positive = adc_positive_channel(cpu, module, index, mux_b);
         uint8_t negative = adc_negative_channel(cpu, module, index, mux_b);
@@ -13938,6 +13998,10 @@ bool dspic33_device_advance_instruction(Dspic33* cpu, uint64_t cpu_cycles,
                     cpu->io.timer_instruction_active = false;
                     return false;
                 }
+                if (cpu->stop_reason == DSPIC33_SILICON_RESULT_UNDEFINED) {
+                    cpu->io.timer_instruction_active = false;
+                    return true;
+                }
             }
         }
     }
@@ -15164,6 +15228,7 @@ static void update_dma_control(Dspic33* cpu, uint8_t channel, uint16_t previous)
         cpu->io.dma_forced_pending &= (uint16_t)~bit;
         cpu->io.dma_peripheral_pending &= (uint16_t)~bit;
         cpu->io.dma_active &= (uint16_t)~bit;
+        cpu->io.dma_arbiter_waiting &= (uint16_t)~bit;
         dma_advance_generation(cpu, channel);
         raw_write_word(
             cpu, (uint16_t)(base + 2u),
@@ -15750,6 +15815,7 @@ static void update_nvm_control(Dspic33* cpu, uint16_t requested) {
                   cpu->current_instruction_pc < DSPIC33_AUXILIARY_PROGRAM_LIMIT
             : cpu->pc >= DSPIC33_AUXILIARY_PROGRAM_BASE &&
                   cpu->pc < DSPIC33_AUXILIARY_PROGRAM_LIMIT;
+    cpu->nvm.stall_workaround = (raw_word(cpu, 0x08c2u) & 0x8000u) == 0u;
     memcpy(cpu->nvm.latches, cpu->write_latches, sizeof(cpu->nvm.latches));
     cpu->nvm.key_stage = 0u;
     cpu->nvm.active = true;
@@ -16831,6 +16897,10 @@ bool dspic33_dma_request(Dspic33* cpu, uint8_t request, uint16_t indirect_addres
             continue;
         }
         if ((cpu->io.dma_peripheral_pending & bit) != 0u) {
+            if ((request == can_rx_requests[0] || request == can_rx_requests[1]) &&
+                (cpu->io.dma_arbiter_waiting & bit) != 0u) {
+                cpu->stop_reason = DSPIC33_SILICON_RESULT_UNDEFINED;
+            }
             continue;
         }
         if ((cpu->io.dma_forced_pending & bit) != 0u) {
@@ -17524,6 +17594,8 @@ void dspic33_device_reset(Dspic33* cpu) {
         cpu->qei_inputs[channel] &= (uint8_t)~cpu->io.qei.pps_qualified[channel];
     }
     memset(&cpu->io, 0, sizeof(cpu->io));
+    cpu->io.cpu_bus_cycle = UINT64_MAX;
+    cpu->io.cpu_write_cycle = UINT64_MAX;
     cpu->io.dci.bcg_paused = true;
     cpu->io.comparator.reference[DSPIC33_COMPARATOR_REFERENCE_AVDD] = 3300u;
     cpu->io.comparator.reference[DSPIC33_COMPARATOR_REFERENCE_VREF_POSITIVE] = 3300u;
