@@ -132,7 +132,8 @@ static void write_json_path(FILE* stream, const char* value) {
 }
 
 static void record_comparison(Runner* runner, const char* category, const char* name,
-                              const char* evidence_class, bool matched) {
+                              const char* evidence_class, bool matched,
+                              const char* details) {
     runner->comparisons++;
     runner->failed_comparisons += matched ? 0u : 1u;
     if (runner->ledger == NULL) {
@@ -144,6 +145,9 @@ static void record_comparison(Runner* runner, const char* category, const char* 
     write_json_string(runner->ledger, evidence_class);
     fprintf(runner->ledger, ",\"matched\":%s,\"name\":", matched ? "true" : "false");
     write_json_string(runner->ledger, name);
+    if (details != NULL) {
+        fputs(details, runner->ledger);
+    }
     fprintf(runner->ledger,
             "},\"comparison_index\":%zu,\"evidence_class\":", runner->comparisons);
     write_json_string(runner->ledger, evidence_class);
@@ -1951,6 +1955,8 @@ static bool compare_registers(Runner* runner, const StepParts* parts, size_t* fa
         bool has_expected = item->type == JSON_OBJECT &&
                             parse_number(json_get(item, "expected"), &expected);
         bool matched;
+        char details[384];
+        int written;
         if (!register_index(name, &reg)) {
             snprintf(error, error_size, "invalid register observation");
             return false;
@@ -1985,12 +1991,46 @@ static bool compare_registers(Runner* runner, const StepParts* parts, size_t* fa
             matched = matched &&
                       (runner->reference.w[reg] & mask) == ((uint16_t)expected & mask);
         }
+        if (expected_location != NULL) {
+            written = snprintf(
+                details, sizeof(details),
+                ",\"expected\":{\"candidate\":%u,\"reference\":%u},\"mask\":%u,"
+                "\"normalized\":{\"candidate\":%u,\"reference\":%u},"
+                "\"raw\":{\"candidate\":%u,\"reference\":%u}",
+                (uint16_t)candidate_expected_address,
+                (uint16_t)reference_expected_address, (uint16_t)mask,
+                runner->candidate.w[reg] & (uint16_t)mask,
+                runner->reference.w[reg] & (uint16_t)mask, runner->candidate.w[reg],
+                runner->reference.w[reg]);
+        } else if (has_expected) {
+            written = snprintf(
+                details, sizeof(details),
+                ",\"expected\":{\"candidate\":%u,\"reference\":%u},\"mask\":%u,"
+                "\"normalized\":{\"candidate\":%u,\"reference\":%u},"
+                "\"raw\":{\"candidate\":%u,\"reference\":%u}",
+                (uint16_t)expected, (uint16_t)expected, (uint16_t)mask,
+                runner->candidate.w[reg] & (uint16_t)mask,
+                runner->reference.w[reg] & (uint16_t)mask, runner->candidate.w[reg],
+                runner->reference.w[reg]);
+        } else {
+            written = snprintf(
+                details, sizeof(details),
+                ",\"mask\":%u,\"normalized\":{\"candidate\":%u,\"reference\":%u},"
+                "\"raw\":{\"candidate\":%u,\"reference\":%u}",
+                (uint16_t)mask, runner->candidate.w[reg] & (uint16_t)mask,
+                runner->reference.w[reg] & (uint16_t)mask, runner->candidate.w[reg],
+                runner->reference.w[reg]);
+        }
+        if (written < 0 || (size_t)written >= sizeof(details)) {
+            snprintf(error, error_size, "register comparison evidence is too large");
+            return false;
+        }
         record_comparison(runner, "register", name,
                           expected_location != NULL ? "mapped-absolute"
                           : has_expected            ? "literal-exact"
                           : mask != UINT16_MAX      ? "masked-defined"
                                                     : "raw-differential",
-                          matched);
+                          matched, details);
         if (!matched) {
             (*failures)++;
             if (!runner->summary_only) {
@@ -2347,7 +2387,7 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item,
                       memory_evidence_class(required_evidence_class, &mapped_fields,
                                             mask, has_expected, expected_text,
                                             expected_location),
-                      matched);
+                      matched, NULL);
     if (!matched) {
         size_t shown = size > 16u ? 16u : size;
         size_t start = first_difference > 4u ? first_difference - 4u : 0u;
@@ -2499,7 +2539,7 @@ static bool compare_pins(Runner* runner, const StepParts* parts, size_t* failure
         }
         record_comparison(runner, "pin", name,
                           expected == NULL ? "raw-differential" : "literal-exact",
-                          matched);
+                          matched, NULL);
         if (!matched) {
             (*failures)++;
             if (!runner->summary_only) {
@@ -2645,7 +2685,8 @@ static bool compare_uart_transmit(Runner* runner, const StepParts* parts,
         record_comparison(
             runner, "uart_tx", comparison_name, evidence_class,
             reference_count == candidate_count &&
-                (expected_values == NULL || reference_count == expected_count));
+                (expected_values == NULL || reference_count == expected_count),
+            NULL);
         if (reference_count != candidate_count ||
             (expected_values != NULL && reference_count != expected_count)) {
             (*failures)++;
@@ -2685,7 +2726,7 @@ static bool compare_uart_transmit(Runner* runner, const StepParts* parts,
             snprintf(comparison_name, sizeof(comparison_name),
                      "UART%" PRIu64 " transmit frame %zu", channel + 1u, frame_index);
             record_comparison(runner, "uart_tx", comparison_name, evidence_class,
-                              matched);
+                              matched, NULL);
             if (!matched) {
                 (*failures)++;
                 if (!runner->summary_only) {
@@ -2763,7 +2804,8 @@ static bool compare_spi_transmit(Runner* runner, const StepParts* parts,
         record_comparison(
             runner, "spi_tx", comparison_name, evidence_class,
             reference_count == candidate_count &&
-                (expected_values == NULL || reference_count == expected_count));
+                (expected_values == NULL || reference_count == expected_count),
+            NULL);
         if (reference_count != candidate_count ||
             (expected_values != NULL && reference_count != expected_count)) {
             (*failures)++;
@@ -2800,7 +2842,7 @@ static bool compare_spi_transmit(Runner* runner, const StepParts* parts,
             snprintf(comparison_name, sizeof(comparison_name),
                      "SPI%" PRIu64 " transmit byte %zu", channel + 1u, byte_index);
             record_comparison(runner, "spi_tx", comparison_name, evidence_class,
-                              matched);
+                              matched, NULL);
             if (!matched) {
                 (*failures)++;
                 if (!runner->summary_only) {
@@ -2865,7 +2907,7 @@ static bool compare_can_transmit(Runner* runner, const StepParts* parts,
         snprintf(comparison_name, sizeof(comparison_name),
                  "CAN%" PRIu64 " transmit count", channel + 1u);
         record_comparison(runner, "can_tx", comparison_name, "raw-differential",
-                          reference_count == candidate_count);
+                          reference_count == candidate_count, NULL);
         if (reference_count != candidate_count) {
             (*failures)++;
             if (!runner->summary_only) {
@@ -2888,7 +2930,7 @@ static bool compare_can_transmit(Runner* runner, const StepParts* parts,
             snprintf(comparison_name, sizeof(comparison_name),
                      "CAN%" PRIu64 " transmit frame %zu", channel + 1u, frame_index);
             record_comparison(runner, "can_tx", comparison_name, "raw-differential",
-                              matched);
+                              matched, NULL);
             if (!matched) {
                 (*failures)++;
                 if (!runner->summary_only) {
@@ -3029,7 +3071,8 @@ static bool compare_usb_transmit(Runner* runner, const StepParts* parts,
         record_comparison(
             runner, "usb_tx", "USB transmit count", evidence_class,
             reference_count == candidate_count &&
-                (expected_values == NULL || reference_count == expected_count));
+                (expected_values == NULL || reference_count == expected_count),
+            NULL);
         if (reference_count != candidate_count ||
             (expected_values != NULL && reference_count != expected_count)) {
             (*failures)++;
@@ -3070,7 +3113,7 @@ static bool compare_usb_transmit(Runner* runner, const StepParts* parts,
             snprintf(comparison_name, sizeof(comparison_name),
                      "USB transmit packet %zu", packet_index);
             record_comparison(runner, "usb_tx", comparison_name, evidence_class,
-                              matched);
+                              matched, NULL);
             if (!matched) {
                 (*failures)++;
                 if (!runner->summary_only) {
@@ -3334,9 +3377,9 @@ static bool execute_step(Runner* runner, const char* scenario_name,
             return false;
         }
         record_comparison(runner, "execution", "reference reached stop point",
-                          "literal-exact", false);
+                          "literal-exact", false, NULL);
         record_comparison(runner, "execution", "candidate reached stop point",
-                          "literal-exact", false);
+                          "literal-exact", false, NULL);
         runner->failed++;
         if (!runner->summary_only) {
             printf("[failed] %zu/%zu %s (execution: %s)\n", runner->current_step,
@@ -3346,9 +3389,9 @@ static bool execute_step(Runner* runner, const char* scenario_name,
         return true;
     }
     record_comparison(runner, "execution", "reference reached stop point",
-                      "literal-exact", true);
+                      "literal-exact", true, NULL);
     record_comparison(runner, "execution", "candidate reached stop point",
-                      "literal-exact", true);
+                      "literal-exact", true, NULL);
     if (!compare_registers(runner, parts, &failures, error, error_size) ||
         !compare_memory(runner, parts, &failures, error, error_size) ||
         !compare_pins(runner, parts, &failures, error, error_size) ||
