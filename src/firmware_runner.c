@@ -1697,12 +1697,17 @@ static Dspic33StopReason run_with_execution_hits(Runner* runner, Dspic33* cpu,
     uint64_t start = cpu->instructions;
     cpu->stop_reason = DSPIC33_RUNNING;
     while (cpu->instructions - start < instruction_limit) {
+        uint64_t instruction_count = cpu->instructions;
+        Dspic33StopReason reason;
         if (stop_enabled && cpu->pc == stop_address) {
             cpu->stop_reason = DSPIC33_STOPPED;
             return cpu->stop_reason;
         }
-        record_execution_address(runner, candidate, cpu->pc);
-        if (dspic33_step(cpu) != DSPIC33_RUNNING) {
+        reason = dspic33_step(cpu);
+        if (cpu->instructions != instruction_count) {
+            record_execution_address(runner, candidate, cpu->current_instruction_pc);
+        }
+        if (reason != DSPIC33_RUNNING) {
             return cpu->stop_reason;
         }
     }

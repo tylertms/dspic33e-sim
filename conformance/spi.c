@@ -1753,6 +1753,31 @@ static void dma_cases(SpiConformance* state, Dspic33* cpu) {
                "duplex DMA receive completion and transmit start");
         expect(state, cpu->io.spi_shift[channel] == 0x8c00u + channel,
                "duplex dma transmit value");
+
+        dspic33_reset(cpu, 0u);
+        configure_spi(cpu, channel, 0x0080u, 0u, 0u);
+        configure_dma(cpu, 0u, 0x4000u, requests[channel], rx_memory,
+                      (uint16_t)(base + 8u), 2u);
+        expect(state,
+               dspic33_spi_select(cpu, channel, true, 0u) &&
+                   dspic33_spi_receive(cpu, channel, 0xa1u, 1u) &&
+                   dspic33_spi_receive(cpu, channel, 0xb2u, 4u) &&
+                   dspic33_spi_receive(cpu, channel, 0xc3u, 7u) &&
+                   dspic33_device_advance(cpu, 10u),
+               "schedule byte dma receive block");
+        expect(state,
+               dspic33_read_byte(cpu, rx_memory) == 0xa1u &&
+                   dspic33_read_byte(cpu, (uint16_t)(rx_memory + 1u)) == 0xb2u &&
+                   dspic33_read_byte(cpu, (uint16_t)(rx_memory + 2u)) == 0xc3u,
+               "byte dma receive preserves each SPI byte");
+        expect(state,
+               cpu->io.spi_rx_fifo[channel].count == 0u &&
+                   (dspic33_read_word(cpu, base) & 0x0041u) == 0u,
+               "byte dma receive drains SPI input");
+        expect(state,
+               interrupt_flag(cpu, 4u) && cpu->io.dma_index[0] == 0u &&
+                   (dspic33_read_word(cpu, dma_base(0u)) & 0x8000u) != 0u,
+               "byte dma receive completes the block");
     }
 }
 
@@ -1816,7 +1841,7 @@ int main(void) {
         dma_cases(&state, &cpu);
         copy_and_reset_cases(&state, &cpu, &copy);
     }
-    expect(&state, state.cases == 3393u, "SPI assertion accounting");
+    expect(&state, state.cases == 3409u, "SPI assertion accounting");
     if (copy_initialized) {
         dspic33_destroy(&copy);
     }

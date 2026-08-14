@@ -14555,6 +14555,16 @@ static void spi_restore_buffer(Dspic33* cpu, uint8_t channel, uint16_t fallback)
     raw_write_word(cpu, (uint16_t)(spi_bases[channel] + 8u), value);
 }
 
+static bool spi_read_complete(const Dspic33* cpu, uint16_t address) {
+    if (cpu->io.dma_transfer_active) {
+        return cpu->io.dma_transfer_width == 1u || (address & 1u) != 0u;
+    }
+    if (cpu->io.cpu_read_valid) {
+        return cpu->io.cpu_read_width == 1u || address == cpu->io.cpu_read_address + 1u;
+    }
+    return (address & 1u) != 0u;
+}
+
 static void update_spi_register(Dspic33* cpu, uint16_t address, uint16_t previous,
                                 uint16_t requested) {
     uint8_t channel;
@@ -15675,6 +15685,8 @@ static void update_crc_data(Dspic33* cpu, uint16_t address, uint16_t requested) 
         if (width <= 8u) {
             if (write_width == 1u) {
                 crc_push(cpu, requested >> (high_byte ? 8u : 0u));
+            } else {
+                crc_push(cpu, requested);
             }
         } else if (width <= 16u) {
             if (write_width == 2u) {
@@ -16529,7 +16541,7 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
     }
     for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
         uint16_t base = spi_bases[channel];
-        if ((address & 0xfffeu) == base + 8u && (address & 1u) != 0u) {
+        if ((address & 0xfffeu) == base + 8u && spi_read_complete(cpu, address)) {
             uint16_t discarded;
             if (word_queue_pop(&cpu->io.spi_rx_fifo[channel], &discarded)) {
                 if (word_queue_front(&cpu->io.spi_rx_fifo[channel], &discarded)) {

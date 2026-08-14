@@ -187,9 +187,11 @@ static void lane_cases(CrcConformance* state, Dspic33* cpu) {
     dspic33_write_byte(cpu, CRC_DATA_LOW, 0x12u);
     dspic33_write_byte(cpu, CRC_DATA_LOW + 1u, 0x34u);
     dspic33_write_word(cpu, CRC_DATA_LOW, 0x5678u);
-    expect(state, valid_words(cpu) == 2u, "byte lanes enqueue two words");
-    expect(state, cpu->io.crc.words[0] == 0x12u && cpu->io.crc.words[1] == 0x34u,
-           "byte lane order and word-write rejection");
+    expect(state, valid_words(cpu) == 3u, "byte lanes enqueue three words");
+    expect(state,
+           cpu->io.crc.words[0] == 0x12u && cpu->io.crc.words[1] == 0x34u &&
+               cpu->io.crc.words[2] == 0x78u,
+           "byte lane order and word-write low lane");
 
     configure(cpu, 16u, 16u, 0x1021u, false, false);
     dspic33_write_byte(cpu, CRC_DATA_LOW, 0x12u);
