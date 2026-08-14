@@ -599,6 +599,56 @@ static bool mapped_address(const Runner* runner, const JsonValue* specification,
     return true;
 }
 
+static bool mapped_memory_address(const Runner* runner, const JsonValue* specification,
+                                  bool candidate, size_t logical_offset,
+                                  uint32_t* result, char* error, size_t error_size) {
+    const JsonValue* segments =
+        entry_field(runner, specification, "candidate_segments");
+    const JsonValue* offset_value = entry_field(runner, specification, "offset");
+    int64_t common_offset = 0;
+    size_t index;
+    if (!candidate || segments == NULL) {
+        if (!mapped_address(runner, specification, candidate, result, error,
+                            error_size)) {
+            return false;
+        }
+        *result += (uint32_t)logical_offset;
+        return true;
+    }
+    if (segments->type != JSON_ARRAY ||
+        (offset_value != NULL && !parse_number(offset_value, &common_offset)) ||
+        common_offset < 0) {
+        snprintf(error, error_size, "invalid segmented candidate location");
+        return false;
+    }
+    logical_offset += (size_t)common_offset;
+    for (index = 0u; index < segments->as.array.count; index++) {
+        const JsonValue* segment = segments->as.array.items[index];
+        int64_t segment_offset;
+        int64_t segment_size;
+        uint32_t segment_address;
+        if (segment->type != JSON_OBJECT ||
+            !parse_number(json_get(segment, "logical_offset"), &segment_offset) ||
+            !parse_number(json_get(segment, "size"), &segment_size) ||
+            segment_offset < 0 || segment_size < 1) {
+            snprintf(error, error_size, "invalid segmented candidate location");
+            return false;
+        }
+        if (logical_offset < (size_t)segment_offset ||
+            logical_offset >= (size_t)(segment_offset + segment_size)) {
+            continue;
+        }
+        if (!mapped_address(runner, segment, true, &segment_address, error,
+                            error_size)) {
+            return false;
+        }
+        *result = segment_address + (uint32_t)(logical_offset - (size_t)segment_offset);
+        return true;
+    }
+    snprintf(error, error_size, "segmented candidate location has no byte mapping");
+    return false;
+}
+
 static bool add_part(StepParts* parts, const JsonValue* value, char* error,
                      size_t error_size) {
     if (value == NULL) {
@@ -966,6 +1016,59 @@ static uint8_t read_memory_byte(Dspic33* cpu, const char* space, uint32_t addres
     return dspic33_read_byte(cpu, address);
 }
 
+static bool read_mapped_memory_byte(Runner* runner, Dspic33* cpu,
+                                    const JsonValue* specification, bool candidate,
+                                    const char* space, size_t offset, uint8_t* result,
+                                    char* error, size_t error_size) {
+    uint32_t address;
+    if (!mapped_memory_address(runner, specification, candidate, offset, &address,
+                               error, error_size)) {
+        return false;
+    }
+    *result = read_memory_byte(cpu, space, address);
+    return true;
+}
+
+static bool read_mapped_memory_value(Runner* runner, Dspic33* cpu,
+                                     const JsonValue* specification, bool candidate,
+                                     const char* space, size_t offset, size_t size,
+                                     uint32_t* result, char* error, size_t error_size) {
+    size_t index;
+    *result = 0u;
+    for (index = 0u; index < size; index++) {
+        uint8_t value;
+        if (!read_mapped_memory_byte(runner, cpu, specification, candidate, space,
+                                     offset + index, &value, error, error_size)) {
+            return false;
+        }
+        *result |= (uint32_t)value << (index * 8u);
+    }
+    return true;
+}
+
+static bool write_mapped_memory_byte(Runner* runner, Dspic33* cpu,
+                                     const JsonValue* specification, bool candidate,
+                                     size_t offset, uint8_t value, char* error,
+                                     size_t error_size) {
+    uint32_t address;
+    if (!mapped_memory_address(runner, specification, candidate, offset, &address,
+                               error, error_size)) {
+        return false;
+    }
+    dspic33_write_byte(cpu, address, value);
+    return true;
+}
+
+static bool write_mapped_memory_word(Runner* runner, Dspic33* cpu,
+                                     const JsonValue* specification, bool candidate,
+                                     size_t offset, uint16_t value, char* error,
+                                     size_t error_size) {
+    return write_mapped_memory_byte(runner, cpu, specification, candidate, offset,
+                                    (uint8_t)value, error, error_size) &&
+           write_mapped_memory_byte(runner, cpu, specification, candidate, offset + 1u,
+                                    (uint8_t)(value >> 8u), error, error_size);
+}
+
 static void write_memory_word(Dspic33* cpu, uint32_t address, uint16_t value) {
     if ((address & 1u) == 0u) {
         dspic33_write_word(cpu, address, value);
@@ -986,8 +1089,11 @@ static bool write_memory_value(Runner* runner, Dspic33* cpu, const FirmwareImage
     int64_t repeat_value = 1;
     size_t repeat;
     size_t index;
-    if (!mapped_address(runner, specification, candidate, &address, error,
-                        error_size) ||
+    const JsonValue* candidate_segments =
+        entry_field(runner, specification, "candidate_segments");
+    if (((!candidate || candidate_segments == NULL) &&
+         !mapped_address(runner, specification, candidate, &address, error,
+                         error_size)) ||
         !field_number(runner, specification, "repeat", 1, &repeat_value) ||
         repeat_value < 1) {
         snprintf(error, error_size, "invalid memory stimulus");
@@ -1005,8 +1111,11 @@ static bool write_memory_value(Runner* runner, Dspic33* cpu, const FirmwareImage
             return false;
         }
         for (index = 0u; index < repeat; index++) {
-            write_memory_word(cpu, address + (uint32_t)index * 2u,
-                              (uint16_t)(location + offset));
+            if (!write_mapped_memory_word(runner, cpu, specification, candidate,
+                                          index * 2u, (uint16_t)(location + offset),
+                                          error, error_size)) {
+                return false;
+            }
         }
         return true;
     }
@@ -1030,9 +1139,11 @@ static bool write_memory_value(Runner* runner, Dspic33* cpu, const FirmwareImage
                              "configuration stimuli must use 24-bit words");
                     return false;
                 }
-                dspic33_write_byte(
-                    cpu, address + (uint32_t)(index * bytes->as.array.count + item),
-                    (uint8_t)value);
+                if (!write_mapped_memory_byte(runner, cpu, specification, candidate,
+                                              index * bytes->as.array.count + item,
+                                              (uint8_t)value, error, error_size)) {
+                    return false;
+                }
             }
         }
         return true;
@@ -1062,7 +1173,11 @@ static bool write_memory_value(Runner* runner, Dspic33* cpu, const FirmwareImage
                 return false;
             }
         } else {
-            write_memory_word(cpu, address + (uint32_t)index * 2u, (uint16_t)value);
+            if (!write_mapped_memory_word(runner, cpu, specification, candidate,
+                                          index * 2u, (uint16_t)value, error,
+                                          error_size)) {
+                return false;
+            }
         }
     }
     (void)image;
@@ -2201,17 +2316,6 @@ static const char* memory_evidence_class(const char* required,
     return "mapped-absolute";
 }
 
-static uint32_t read_memory_value(Dspic33* cpu, const char* space, uint32_t address,
-                                  size_t size) {
-    uint32_t value = 0u;
-    size_t index;
-    for (index = 0u; index < size; index++) {
-        value |= (uint32_t)read_memory_byte(cpu, space, address + (uint32_t)index)
-                 << (index * 8u);
-    }
-    return value;
-}
-
 static bool compare_memory_item(Runner* runner, const JsonValue* item,
                                 const char* required_category,
                                 const char* required_evidence_class, size_t* failures,
@@ -2236,7 +2340,8 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item,
     const MappedField* failed_mapped_field = NULL;
     bool matched = true;
     if (!mapped_address(runner, item, false, &reference_address, error, error_size) ||
-        !mapped_address(runner, item, true, &candidate_address, error, error_size) ||
+        !mapped_memory_address(runner, item, true, 0u, &candidate_address, error,
+                               error_size) ||
         !field_number(runner, item, "size", 0, &size_value) || size_value < 1) {
         snprintf(error, error_size, "invalid memory observation");
         return false;
@@ -2251,13 +2356,18 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item,
         return false;
     }
     for (index = 0u; index < size; index++) {
+        uint8_t reference_byte;
+        uint8_t candidate_byte;
         if (mapped_field_at(&mapped_fields, index) != NULL) {
             continue;
         }
-        if (read_memory_byte(&runner->reference, space,
-                             reference_address + (uint32_t)index) !=
-            read_memory_byte(&runner->candidate, space,
-                             candidate_address + (uint32_t)index)) {
+        if (!read_mapped_memory_byte(runner, &runner->reference, item, false, space,
+                                     index, &reference_byte, error, error_size) ||
+            !read_mapped_memory_byte(runner, &runner->candidate, item, true, space,
+                                     index, &candidate_byte, error, error_size)) {
+            return false;
+        }
+        if (reference_byte != candidate_byte) {
             matched = false;
             first_difference = index;
             break;
@@ -2265,15 +2375,22 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item,
     }
     for (index = 0u; index < mapped_fields.count; index++) {
         const MappedField* field = &mapped_fields.items[index];
-        uint32_t reference_value =
-            read_memory_value(&runner->reference, space,
-                              reference_address + (uint32_t)field->offset, field->size);
-        uint32_t candidate_value =
-            read_memory_value(&runner->candidate, space,
-                              candidate_address + (uint32_t)field->offset, field->size);
-        bool both_null = reference_value == 0u && candidate_value == 0u;
-        bool both_nonnull = reference_value != 0u && candidate_value != 0u;
-        bool field_matches = field->nullable && both_null;
+        uint32_t reference_value;
+        uint32_t candidate_value;
+        bool both_null;
+        bool both_nonnull;
+        bool field_matches;
+        if (!read_mapped_memory_value(runner, &runner->reference, item, false, space,
+                                      field->offset, field->size, &reference_value,
+                                      error, error_size) ||
+            !read_mapped_memory_value(runner, &runner->candidate, item, true, space,
+                                      field->offset, field->size, &candidate_value,
+                                      error, error_size)) {
+            return false;
+        }
+        both_null = reference_value == 0u && candidate_value == 0u;
+        both_nonnull = reference_value != 0u && candidate_value != 0u;
+        field_matches = field->nullable && both_null;
         if (!field_matches && (!field->nullable || both_nonnull)) {
             if (field->target_count != 0u) {
                 size_t target_index;
@@ -2322,14 +2439,19 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item,
             return false;
         }
         for (index = 0u; index < size; index++) {
-            bool reference_matches =
-                read_memory_byte(&runner->reference, space,
-                                 reference_address + (uint32_t)index) ==
-                expected_bytes[index];
-            bool candidate_matches =
-                read_memory_byte(&runner->candidate, space,
-                                 candidate_address + (uint32_t)index) ==
-                expected_bytes[index];
+            uint8_t reference_byte;
+            uint8_t candidate_byte;
+            bool reference_matches;
+            bool candidate_matches;
+            if (!read_mapped_memory_byte(runner, &runner->reference, item, false, space,
+                                         index, &reference_byte, error, error_size) ||
+                !read_mapped_memory_byte(runner, &runner->candidate, item, true, space,
+                                         index, &candidate_byte, error, error_size)) {
+                free(expected_bytes);
+                return false;
+            }
+            reference_matches = reference_byte == expected_bytes[index];
+            candidate_matches = candidate_byte == expected_bytes[index];
             if ((!reference_matches || !candidate_matches) &&
                 first_difference == size) {
                 first_difference = index;
@@ -2354,15 +2476,11 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item,
             (uint32_t)(reference_expected_address + expected_location_offset);
         candidate_expected_address =
             (uint32_t)(candidate_expected_address + expected_location_offset);
-        for (index = 0u; index < size; index++) {
-            reference_value |=
-                (uint32_t)read_memory_byte(&runner->reference, space,
-                                           reference_address + (uint32_t)index)
-                << (index * 8u);
-            candidate_value |=
-                (uint32_t)read_memory_byte(&runner->candidate, space,
-                                           candidate_address + (uint32_t)index)
-                << (index * 8u);
+        if (!read_mapped_memory_value(runner, &runner->reference, item, false, space,
+                                      0u, size, &reference_value, error, error_size) ||
+            !read_mapped_memory_value(runner, &runner->candidate, item, true, space, 0u,
+                                      size, &candidate_value, error, error_size)) {
+            return false;
         }
         matched = (reference_value & (uint32_t)mask) ==
                       (reference_expected_address & (uint32_t)mask) &&
@@ -2371,15 +2489,11 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item,
     } else if (has_expected && size <= 4u) {
         uint32_t reference_value = 0u;
         uint32_t candidate_value = 0u;
-        for (index = 0u; index < size; index++) {
-            reference_value |=
-                (uint32_t)read_memory_byte(&runner->reference, space,
-                                           reference_address + (uint32_t)index)
-                << (index * 8u);
-            candidate_value |=
-                (uint32_t)read_memory_byte(&runner->candidate, space,
-                                           candidate_address + (uint32_t)index)
-                << (index * 8u);
+        if (!read_mapped_memory_value(runner, &runner->reference, item, false, space,
+                                      0u, size, &reference_value, error, error_size) ||
+            !read_mapped_memory_value(runner, &runner->candidate, item, true, space, 0u,
+                                      size, &candidate_value, error, error_size)) {
+            return false;
         }
         matched =
             matched &&
@@ -2401,6 +2515,7 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item,
         }
         (*failures)++;
         if (!runner->summary_only) {
+            uint32_t candidate_shown_address;
             printf("  memory %s", name == NULL ? "state" : name);
             if (first_difference != size) {
                 printf(" difference=+0x%zx", first_difference);
@@ -2411,11 +2526,19 @@ static bool compare_memory_item(Runner* runner, const JsonValue* item,
                        read_memory_byte(&runner->reference, space,
                                         reference_address + (uint32_t)(start + index)));
             }
-            printf(" candidate@0x%05" PRIx32 "=", candidate_address + (uint32_t)start);
+            if (!mapped_memory_address(runner, item, true, start,
+                                       &candidate_shown_address, error, error_size)) {
+                return false;
+            }
+            printf(" candidate@0x%05" PRIx32 "=", candidate_shown_address);
             for (index = 0u; index < shown; index++) {
-                printf("%02x",
-                       read_memory_byte(&runner->candidate, space,
-                                        candidate_address + (uint32_t)(start + index)));
+                uint8_t value;
+                if (!read_mapped_memory_byte(runner, &runner->candidate, item, true,
+                                             space, start + index, &value, error,
+                                             error_size)) {
+                    return false;
+                }
+                printf("%02x", value);
             }
             if (start + shown != size) {
                 printf("...");
