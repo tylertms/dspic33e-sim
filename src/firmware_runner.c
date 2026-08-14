@@ -1087,6 +1087,8 @@ static bool write_memory_value(Runner* runner, Dspic33* cpu, const FirmwareImage
     const JsonValue* value_location = json_get(specification, "value_location");
     const char* space = json_string(entry_field(runner, specification, "space"));
     int64_t repeat_value = 1;
+    int64_t stride_value = 2;
+    int64_t value_location_page = -1;
     size_t repeat;
     size_t index;
     const JsonValue* candidate_segments =
@@ -1095,7 +1097,11 @@ static bool write_memory_value(Runner* runner, Dspic33* cpu, const FirmwareImage
          !mapped_address(runner, specification, candidate, &address, error,
                          error_size)) ||
         !field_number(runner, specification, "repeat", 1, &repeat_value) ||
-        repeat_value < 1) {
+        !field_number(runner, specification, "stride", 2, &stride_value) ||
+        !field_number(runner, specification, "value_location_page", -1,
+                      &value_location_page) ||
+        repeat_value < 1 || stride_value < 1 || value_location_page > UINT16_MAX ||
+        (value_location_page >= 0 && stride_value < 4)) {
         snprintf(error, error_size, "invalid memory stimulus");
         return false;
     }
@@ -1111,9 +1117,16 @@ static bool write_memory_value(Runner* runner, Dspic33* cpu, const FirmwareImage
             return false;
         }
         for (index = 0u; index < repeat; index++) {
-            if (!write_mapped_memory_word(runner, cpu, specification, candidate,
-                                          index * 2u, (uint16_t)(location + offset),
-                                          error, error_size)) {
+            if (!write_mapped_memory_word(
+                    runner, cpu, specification, candidate, index * (size_t)stride_value,
+                    (uint16_t)(location + offset), error, error_size)) {
+                return false;
+            }
+            if (value_location_page >= 0 &&
+                !write_mapped_memory_word(runner, cpu, specification, candidate,
+                                          index * (size_t)stride_value + 2u,
+                                          (uint16_t)value_location_page, error,
+                                          error_size)) {
                 return false;
             }
         }
