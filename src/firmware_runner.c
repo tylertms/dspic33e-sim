@@ -18,7 +18,8 @@ enum {
     MAX_STEP_PARTS = 32,
     MAX_MATRIX_DIMENSIONS = 16,
     MAX_MAPPED_FIELDS = 64,
-    MAX_MAPPED_TARGETS = 32
+    MAX_MAPPED_TARGETS = 32,
+    EXECUTION_HIT_BYTES = (DSPIC33_PROGRAM_WORDS + 7u) / 8u
 };
 
 typedef struct RunTask RunTask;
@@ -54,8 +55,16 @@ typedef struct {
     uint64_t instruction_limit;
     const char* ledger_path;
     const char* summary_path;
+    const char* execution_path;
     char ledger_partial_path[1024];
+    char execution_partial_path[1024];
     FILE* ledger;
+    FILE* execution_ledger;
+    uint8_t* reference_hits;
+    uint8_t* candidate_hits;
+    size_t exercises;
+    size_t exercised;
+    size_t exclusions;
     const char* current_scenario_identifier;
     const char* current_scenario_source;
     const char* current_step_identifier;
@@ -193,6 +202,48 @@ static bool close_comparison_ledger(Runner* runner, bool complete, char* error,
     return true;
 }
 
+static bool open_execution_ledger(Runner* runner, char* error, size_t error_size) {
+    int written;
+    if (runner->execution_path == NULL) {
+        return true;
+    }
+    written =
+        snprintf(runner->execution_partial_path, sizeof(runner->execution_partial_path),
+                 "%s.partial", runner->execution_path);
+    if (written < 0 || (size_t)written >= sizeof(runner->execution_partial_path)) {
+        snprintf(error, error_size, "execution ledger path is too long");
+        return false;
+    }
+    runner->execution_ledger = fopen(runner->execution_partial_path, "wb");
+    if (runner->execution_ledger == NULL) {
+        snprintf(error, error_size, "cannot open execution ledger");
+        return false;
+    }
+    return true;
+}
+
+static bool close_execution_ledger(Runner* runner, bool complete, char* error,
+                                   size_t error_size) {
+    if (runner->execution_ledger == NULL) {
+        return true;
+    }
+    if (fclose(runner->execution_ledger) != 0) {
+        runner->execution_ledger = NULL;
+        snprintf(error, error_size, "cannot close execution ledger");
+        return false;
+    }
+    runner->execution_ledger = NULL;
+    if (!complete || runner->execution_path == NULL) {
+        return true;
+    }
+    remove(runner->execution_path);
+    if (rename(runner->execution_partial_path, runner->execution_path) != 0) {
+        snprintf(error, error_size, "cannot finalize execution ledger");
+        return false;
+    }
+    return true;
+}
+
 static bool write_summary_json(const Runner* runner, char* error, size_t error_size) {
     FILE* stream;
     char partial_path[1024];
@@ -224,6 +275,14 @@ static bool write_summary_json(const Runner* runner, char* error, size_t error_s
     } else {
         write_json_path(stream, runner->ledger_path);
     }
+    fputs(",\"execution_ledger\":", stream);
+    if (runner->execution_path == NULL) {
+        fputs("null", stream);
+    } else {
+        write_json_path(stream, runner->execution_path);
+    }
+    fprintf(stream, ",\"exclusions\":%zu,\"exercises\":%zu,\"exercised\":%zu",
+            runner->exclusions, runner->exercises, runner->exercised);
     fprintf(stream, ",\"max_instructions\":%" PRIu64 ",\"passed_steps\":%zu",
             runner->instruction_limit, runner->passed);
     fprintf(stream,
@@ -618,7 +677,18 @@ static size_t values_count(const Runner* runner, const JsonValue* specification)
 static size_t matrix_dimension_count(const Runner* runner, const JsonValue* dimension) {
     const JsonValue* rows;
     if (dimension->type == JSON_ARRAY) {
-        return dimension->as.array.count;
+        size_t count = 0u;
+        size_t index;
+        for (index = 0u; index < dimension->as.array.count; index++) {
+            const JsonValue* alternative = dimension->as.array.items[index];
+            if (json_get(alternative, "values") != NULL ||
+                json_get(alternative, "start") != NULL) {
+                count += matrix_dimension_count(runner, alternative);
+            } else {
+                count++;
+            }
+        }
+        return count;
     }
     rows = json_get(dimension, "rows");
     if (rows != NULL) {
@@ -892,6 +962,15 @@ static uint8_t read_memory_byte(Dspic33* cpu, const char* space, uint32_t addres
     return dspic33_read_byte(cpu, address);
 }
 
+static void write_memory_word(Dspic33* cpu, uint32_t address, uint16_t value) {
+    if ((address & 1u) == 0u) {
+        dspic33_write_word(cpu, address, value);
+        return;
+    }
+    dspic33_write_byte(cpu, address, (uint8_t)value);
+    dspic33_write_byte(cpu, address + 1u, (uint8_t)(value >> 8u));
+}
+
 static bool write_memory_value(Runner* runner, Dspic33* cpu, const FirmwareImage* image,
                                const JsonValue* specification, bool candidate,
                                char* error, size_t error_size) {
@@ -922,8 +1001,8 @@ static bool write_memory_value(Runner* runner, Dspic33* cpu, const FirmwareImage
             return false;
         }
         for (index = 0u; index < repeat; index++) {
-            dspic33_write_word(cpu, address + (uint32_t)index * 2u,
-                               (uint16_t)(location + offset));
+            write_memory_word(cpu, address + (uint32_t)index * 2u,
+                              (uint16_t)(location + offset));
         }
         return true;
     }
@@ -979,7 +1058,7 @@ static bool write_memory_value(Runner* runner, Dspic33* cpu, const FirmwareImage
                 return false;
             }
         } else {
-            dspic33_write_word(cpu, address + (uint32_t)index * 2u, (uint16_t)value);
+            write_memory_word(cpu, address + (uint32_t)index * 2u, (uint16_t)value);
         }
     }
     (void)image;
@@ -1586,6 +1665,47 @@ static uint32_t stopped_opcode(const Dspic33* cpu) {
                : 0u;
 }
 
+static void record_execution_address(Runner* runner, bool candidate, uint32_t address) {
+    uint8_t* hits;
+    size_t index;
+    if (address >= DSPIC33_PROGRAM_LIMIT || (address & 1u) != 0u) {
+        return;
+    }
+    hits = candidate ? runner->candidate_hits : runner->reference_hits;
+    index = address / 2u;
+    hits[index / 8u] |= (uint8_t)(1u << (index % 8u));
+}
+
+static bool execution_address_hit(const uint8_t* hits, uint32_t address) {
+    size_t index;
+    if (address >= DSPIC33_PROGRAM_LIMIT || (address & 1u) != 0u) {
+        return false;
+    }
+    index = address / 2u;
+    return (hits[index / 8u] & (uint8_t)(1u << (index % 8u))) != 0u;
+}
+
+static Dspic33StopReason run_with_execution_hits(Runner* runner, Dspic33* cpu,
+                                                 bool candidate,
+                                                 uint64_t instruction_limit,
+                                                 uint32_t stop_address,
+                                                 bool stop_enabled) {
+    uint64_t start = cpu->instructions;
+    cpu->stop_reason = DSPIC33_RUNNING;
+    while (cpu->instructions - start < instruction_limit) {
+        if (stop_enabled && cpu->pc == stop_address) {
+            cpu->stop_reason = DSPIC33_STOPPED;
+            return cpu->stop_reason;
+        }
+        record_execution_address(runner, candidate, cpu->pc);
+        if (dspic33_step(cpu) != DSPIC33_RUNNING) {
+            return cpu->stop_reason;
+        }
+    }
+    cpu->stop_reason = DSPIC33_INSTRUCTION_LIMIT;
+    return cpu->stop_reason;
+}
+
 static bool run_image(Runner* runner, Dspic33* cpu, bool candidate,
                       const JsonValue* call, const JsonValue* stop, char* error,
                       size_t error_size, bool* execution_failure) {
@@ -1603,7 +1723,8 @@ static bool run_image(Runner* runner, Dspic33* cpu, bool candidate,
         if (!mapped_address(runner, stop, candidate, &address, error, error_size)) {
             return false;
         }
-        reason = dspic33_run_until(cpu, address, runner->instruction_limit);
+        reason = run_with_execution_hits(runner, cpu, candidate,
+                                         runner->instruction_limit, address, true);
         if (reason != DSPIC33_STOPPED) {
             *execution_failure = true;
             snprintf(error, error_size,
@@ -1620,7 +1741,8 @@ static bool run_image(Runner* runner, Dspic33* cpu, bool candidate,
             return false;
         }
     } else {
-        reason = dspic33_run(cpu, runner->instruction_limit);
+        reason = run_with_execution_hits(runner, cpu, candidate,
+                                         runner->instruction_limit, 0u, false);
         if (reason != DSPIC33_RETURNED) {
             *execution_failure = true;
             snprintf(error, error_size,
@@ -2977,6 +3099,7 @@ static bool apply_generated_value(Runner* runner, const JsonValue* specification
     int64_t base = 0;
     int64_t shift = 0;
     int64_t offset = 0;
+    int64_t size = 2;
     uint16_t word;
     if (!range) {
         if ((json_get(specification, "base") != NULL &&
@@ -2995,16 +3118,26 @@ static bool apply_generated_value(Runner* runner, const JsonValue* specification
         uint32_t candidate_address;
         if ((json_get(specification, "offset") != NULL &&
              !parse_number(json_get(specification, "offset"), &offset)) ||
+            (json_get(specification, "size") != NULL &&
+             !parse_number(json_get(specification, "size"), &size)) ||
+            (size != 1 && size != 2) ||
             !mapped_address(runner, location, false, &reference_address, error,
                             error_size) ||
             !mapped_address(runner, location, true, &candidate_address, error,
                             error_size)) {
             return false;
         }
-        dspic33_write_word(&runner->reference, (uint32_t)(reference_address + offset),
-                           word);
-        dspic33_write_word(&runner->candidate, (uint32_t)(candidate_address + offset),
-                           word);
+        if (size == 1) {
+            dspic33_write_byte(&runner->reference,
+                               (uint32_t)(reference_address + offset), (uint8_t)word);
+            dspic33_write_byte(&runner->candidate,
+                               (uint32_t)(candidate_address + offset), (uint8_t)word);
+        } else {
+            write_memory_word(&runner->reference,
+                              (uint32_t)(reference_address + offset), word);
+            write_memory_word(&runner->candidate,
+                              (uint32_t)(candidate_address + offset), word);
+        }
         return true;
     }
     {
@@ -3099,10 +3232,10 @@ static bool apply_matrix_table_selection(Runner* runner,
                 snprintf(error, error_size, "invalid matrix table pointer");
                 return false;
             }
-            dspic33_write_word(&runner->reference, reference_address,
-                               (uint16_t)(reference_value + value));
-            dspic33_write_word(&runner->candidate, candidate_address,
-                               (uint16_t)(candidate_value + value));
+            write_memory_word(&runner->reference, reference_address,
+                              (uint16_t)(reference_value + value));
+            write_memory_word(&runner->candidate, candidate_address,
+                              (uint16_t)(candidate_value + value));
             continue;
         }
         if (!matrix_table_value_type(type, &minimum, &maximum, &word) ||
@@ -3112,12 +3245,12 @@ static bool apply_matrix_table_selection(Runner* runner,
         }
         for (item = 0u; item < (size_t)count; item++) {
             if (word) {
-                dspic33_write_word(&runner->reference,
-                                   reference_address + (uint32_t)item * 2u,
-                                   (uint16_t)value);
-                dspic33_write_word(&runner->candidate,
-                                   candidate_address + (uint32_t)item * 2u,
-                                   (uint16_t)value);
+                write_memory_word(&runner->reference,
+                                  reference_address + (uint32_t)item * 2u,
+                                  (uint16_t)value);
+                write_memory_word(&runner->candidate,
+                                  candidate_address + (uint32_t)item * 2u,
+                                  (uint16_t)value);
             } else {
                 dspic33_write_byte(&runner->reference,
                                    reference_address + (uint32_t)item, (uint8_t)value);
@@ -3377,11 +3510,27 @@ static bool select_matrix_case(const Runner* runner, const JsonValue* dimension,
     memset(selection, 0, sizeof(*selection));
     selection->specification = dimension;
     if (dimension->type == JSON_ARRAY) {
-        if (index >= dimension->as.array.count) {
-            return false;
+        size_t alternative_index;
+        for (alternative_index = 0u; alternative_index < dimension->as.array.count;
+             alternative_index++) {
+            const JsonValue* alternative = dimension->as.array.items[alternative_index];
+            if (json_get(alternative, "values") != NULL ||
+                json_get(alternative, "start") != NULL) {
+                size_t count = matrix_dimension_count(runner, alternative);
+                if (index < count) {
+                    selection->specification = alternative;
+                    selection->generated = true;
+                    return value_at(runner, alternative, index, &selection->value);
+                }
+                index -= count;
+            } else if (index == 0u) {
+                selection->explicit_case = alternative;
+                return true;
+            } else {
+                index--;
+            }
         }
-        selection->explicit_case = dimension->as.array.items[index];
-        return true;
+        return false;
     }
     rows = json_get(dimension, "rows");
     if (rows != NULL) {
@@ -3579,6 +3728,125 @@ static bool execute_matrix(Runner* runner, const JsonValue* scenario,
                                   error, error_size);
 }
 
+static bool reference_exercise_address(const char* name, uint32_t* address) {
+    const char* suffix = strrchr(name, '_');
+    char* end;
+    unsigned long parsed;
+    if (suffix == NULL || strlen(suffix + 1u) != 6u) {
+        return false;
+    }
+    parsed = strtoul(suffix + 1u, &end, 16);
+    if (*end != '\0' || parsed >= DSPIC33_PROGRAM_LIMIT) {
+        return false;
+    }
+    *address = (uint32_t)parsed;
+    return true;
+}
+
+static void write_execution_addresses(FILE* stream, const uint8_t* hits) {
+    size_t index;
+    bool first = true;
+    fputc('[', stream);
+    for (index = 0u; index < DSPIC33_PROGRAM_WORDS; index++) {
+        if ((hits[index / 8u] & (uint8_t)(1u << (index % 8u))) == 0u) {
+            continue;
+        }
+        fprintf(stream, "%s%zu", first ? "" : ",", index * 2u);
+        first = false;
+    }
+    fputc(']', stream);
+}
+
+static bool write_execution_record(Runner* runner, const JsonValue* scenario,
+                                   char* error, size_t error_size) {
+    const JsonValue* exercises = json_get(scenario, "exercises");
+    const JsonValue* exclusions = json_get(scenario, "exclusions");
+    size_t index;
+    bool first;
+    if (runner->execution_ledger == NULL) {
+        return true;
+    }
+    fputs("{\"candidate_addresses\":", runner->execution_ledger);
+    write_execution_addresses(runner->execution_ledger, runner->candidate_hits);
+    fputs(",\"exclusions\":[", runner->execution_ledger);
+    first = true;
+    if (exclusions != NULL && exclusions->type == JSON_ARRAY) {
+        for (index = 0u; index < exclusions->as.array.count; index++) {
+            const JsonValue* exclusion = exclusions->as.array.items[index];
+            const char* id = json_string(json_get(exclusion, "id"));
+            const char* classification =
+                json_string(json_get(exclusion, "classification"));
+            const char* reason = json_string(json_get(exclusion, "reason"));
+            fprintf(runner->execution_ledger,
+                    "%s{\"classification\":", first ? "" : ",");
+            write_json_string(runner->execution_ledger, classification);
+            fputs(",\"id\":", runner->execution_ledger);
+            write_json_string(runner->execution_ledger, id);
+            fputs(",\"reason\":", runner->execution_ledger);
+            write_json_string(runner->execution_ledger, reason);
+            fputc('}', runner->execution_ledger);
+            first = false;
+            runner->exclusions++;
+        }
+    }
+    fputs("],\"exercises\":[", runner->execution_ledger);
+    first = true;
+    if (exercises != NULL && exercises->type == JSON_ARRAY) {
+        for (index = 0u; index < exercises->as.array.count; index++) {
+            const char* name = json_string(exercises->as.array.items[index]);
+            uint32_t candidate_address;
+            uint32_t reference_address = 0u;
+            bool reference_known;
+            bool candidate_hit;
+            bool reference_hit;
+            char symbol_error[256];
+            if (name == NULL || !firmware_image_symbol(&runner->candidate_image, name,
+                                                       &candidate_address, symbol_error,
+                                                       sizeof(symbol_error))) {
+                snprintf(error, error_size, "exercise has no candidate symbol: %s",
+                         name == NULL ? "<invalid>" : name);
+                return false;
+            }
+            reference_known = reference_exercise_address(name, &reference_address);
+            candidate_hit =
+                execution_address_hit(runner->candidate_hits, candidate_address);
+            reference_hit =
+                !reference_known ||
+                execution_address_hit(runner->reference_hits, reference_address);
+            fprintf(runner->execution_ledger, "%s{\"candidate_address\":%" PRIu32,
+                    first ? "" : ",", candidate_address);
+            fprintf(runner->execution_ledger, ",\"candidate_hit\":%s,\"name\":",
+                    candidate_hit ? "true" : "false");
+            write_json_string(runner->execution_ledger, name);
+            fputs(",\"reference_address\":", runner->execution_ledger);
+            if (reference_known) {
+                fprintf(runner->execution_ledger, "%" PRIu32, reference_address);
+            } else {
+                fputs("null", runner->execution_ledger);
+            }
+            fprintf(runner->execution_ledger, ",\"reference_hit\":");
+            if (reference_known) {
+                fputs(reference_hit ? "true}" : "false}", runner->execution_ledger);
+            } else {
+                fputs("null}", runner->execution_ledger);
+            }
+            first = false;
+            runner->exercises++;
+            if (candidate_hit && reference_hit) {
+                runner->exercised++;
+            }
+        }
+    }
+    fputs("],\"reference_addresses\":", runner->execution_ledger);
+    write_execution_addresses(runner->execution_ledger, runner->reference_hits);
+    fputs(",\"scenario_id\":", runner->execution_ledger);
+    write_json_string(runner->execution_ledger, runner->current_scenario_identifier);
+    fprintf(runner->execution_ledger, ",\"shard_count\":%zu,\"shard_index\":%zu}\n",
+            runner->shard_count, runner->shard_index);
+    fflush(runner->execution_ledger);
+    return true;
+}
+
 static bool execute_scenario(const char* path, const JsonValue* scenario, void* context,
                              char* error, size_t error_size) {
     Runner* runner = context;
@@ -3622,6 +3890,8 @@ static bool execute_scenario(const char* path, const JsonValue* scenario, void* 
             }
         }
     }
+    memset(runner->reference_hits, 0, EXECUTION_HIT_BYTES);
+    memset(runner->candidate_hits, 0, EXECUTION_HIT_BYTES);
     mode = json_get(scenario, "steps");
     if (mode != NULL) {
         runner->restore_baseline = false;
@@ -3648,6 +3918,9 @@ static bool execute_scenario(const char* path, const JsonValue* scenario, void* 
             }
         }
     }
+    if (completed && !write_execution_record(runner, scenario, error, error_size)) {
+        return false;
+    }
     if (completed && runner->summary_only) {
         printf("[scenario-result] %s steps=%zu passed=%zu failed=%zu comparisons=%zu\n",
                id, runner->current_step - start_step, runner->passed - start_passed,
@@ -3663,7 +3936,7 @@ static void print_usage(const char* program) {
             "[--shard-index INDEX --shard-count COUNT] [--failures-only] "
             "[--summary-only] [--plan] [--max-instructions COUNT] "
             "[--reference FILE] [--candidate FILE] [--ledger FILE] "
-            "[--summary-json FILE]\n",
+            "[--execution-ledger FILE] [--summary-json FILE]\n",
             program);
 }
 
@@ -3714,6 +3987,8 @@ static int run_firmware_runner(int argc, char** argv, Runner* runner) {
             runner->candidate_path = argv[++index];
         } else if (strcmp(argv[index], "--ledger") == 0 && index + 1 < argc) {
             runner->ledger_path = argv[++index];
+        } else if (strcmp(argv[index], "--execution-ledger") == 0 && index + 1 < argc) {
+            runner->execution_path = argv[++index];
         } else if (strcmp(argv[index], "--summary-json") == 0 && index + 1 < argc) {
             runner->summary_path = argv[++index];
         } else {
@@ -3724,6 +3999,10 @@ static int run_firmware_runner(int argc, char** argv, Runner* runner) {
     if (suite_path == NULL || runner->shard_index >= runner->shard_count ||
         (runner->ledger_path != NULL && runner->summary_path != NULL &&
          strcmp(runner->ledger_path, runner->summary_path) == 0) ||
+        (runner->execution_path != NULL && runner->summary_path != NULL &&
+         strcmp(runner->execution_path, runner->summary_path) == 0) ||
+        (runner->ledger_path != NULL && runner->execution_path != NULL &&
+         strcmp(runner->ledger_path, runner->execution_path) == 0) ||
         !suite_directory(suite_path, runner->suite_directory,
                          sizeof(runner->suite_directory))) {
         print_usage(argv[0]);
@@ -3771,8 +4050,16 @@ static int run_firmware_runner(int argc, char** argv, Runner* runner) {
         json_free((JsonValue*)runner->suite);
         return 1;
     }
+    if (!open_execution_ledger(runner, error, sizeof(error))) {
+        fprintf(stderr, "[error] %s\n", error);
+        close_comparison_ledger(runner, false, error, sizeof(error));
+        close_images(runner);
+        json_free((JsonValue*)runner->suite);
+        return 1;
+    }
     if (!start_run_tasks(runner)) {
         fprintf(stderr, "[error] cannot start native simulator workers\n");
+        close_execution_ledger(runner, false, error, sizeof(error));
         close_comparison_ledger(runner, false, error, sizeof(error));
         close_images(runner);
         json_free((JsonValue*)runner->suite);
@@ -3783,12 +4070,21 @@ static int run_firmware_runner(int argc, char** argv, Runner* runner) {
     if (!stream_patterns(runner, execute_scenario, error, sizeof(error))) {
         fprintf(stderr, "[error] %s\n", error);
         stop_run_tasks(runner);
+        close_execution_ledger(runner, false, error, sizeof(error));
         close_comparison_ledger(runner, false, error, sizeof(error));
         close_images(runner);
         json_free((JsonValue*)runner->suite);
         return 1;
     }
     if (!close_comparison_ledger(runner, true, error, sizeof(error))) {
+        fprintf(stderr, "[error] %s\n", error);
+        stop_run_tasks(runner);
+        close_execution_ledger(runner, false, error, sizeof(error));
+        close_images(runner);
+        json_free((JsonValue*)runner->suite);
+        return 1;
+    }
+    if (!close_execution_ledger(runner, true, error, sizeof(error))) {
         fprintf(stderr, "[error] %s\n", error);
         stop_run_tasks(runner);
         close_images(runner);
@@ -3823,7 +4119,18 @@ int firmware_runner_main(int argc, char** argv) {
         fprintf(stderr, "[error] cannot allocate firmware runner state\n");
         return 1;
     }
+    runner->reference_hits = calloc(EXECUTION_HIT_BYTES, 1u);
+    runner->candidate_hits = calloc(EXECUTION_HIT_BYTES, 1u);
+    if (runner->reference_hits == NULL || runner->candidate_hits == NULL) {
+        fprintf(stderr, "[error] cannot allocate execution coverage state\n");
+        free(runner->candidate_hits);
+        free(runner->reference_hits);
+        free(runner);
+        return 1;
+    }
     result = run_firmware_runner(argc, argv, runner);
+    free(runner->candidate_hits);
+    free(runner->reference_hits);
     free(runner);
     return result;
 }
