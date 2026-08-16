@@ -94,7 +94,7 @@ SFR_ACCESS_CONFORMANCE = (
     SIMULATOR_BUILD / "dspic33_sfr_access_conformance.exe"
 )
 
-SFR_MANIFEST_VERIFIER = SIMULATOR_SOURCE / "tools" / "verify_sfr_manifest.py"
+SFR_MANIFEST_GENERATOR = SIMULATOR_SOURCE / "tools" / "generate_sfr_manifest.py"
 
 SFR_ACCESS_GENERATOR = (
     SIMULATOR_SOURCE / "tools" / "generate_sfr_access_expectations.py"
@@ -3783,7 +3783,10 @@ def main() -> int:
     verify_sfr_side_effect_coverage_regressions()
     started = time.perf_counter()
     print("[check] Device-pack SFR inventory", flush=True)
-    print(run([sys.executable, str(SFR_MANIFEST_VERIFIER)]).rstrip(), flush=True)
+    print(
+        run([sys.executable, str(SFR_MANIFEST_GENERATOR), "--check"]).rstrip(),
+        flush=True,
+    )
     print("[check] Generated SFR access expectations", flush=True)
     sfr_access_generator_output = run(
         [sys.executable, str(SFR_ACCESS_GENERATOR), "--check"]

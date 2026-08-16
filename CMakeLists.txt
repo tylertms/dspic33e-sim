@@ -69,51 +69,7 @@ target_include_directories(
     PUBLIC src
     PRIVATE generated
 )
-target_link_libraries(dspic33_firmware_runner PRIVATE dspic33_simulator)
-target_link_libraries(dspic33_event_conformance PRIVATE dspic33_simulator)
-target_link_libraries(dspic33_processor_conformance PRIVATE dspic33_simulator)
-target_include_directories(dspic33_processor_conformance PRIVATE generated)
-target_link_libraries(dspic33_dma_conformance PRIVATE dspic33_simulator)
-target_link_libraries(dspic33_timer_conformance PRIVATE dspic33_simulator)
-target_link_libraries(dspic33_adc_conformance PRIVATE dspic33_simulator)
-target_link_libraries(dspic33_pwm_conformance PRIVATE dspic33_simulator)
-target_link_libraries(dspic33_spi_conformance PRIVATE dspic33_simulator)
-target_link_libraries(dspic33_can_conformance PRIVATE dspic33_simulator)
-target_link_libraries(dspic33_usb_conformance PRIVATE dspic33_simulator)
-target_link_libraries(dspic33_uart_conformance PRIVATE dspic33_simulator)
-target_link_libraries(dspic33_i2c_conformance PRIVATE dspic33_simulator)
-target_link_libraries(dspic33_nvm_conformance PRIVATE dspic33_simulator)
-target_link_libraries(dspic33_crc_conformance PRIVATE dspic33_simulator)
-target_link_libraries(dspic33_pmp_conformance PRIVATE dspic33_simulator)
-target_link_libraries(
-    dspic33_input_capture_conformance PRIVATE dspic33_simulator
-)
-target_link_libraries(
-    dspic33_output_compare_conformance PRIVATE dspic33_simulator
-)
-target_link_libraries(dspic33_comparator_conformance PRIVATE dspic33_simulator)
-target_link_libraries(dspic33_rtcc_conformance PRIVATE dspic33_simulator)
-target_link_libraries(dspic33_qei_conformance PRIVATE dspic33_simulator)
-target_link_libraries(dspic33_dci_conformance PRIVATE dspic33_simulator)
-target_link_libraries(dspic33_gpio_conformance PRIVATE dspic33_simulator)
-target_link_libraries(dspic33_pps_conformance PRIVATE dspic33_simulator)
-target_link_libraries(
-    dspic33_auxiliary_clock_conformance PRIVATE dspic33_simulator
-)
-target_link_libraries(dspic33_oscillator_conformance PRIVATE dspic33_simulator)
-target_link_libraries(dspic33_watchdog_conformance PRIVATE dspic33_simulator)
-target_link_libraries(
-    dspic33_interrupt_control_conformance PRIVATE dspic33_simulator
-)
-target_link_libraries(dspic33_core_sfr_conformance PRIVATE dspic33_simulator)
-target_link_libraries(dspic33_reset_conformance PRIVATE dspic33_simulator)
-target_link_libraries(dspic33_sfr_reset_conformance PRIVATE dspic33_simulator)
-target_include_directories(dspic33_sfr_access_conformance PRIVATE generated)
-target_link_libraries(dspic33_sfr_access_conformance PRIVATE dspic33_simulator)
-
-set(dspic33_targets
-    dspic33_simulator
-    dspic33_firmware_runner
+set(dspic33_conformance_targets
     dspic33_event_conformance
     dspic33_processor_conformance
     dspic33_dma_conformance
@@ -146,15 +102,24 @@ set(dspic33_targets
     dspic33_sfr_access_conformance
 )
 
+target_link_libraries(dspic33_firmware_runner PRIVATE dspic33_simulator)
+foreach(target IN LISTS dspic33_conformance_targets)
+    target_link_libraries(${target} PRIVATE dspic33_simulator)
+endforeach()
+target_include_directories(dspic33_processor_conformance PRIVATE generated)
+target_include_directories(dspic33_sfr_access_conformance PRIVATE generated)
+
+set(dspic33_targets dspic33_simulator dspic33_firmware_runner
+                    ${dspic33_conformance_targets}
+)
+
 foreach(target IN LISTS dspic33_targets)
     target_compile_features(${target} PRIVATE c_std_11)
 endforeach()
 
 if(BUILD_TESTING)
-    foreach(target IN LISTS dspic33_targets)
-        if(target MATCHES "_conformance$")
-            add_test(NAME ${target} COMMAND ${target})
-        endif()
+    foreach(target IN LISTS dspic33_conformance_targets)
+        add_test(NAME ${target} COMMAND ${target})
     endforeach()
 endif()
 
