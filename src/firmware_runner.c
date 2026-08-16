@@ -1817,6 +1817,12 @@ static bool execution_address_hit(const uint8_t* hits, uint32_t address) {
     return (hits[index / 8u] & (uint8_t)(1u << (index % 8u))) != 0u;
 }
 
+static bool exercise_address_hit(const uint8_t* hits, const char* name,
+                                 uint32_t address) {
+    return execution_address_hit(hits, address) ||
+           (name[0] == '_' && execution_address_hit(hits, address + 2u));
+}
+
 static Dspic33StopReason run_with_execution_hits(Runner* runner, Dspic33* cpu,
                                                  bool candidate,
                                                  uint64_t instruction_limit,
@@ -3994,10 +4000,10 @@ static bool write_execution_record(Runner* runner, const JsonValue* scenario,
             }
             reference_known = reference_exercise_address(name, &reference_address);
             candidate_hit =
-                execution_address_hit(runner->candidate_hits, candidate_address);
+                exercise_address_hit(runner->candidate_hits, name, candidate_address);
             reference_hit =
                 !reference_known ||
-                execution_address_hit(runner->reference_hits, reference_address);
+                exercise_address_hit(runner->reference_hits, name, reference_address);
             fprintf(runner->execution_ledger, "%s{\"candidate_address\":%" PRIu32,
                     first ? "" : ",", candidate_address);
             fprintf(runner->execution_ledger, ",\"candidate_hit\":%s,\"name\":",
