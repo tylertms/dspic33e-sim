@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(opentec_firmware_simulator LANGUAGES C)
+project(dspic33_sim LANGUAGES C)
+
+include(CTest)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE
@@ -9,10 +11,11 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     )
 endif()
 
-add_library(opentec_simulator_core STATIC src/device.c src/dspic33.c src/i2c.c)
+add_library(dspic33_simulator STATIC src/device.c src/dspic33.c src/i2c.c)
+add_library(dspic33::simulator ALIAS dspic33_simulator)
 
 add_executable(
-    opentec_firmware_simulator
+    dspic33_firmware_runner
     src/elf_image.c
     src/firmware_image.c
     src/firmware_runner.c
@@ -21,209 +24,146 @@ add_executable(
     src/main.c
     src/scenario_stream.c
 )
+add_executable(dspic33::firmware_runner ALIAS dspic33_firmware_runner)
 
-add_executable(
-    opentec_simulator_event_conformance conformance/event_scheduler.c
-)
-add_executable(opentec_simulator_processor_conformance conformance/processor.c)
+add_executable(dspic33_event_conformance conformance/event_scheduler.c)
+add_executable(dspic33_processor_conformance conformance/processor.c)
 
-add_executable(opentec_simulator_dma_conformance conformance/dma.c)
-add_executable(opentec_simulator_timer_conformance conformance/timer.c)
-add_executable(opentec_simulator_adc_conformance conformance/adc.c)
-add_executable(opentec_simulator_pwm_conformance conformance/pwm.c)
-add_executable(opentec_simulator_spi_conformance conformance/spi.c)
-add_executable(opentec_simulator_can_conformance conformance/can.c)
-add_executable(opentec_simulator_usb_conformance conformance/usb.c)
-add_executable(opentec_simulator_uart_conformance conformance/uart.c)
-add_executable(opentec_simulator_i2c_conformance conformance/i2c.c)
+add_executable(dspic33_dma_conformance conformance/dma.c)
+add_executable(dspic33_timer_conformance conformance/timer.c)
+add_executable(dspic33_adc_conformance conformance/adc.c)
+add_executable(dspic33_pwm_conformance conformance/pwm.c)
+add_executable(dspic33_spi_conformance conformance/spi.c)
+add_executable(dspic33_can_conformance conformance/can.c)
+add_executable(dspic33_usb_conformance conformance/usb.c)
+add_executable(dspic33_uart_conformance conformance/uart.c)
+add_executable(dspic33_i2c_conformance conformance/i2c.c)
 add_executable(
-    opentec_simulator_nvm_conformance conformance/nvm.c src/elf_image.c
-                                      src/hex_image.c
+    dspic33_nvm_conformance conformance/nvm.c src/elf_image.c src/hex_image.c
 )
-add_executable(opentec_simulator_crc_conformance conformance/crc.c)
-add_executable(opentec_simulator_pmp_conformance conformance/pmp.c)
+add_executable(dspic33_crc_conformance conformance/crc.c)
+add_executable(dspic33_pmp_conformance conformance/pmp.c)
+add_executable(dspic33_input_capture_conformance conformance/input_capture.c)
+add_executable(dspic33_output_compare_conformance conformance/output_compare.c)
+add_executable(dspic33_comparator_conformance conformance/comparator.c)
+add_executable(dspic33_rtcc_conformance conformance/rtcc.c)
+add_executable(dspic33_qei_conformance conformance/qei.c)
+add_executable(dspic33_dci_conformance conformance/dci.c)
+add_executable(dspic33_gpio_conformance conformance/gpio.c)
+add_executable(dspic33_pps_conformance conformance/pps.c)
 add_executable(
-    opentec_simulator_input_capture_conformance conformance/input_capture.c
+    dspic33_auxiliary_clock_conformance conformance/auxiliary_clock.c
 )
+add_executable(dspic33_oscillator_conformance conformance/oscillator.c)
+add_executable(dspic33_watchdog_conformance conformance/watchdog.c)
 add_executable(
-    opentec_simulator_output_compare_conformance conformance/output_compare.c
+    dspic33_interrupt_control_conformance conformance/interrupt_control.c
 )
-add_executable(
-    opentec_simulator_comparator_conformance conformance/comparator.c
-)
-add_executable(opentec_simulator_rtcc_conformance conformance/rtcc.c)
-add_executable(opentec_simulator_qei_conformance conformance/qei.c)
-add_executable(opentec_simulator_dci_conformance conformance/dci.c)
-add_executable(opentec_simulator_gpio_conformance conformance/gpio.c)
-add_executable(opentec_simulator_pps_conformance conformance/pps.c)
-add_executable(
-    opentec_simulator_auxiliary_clock_conformance conformance/auxiliary_clock.c
-)
-add_executable(
-    opentec_simulator_oscillator_conformance conformance/oscillator.c
-)
-add_executable(opentec_simulator_watchdog_conformance conformance/watchdog.c)
-add_executable(
-    opentec_simulator_interrupt_control_conformance
-    conformance/interrupt_control.c
-)
-add_executable(opentec_simulator_core_sfr_conformance conformance/core_sfr.c)
-add_executable(opentec_simulator_reset_conformance conformance/reset.c)
-add_executable(opentec_simulator_sfr_reset_conformance conformance/sfr_reset.c)
-add_executable(
-    opentec_simulator_sfr_access_conformance conformance/sfr_access.c
-)
+add_executable(dspic33_core_sfr_conformance conformance/core_sfr.c)
+add_executable(dspic33_reset_conformance conformance/reset.c)
+add_executable(dspic33_sfr_reset_conformance conformance/sfr_reset.c)
+add_executable(dspic33_sfr_access_conformance conformance/sfr_access.c)
 
 target_include_directories(
-    opentec_simulator_core
+    dspic33_simulator
     PUBLIC src
     PRIVATE generated
 )
-target_link_libraries(opentec_firmware_simulator PRIVATE opentec_simulator_core)
+target_link_libraries(dspic33_firmware_runner PRIVATE dspic33_simulator)
+target_link_libraries(dspic33_event_conformance PRIVATE dspic33_simulator)
+target_link_libraries(dspic33_processor_conformance PRIVATE dspic33_simulator)
+target_include_directories(dspic33_processor_conformance PRIVATE generated)
+target_link_libraries(dspic33_dma_conformance PRIVATE dspic33_simulator)
+target_link_libraries(dspic33_timer_conformance PRIVATE dspic33_simulator)
+target_link_libraries(dspic33_adc_conformance PRIVATE dspic33_simulator)
+target_link_libraries(dspic33_pwm_conformance PRIVATE dspic33_simulator)
+target_link_libraries(dspic33_spi_conformance PRIVATE dspic33_simulator)
+target_link_libraries(dspic33_can_conformance PRIVATE dspic33_simulator)
+target_link_libraries(dspic33_usb_conformance PRIVATE dspic33_simulator)
+target_link_libraries(dspic33_uart_conformance PRIVATE dspic33_simulator)
+target_link_libraries(dspic33_i2c_conformance PRIVATE dspic33_simulator)
+target_link_libraries(dspic33_nvm_conformance PRIVATE dspic33_simulator)
+target_link_libraries(dspic33_crc_conformance PRIVATE dspic33_simulator)
+target_link_libraries(dspic33_pmp_conformance PRIVATE dspic33_simulator)
 target_link_libraries(
-    opentec_simulator_event_conformance PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_processor_conformance PRIVATE opentec_simulator_core
-)
-target_include_directories(
-    opentec_simulator_processor_conformance PRIVATE generated
-)
-target_link_libraries(
-    opentec_simulator_dma_conformance PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_timer_conformance PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_adc_conformance PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_pwm_conformance PRIVATE opentec_simulator_core
+    dspic33_input_capture_conformance PRIVATE dspic33_simulator
 )
 target_link_libraries(
-    opentec_simulator_spi_conformance PRIVATE opentec_simulator_core
+    dspic33_output_compare_conformance PRIVATE dspic33_simulator
 )
+target_link_libraries(dspic33_comparator_conformance PRIVATE dspic33_simulator)
+target_link_libraries(dspic33_rtcc_conformance PRIVATE dspic33_simulator)
+target_link_libraries(dspic33_qei_conformance PRIVATE dspic33_simulator)
+target_link_libraries(dspic33_dci_conformance PRIVATE dspic33_simulator)
+target_link_libraries(dspic33_gpio_conformance PRIVATE dspic33_simulator)
+target_link_libraries(dspic33_pps_conformance PRIVATE dspic33_simulator)
 target_link_libraries(
-    opentec_simulator_can_conformance PRIVATE opentec_simulator_core
+    dspic33_auxiliary_clock_conformance PRIVATE dspic33_simulator
 )
+target_link_libraries(dspic33_oscillator_conformance PRIVATE dspic33_simulator)
+target_link_libraries(dspic33_watchdog_conformance PRIVATE dspic33_simulator)
 target_link_libraries(
-    opentec_simulator_usb_conformance PRIVATE opentec_simulator_core
+    dspic33_interrupt_control_conformance PRIVATE dspic33_simulator
 )
-target_link_libraries(
-    opentec_simulator_uart_conformance PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_i2c_conformance PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_nvm_conformance PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_crc_conformance PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_pmp_conformance PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_input_capture_conformance PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_output_compare_conformance PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_comparator_conformance PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_rtcc_conformance PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_qei_conformance PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_dci_conformance PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_gpio_conformance PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_pps_conformance PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_auxiliary_clock_conformance
-    PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_oscillator_conformance PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_watchdog_conformance PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_interrupt_control_conformance
-    PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_core_sfr_conformance PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_reset_conformance PRIVATE opentec_simulator_core
-)
-target_link_libraries(
-    opentec_simulator_sfr_reset_conformance PRIVATE opentec_simulator_core
-)
-target_include_directories(
-    opentec_simulator_sfr_access_conformance PRIVATE generated
-)
-target_link_libraries(
-    opentec_simulator_sfr_access_conformance PRIVATE opentec_simulator_core
+target_link_libraries(dspic33_core_sfr_conformance PRIVATE dspic33_simulator)
+target_link_libraries(dspic33_reset_conformance PRIVATE dspic33_simulator)
+target_link_libraries(dspic33_sfr_reset_conformance PRIVATE dspic33_simulator)
+target_include_directories(dspic33_sfr_access_conformance PRIVATE generated)
+target_link_libraries(dspic33_sfr_access_conformance PRIVATE dspic33_simulator)
+
+set(dspic33_targets
+    dspic33_simulator
+    dspic33_firmware_runner
+    dspic33_event_conformance
+    dspic33_processor_conformance
+    dspic33_dma_conformance
+    dspic33_timer_conformance
+    dspic33_adc_conformance
+    dspic33_pwm_conformance
+    dspic33_spi_conformance
+    dspic33_can_conformance
+    dspic33_usb_conformance
+    dspic33_uart_conformance
+    dspic33_i2c_conformance
+    dspic33_nvm_conformance
+    dspic33_crc_conformance
+    dspic33_pmp_conformance
+    dspic33_input_capture_conformance
+    dspic33_output_compare_conformance
+    dspic33_comparator_conformance
+    dspic33_rtcc_conformance
+    dspic33_qei_conformance
+    dspic33_dci_conformance
+    dspic33_gpio_conformance
+    dspic33_pps_conformance
+    dspic33_auxiliary_clock_conformance
+    dspic33_oscillator_conformance
+    dspic33_watchdog_conformance
+    dspic33_interrupt_control_conformance
+    dspic33_core_sfr_conformance
+    dspic33_reset_conformance
+    dspic33_sfr_reset_conformance
+    dspic33_sfr_access_conformance
 )
 
-set(opentec_simulator_targets
-    opentec_simulator_core
-    opentec_firmware_simulator
-    opentec_simulator_event_conformance
-    opentec_simulator_processor_conformance
-    opentec_simulator_dma_conformance
-    opentec_simulator_timer_conformance
-    opentec_simulator_adc_conformance
-    opentec_simulator_pwm_conformance
-    opentec_simulator_spi_conformance
-    opentec_simulator_can_conformance
-    opentec_simulator_usb_conformance
-    opentec_simulator_uart_conformance
-    opentec_simulator_i2c_conformance
-    opentec_simulator_nvm_conformance
-    opentec_simulator_crc_conformance
-    opentec_simulator_pmp_conformance
-    opentec_simulator_input_capture_conformance
-    opentec_simulator_output_compare_conformance
-    opentec_simulator_comparator_conformance
-    opentec_simulator_rtcc_conformance
-    opentec_simulator_qei_conformance
-    opentec_simulator_dci_conformance
-    opentec_simulator_gpio_conformance
-    opentec_simulator_pps_conformance
-    opentec_simulator_auxiliary_clock_conformance
-    opentec_simulator_oscillator_conformance
-    opentec_simulator_watchdog_conformance
-    opentec_simulator_interrupt_control_conformance
-    opentec_simulator_core_sfr_conformance
-    opentec_simulator_reset_conformance
-    opentec_simulator_sfr_reset_conformance
-    opentec_simulator_sfr_access_conformance
-)
-
-foreach(target IN LISTS opentec_simulator_targets)
+foreach(target IN LISTS dspic33_targets)
     target_compile_features(${target} PRIVATE c_std_11)
 endforeach()
 
+if(BUILD_TESTING)
+    foreach(target IN LISTS dspic33_targets)
+        if(target MATCHES "_conformance$")
+            add_test(NAME ${target} COMMAND ${target})
+        endif()
+    endforeach()
+endif()
+
 if(MSVC)
-    foreach(target IN LISTS opentec_simulator_targets)
+    foreach(target IN LISTS dspic33_targets)
         target_compile_options(${target} PRIVATE /W4 /WX)
     endforeach()
 else()
-    foreach(target IN LISTS opentec_simulator_targets)
+    foreach(target IN LISTS dspic33_targets)
         target_compile_options(
             ${target} PRIVATE -Wall -Wextra -Wpedantic -Werror
         )
@@ -231,5 +171,5 @@ else()
 endif()
 
 if(WIN32)
-    target_link_libraries(opentec_firmware_simulator PRIVATE advapi32)
+    target_link_libraries(dspic33_firmware_runner PRIVATE advapi32)
 endif()

@@ -1,10 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 
-set(OPENTEC_TOOLCHAIN xc16)
-set(OPENTEC_PROCESSOR dsPIC33E)
-set(OPENTEC_DEVICE 33EP512MU810)
+set(DSPIC33_SIM_PROCESSOR dsPIC33E)
+set(DSPIC33_SIM_DEVICE 33EP512MU810)
 
-include("${CMAKE_CURRENT_LIST_DIR}/../../../cmake/FirmwareToolchain.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/Xc16Toolchain.cmake")
 project(dspic33-conformance LANGUAGES C ASM)
 
 set(device_linker_script
@@ -46,7 +45,7 @@ target_compile_options(
     PRIVATE -Wall
             -Werror
             -O1
-            -mcpu=${OPENTEC_DEVICE}
+            -mcpu=${DSPIC33_SIM_DEVICE}
             -mlarge-code
             -mlarge-data
             -mlarge-arrays
@@ -54,7 +53,7 @@ target_compile_options(
 target_link_options(
     dspic33-conformance
     PRIVATE
-    -mcpu=${OPENTEC_DEVICE}
+    -mcpu=${DSPIC33_SIM_DEVICE}
     -mlarge-code
     -mlarge-data
     -mlarge-arrays

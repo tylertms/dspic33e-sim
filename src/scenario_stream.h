@@ -1,5 +1,5 @@
-#ifndef OPENTEC_SCENARIO_STREAM_H
-#define OPENTEC_SCENARIO_STREAM_H
+#ifndef DSPIC33_SIM_SCENARIO_STREAM_H
+#define DSPIC33_SIM_SCENARIO_STREAM_H
 
 #include <stdbool.h>
 #include <stddef.h>

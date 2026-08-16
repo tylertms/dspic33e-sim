@@ -1,5 +1,5 @@
-#ifndef OPENTEC_ELF_IMAGE_H
-#define OPENTEC_ELF_IMAGE_H
+#ifndef DSPIC33_SIM_ELF_IMAGE_H
+#define DSPIC33_SIM_ELF_IMAGE_H
 
 #include <stdbool.h>
 #include <stddef.h>

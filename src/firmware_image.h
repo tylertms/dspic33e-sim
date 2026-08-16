@@ -1,5 +1,5 @@
-#ifndef OPENTEC_FIRMWARE_IMAGE_H
-#define OPENTEC_FIRMWARE_IMAGE_H
+#ifndef DSPIC33_SIM_FIRMWARE_IMAGE_H
+#define DSPIC33_SIM_FIRMWARE_IMAGE_H
 
 #include "elf_image.h"
 #include "hex_image.h"
