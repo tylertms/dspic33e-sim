@@ -17,6 +17,7 @@ MPLABX_VERSION = "6.35"
 DEVICE_NAME = "DSPIC33EP512MU810"
 SOURCE_SIZE = 1745713
 SOURCE_SHA256 = "44b421dcb5f6cc84fe8a7b295ccda87eb04ed2d3c2836b800713c1ac9016c7a3"
+SUMMARY_SHA256 = "97c0e4c7351c81d2a7a9eceb247b2e2ddbce5c4c656267062711326d9f624e0f"
 
 
 def local_name(name):
@@ -285,6 +286,39 @@ def muxed_records(root):
     return sorted(records, key=lambda record: int(record["address"], 0))
 
 
+def validate_manifest(document):
+    encoded_summary = json.dumps(
+        document["summary"], sort_keys=True, separators=(",", ":")
+    ).encode()
+    if hashlib.sha256(encoded_summary).hexdigest() != SUMMARY_SHA256:
+        raise ValueError("SFR inventory summary does not match the pinned device")
+    registers = document["registers"]
+    names = [register["name"] for register in registers]
+    if len(names) != len(set(names)):
+        raise ValueError("SFR register names are not unique")
+    expected_order = sorted(
+        registers, key=lambda register: (int(register["address"], 0), register["name"])
+    )
+    if registers != expected_order:
+        raise ValueError("SFR register order is not canonical")
+    for register in registers:
+        address = int(register["address"], 0)
+        if address & 1 or address >= 0x1000:
+            raise ValueError(f"invalid SFR address for {register['name']}")
+        if len(register["access"]) != 16 or not set(register["access"]) <= set(
+            "-nrcsw"
+        ):
+            raise ValueError(f"invalid access pattern for {register['name']}")
+        if len(register["por"]) != 16 or not set(register["por"]) <= set("-01xy"):
+            raise ValueError(f"invalid POR pattern for {register['name']}")
+        if len(register["mclr"]) != 16 or not set(register["mclr"]) <= set(
+            "-01xyu"
+        ):
+            raise ValueError(f"invalid MCLR pattern for {register['name']}")
+        if sum(mode["id"] == "DS.0" for mode in register["modes"]) != 1:
+            raise ValueError(f"{register['name']} does not have exactly one DS.0 mode")
+
+
 def manifest(path):
     source_identity(path)
     root = ElementTree.parse(path).getroot()
@@ -298,7 +332,7 @@ def manifest(path):
     registers.sort(key=lambda record: (int(record["address"], 0), record["name"]))
     joined = joined_records(root)
     muxed = muxed_records(root)
-    return {
+    document = {
         "schema_version": 1,
         "source": {
             "pack": PACK_NAME,
@@ -325,6 +359,8 @@ def manifest(path):
         "muxed": muxed,
         "registers": registers,
     }
+    validate_manifest(document)
+    return document
 
 
 def serialized_manifest(document):
