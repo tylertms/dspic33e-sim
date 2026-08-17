@@ -865,6 +865,20 @@ static void physical_lifecycle_cases(TestState* state, Dspic33* cpu) {
            "UART PPS wake rising edge clears WAKE without receiving character");
 
     dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0e3eu, 0u);
+    dspic33_gpio_drive(cpu, 3u, 1u, 1u);
+    dspic33_write_word(cpu, pps_registers[0], 64u);
+    configure(cpu, 0u, mode, 0u, 0u);
+    expect(state,
+           dspic33_gpio_drive(cpu, 3u, 0u, 1u) && (cpu->io.uart_rx_active & 1u) != 0u,
+           "UART PPS falling edge starts physical receive");
+    dspic33_write_word(cpu, bases[0], 0x8008u);
+    expect(state,
+           (cpu->io.uart_rx_active & 1u) == 0u && cpu->io.uart_rx_votes[0] == 0u &&
+               cpu->io.uart_rx_shift[0].data_bits == 0u,
+           "UART mode change cancels physical receive");
+
+    dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, 0x0680u, tx_functions[0]);
     dspic33_gpio_drive(cpu, 3u, 0u, 1u);
     dspic33_write_word(cpu, 0x0e36u, 1u);

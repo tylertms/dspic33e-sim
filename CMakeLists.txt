@@ -1,8 +1,18 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.21)
 
 project(dspic33_sim LANGUAGES C)
 
-include(CTest)
+if(PROJECT_IS_TOP_LEVEL)
+    option(BUILD_TESTING "Build the simulator tests" ON)
+    option(DSPIC33_ENABLE_COVERAGE "Enable GCC coverage instrumentation" OFF)
+    if(DSPIC33_ENABLE_COVERAGE)
+        if(NOT CMAKE_C_COMPILER_ID STREQUAL "GNU")
+            message(FATAL_ERROR "Coverage requires GCC")
+        endif()
+        add_compile_options(-O1 -g --coverage)
+        add_link_options(--coverage)
+    endif()
+endif()
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE
@@ -60,7 +70,9 @@ if(WIN32)
     target_link_libraries(dspic33_firmware_runner PRIVATE advapi32)
 endif()
 
-if(BUILD_TESTING AND PROJECT_IS_TOP_LEVEL)
+if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
+    enable_testing()
+
     function(dspic33_add_test name source labels)
         set(target "dspic33_${name}_test")
         add_executable(${target} ${source} ${ARGN})
@@ -75,7 +87,12 @@ if(BUILD_TESTING AND PROJECT_IS_TOP_LEVEL)
             )
         endif()
         add_test(NAME ${target} COMMAND ${target})
-        set_tests_properties(${target} PROPERTIES LABELS "${labels}")
+        set_tests_properties(
+            ${target}
+            PROPERTIES
+                LABELS "${labels}"
+                TIMEOUT 60
+        )
     endfunction()
 
     dspic33_add_test(event_scheduler tests/cpu/event_scheduler_test.c "cpu;integration")
@@ -115,6 +132,8 @@ if(BUILD_TESTING AND PROJECT_IS_TOP_LEVEL)
     dspic33_add_test(usb tests/device/usb_test.c "device;integration")
     dspic33_add_test(watchdog tests/device/watchdog_test.c "device;integration")
 
+    set_tests_properties(dspic33_processor_test PROPERTIES TIMEOUT 600)
+
     add_test(
         NAME dspic33_firmware_runner_smoke_test
         COMMAND
@@ -131,5 +150,6 @@ if(BUILD_TESTING AND PROJECT_IS_TOP_LEVEL)
         PROPERTIES
             LABELS "runner;system"
             PASS_REGULAR_EXPRESSION "\\[passed\\].*W0=0x005a"
+            TIMEOUT 10
     )
 endif()

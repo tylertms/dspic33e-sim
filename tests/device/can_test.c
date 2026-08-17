@@ -246,7 +246,7 @@ static void register_cases(TestState* state, Dspic33* cpu) {
         expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x14u)) == 0x003fu,
                "filter enable reset");
         dspic33_write_word(cpu, (uint16_t)(base + 2u), 0xffffu);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 2u)) == 0u,
+        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 2u)) == 0x001fu,
                "control two mask");
         dspic33_write_byte(cpu, (uint16_t)(base + 6u), 0xffu);
         dspic33_write_byte(cpu, (uint16_t)(base + 7u), 0xffu);

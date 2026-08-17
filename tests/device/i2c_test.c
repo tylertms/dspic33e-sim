@@ -143,6 +143,14 @@ static void register_cases(TestState* state, Dspic33* cpu) {
         dspic33_write_word(cpu, (uint16_t)(base + 8u), 0xffffu);
         expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0u,
                "status clear-only mask");
+        expect(state, dspic33_i2c_status(cpu, channel, 0x84c0u),
+               "hardware status injection accepts defined bits");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0x84c0u,
+               "hardware status injection updates defined bits");
+        expect(state, dspic33_i2c_status(cpu, channel, 0x0040u),
+               "hardware status injection replaces prior bits");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0x0040u,
+               "hardware status injection preserves replacement");
         dspic33_write_word(cpu, (uint16_t)(base + 10u), 0xffffu);
         expect(state, dspic33_read_word(cpu, (uint16_t)(base + 10u)) == 0x03ffu,
                "address mask");
@@ -150,6 +158,10 @@ static void register_cases(TestState* state, Dspic33* cpu) {
         expect(state, dspic33_read_word(cpu, (uint16_t)(base + 12u)) == 0x03ffu,
                "slave mask mask");
     }
+    expect(state, !dspic33_i2c_status(cpu, DSPIC33_I2C_COUNT, 0u),
+           "hardware status injection rejects invalid channel");
+    expect(state, !dspic33_i2c_status(cpu, 0u, 0x0001u),
+           "hardware status injection rejects software-owned bits");
 }
 
 static void timing_cases(TestState* state, Dspic33* cpu) {
@@ -2798,7 +2810,7 @@ int main(void) {
     master_pin_collision_cases(&state, &cpu);
     slave_pin_address_policy_cases(&state, &cpu);
     acknowledge_rmw_erratum_cases(&state, &cpu);
-    expect(&state, state.cases == 1188u, "I2C assertion arithmetic");
+    expect(&state, state.cases == 1198u, "I2C assertion arithmetic");
     dspic33_destroy(&cpu);
     printf("[i2c-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);

@@ -1,13 +1,5 @@
 * text=auto
 *.c text eol=lf
 *.h text eol=lf
-*.inc text eol=lf
-*.s text eol=lf
-*.py text eol=lf
-*.json text eol=lf
 *.md text eol=lf
-*.yaml text eol=lf
-*.cmake text eol=lf
 CMakeLists.txt text eol=lf
-*.bin binary
-*.gz binary

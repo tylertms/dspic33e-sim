@@ -15,6 +15,37 @@ static uint32_t count_bits(uint8_t value) {
     return count;
 }
 
+static uint64_t hash_byte(uint64_t hash, uint8_t value) {
+    hash ^= value;
+    return hash * UINT64_C(1099511628211);
+}
+
+static uint64_t hash_word(uint64_t hash, uint16_t value) {
+    hash = hash_byte(hash, (uint8_t)value);
+    return hash_byte(hash, (uint8_t)(value >> 8u));
+}
+
+static void test_data_hashes(TestState* state) {
+    uint64_t implementation_hash = UINT64_C(14695981039346656037);
+    uint64_t reset_hash = UINT64_C(14695981039346656037);
+    for (uint32_t index = 0u; index < DSPIC33_SFR_IMPLEMENTATION_BITMAP_SIZE; index++) {
+        implementation_hash =
+            hash_byte(implementation_hash, dspic33_sfr_implementation_bitmap[index]);
+    }
+    for (uint32_t index = 0u; index < DSPIC33_SFR_MASTER_CLEAR_RESET_COUNT; index++) {
+        const Dspic33SfrMasterClearReset* reset =
+            &dspic33_sfr_master_clear_resets[index];
+        reset_hash = hash_word(reset_hash, reset->address);
+        reset_hash = hash_word(reset_hash, reset->known_mask);
+        reset_hash = hash_word(reset_hash, reset->value);
+        reset_hash = hash_word(reset_hash, reset->unchanged);
+    }
+    expect(state, implementation_hash == UINT64_C(0xa0bac28c616ad517),
+           "SFR implementation data hash");
+    expect(state, reset_hash == UINT64_C(0x1171ca315d88f5e6),
+           "master-clear reset data hash");
+}
+
 static void test_implementation_map(TestState* state) {
     uint32_t implemented = 0u;
     uint32_t absent_ranges = 0u;
@@ -63,6 +94,7 @@ static void test_master_clear_resets(TestState* state) {
 
 int main(void) {
     TestState state = {0};
+    test_data_hashes(&state);
     test_implementation_map(&state);
     test_master_clear_resets(&state);
     printf("[device-data] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",

@@ -198,7 +198,14 @@ enum {
     OPCODE_DSP_PREFETCH_W5_COLLISION = 0xc01447u,
     OPCODE_DSP_PREFETCH_W6_COLLISION = 0xc02847u,
     OPCODE_DSP_PREFETCH_W7_COLLISION = 0xc03c47u,
-    OPCODE_DSP_MOVSAC_W4_COLLISION = 0xc70046u
+    OPCODE_DSP_MOVSAC_W4_COLLISION = 0xc70046u,
+    OPCODE_ACCUMULATOR_ADD_A_AND_B = 0xcb0000u,
+    OPCODE_ACCUMULATOR_NEGATE_B = 0xcb9000u,
+    OPCODE_ACCUMULATOR_SUBTRACT_B_FROM_A = 0xcb3000u,
+    OPCODE_ACCUMULATOR_STORE_A_W2 = 0xcc0002u,
+    OPCODE_ACCUMULATOR_ROUNDED_STORE_A_W2 = 0xcd0002u,
+    OPCODE_ACCUMULATOR_SHIFTED_STORE_A_W4 = 0xcc0784u,
+    OPCODE_MOV_W1_W2_BIT_REVERSED_INCREMENT = 0x781901u
 };
 
 static void load_instruction(TestState* state, Dspic33* cpu, uint32_t address,
@@ -11332,6 +11339,78 @@ static void illegal_condition_reset_cases(TestState* state, Dspic33* cpu) {
     expect_illegal_reset(state, cpu, "PUSH.S does not initialize W0 pointer");
 }
 
+static void accumulator_operation_cases(TestState* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_ACCUMULATOR_ADD_A_AND_B);
+    cpu->accumulator[0] = 7;
+    cpu->accumulator[1] = -2;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->accumulator[0] == 5 &&
+               cpu->accumulator[1] == -2,
+           "accumulator addition stores in A");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_ACCUMULATOR_NEGATE_B);
+    cpu->accumulator[0] = 7;
+    cpu->accumulator[1] = -2;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->accumulator[0] == 7 &&
+               cpu->accumulator[1] == 2,
+           "accumulator negation stores in B");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_ACCUMULATOR_SUBTRACT_B_FROM_A);
+    cpu->accumulator[0] = 7;
+    cpu->accumulator[1] = -2;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->accumulator[0] == 9 &&
+               cpu->accumulator[1] == -2,
+           "accumulator subtraction stores in A");
+}
+
+static void accumulator_store_cases(TestState* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_ACCUMULATOR_STORE_A_W2);
+    cpu->accumulator[0] = 0x12348000;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0x1234u,
+           "accumulator store truncates the low word");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_ACCUMULATOR_ROUNDED_STORE_A_W2);
+    cpu->corcon |= 0x0002u;
+    cpu->accumulator[0] = 0x12348000;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0x1235u,
+           "accumulator store applies conventional rounding");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_ACCUMULATOR_SHIFTED_STORE_A_W4);
+    cpu->accumulator[0] = 0x00008000;
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[4] == 1u,
+           "accumulator store applies the encoded shift");
+}
+
+static void bit_reversed_addressing_cases(TestState* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W1_W2_BIT_REVERSED_INCREMENT);
+    dspic33_set_working_register(cpu, 1u, 0x5a5au);
+    dspic33_set_working_register(cpu, 2u, 0x1000u);
+    dspic33_write_word(cpu, 0x0046u, 0x0200u);
+    dspic33_write_word(cpu, 0x0050u, 0x8002u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0x1004u &&
+               dspic33_read_word(cpu, 0x1000u) == 0x5a5au,
+           "bit-reversed post-increment updates the selected pointer");
+}
+
+static void run_limit_cases(TestState* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_NOP);
+    expect(state,
+           dspic33_run(cpu, 1u) == DSPIC33_INSTRUCTION_LIMIT && cpu->pc == 2u &&
+               cpu->instructions == 1u,
+           "run stops at the instruction limit");
+}
+
 int main(void) {
     TestState state = {0u, 0u, 0u};
     Dspic33 cpu;
@@ -11415,6 +11494,10 @@ int main(void) {
         file_multiply_encoding_matrix_cases(&state, &cpu);
         move_encoding_matrix_cases(&state, &cpu);
         illegal_condition_reset_cases(&state, &cpu);
+        accumulator_operation_cases(&state, &cpu);
+        accumulator_store_cases(&state, &cpu);
+        bit_reversed_addressing_cases(&state, &cpu);
+        run_limit_cases(&state, &cpu);
         dspic33_destroy(&cpu);
     }
     printf("[processor-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32

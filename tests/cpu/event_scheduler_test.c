@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "device.h"
 #include "dspic33.h"
@@ -45,6 +46,34 @@ static size_t active_usb_pending_count(const Dspic33* cpu) {
 static bool single_external_event(const Dspic33* cpu, Dspic33EventType type) {
     return cpu->events.count == 1u && cpu->events.items[0].external &&
            cpu->events.items[0].type == type;
+}
+
+static void stop_reason_name_cases(TestState* state) {
+    static const char* names[] = {
+        "running",
+        "returned",
+        "stop point",
+        "sleeping",
+        "idling",
+        "halted",
+        "trap",
+        "unsupported instruction",
+        "program bounds",
+        "instruction limit",
+        "event queue error",
+        "silicon result undefined",
+    };
+    size_t index;
+    for (index = 0u; index < sizeof(names) / sizeof(names[0]); index++) {
+        expect(state,
+               strcmp(dspic33_stop_reason_name((Dspic33StopReason)index),
+                      names[index]) == 0,
+               "stop reason name");
+    }
+    expect(state,
+           strcmp(dspic33_stop_reason_name((Dspic33StopReason)UINT32_MAX), "unknown") ==
+               0,
+           "unknown stop reason name");
 }
 
 static void external_event_classification_cases(TestState* state, Dspic33* cpu) {
@@ -356,6 +385,7 @@ int main(void) {
     bool copy_initialized = dspic33_initialize(&copy);
     expect(&state, cpu_initialized, "initialize event processor");
     expect(&state, copy_initialized, "initialize event copy");
+    stop_reason_name_cases(&state);
     if (cpu_initialized && copy_initialized) {
         delayed_interrupt_cases(&state, &cpu);
         relative_and_zero_delay_cases(&state, &cpu);

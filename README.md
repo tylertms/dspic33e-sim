@@ -37,10 +37,14 @@ ctest --test-dir build/simulator --output-on-failure
 
 The `tests` directory has these groups:
 
-- `cpu`: CPU and event integration tests
-- `device`: device unit and integration tests
-- `system`: firmware-runner system tests
+- `cpu`: instruction encoding matrices, value-domain, trap, timing, and event tests
+- `device`: register, peripheral, interrupt, reset, copy, power, and error-path tests
+- `system`: firmware image loading and runner integration tests
 - `support`: shared test utilities
+
+Each test is an isolated native executable. CTest applies a 60-second timeout to
+ordinary tests, a 10-minute timeout to the exhaustive processor test, and a
+10-second timeout to the system smoke test.
 
 Use a CTest label to run one test level or subsystem:
 
@@ -49,5 +53,22 @@ ctest --test-dir build/simulator -L unit --output-on-failure
 ctest --test-dir build/simulator -L device --output-on-failure
 ctest --test-dir build/simulator -L system --output-on-failure
 ```
+
+## Coverage
+
+GCC can instrument the simulator and tests without additional tools:
+
+```powershell
+cmake -S . -B build/coverage -G Ninja -DCMAKE_BUILD_TYPE=Debug -DDSPIC33_ENABLE_COVERAGE=ON
+cmake --build build/coverage --parallel
+ctest --test-dir build/coverage --output-on-failure
+Push-Location build/coverage
+Get-ChildItem CMakeFiles/dspic33_simulator.dir/src/*.gcno | ForEach-Object { gcov -b $_.FullName }
+Pop-Location
+```
+
+Coverage measures the native model. Electrical timing, analog tolerances, and
+silicon behavior that the device documentation leaves undefined require hardware
+validation.
 
 The device data in `src/dspic33ep512mu810_data.c` defines the implemented SFR addresses and master-clear reset values.
