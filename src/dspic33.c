@@ -4,9 +4,7 @@
 #include <string.h>
 
 #include "device.h"
-#define DSPIC33_SFR_INCLUDE_MASTER_CLEAR_RESETS
-#include "dspic33ep512mu810_sfr_map.h"
-#undef DSPIC33_SFR_INCLUDE_MASTER_CLEAR_RESETS
+#include "dspic33ep512mu810_data.h"
 
 enum {
     PSV_ADDRESS = 0x01000000u,
@@ -247,13 +245,7 @@ static bool check_data_alignment(Dspic33* cpu, uint32_t address) {
 }
 
 static bool data_byte_is_implemented(uint32_t address) {
-    uint32_t slot;
-    if (address >= 0x1000u) {
-        return true;
-    }
-    slot = (address & 0x0ffeu) >> 1u;
-    return (dspic33_sfr_implementation_bitmap[slot >> 3u] &
-            (uint8_t)(1u << (slot & 7u))) != 0u;
+    return dspic33ep512mu810_address_implemented(address);
 }
 
 static bool check_data_implementation(Dspic33* cpu, uint32_t address, uint8_t width) {
