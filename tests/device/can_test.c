@@ -182,7 +182,7 @@ static Dspic33CanFrame frame(uint32_t identifier, bool extended, bool remote,
     result.extended = extended;
     result.remote = remote;
     result.length = length;
-    for (index = 0u; index < length; index++) {
+    for (index = 0u; index < length && index < sizeof(result.data); index++) {
         result.data[index] = (uint8_t)(seed + index * 17u);
     }
     return result;
