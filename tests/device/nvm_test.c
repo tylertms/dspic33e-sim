@@ -2106,7 +2106,7 @@ static void vector_segment_execution_cases(TestState* state, Dspic33* cpu) {
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000100u &&
                cpu->last_trap == UINT16_MAX && !cpu->illegal_reset,
-           "PFC may target the vector segment");
+           "PFC can target the vector segment");
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == 1u &&
                cpu->pc == handler && cpu->last_trap_return == 0x000102u &&

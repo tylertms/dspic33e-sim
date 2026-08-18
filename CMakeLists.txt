@@ -11,6 +11,7 @@ if(PROJECT_IS_TOP_LEVEL)
         endif()
         add_compile_options(-O1 -g --coverage)
         add_link_options(--coverage)
+        find_program(GCOV_EXECUTABLE gcov REQUIRED)
     endif()
 endif()
 
@@ -96,7 +97,18 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     endfunction()
 
     dspic33_add_test(event_scheduler tests/cpu/event_scheduler_test.c "cpu;integration")
-    dspic33_add_test(processor tests/cpu/processor_test.c "cpu;integration")
+    dspic33_add_test(
+        processor_fault tests/cpu/processor/processor_fault_test.c "cpu;integration"
+    )
+    dspic33_add_test(
+        processor_timing tests/cpu/processor/processor_timing_test.c "cpu;integration"
+    )
+    dspic33_add_test(
+        processor_data tests/cpu/processor/processor_data_test.c "cpu;integration"
+    )
+    dspic33_add_test(
+        processor_control tests/cpu/processor/processor_control_test.c "cpu;integration"
+    )
 
     dspic33_add_test(adc tests/device/adc_test.c "device;integration")
     dspic33_add_test(auxiliary_clock tests/device/auxiliary_clock_test.c "device;integration")
@@ -117,7 +129,31 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
         src/hex_image.c
     )
     dspic33_add_test(oscillator tests/device/oscillator_test.c "device;integration")
-    dspic33_add_test(output_compare tests/device/output_compare_test.c "device;integration")
+    dspic33_add_test(
+        output_compare_basic
+        tests/device/output_compare/output_compare_basic_test.c
+        "device;integration"
+    )
+    dspic33_add_test(
+        output_compare_fault
+        tests/device/output_compare/output_compare_fault_test.c
+        "device;integration"
+    )
+    dspic33_add_test(
+        output_compare_cascade
+        tests/device/output_compare/output_compare_cascade_test.c
+        "device;integration"
+    )
+    dspic33_add_test(
+        output_compare_power
+        tests/device/output_compare/output_compare_power_test.c
+        "device;integration"
+    )
+    dspic33_add_test(
+        output_compare_sync
+        tests/device/output_compare/output_compare_sync_test.c
+        "device;integration"
+    )
     dspic33_add_test(pmp tests/device/pmp_test.c "device;integration")
     dspic33_add_test(pps tests/device/pps_test.c "device;integration")
     dspic33_add_test(pwm tests/device/pwm_test.c "device;integration")
@@ -132,13 +168,19 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     dspic33_add_test(usb tests/device/usb_test.c "device;integration")
     dspic33_add_test(watchdog tests/device/watchdog_test.c "device;integration")
 
-    set_tests_properties(dspic33_processor_test PROPERTIES TIMEOUT 600)
+    set_tests_properties(
+        dspic33_processor_fault_test
+        dspic33_processor_timing_test
+        dspic33_processor_data_test
+        dspic33_processor_control_test
+        PROPERTIES TIMEOUT 600
+    )
 
     add_test(
         NAME dspic33_firmware_runner_smoke_test
         COMMAND
             dspic33_firmware_runner
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/system/smoke.hex
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/runner_smoke.hex
             0
             --stop
             2
@@ -152,4 +194,22 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
             PASS_REGULAR_EXPRESSION "\\[passed\\].*W0=0x005a"
             TIMEOUT 10
     )
+
+    if(DSPIC33_ENABLE_COVERAGE)
+        set(coverage_directory "${CMAKE_CURRENT_BINARY_DIR}/coverage")
+        file(MAKE_DIRECTORY "${coverage_directory}")
+        set(coverage_notes
+            "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/dspic33_simulator.dir/src/device.c.gcno"
+            "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/dspic33_simulator.dir/src/dspic33.c.gcno"
+            "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/dspic33_simulator.dir/src/dspic33ep512mu810_data.c.gcno"
+            "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/dspic33_simulator.dir/src/i2c.c.gcno"
+        )
+        add_custom_target(
+            dspic33_coverage_report
+            COMMAND ${GCOV_EXECUTABLE} -b ${coverage_notes}
+            WORKING_DIRECTORY "${coverage_directory}"
+            DEPENDS dspic33_simulator
+            VERBATIM
+        )
+    endif()
 endif()

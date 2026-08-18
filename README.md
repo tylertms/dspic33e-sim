@@ -1,74 +1,104 @@
 # dsPIC33 Simulator
 
-This repository contains a native C simulator for the dsPIC33E architecture.
+This repository provides a native C simulator for the dsPIC33E architecture.
 
-The CPU engine implements the dsPIC33E instruction set. The device model targets the dsPIC33EP512MU810 B1 revision.
+The CPU model implements the dsPIC33E instruction set. The device model implements the dsPIC33EP512MU810 B1 revision.
 
 ## Build
 
-```powershell
+Configure a Release build:
+
+```
 cmake -S . -B build/simulator -G Ninja -DCMAKE_BUILD_TYPE=Release
+```
+
+Build the simulator:
+
+```
 cmake --build build/simulator --parallel
 ```
 
 The build provides these targets:
 
-- `dspic33::simulator`: static simulator library
-- `dspic33::firmware_runner`: firmware scenario runner
+- `dspic33::simulator` is the static simulator library.
+- `dspic33::firmware_runner` is the firmware scenario runner.
 
 ## Use from CMake
 
-Add this repository as a Git submodule. Then add the simulator to the parent build:
+Add this repository as a Git submodule.
+
+Add the submodule to the parent build:
 
 ```cmake
 add_subdirectory(third_party/dspic33-sim EXCLUDE_FROM_ALL)
 target_link_libraries(your_target PRIVATE dspic33::simulator)
 ```
 
-The parent build does not build the standalone simulator tests.
+The parent build does not build the standalone tests.
 
 ## Tests
 
-The test suite uses CTest and native C executables.
+CTest runs isolated native C executables. No external test framework is necessary.
 
-```powershell
-ctest --test-dir build/simulator --output-on-failure
+Run all tests:
+
+```
+ctest --test-dir build/simulator --parallel --output-on-failure
 ```
 
-The `tests` directory has these groups:
+The `tests` directory has this structure:
 
-- `cpu`: instruction encoding matrices, value-domain, trap, timing, and event tests
-- `device`: register, peripheral, interrupt, reset, copy, power, and error-path tests
-- `system`: firmware image loading and runner integration tests
-- `support`: shared test utilities
+- `cpu/processor` contains separate fault, timing, data-encoding, and control-encoding tests.
+- `cpu/event_scheduler_test.c` contains event and public-state tests.
+- `device` contains register and peripheral tests.
+- `support` contains shared test data and the small assertion helper.
+- `runner_smoke.hex` is the firmware-runner fixture.
 
-Each test is an isolated native executable. CTest applies a 60-second timeout to
-ordinary tests, a 10-minute timeout to the exhaustive processor test, and a
-10-second timeout to the system smoke test.
+The device tests include interrupt, reset, copy, power, lifecycle, and error cases.
 
-Use a CTest label to run one test level or subsystem:
+CTest stops an ordinary test after 60 seconds. It gives each exhaustive processor test 10 minutes.
 
-```powershell
-ctest --test-dir build/simulator -L unit --output-on-failure
-ctest --test-dir build/simulator -L device --output-on-failure
-ctest --test-dir build/simulator -L system --output-on-failure
+Run one test group:
+
+```
+ctest --test-dir build/simulator -L unit --parallel --output-on-failure
+ctest --test-dir build/simulator -L cpu --parallel --output-on-failure
+ctest --test-dir build/simulator -L device --parallel --output-on-failure
+ctest --test-dir build/simulator -L system --parallel --output-on-failure
 ```
 
 ## Coverage
 
-GCC can instrument the simulator and tests without additional tools:
+GCC and gcov measure source coverage. Configure a coverage build:
 
-```powershell
+```
 cmake -S . -B build/coverage -G Ninja -DCMAKE_BUILD_TYPE=Debug -DDSPIC33_ENABLE_COVERAGE=ON
-cmake --build build/coverage --parallel
-ctest --test-dir build/coverage --output-on-failure
-Push-Location build/coverage
-Get-ChildItem CMakeFiles/dspic33_simulator.dir/src/*.gcno | ForEach-Object { gcov -b $_.FullName }
-Pop-Location
 ```
 
-Coverage measures the native model. Electrical timing, analog tolerances, and
-silicon behavior that the device documentation leaves undefined require hardware
-validation.
+Build the coverage targets:
 
-The device data in `src/dspic33ep512mu810_data.c` defines the implemented SFR addresses and master-clear reset values.
+```
+cmake --build build/coverage --parallel
+```
+
+Run the tests:
+
+```
+ctest --test-dir build/coverage --output-on-failure
+```
+
+Create the gcov reports:
+
+```
+cmake --build build/coverage --target dspic33_coverage_report
+```
+
+The target writes the reports to `build/coverage/coverage`.
+
+Coverage measures the native model. Hardware tests must measure electrical timing, analog tolerances, and undefined silicon behavior.
+
+## Device data
+
+Special function registers (SFRs) control the dsPIC device.
+
+`src/dspic33ep512mu810_data.c` contains the implemented SFR addresses and reset values. The tests use fixed hashes and independent access expectations.
