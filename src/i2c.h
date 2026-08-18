@@ -1,5 +1,5 @@
-#ifndef DSPIC33_SIM_DSPIC33_I2C_H
-#define DSPIC33_SIM_DSPIC33_I2C_H
+#ifndef DSPIC33E_SIM_DSPIC33_I2C_H
+#define DSPIC33E_SIM_DSPIC33_I2C_H
 
 #include "dspic33.h"
 

@@ -1,5 +1,5 @@
-#ifndef DSPIC33_SIM_JSON_H
-#define DSPIC33_SIM_JSON_H
+#ifndef DSPIC33E_SIM_JSON_H
+#define DSPIC33E_SIM_JSON_H
 
 #include <stdbool.h>
 #include <stddef.h>

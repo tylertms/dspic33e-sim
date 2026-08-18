@@ -1,4 +1,4 @@
-# dsPIC33 Simulator
+# dsPIC33E Simulator
 
 This repository provides a native C simulator for the dsPIC33E architecture.
 
@@ -20,8 +20,8 @@ cmake --build build/simulator --parallel
 
 The build provides these targets:
 
-- `dspic33::simulator` is the static simulator library.
-- `dspic33::firmware_runner` is the firmware scenario runner.
+- `dspic33e::simulator` is the static simulator library.
+- `dspic33e::firmware_runner` is the firmware scenario runner.
 
 ## Use from CMake
 
@@ -30,8 +30,8 @@ Add this repository as a Git submodule.
 Add the submodule to the parent build:
 
 ```cmake
-add_subdirectory(third_party/dspic33-sim EXCLUDE_FROM_ALL)
-target_link_libraries(your_target PRIVATE dspic33::simulator)
+add_subdirectory(third_party/dspic33e-sim EXCLUDE_FROM_ALL)
+target_link_libraries(your_target PRIVATE dspic33e::simulator)
 ```
 
 The parent build does not build the standalone tests.
@@ -72,7 +72,7 @@ ctest --test-dir build/simulator -L system --parallel --output-on-failure
 GCC and gcov measure source coverage. Configure a coverage build:
 
 ```
-cmake -S . -B build/coverage -G Ninja -DCMAKE_BUILD_TYPE=Debug -DDSPIC33_ENABLE_COVERAGE=ON
+cmake -S . -B build/coverage -G Ninja -DCMAKE_BUILD_TYPE=Debug -DDSPIC33E_ENABLE_COVERAGE=ON
 ```
 
 Build the coverage targets:
@@ -90,7 +90,7 @@ ctest --test-dir build/coverage --output-on-failure
 Create the gcov reports:
 
 ```
-cmake --build build/coverage --target dspic33_coverage_report
+cmake --build build/coverage --target dspic33e_coverage_report
 ```
 
 The target writes the reports to `build/coverage/coverage`.
