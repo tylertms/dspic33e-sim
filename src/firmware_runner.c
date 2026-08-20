@@ -4313,7 +4313,7 @@ int firmware_runner_main(int argc, char** argv) {
     runner->reference_hits = calloc(EXECUTION_HIT_BYTES, 1u);
     runner->candidate_hits = calloc(EXECUTION_HIT_BYTES, 1u);
     if (runner->reference_hits == NULL || runner->candidate_hits == NULL) {
-        fprintf(stderr, "[error] cannot allocate execution coverage state\n");
+        fprintf(stderr, "[error] cannot allocate execution tracking state\n");
         free(runner->candidate_hits);
         free(runner->reference_hits);
         free(runner);

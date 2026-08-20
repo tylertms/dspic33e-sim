@@ -67,36 +67,6 @@ ctest --test-dir build/simulator -L device --parallel --output-on-failure
 ctest --test-dir build/simulator -L system --parallel --output-on-failure
 ```
 
-## Coverage
-
-GCC and gcov measure source coverage. Configure a coverage build:
-
-```
-cmake -S . -B build/coverage -G Ninja -DCMAKE_BUILD_TYPE=Debug -DDSPIC33E_ENABLE_COVERAGE=ON
-```
-
-Build the coverage targets:
-
-```
-cmake --build build/coverage --parallel
-```
-
-Run the tests:
-
-```
-ctest --test-dir build/coverage --output-on-failure
-```
-
-Create the gcov reports:
-
-```
-cmake --build build/coverage --target dspic33e_coverage_report
-```
-
-The target writes the reports to `build/coverage/coverage`.
-
-Coverage measures the native model. Hardware tests must measure electrical timing, analog tolerances, and undefined silicon behavior.
-
 ## Device data
 
 Special function registers (SFRs) control the dsPIC device.
