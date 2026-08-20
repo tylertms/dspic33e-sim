@@ -10,7 +10,7 @@
 #endif
 
 #include "dspic33.h"
-#include "firmware_image.h"
+#include "dspic33_firmware_image.h"
 #include "json.h"
 #include "scenario_stream.h"
 

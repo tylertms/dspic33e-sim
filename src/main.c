@@ -5,7 +5,7 @@
 #include <string.h>
 
 #include "dspic33.h"
-#include "firmware_image.h"
+#include "dspic33_firmware_image.h"
 #include "firmware_runner.h"
 
 enum { PROGRAM_WORD_LIMIT = 8 };

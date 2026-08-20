@@ -110,13 +110,8 @@ static bool is_text_image(const uint8_t* bytes, size_t size) {
     return true;
 }
 
-bool hex_image_open(HexImage* image, const char* path, char* error, size_t error_size) {
+static bool prepare_image(HexImage* image, char* error, size_t error_size) {
     size_t offset;
-    memset(image, 0, sizeof(*image));
-    if (!read_file(path, &image->bytes, &image->size)) {
-        set_error(error, error_size, "cannot read firmware image");
-        return false;
-    }
     if (!is_text_image(image->bytes, image->size)) {
         if (!decrypt_image(image->bytes, &image->size)) {
             hex_image_close(image);
@@ -137,6 +132,33 @@ bool hex_image_open(HexImage* image, const char* path, char* error, size_t error
         image->bytes[image->size] = 0u;
     }
     return true;
+}
+
+bool hex_image_open(HexImage* image, const char* path, char* error, size_t error_size) {
+    memset(image, 0, sizeof(*image));
+    if (!read_file(path, &image->bytes, &image->size)) {
+        set_error(error, error_size, "cannot read firmware image");
+        return false;
+    }
+    return prepare_image(image, error, error_size);
+}
+
+bool hex_image_open_data(HexImage* image, const void* data, size_t size, char* error,
+                         size_t error_size) {
+    memset(image, 0, sizeof(*image));
+    if (data == NULL || size == 0u) {
+        set_error(error, error_size, "firmware image is empty");
+        return false;
+    }
+    image->bytes = malloc(size + 1u);
+    if (image->bytes == NULL) {
+        set_error(error, error_size, "cannot allocate firmware image");
+        return false;
+    }
+    memcpy(image->bytes, data, size);
+    image->bytes[size] = 0u;
+    image->size = size;
+    return prepare_image(image, error, error_size);
 }
 
 void hex_image_close(HexImage* image) {

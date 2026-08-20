@@ -19,22 +19,26 @@ add_library(
 )
 add_library(dspic33e::simulator ALIAS dspic33e_simulator)
 
+add_library(
+    dspic33e_firmware_image STATIC src/elf_image.c src/dspic33_firmware_image.c
+                                   src/hex_image.c
+)
+add_library(dspic33e::firmware_image ALIAS dspic33e_firmware_image)
+
 add_executable(
-    dspic33e_firmware_runner
-    src/elf_image.c
-    src/firmware_image.c
-    src/firmware_runner.c
-    src/hex_image.c
-    src/json.c
-    src/main.c
-    src/scenario_stream.c
+    dspic33e_firmware_runner src/firmware_runner.c src/json.c src/main.c
+                             src/scenario_stream.c
 )
 add_executable(dspic33e::firmware_runner ALIAS dspic33e_firmware_runner)
 
 target_include_directories(dspic33e_simulator PUBLIC src)
+target_include_directories(dspic33e_firmware_image PUBLIC src)
 
-target_link_libraries(dspic33e_firmware_runner PRIVATE dspic33e_simulator)
-set(dspic33e_targets dspic33e_simulator dspic33e_firmware_runner)
+target_link_libraries(dspic33e_firmware_image PUBLIC dspic33e_simulator)
+target_link_libraries(dspic33e_firmware_runner PRIVATE dspic33e_firmware_image)
+set(dspic33e_targets dspic33e_simulator dspic33e_firmware_image
+                     dspic33e_firmware_runner
+)
 
 foreach(target IN LISTS dspic33e_targets)
     target_compile_features(${target} PRIVATE c_std_11)
@@ -53,7 +57,7 @@ else()
 endif()
 
 if(WIN32)
-    target_link_libraries(dspic33e_firmware_runner PRIVATE advapi32)
+    target_link_libraries(dspic33e_firmware_image PUBLIC advapi32)
 endif()
 
 if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
@@ -121,10 +125,8 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
         interrupt_control tests/device/interrupt_control_test.c
         "device;integration"
     )
-    dspic33e_add_test(
-        nvm tests/device/nvm_test.c "device;integration" src/elf_image.c
-        src/hex_image.c
-    )
+    dspic33e_add_test(nvm tests/device/nvm_test.c "device;integration")
+    target_link_libraries(dspic33e_nvm_test PRIVATE dspic33e_firmware_image)
     dspic33e_add_test(
         oscillator tests/device/oscillator_test.c "device;integration"
     )

@@ -13,6 +13,8 @@ typedef struct {
 } ElfImage;
 
 bool elf_image_open(ElfImage* image, const char* path, char* error, size_t error_size);
+bool elf_image_open_data(ElfImage* image, const void* data, size_t size, char* error,
+                         size_t error_size);
 void elf_image_close(ElfImage* image);
 bool elf_image_load_program(const ElfImage* image, Dspic33* cpu, char* error,
                             size_t error_size);

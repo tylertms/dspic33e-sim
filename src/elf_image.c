@@ -127,6 +127,27 @@ bool elf_image_open(ElfImage* image, const char* path, char* error, size_t error
     return true;
 }
 
+bool elf_image_open_data(ElfImage* image, const void* data, size_t size, char* error,
+                         size_t error_size) {
+    memset(image, 0, sizeof(*image));
+    if (data == NULL || size == 0u) {
+        set_error(error, error_size, "ELF image is empty");
+        return false;
+    }
+    image->bytes = malloc(size);
+    if (image->bytes == NULL) {
+        set_error(error, error_size, "cannot allocate ELF image");
+        return false;
+    }
+    memcpy(image->bytes, data, size);
+    image->size = size;
+    if (!header_valid(image, error, error_size)) {
+        elf_image_close(image);
+        return false;
+    }
+    return true;
+}
+
 void elf_image_close(ElfImage* image) {
     free(image->bytes);
     image->bytes = NULL;

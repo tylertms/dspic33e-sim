@@ -14,6 +14,8 @@ typedef struct {
 } HexImage;
 
 bool hex_image_open(HexImage* image, const char* path, char* error, size_t error_size);
+bool hex_image_open_data(HexImage* image, const void* data, size_t size, char* error,
+                         size_t error_size);
 void hex_image_close(HexImage* image);
 bool hex_image_load_program(const HexImage* image, Dspic33* cpu, char* error,
                             size_t error_size);
