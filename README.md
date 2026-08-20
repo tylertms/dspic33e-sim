@@ -21,7 +21,8 @@ cmake --build build/simulator --parallel
 The build provides these targets:
 
 - `dspic33e::simulator` is the static simulator library.
-- `dspic33e::firmware_runner` is the firmware scenario runner.
+- `dspic33e::firmware_image` loads ELF and Intel HEX images.
+- `dspic33e::firmware_runner` loads and runs one firmware image.
 
 ## Use from CMake
 

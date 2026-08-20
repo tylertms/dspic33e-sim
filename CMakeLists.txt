@@ -25,10 +25,7 @@ add_library(
 )
 add_library(dspic33e::firmware_image ALIAS dspic33e_firmware_image)
 
-add_executable(
-    dspic33e_firmware_runner src/firmware_runner.c src/json.c src/main.c
-                             src/scenario_stream.c
-)
+add_executable(dspic33e_firmware_runner src/main.c)
 add_executable(dspic33e::firmware_runner ALIAS dspic33e_firmware_runner)
 
 target_include_directories(dspic33e_simulator PUBLIC src)

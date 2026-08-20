@@ -6,7 +6,6 @@
 
 #include "dspic33.h"
 #include "dspic33_firmware_image.h"
-#include "firmware_runner.h"
 
 enum { PROGRAM_WORD_LIMIT = 8 };
 
@@ -220,9 +219,6 @@ int main(int argc, char** argv) {
     uint8_t reg;
     char error[160];
 
-    if (argc >= 2 && strcmp(argv[1], "--suite") == 0) {
-        return firmware_runner_main(argc, argv);
-    }
     if (!parse_arguments(argc, argv, &arguments)) {
         print_usage(argv[0]);
         return 2;
