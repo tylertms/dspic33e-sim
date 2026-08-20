@@ -30,7 +30,7 @@ Add this repository as a Git submodule.
 Add the submodule to the parent build:
 
 ```cmake
-add_subdirectory(third_party/dspic33e-sim EXCLUDE_FROM_ALL)
+add_subdirectory(sim/dspic33e-sim EXCLUDE_FROM_ALL)
 target_link_libraries(your_target PRIVATE dspic33e::simulator)
 ```
 
