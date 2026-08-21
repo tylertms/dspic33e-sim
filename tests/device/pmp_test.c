@@ -743,7 +743,7 @@ static void read_lifecycle_cases(TestState* state, Dspic33* cpu) {
                cpu->events.count == 0u &&
                (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) == 0u,
            "PMP read scheduling overflow rolls back transfer");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 }
 
 static void interrupt_cases(TestState* state, Dspic33* cpu) {
@@ -923,7 +923,7 @@ static void lifecycle_cases(TestState* state, Dspic33* cpu) {
            !cpu->io.pmp.active && cpu->events.count == 0u &&
                (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) == 0u,
            "PMP scheduling overflow rolls back transfer");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 }
 
 static void legacy_slave_cases(TestState* state, Dspic33* cpu) {
@@ -1320,7 +1320,7 @@ static void slave_power_lifecycle_cases(TestState* state, Dspic33* cpu) {
            dspic33_pmp_slave_read(cpu, 0u, 0u) && !dspic33_device_advance(cpu, 0u) &&
                cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR,
            "full PMP output queue reports slave read failure");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 }
 
 static void slave_mode_matrix_cases(TestState* state, Dspic33* cpu) {
@@ -1587,7 +1587,7 @@ static void pmp_extended_lifecycle_cases(TestState* state, Dspic33* cpu) {
            !dspic33_pmp_slave_write(cpu, 0u, 0x81u, 1u) &&
                !dspic33_pmp_slave_read(cpu, 0u, 1u) && cpu->events.count == 0u,
            "slave scheduling overflow rolls back without state");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 }
 
 static void pmp_power_wake_matrix_cases(TestState* state, Dspic33* cpu) {
@@ -1829,7 +1829,7 @@ static void pmp_power_wake_matrix_cases(TestState* state, Dspic33* cpu) {
                copy.io.pmp.pmd_disabled &&
                    (dspic33_read_word(&copy, PMP_PMD) & PMP_MODULE_DISABLE) != 0u,
                "copied PMP PMD state remains independent");
-        dspic33_destroy(&copy);
+        dspic33_release(&copy);
     }
 
     dspic33_reset(cpu, 0u);
@@ -1922,9 +1922,7 @@ int main(void) {
         slave_dma_isolation_cases(&state, &cpu);
         pmp_extended_lifecycle_cases(&state, &cpu);
         pmp_power_wake_matrix_cases(&state, &cpu);
-        dspic33_destroy(&cpu);
+        dspic33_release(&cpu);
     }
-    printf("[pmp-summary] cases=%u passed=%u failed=%u\n", state.cases, state.passed,
-           state.failed);
-    return state.failed == 0u ? 0 : 1;
+    return test_finish(&state);
 }

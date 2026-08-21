@@ -328,7 +328,7 @@ static void cascade_lifecycle_cases(TestState* state, Dspic33* cpu) {
                    compare_raw_word(cpu, 0x0908u) == 3u &&
                    compare_raw_word(&copy, 0x0908u) == 4u,
                "copied cascade timers advance independently");
-        dspic33_destroy(&copy);
+        dspic33_release(&copy);
     }
 
     dspic33_reset(cpu, 0u);
@@ -420,7 +420,7 @@ static void cascade_clock_cases(TestState* state, Dspic33* cpu) {
                            stepped.io.output_compare.output_high &&
                        interrupt_flag(cpu, 1u) == interrupt_flag(&stepped, 1u),
                    "cascade batched and stepped advancement are equivalent");
-            dspic33_destroy(&stepped);
+            dspic33_release(&stepped);
         }
     }
 }
@@ -634,9 +634,7 @@ int main(void) {
         cascade_pipeline_cases(&state, &cpu);
         cascade_short_pwm_cases(&state, &cpu);
         cascade_access_activation_cases(&state, &cpu);
-        dspic33_destroy(&cpu);
+        dspic33_release(&cpu);
     }
-    printf("[output-compare-cascade-summary] cases=%u passed=%u failed=%u\n",
-           state.cases, state.passed, state.failed);
-    return state.failed == 0u ? 0 : 1;
+    return test_finish(&state);
 }

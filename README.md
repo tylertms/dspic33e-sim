@@ -2,7 +2,21 @@
 
 This repository provides a native C simulator for the dsPIC33E architecture.
 
-The CPU model implements the dsPIC33E instruction set. The device model implements the dsPIC33EP512MU810 B1 revision.
+The CPU model implements the dsPIC33E instruction set. The device model
+implements the dsPIC33EP512MU810 B1 revision.
+
+## Supported behavior
+
+The CPU supports integer, DSP, branch, table, stack, repeat, and DO-loop
+instructions. It also supports interrupts, traps, reset states, power states,
+event scheduling, and bounded execution.
+
+The device model includes memory, clocks, DMA, GPIO, timers, analog units,
+serial interfaces, USB, CAN, PWM, PPS, and other dsPIC33EP512MU810 peripherals.
+
+The register model rejects unknown addresses and unsupported access widths.
+Hardware tests must check electrical timing, analog tolerances, clock accuracy,
+and silicon-specific behavior. The model does not replace these hardware tests.
 
 ## Build
 
@@ -22,7 +36,19 @@ The build provides these targets:
 
 - `dspic33e::simulator` is the static simulator library.
 - `dspic33e::firmware_image` loads ELF and raw binary images.
-- `dspic33e::firmware_runner` loads and runs one firmware image.
+- `dspic33e::firmware_runner` loads and runs a firmware image.
+
+The runner accepts a dsPIC ELF file or a raw binary file. It requires a reset
+address and uses finite instruction and cycle limits by default:
+
+```
+dspic33e_firmware_runner IMAGE --reset-address ADDRESS \
+  [--max-instructions COUNT] [--max-cycles COUNT] \
+  [--stop-address ADDRESS] [--program-word ADDRESS VALUE]
+```
+
+Reset and stop addresses can be numeric values or ELF symbols. The
+`--program-word` option supports CPU-specific runner tests.
 
 ## Use from CMake
 
@@ -49,10 +75,9 @@ ctest --test-dir build/simulator --parallel --output-on-failure
 
 The `tests` directory has this structure:
 
-- `core/processor` contains separate fault, timing, data-encoding, and control-encoding tests.
-- `core/event_scheduler_test.c` contains event and public-state tests.
+- `core` contains instruction, event, fault, timing, and public API tests.
 - `device` contains register and peripheral tests.
-- `system` contains firmware-runner tests and fixtures.
+- `system` contains firmware image and runner tests.
 - `support` contains shared test data and the small assertion helper.
 
 The device tests include interrupt, reset, copy, power, lifecycle, and error cases.

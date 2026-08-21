@@ -1,7 +1,7 @@
 #ifndef DSPIC33E_SIM_DSPIC33_I2C_H
 #define DSPIC33E_SIM_DSPIC33_I2C_H
 
-#include "dspic33.h"
+#include "dspic33_internal.h"
 
 bool dspic33_i2c_write_register(Dspic33* cpu, uint16_t address, uint16_t previous,
                                 uint16_t requested);

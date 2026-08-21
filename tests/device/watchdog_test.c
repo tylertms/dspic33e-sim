@@ -339,10 +339,7 @@ int main(void) {
     power_cases(&state, &source);
     lifecycle_cases(&state, &source, &copy);
     nvm_cases(&state, &source);
-    printf("[watchdog-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32
-           "\n",
-           state.cases, state.passed, state.failed);
-    dspic33_destroy(&copy);
-    dspic33_destroy(&source);
-    return state.failed == 0u ? 0 : 1;
+    dspic33_release(&copy);
+    dspic33_release(&source);
+    return test_finish(&state);
 }

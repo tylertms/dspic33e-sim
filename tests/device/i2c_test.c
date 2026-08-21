@@ -1627,7 +1627,7 @@ static void pmd_transition_cases(TestState* state, Dspic33* cpu) {
            dspic33_device_advance(cpu, 1u) && dspic33_device_advance(&copy, 1u) &&
                cpu->io.i2c_pmd_disabled == 1u && copy.io.i2c_pmd_disabled == 1u,
            "copied PMD transitions complete equally");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, pmd_addresses[0], pmd_masks[0]);
@@ -1904,7 +1904,7 @@ static void pin_routing_cases(TestState* state, Dspic33* cpu) {
                dspic33_i2c_pin(cpu, 0u, 2u, &high) &&
                    dspic33_i2c_pin(&copy, 5u, 5u, &copy_high),
                "copy preserves an independent I2C pin selection");
-        dspic33_destroy(&copy);
+        dspic33_release(&copy);
     }
 
     dspic33_load_program_word(cpu, 0u, 0xfe0000u);
@@ -2189,7 +2189,7 @@ static void master_pin_lifecycle_cases(TestState* state, Dspic33* cpu) {
                    dspic33_device_advance(&copy, half) &&
                    copy.io.i2c_pin_phase[1] == cpu->io.i2c_pin_phase[1],
                "copied physical I2C engines advance equally");
-        dspic33_destroy(&copy);
+        dspic33_release(&copy);
     }
 
     dspic33_load_program_word(cpu, 0u, 0xfe0000u);
@@ -2568,7 +2568,7 @@ static void slave_pin_lifecycle_cases(TestState* state, Dspic33* cpu) {
                    dspic33_read_word(&copy, base) == 0xa4u &&
                    cpu->io.i2c_slave_pin_state[1] == copy.io.i2c_slave_pin_state[1],
                "copied physical slave engines complete independently and equally");
-        dspic33_destroy(&copy);
+        dspic33_release(&copy);
     }
 
     dspic33_load_program_word(cpu, 0u, 0xfe0000u);
@@ -2810,8 +2810,6 @@ int main(void) {
     master_pin_collision_cases(&state, &cpu);
     slave_pin_address_policy_cases(&state, &cpu);
     acknowledge_rmw_erratum_cases(&state, &cpu);
-    dspic33_destroy(&cpu);
-    printf("[i2c-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
-           state.cases, state.passed, state.failed);
-    return state.failed == 0u ? 0 : 1;
+    dspic33_release(&cpu);
+    return test_finish(&state);
 }

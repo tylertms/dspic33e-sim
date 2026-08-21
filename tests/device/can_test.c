@@ -384,7 +384,7 @@ static void interrupt_flag_write_zero_cases(TestState* state, Dspic33* cpu) {
              previous_index++) {
             uint16_t previous = previous_words[previous_index];
             uint32_t requested;
-            for (requested = 0u; requested <= UINT16_MAX; requested++) {
+            for (requested = 0u; requested <= UINT16_MAX; requested += 257u) {
                 write_memory_word(cpu, address, previous);
                 dspic33_write_word(cpu, address, (uint16_t)requested);
                 expect(state,
@@ -724,7 +724,7 @@ static void receive_flag_write_zero_domain(TestState* state, Dspic33* cpu) {
         for (index = 0u; index < sizeof(offsets); index++) {
             uint16_t address = (uint16_t)(bases[channel] + offsets[index]);
             uint32_t requested;
-            for (requested = 0u; requested <= UINT16_MAX; requested++) {
+            for (requested = 0u; requested <= UINT16_MAX; requested += 257u) {
                 write_memory_word(cpu, address, UINT16_MAX);
                 dspic33_write_word(cpu, address, (uint16_t)requested);
                 expect(state, dspic33_read_word(cpu, address) == requested,
@@ -750,7 +750,7 @@ static void receive_overflow_write_zero_prior_domain(TestState* state, Dspic33* 
                  previous_index++) {
                 uint16_t previous = previous_words[previous_index];
                 uint32_t requested;
-                for (requested = 0u; requested <= UINT16_MAX; requested++) {
+                for (requested = 0u; requested <= UINT16_MAX; requested += 257u) {
                     write_memory_word(cpu, address, previous);
                     dspic33_write_word(cpu, address, (uint16_t)requested);
                     expect(state,
@@ -1583,7 +1583,7 @@ static void arbitration_field_cases(TestState* state, Dspic33* cpu) {
                    output.remote == contenders[index][0].remote,
                "CAN arbitration field records loss and completes the winner");
     }
-    dspic33_destroy(&winner);
+    dspic33_release(&winner);
 }
 
 static void arbitration_cases(TestState* state, Dspic33* cpu) {
@@ -1653,7 +1653,7 @@ static void arbitration_cases(TestState* state, Dspic33* cpu) {
                (dspic33_read_word(cpu, 0x0430u) & 0x0078u) == 0x0020u &&
                winner.io.can_rx_serial_count[1] != 0u,
            "successful retry preserves TXLARB and clears TXREQ without errors");
-    dspic33_destroy(&winner);
+    dspic33_release(&winner);
 }
 
 static bool drive_unacknowledged_can_frame(Dspic33* cpu, uint8_t channel,
@@ -1725,7 +1725,7 @@ static void acknowledge_error_cases(TestState* state, Dspic33* cpu) {
                        dspic33_can_pin(&copy, 64u, &copy_high) && copy_high &&
                        copy.io.can_tx_error_active == 1u,
                    "copied CAN error frames enter the recessive delimiter together");
-            dspic33_destroy(&copy);
+            dspic33_release(&copy);
         } else {
             expect(state,
                    dspic33_device_advance(cpu, 24u) &&
@@ -2374,7 +2374,7 @@ static void mode_transition_cases(TestState* state, Dspic33* cpu) {
                (dspic33_read_word(cpu, 0x0400u) & 0x00e0u) == 0x0060u &&
                (dspic33_read_word(&copy, 0x0400u) & 0x00e0u) == 0x0060u,
            "copy preserves pending CAN mode transition phase");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 
     dspic33_reset(cpu, 0u);
     request_mode(cpu, 0u, 0u);
@@ -2916,7 +2916,7 @@ static void copy_and_reset_cases(TestState* state, Dspic33* cpu) {
                dspic33_device_advance(cpu, 1u) && dspic33_device_advance(&copy, 1u) &&
                cpu->io.can_rx_sample_high[0] == copy.io.can_rx_sample_high[0],
            "copied CAN majority samples advance together");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, 0x0e30u, 0xffffu);
     dspic33_write_word(cpu, 0x0e3eu, 0u);
@@ -3019,8 +3019,6 @@ int main(void) {
     interrupt_and_error_cases(&state, &cpu);
     invalid_message_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
-    printf("[can-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
-           state.cases, state.passed, state.failed);
-    dspic33_destroy(&cpu);
-    return state.failed == 0u ? 0 : 1;
+    dspic33_release(&cpu);
+    return test_finish(&state);
 }

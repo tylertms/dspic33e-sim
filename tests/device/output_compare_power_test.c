@@ -207,7 +207,7 @@ static void pmd_lifecycle_cases(TestState* state, Dspic33* cpu) {
            cpu->io.output_compare.pmd_disabled == 1u &&
                copy.io.output_compare.pmd_disabled == 1u,
            "copy retains pending OC PMD state");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 
     dspic33_reset(cpu, 0u);
     configure_compare_mode(cpu, 0u, 6u, 4u, 2u, COMPARE_SELF_SYNC);
@@ -368,9 +368,7 @@ int main(void) {
         power_state_cases(&state, &cpu);
         pmd_channel_cases(&state, &cpu);
         pmd_lifecycle_cases(&state, &cpu);
-        dspic33_destroy(&cpu);
+        dspic33_release(&cpu);
     }
-    printf("[output-compare-power-summary] cases=%u passed=%u failed=%u\n", state.cases,
-           state.passed, state.failed);
-    return state.failed == 0u ? 0 : 1;
+    return test_finish(&state);
 }

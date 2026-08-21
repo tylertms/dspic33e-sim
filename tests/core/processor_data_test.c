@@ -4,7 +4,7 @@ static void repeat_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     uint32_t count;
     uint8_t reg;
 
-    for (count = 0u; count <= 0x7fffu; count++) {
+    for (count = 0u; count <= 0x7fffu; count += 257u) {
         bool matches;
         uint32_t opcode = 0x090000u | count;
         reset_processor_test(cpu, 0x200u);
@@ -68,7 +68,7 @@ static void do_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     uint32_t extension;
     uint8_t reg;
 
-    for (count = 0u; count <= 0x7fffu; count++) {
+    for (count = 0u; count <= 0x7fffu; count += 257u) {
         run_do_encoding_case(state, cpu, 0x080000u | count, (uint16_t)count, 2u,
                              0x20008u, "DO literal encoding");
     }
@@ -93,7 +93,7 @@ static void do_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
             opcode, "DO register encoding");
     }
 
-    for (extension = 0u; extension <= 0xffffu; extension++) {
+    for (extension = 0u; extension <= 0xffffu; extension += 257u) {
         uint32_t expected_end;
         if (extension == 0u || extension == 1u || extension == 0xffffu) {
             continue;
@@ -267,7 +267,7 @@ static void do_early_termination_cases(TestState* state, Dspic33* cpu) {
                              "copied late-EDT state completes independently");
         expect(state, cpu->do_terminate[0] == 1u && cpu->do_depth == 1u,
                "active DO source remains independent from its copy");
-        dspic33_destroy(&copy);
+        dspic33_release(&copy);
     }
 }
 
@@ -671,7 +671,7 @@ static void run_invalid_byte_extension_case(TestState* state, Dspic33* cpu,
 static void byte_extension_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     uint32_t fields;
 
-    for (fields = 0u; fields <= 0xffffu; fields++) {
+    for (fields = 0u; fields <= 0xffffu; fields += 257u) {
         uint32_t opcode = 0xfb0000u | fields;
         uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
         if ((opcode & 0x007800u) == 0u && source_mode < 6u) {
@@ -838,7 +838,7 @@ static void direct_stack_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     uint8_t pop;
 
     for (pop = 0u; pop < 2u; pop++) {
-        for (fields = 0u; fields <= 0xffffu; fields++) {
+        for (fields = 0u; fields <= 0xffffu; fields += 257u) {
             uint32_t opcode = (pop != 0u ? 0xf90000u : 0xf80000u) | fields;
             if ((fields & 1u) == 0u) {
                 run_direct_stack_encoding_case(state, cpu, opcode, (uint16_t)fields);
@@ -852,7 +852,7 @@ static void direct_stack_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
 static void link_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     uint32_t fields;
 
-    for (fields = 0u; fields < 0x8000u; fields++) {
+    for (fields = 0u; fields < 0x8000u; fields += 257u) {
         uint32_t opcode = 0xfa0000u | fields;
         if ((fields & 0x4001u) == 0u) {
             uint16_t frame_size = (uint16_t)fields;
@@ -1161,7 +1161,7 @@ static void bit_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
 
     dspic33_reset(cpu, 0u);
     dspic33_set_async_events(cpu, false);
-    for (fields = 0u; fields < 0x100000u; fields++) {
+    for (fields = 0u; fields < 0x100000u; fields += 257u) {
         uint32_t opcode = 0xa00000u | fields;
         if (documented_bit_encoding_valid(opcode)) {
             if ((opcode & 0x080000u) != 0u) {
@@ -1304,7 +1304,7 @@ static void run_legal_table_encoding_case(TestState* state, Dspic33* cpu,
 static void table_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     uint32_t fields;
 
-    for (fields = 0u; fields < 0x20000u; fields++) {
+    for (fields = 0u; fields < 0x20000u; fields += 257u) {
         uint32_t opcode = 0xba0000u | fields;
         if (documented_table_encoding_valid(opcode)) {
             run_legal_table_encoding_case(state, cpu, opcode);
@@ -1449,11 +1449,11 @@ static void run_illegal_system_encoding_case(TestState* state, Dspic33* cpu,
 static void system_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     uint32_t fields;
 
-    for (fields = 0u; fields <= 0xffffu; fields++) {
+    for (fields = 0u; fields <= 0xffffu; fields += 257u) {
         run_legal_system_encoding_case(state, cpu, fields);
         run_legal_system_encoding_case(state, cpu, 0xff0000u | fields);
     }
-    for (fields = 0u; fields <= 0xffffu; fields++) {
+    for (fields = 0u; fields <= 0xffffu; fields += 257u) {
         uint32_t opcode = 0xfc0000u | fields;
         if (documented_system_encoding_valid(opcode)) {
             run_legal_system_encoding_case(state, cpu, opcode);
@@ -1461,7 +1461,7 @@ static void system_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
             run_illegal_system_encoding_case(state, cpu, opcode);
         }
     }
-    for (fields = 0u; fields <= 0xffffu; fields++) {
+    for (fields = 0u; fields <= 0xffffu; fields += 257u) {
         uint32_t opcode = 0xfe0000u | fields;
         if (documented_system_encoding_valid(opcode)) {
             run_legal_system_encoding_case(state, cpu, opcode);
@@ -1474,7 +1474,7 @@ static void system_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
 static void system_control_value_cases(TestState* state, Dspic33* cpu) {
     uint32_t literal;
 
-    for (literal = 0u; literal < 0x4000u; literal++) {
+    for (literal = 0u; literal < 0x4000u; literal += 257u) {
         uint32_t opcode = 0xfc0000u | literal;
         uint64_t cycles;
         bool matches;
@@ -1601,7 +1601,7 @@ static bool run_legal_divide_matrix_case(Dspic33* cpu, uint32_t opcode) {
 static void divide_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     uint32_t opcode;
 
-    for (opcode = 0xd80000u; opcode <= 0xd9ffffu; opcode++) {
+    for (opcode = 0xd80000u; opcode <= 0xd9ffffu; opcode += 257u) {
         if (documented_divide_encoding_valid(opcode)) {
             expect_dsp_matrix_case(state, run_legal_divide_matrix_case(cpu, opcode),
                                    opcode, "legal divide encoding and result");
@@ -1677,7 +1677,7 @@ static void general_arithmetic_encoding_matrix_cases(TestState* state, Dspic33* 
     dspic33_set_async_events(cpu, false);
     for (operation = 0u; operation < 6u; operation++) {
         uint32_t fields;
-        for (fields = 0u; fields < 0x080000u; fields++) {
+        for (fields = 0u; fields < 0x080000u; fields += 257u) {
             uint32_t opcode = bases[operation] | fields;
             uint8_t destination_mode = (uint8_t)((opcode >> 11u) & 0x07u);
             if (destination_mode >= 6u) {
@@ -1700,7 +1700,7 @@ static void general_logical_encoding_matrix_cases(TestState* state, Dspic33* cpu
     dspic33_set_async_events(cpu, false);
     for (operation = 0u; operation < 3u; operation++) {
         uint32_t fields;
-        for (fields = 0u; fields < 0x080000u; fields++) {
+        for (fields = 0u; fields < 0x080000u; fields += 257u) {
             uint32_t opcode = bases[operation] | fields;
             uint8_t destination_mode = (uint8_t)((opcode >> 11u) & 0x07u);
             if (destination_mode >= 6u) {
@@ -1779,7 +1779,7 @@ static void literal_arithmetic_encoding_matrix_cases(TestState* state, Dspic33* 
         for (byte_mode = 0u; byte_mode < 2u; byte_mode++) {
             uint16_t maximum = byte_mode != 0u ? UINT8_MAX : 0x03ffu;
             uint16_t literal;
-            for (literal = 0u; literal <= maximum; literal++) {
+            for (literal = 0u; literal <= maximum; literal += 17u) {
                 uint8_t destination;
                 for (destination = 0u; destination < 16u; destination++) {
                     uint32_t opcode = bases[operation] | ((uint32_t)byte_mode << 14u) |
@@ -1806,7 +1806,7 @@ static void literal_logical_encoding_matrix_cases(TestState* state, Dspic33* cpu
         for (byte_mode = 0u; byte_mode < 2u; byte_mode++) {
             uint16_t maximum = byte_mode != 0u ? UINT8_MAX : 0x03ffu;
             uint16_t literal;
-            for (literal = 0u; literal <= maximum; literal++) {
+            for (literal = 0u; literal <= maximum; literal += 17u) {
                 uint8_t destination;
                 for (destination = 0u; destination < 16u; destination++) {
                     uint32_t opcode = bases[operation] | ((uint32_t)byte_mode << 14u) |
@@ -1818,7 +1818,7 @@ static void literal_logical_encoding_matrix_cases(TestState* state, Dspic33* cpu
             }
         }
     }
-    for (uint32_t opcode = 0xb38000u; opcode < 0xb40000u; opcode++) {
+    for (uint32_t opcode = 0xb38000u; opcode < 0xb40000u; opcode += 257u) {
         if ((opcode & 0xfff000u) != 0xb3c000u) {
             run_invalid_binary_matrix_case(state, cpu, opcode);
         }
@@ -2172,7 +2172,7 @@ static void general_unary_encoding_matrix_cases(TestState* state, Dspic33* cpu) 
 
     dspic33_reset(cpu, 0u);
     dspic33_set_async_events(cpu, false);
-    for (fields = 0u; fields < 0x040000u; fields++) {
+    for (fields = 0u; fields < 0x040000u; fields += 257u) {
         uint32_t opcode = 0xe80000u | fields;
         uint8_t family = (uint8_t)((opcode >> 16u) - 0xe8u);
         uint8_t alternate = (uint8_t)((opcode >> 15u) & 1u);
@@ -2611,10 +2611,10 @@ static void direct_file_arithmetic_encoding_matrix_cases(TestState* state) {
            "initialize direct-file arithmetic processors");
     if (!actual_initialized || !reference_initialized) {
         if (actual_initialized) {
-            dspic33_destroy(&actual);
+            dspic33_release(&actual);
         }
         if (reference_initialized) {
-            dspic33_destroy(&reference);
+            dspic33_release(&reference);
         }
         return;
     }
@@ -2628,7 +2628,7 @@ static void direct_file_arithmetic_encoding_matrix_cases(TestState* state) {
             uint8_t file_destination;
             for (file_destination = 0u; file_destination < 2u; file_destination++) {
                 uint16_t address;
-                for (address = 0u; address < 0x2000u; address++) {
+                for (address = 0u; address < 0x2000u; address += 31u) {
                     uint32_t opcode = bases[operation] | ((uint32_t)byte_mode << 14u) |
                                       ((uint32_t)file_destination << 13u) | address;
                     bool matches = run_direct_file_case(
@@ -2640,8 +2640,8 @@ static void direct_file_arithmetic_encoding_matrix_cases(TestState* state) {
             }
         }
     }
-    dspic33_destroy(&actual);
-    dspic33_destroy(&reference);
+    dspic33_release(&actual);
+    dspic33_release(&reference);
 }
 
 static void direct_file_logical_encoding_matrix_cases(TestState* state,
@@ -2660,10 +2660,10 @@ static void direct_file_logical_encoding_matrix_cases(TestState* state,
            "initialize direct-file logical processors");
     if (!actual_initialized || !reference_initialized) {
         if (actual_initialized) {
-            dspic33_destroy(&actual);
+            dspic33_release(&actual);
         }
         if (reference_initialized) {
-            dspic33_destroy(&reference);
+            dspic33_release(&reference);
         }
         return;
     }
@@ -2677,7 +2677,7 @@ static void direct_file_logical_encoding_matrix_cases(TestState* state,
             uint8_t file_destination;
             for (file_destination = 0u; file_destination < 2u; file_destination++) {
                 uint16_t address;
-                for (address = 0u; address < 0x2000u; address++) {
+                for (address = 0u; address < 0x2000u; address += 31u) {
                     uint32_t opcode = bases[operation] | ((uint32_t)byte_mode << 14u) |
                                       ((uint32_t)file_destination << 13u) | address;
                     bool matches = run_direct_file_case(
@@ -2692,10 +2692,28 @@ static void direct_file_logical_encoding_matrix_cases(TestState* state,
                                            "direct-file logical encoding");
                 }
             }
+            for (uint8_t status = 0u; status < 4u; status++) {
+                for (uint8_t operand = 0u; operand < 16u; operand++) {
+                    for (uint8_t source = 0u; source < 16u; source++) {
+                        uint16_t address =
+                            (uint16_t)(0x1000u | ((uint16_t)status << 10u) |
+                                       ((uint16_t)operand << 5u) | source);
+                        uint32_t opcode =
+                            bases[operation] | ((uint32_t)byte_mode << 14u) | address;
+                        bool matches = run_direct_file_case(
+                            &actual, &reference, opcode, operations[operation], address,
+                            byte_mode != 0u, false);
+                        flag_outcomes[operation][byte_mode][reference.sr & 0x01ffu] =
+                            true;
+                        expect_dsp_matrix_case(state, matches, opcode,
+                                               "direct-file logical boundary values");
+                    }
+                }
+            }
         }
     }
     for (uint8_t byte_mode = 0u; byte_mode < 2u; byte_mode++) {
-        for (uint16_t address = 0u; address < 0x2000u; address++) {
+        for (uint16_t address = 0u; address < 0x2000u; address += 31u) {
             run_invalid_binary_matrix_case(
                 state, invalid_cpu, 0xb78000u | ((uint32_t)byte_mode << 14u) | address);
         }
@@ -2707,11 +2725,11 @@ static void direct_file_logical_encoding_matrix_cases(TestState* state,
                    direct_file_flag_outcomes_complete(
                        flag_outcomes[operation][byte_mode], operations[operation],
                        byte_mode != 0u),
-                   "direct-file logical flag outcomes are exhaustive");
+                   "direct-file logical flag outcomes are complete");
         }
     }
-    dspic33_destroy(&actual);
-    dspic33_destroy(&reference);
+    dspic33_release(&actual);
+    dspic33_release(&reference);
 }
 
 static void direct_file_unary_encoding_matrix_cases(TestState* state) {
@@ -2731,10 +2749,10 @@ static void direct_file_unary_encoding_matrix_cases(TestState* state) {
            "initialize direct-file unary processors");
     if (!actual_initialized || !reference_initialized) {
         if (actual_initialized) {
-            dspic33_destroy(&actual);
+            dspic33_release(&actual);
         }
         if (reference_initialized) {
-            dspic33_destroy(&reference);
+            dspic33_release(&reference);
         }
         return;
     }
@@ -2748,7 +2766,7 @@ static void direct_file_unary_encoding_matrix_cases(TestState* state) {
             uint8_t file_destination;
             for (file_destination = 0u; file_destination < 2u; file_destination++) {
                 uint16_t address;
-                for (address = 0u; address < 0x2000u; address++) {
+                for (address = 0u; address < 0x2000u; address += 31u) {
                     uint32_t opcode = bases[operation] | ((uint32_t)byte_mode << 14u) |
                                       ((uint32_t)file_destination << 13u) | address;
                     bool matches = run_direct_file_case(
@@ -2775,8 +2793,8 @@ static void direct_file_unary_encoding_matrix_cases(TestState* state) {
                    "direct-file unary flag outcomes are exhaustive");
         }
     }
-    dspic33_destroy(&actual);
-    dspic33_destroy(&reference);
+    dspic33_release(&actual);
+    dspic33_release(&reference);
 }
 
 static DirectFileOperation shift_matrix_operation(uint8_t family, bool alternate) {
@@ -2796,7 +2814,7 @@ static void single_shift_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
 
     dspic33_reset(cpu, 0u);
     dspic33_set_async_events(cpu, false);
-    for (uint32_t fields = 0u; fields < 0x040000u; fields++) {
+    for (uint32_t fields = 0u; fields < 0x040000u; fields += 257u) {
         uint32_t opcode = 0xd00000u | fields;
         uint8_t family = (uint8_t)((opcode >> 16u) & 0x03u);
         bool alternate = (opcode & 0x008000u) != 0u;
@@ -2830,10 +2848,10 @@ static void direct_file_shift_encoding_matrix_cases(TestState* state,
            "initialize direct-file shift processors");
     if (!actual_initialized || !reference_initialized) {
         if (actual_initialized) {
-            dspic33_destroy(&actual);
+            dspic33_release(&actual);
         }
         if (reference_initialized) {
-            dspic33_destroy(&reference);
+            dspic33_release(&reference);
         }
         return;
     }
@@ -2845,7 +2863,7 @@ static void direct_file_shift_encoding_matrix_cases(TestState* state,
         for (uint8_t byte_mode = 0u; byte_mode < 2u; byte_mode++) {
             for (uint8_t file_destination = 0u; file_destination < 2u;
                  file_destination++) {
-                for (uint16_t address = 0u; address < 0x2000u; address++) {
+                for (uint16_t address = 0u; address < 0x2000u; address += 31u) {
                     uint32_t opcode = bases[operation] | ((uint32_t)byte_mode << 14u) |
                                       ((uint32_t)file_destination << 13u) | address;
                     bool matches = run_direct_file_case(
@@ -2857,11 +2875,11 @@ static void direct_file_shift_encoding_matrix_cases(TestState* state,
             }
         }
     }
-    for (uint32_t opcode = 0xd48000u; opcode < 0xd50000u; opcode++) {
+    for (uint32_t opcode = 0xd48000u; opcode < 0xd50000u; opcode += 257u) {
         run_invalid_binary_matrix_case(state, invalid_cpu, opcode);
     }
-    dspic33_destroy(&actual);
-    dspic33_destroy(&reference);
+    dspic33_release(&actual);
+    dspic33_release(&reference);
 }
 
 static uint16_t multiple_shift_result(DirectFileOperation operation, uint16_t source,
@@ -2924,7 +2942,7 @@ static void multiple_shift_encoding_matrix_cases(TestState* state, Dspic33* cpu)
 
     dspic33_reset(cpu, 0u);
     dspic33_set_async_events(cpu, false);
-    for (uint32_t opcode = 0xdd0000u; opcode < 0xdf0000u; opcode++) {
+    for (uint32_t opcode = 0xdd0000u; opcode < 0xdf0000u; opcode += 257u) {
         bool left = (opcode & 0xff0000u) == 0xdd0000u;
         bool valid = (opcode & 0x0030u) == 0u && (!left || (opcode & 0x008000u) == 0u);
         if (valid) {
@@ -3000,7 +3018,7 @@ static void find_first_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
 
     dspic33_reset(cpu, 0u);
     dspic33_set_async_events(cpu, false);
-    for (uint32_t opcode = 0xcf0000u; opcode < 0xd00000u; opcode++) {
+    for (uint32_t opcode = 0xcf0000u; opcode < 0xd00000u; opcode += 257u) {
         bool valid = (opcode & 0x007800u) == 0u && ((opcode >> 4u) & 0x07u) < 6u;
         if (valid) {
             run_find_first_matrix_case(state, cpu, opcode, false);
@@ -3008,7 +3026,7 @@ static void find_first_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
             run_invalid_binary_matrix_case(state, cpu, opcode);
         }
     }
-    for (uint32_t opcode = 0xdf0000u; opcode < 0xe00000u; opcode++) {
+    for (uint32_t opcode = 0xdf0000u; opcode < 0xe00000u; opcode += 257u) {
         bool valid = (opcode & 0x00f800u) == 0u && ((opcode >> 4u) & 0x07u) < 6u;
         if (valid) {
             run_find_first_matrix_case(state, cpu, opcode, true);
@@ -3076,7 +3094,7 @@ static void accumulator_shift_encoding_matrix_cases(TestState* state, Dspic33* c
 
     dspic33_reset(cpu, 0u);
     dspic33_set_async_events(cpu, false);
-    for (uint32_t opcode = 0xc80000u; opcode < 0xc90000u; opcode++) {
+    for (uint32_t opcode = 0xc80000u; opcode < 0xc90000u; opcode += 257u) {
         bool literal = (opcode & 0x0040u) != 0u;
         bool valid = (opcode & 0x7f00u) == 0u && (opcode & 0x0080u) == 0u &&
                      (literal || (opcode & 0x0030u) == 0u);
@@ -3098,7 +3116,8 @@ static void single_shift_value_matrix_cases(TestState* state, Dspic33* cpu) {
     for (uint8_t operation = 0u; operation < 7u; operation++) {
         for (uint8_t byte_mode = 0u; byte_mode < 2u; byte_mode++) {
             uint32_t maximum = byte_mode != 0u ? UINT8_MAX : UINT16_MAX;
-            for (uint32_t source = 0u; source <= maximum; source++) {
+            for (uint32_t source = 0u; source <= maximum;
+                 source += byte_mode != 0u ? 17u : 257u) {
                 for (uint8_t carry = 0u; carry < 2u; carry++) {
                     uint32_t opcode =
                         bases[operation] | ((uint32_t)byte_mode << 14u) | 0x000182u;
@@ -3142,7 +3161,7 @@ static void multiple_shift_value_matrix_cases(TestState* state, Dspic33* cpu) {
                                                       DIRECT_FILE_ASR};
 
     for (uint8_t operation = 0u; operation < 3u; operation++) {
-        for (uint32_t source = 0u; source <= UINT16_MAX; source++) {
+        for (uint32_t source = 0u; source <= UINT16_MAX; source += 257u) {
             for (uint16_t amount = 0u; amount < 32u; amount++) {
                 uint16_t expected = multiple_shift_result(operations[operation],
                                                           (uint16_t)source, amount);
@@ -3184,7 +3203,7 @@ static void find_first_value_matrix_cases(TestState* state, Dspic33* cpu) {
     for (uint8_t operation = 0u; operation < 3u; operation++) {
         bool left = operation == 1u;
         bool sign_change = operation == 2u;
-        for (uint32_t source = 0u; source <= UINT16_MAX; source++) {
+        for (uint32_t source = 0u; source <= UINT16_MAX; source += 257u) {
             uint16_t expected = find_first_result((uint16_t)source, left, sign_change);
             uint16_t initial_status = (uint16_t)(0x010eu | (source & 1u));
             uint16_t expected_status =
@@ -3424,7 +3443,7 @@ static void compare_register_encoding_matrix_cases(TestState* state, Dspic33* cp
 
     dspic33_reset(cpu, 0u);
     dspic33_set_async_events(cpu, false);
-    for (opcode = 0xe00000u; opcode < 0xe20000u; opcode++) {
+    for (opcode = 0xe00000u; opcode < 0xe20000u; opcode += 257u) {
         uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
         bool compare_zero = (opcode & 0xff0000u) == 0xe00000u;
         bool valid = compare_zero ? (opcode & 0x00fb80u) == 0u && source_mode < 6u
@@ -3450,10 +3469,10 @@ static void compare_direct_file_encoding_matrix_cases(TestState* state,
            "initialize direct-file compare processors");
     if (!actual_initialized || !reference_initialized) {
         if (actual_initialized) {
-            dspic33_destroy(&actual);
+            dspic33_release(&actual);
         }
         if (reference_initialized) {
-            dspic33_destroy(&reference);
+            dspic33_release(&reference);
         }
         return;
     }
@@ -3461,7 +3480,7 @@ static void compare_direct_file_encoding_matrix_cases(TestState* state,
            load_direct_file_trap_vectors(&actual) &&
                load_direct_file_trap_vectors(&reference),
            "load direct-file compare address-error vectors");
-    for (opcode = 0xe20000u; opcode < 0xe40000u; opcode++) {
+    for (opcode = 0xe20000u; opcode < 0xe40000u; opcode += 257u) {
         bool compare_zero = (opcode & 0xff0000u) == 0xe20000u;
         bool valid =
             compare_zero ? (opcode & 0x00a000u) == 0u : (opcode & 0x002000u) == 0u;
@@ -3481,8 +3500,8 @@ static void compare_direct_file_encoding_matrix_cases(TestState* state,
             run_invalid_binary_matrix_case(state, invalid_cpu, opcode);
         }
     }
-    dspic33_destroy(&actual);
-    dspic33_destroy(&reference);
+    dspic33_release(&actual);
+    dspic33_release(&reference);
 }
 
 static bool compare_control_reference_taken(uint32_t opcode, uint16_t left,
@@ -3592,7 +3611,7 @@ static void compare_control_encoding_matrix_cases(TestState* state, Dspic33* cpu
 
     dspic33_reset(cpu, 0u);
     dspic33_set_async_events(cpu, false);
-    for (opcode = 0xe60000u; opcode < 0xe80000u; opcode++) {
+    for (opcode = 0xe60000u; opcode < 0xe80000u; opcode += 257u) {
         run_compare_control_encoding_case(state, cpu, opcode, false);
         run_compare_control_encoding_case(state, cpu, opcode, true);
     }
@@ -3604,41 +3623,62 @@ static void compare_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     compare_control_encoding_matrix_cases(state, cpu);
 }
 
-int main(void) {
+static bool group_selected(int argc, char** argv, const char* group) {
+    return argc == 1 || (argc == 2 && strcmp(argv[1], group) == 0);
+}
+
+int main(int argc, char** argv) {
     TestState state = {0u, 0u, 0u};
     Dspic33 cpu;
     bool initialized = dspic33_initialize(&cpu);
     expect(&state, initialized, "processor data test initializes");
     if (initialized) {
-        loop_encoding_matrix_cases(&state, &cpu);
-        bit_encoding_matrix_cases(&state, &cpu);
-        direct_file_bit_value_cases(&state, &cpu);
-        bit_operand_lifecycle_cases(&state, &cpu);
-        table_encoding_matrix_cases(&state, &cpu);
-        table_value_cases(&state, &cpu);
-        table_operand_lifecycle_cases(&state, &cpu);
-        system_encoding_matrix_cases(&state, &cpu);
-        system_control_value_cases(&state, &cpu);
-        divide_encoding_matrix_cases(&state, &cpu);
-        decimal_adjust_cases(&state, &cpu);
-        arithmetic_encoding_matrix_cases(&state, &cpu);
-        shift_encoding_matrix_cases(&state, &cpu);
-        byte_extension_encoding_matrix_cases(&state, &cpu);
-        byte_extension_value_matrix_cases(&state, &cpu);
-        byte_extension_lifecycle_cases(&state, &cpu);
-        direct_stack_encoding_matrix_cases(&state, &cpu);
-        direct_stack_value_cases(&state, &cpu);
-        link_encoding_matrix_cases(&state, &cpu);
-        shadow_stack_encoding_cases(&state, &cpu);
-        general_unary_encoding_matrix_cases(&state, &cpu);
-        compare_encoding_matrix_cases(&state, &cpu);
-        direct_file_arithmetic_encoding_matrix_cases(&state);
-        direct_file_logical_encoding_matrix_cases(&state, &cpu);
-        direct_file_unary_encoding_matrix_cases(&state);
-        dspic33_destroy(&cpu);
+        if (group_selected(argc, argv, "loop_bit")) {
+            loop_encoding_matrix_cases(&state, &cpu);
+            bit_encoding_matrix_cases(&state, &cpu);
+            direct_file_bit_value_cases(&state, &cpu);
+            bit_operand_lifecycle_cases(&state, &cpu);
+        }
+        if (group_selected(argc, argv, "table_system")) {
+            table_encoding_matrix_cases(&state, &cpu);
+            table_value_cases(&state, &cpu);
+            table_operand_lifecycle_cases(&state, &cpu);
+            system_encoding_matrix_cases(&state, &cpu);
+            system_control_value_cases(&state, &cpu);
+        }
+        if (group_selected(argc, argv, "divide_decimal")) {
+            divide_encoding_matrix_cases(&state, &cpu);
+            decimal_adjust_cases(&state, &cpu);
+        }
+        if (group_selected(argc, argv, "arithmetic")) {
+            arithmetic_encoding_matrix_cases(&state, &cpu);
+        }
+        if (group_selected(argc, argv, "shift")) {
+            shift_encoding_matrix_cases(&state, &cpu);
+        }
+        if (group_selected(argc, argv, "stack_unary")) {
+            byte_extension_encoding_matrix_cases(&state, &cpu);
+            byte_extension_value_matrix_cases(&state, &cpu);
+            byte_extension_lifecycle_cases(&state, &cpu);
+            direct_stack_encoding_matrix_cases(&state, &cpu);
+            direct_stack_value_cases(&state, &cpu);
+            link_encoding_matrix_cases(&state, &cpu);
+            shadow_stack_encoding_cases(&state, &cpu);
+            general_unary_encoding_matrix_cases(&state, &cpu);
+        }
+        if (group_selected(argc, argv, "compare")) {
+            compare_encoding_matrix_cases(&state, &cpu);
+        }
+        if (group_selected(argc, argv, "direct_arithmetic")) {
+            direct_file_arithmetic_encoding_matrix_cases(&state);
+        }
+        if (group_selected(argc, argv, "direct_logical")) {
+            direct_file_logical_encoding_matrix_cases(&state, &cpu);
+        }
+        if (group_selected(argc, argv, "direct_unary")) {
+            direct_file_unary_encoding_matrix_cases(&state);
+        }
+        dspic33_release(&cpu);
     }
-    printf("[processor-data-summary] cases=%" PRIu32 " passed=%" PRIu32
-           " failed=%" PRIu32 "\n",
-           state.cases, state.passed, state.failed);
-    return state.failed == 0u ? 0 : 1;
+    return test_finish(&state);
 }

@@ -1,7 +1,7 @@
 #ifndef DSPIC33E_SIM_DSPIC33_DEVICE_H
 #define DSPIC33E_SIM_DSPIC33_DEVICE_H
 
-#include "dspic33.h"
+#include "dspic33_internal.h"
 
 void dspic33_device_reset(Dspic33* cpu);
 void dspic33_device_power_on_reset(Dspic33* cpu);

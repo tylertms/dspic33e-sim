@@ -646,7 +646,7 @@ static void copy_reset_failure_cases(TestState* state, Dspic33* cpu) {
            !cpu->io.crc.active && cpu->events.count == 0u && valid_words(cpu) == 1u &&
                (dspic33_read_word(cpu, CRC_CONTROL) & CRC_GO) == 0u,
            "CRC event overflow aborts without consuming FIFO");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 }
 
 int main(void) {
@@ -667,9 +667,7 @@ int main(void) {
         interrupt_service_cases(&state, &cpu);
         no_dma_cases(&state, &cpu);
         copy_reset_failure_cases(&state, &cpu);
-        dspic33_destroy(&cpu);
+        dspic33_release(&cpu);
     }
-    printf("[crc-summary] cases=%u passed=%u failed=%u\n", state.cases, state.passed,
-           state.failed);
-    return state.failed == 0u ? 0 : 1;
+    return test_finish(&state);
 }

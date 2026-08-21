@@ -530,7 +530,7 @@ static void fault_lifecycle_cases(TestState* state, Dspic33* cpu) {
                    (dspic33_read_word(cpu, 0x0900u) & COMPARE_FAULT_STATUS_A) != 0u &&
                    (dspic33_read_word(&copy, 0x0900u) & COMPARE_FAULT_STATUS_A) != 0u,
                "copied delayed OC faults complete independently");
-        dspic33_destroy(&copy);
+        dspic33_release(&copy);
     }
 
     dspic33_reset(cpu, 0u);
@@ -599,9 +599,7 @@ int main(void) {
         fault_pmd_cases(&state, &cpu);
         fault_cascade_cases(&state, &cpu);
         fault_lifecycle_cases(&state, &cpu);
-        dspic33_destroy(&cpu);
+        dspic33_release(&cpu);
     }
-    printf("[output-compare-fault-summary] cases=%u passed=%u failed=%u\n", state.cases,
-           state.passed, state.failed);
-    return state.failed == 0u ? 0 : 1;
+    return test_finish(&state);
 }

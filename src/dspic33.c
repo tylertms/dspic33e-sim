@@ -1,9 +1,8 @@
-#include "dspic33.h"
-
 #include <stdlib.h>
 #include <string.h>
 
 #include "device.h"
+#include "dspic33_internal.h"
 #include "dspic33ep512mu810_data.h"
 
 enum {
@@ -4001,7 +4000,7 @@ bool dspic33_initialize(Dspic33* cpu) {
     if (cpu->program == NULL || cpu->auxiliary_program == NULL ||
         cpu->persistent_program == NULL || cpu->data == NULL ||
         cpu->var_write_domains == NULL) {
-        dspic33_destroy(cpu);
+        dspic33_release(cpu);
         return false;
     }
     memset(cpu->program, 0xff, DSPIC33_PROGRAM_WORDS * sizeof(*cpu->program));
@@ -4021,7 +4020,10 @@ bool dspic33_initialize(Dspic33* cpu) {
     return true;
 }
 
-void dspic33_destroy(Dspic33* cpu) {
+void dspic33_release(Dspic33* cpu) {
+    if (cpu == NULL) {
+        return;
+    }
     free(cpu->program);
     free(cpu->auxiliary_program);
     free(cpu->persistent_program);
@@ -4038,7 +4040,24 @@ void dspic33_destroy(Dspic33* cpu) {
     cpu->events.capacity = 0u;
 }
 
+Dspic33* dspic33_create(void) {
+    Dspic33* cpu = malloc(sizeof(*cpu));
+    if (cpu == NULL || !dspic33_initialize(cpu)) {
+        free(cpu);
+        return NULL;
+    }
+    return cpu;
+}
+
+void dspic33_destroy(Dspic33* cpu) {
+    dspic33_release(cpu);
+    free(cpu);
+}
+
 bool dspic33_copy(Dspic33* destination, const Dspic33* source) {
+    if (destination == NULL || source == NULL) {
+        return false;
+    }
     Dspic33Event* events = destination->events.items;
     size_t event_capacity = destination->events.capacity;
     uint32_t* program = destination->program;
@@ -5482,6 +5501,113 @@ Dspic33StopReason dspic33_run(Dspic33* cpu, uint64_t instruction_limit) {
 Dspic33StopReason dspic33_run_until(Dspic33* cpu, uint32_t stop_address,
                                     uint64_t instruction_limit) {
     return run(cpu, instruction_limit, stop_address, true);
+}
+
+static Dspic33Result result(const Dspic33* cpu) {
+    if (cpu == NULL) {
+        return (Dspic33Result){DSPIC33_HALTED, 0u, 0u, 0u, 0u};
+    }
+    return (Dspic33Result){cpu->stop_reason, cpu->instructions, cpu->cycles, cpu->pc,
+                           dspic33_read_program_word(cpu, cpu->current_instruction_pc)};
+}
+
+Dspic33Result dspic33_step_result(Dspic33* cpu) {
+    if (cpu == NULL) {
+        return result(cpu);
+    }
+    dspic33_step(cpu);
+    return result(cpu);
+}
+
+Dspic33Result dspic33_run_with_limits(Dspic33* cpu, Dspic33RunLimits limits) {
+    if (cpu == NULL) {
+        return result(cpu);
+    }
+    const uint64_t start_instructions = cpu->instructions;
+    const uint64_t start_cycles = cpu->cycles;
+    cpu->stop_reason = DSPIC33_RUNNING;
+    while (cpu->stop_reason == DSPIC33_RUNNING) {
+        if ((limits.instruction_limit != 0u &&
+             cpu->instructions - start_instructions >= limits.instruction_limit) ||
+            (limits.cycle_limit != 0u &&
+             cpu->cycles - start_cycles >= limits.cycle_limit)) {
+            Dspic33Result limited = result(cpu);
+            limited.stop = DSPIC33_INSTRUCTION_LIMIT;
+            return limited;
+        }
+        dspic33_step(cpu);
+    }
+    return result(cpu);
+}
+
+uint32_t dspic33_get_register(const Dspic33* cpu, uint8_t reg) {
+    return cpu != NULL && reg < 16u ? cpu->w[reg] : 0u;
+}
+
+uint32_t dspic33_get_program_counter(const Dspic33* cpu) {
+    return cpu != NULL ? cpu->pc : 0u;
+}
+
+uint64_t dspic33_get_instruction_count(const Dspic33* cpu) {
+    return cpu != NULL ? cpu->instructions : 0u;
+}
+
+uint64_t dspic33_get_cycle_count(const Dspic33* cpu) {
+    return cpu != NULL ? cpu->cycles : 0u;
+}
+
+Dspic33StopReason dspic33_get_stop(const Dspic33* cpu) {
+    return cpu != NULL ? cpu->stop_reason : DSPIC33_HALTED;
+}
+
+uint32_t dspic33_get_fault_address(const Dspic33* cpu) {
+    if (cpu == NULL) {
+        return 0u;
+    }
+    if (cpu->stop_reason != DSPIC33_TRAPPED) {
+        return cpu->pc;
+    }
+    return cpu->address_error_return != 0u ? cpu->address_error_return
+                                           : cpu->current_instruction_pc;
+}
+
+uint64_t dspic33_get_interrupt_count(const Dspic33* cpu) {
+    return cpu != NULL ? cpu->interrupt_count : 0u;
+}
+
+uint16_t dspic33_get_last_interrupt(const Dspic33* cpu) {
+    return cpu != NULL ? cpu->last_interrupt : UINT16_MAX;
+}
+
+uint8_t dspic33_get_interrupt_depth(const Dspic33* cpu) {
+    return cpu != NULL ? cpu->interrupt_depth : 0u;
+}
+
+void dspic33_set_stop_on_trap(Dspic33* cpu, bool enabled) {
+    if (cpu != NULL) {
+        cpu->stop_on_trap = enabled;
+    }
+}
+
+bool dspic33_begin_call(Dspic33* cpu, uint32_t address, bool async_events) {
+    if (cpu == NULL || (address & 1u) != 0u ||
+        !dspic33_program_range_implemented(address, 2u)) {
+        return false;
+    }
+    cpu->pc = address;
+    cpu->call_depth = 0u;
+    cpu->stop_reason = DSPIC33_RUNNING;
+    dspic33_set_async_events(cpu, async_events);
+    return true;
+}
+
+bool dspic33_seed_data(Dspic33* cpu, uint32_t address, const void* data, size_t size) {
+    if (cpu == NULL || (data == NULL && size != 0u) || address > DSPIC33_DATA_SIZE ||
+        size > DSPIC33_DATA_SIZE - address) {
+        return false;
+    }
+    memcpy(cpu->data + address, data, size);
+    return true;
 }
 
 const char* dspic33_stop_reason_name(Dspic33StopReason reason) {

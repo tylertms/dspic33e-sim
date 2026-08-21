@@ -1820,12 +1820,10 @@ int main(void) {
         copy_and_reset_cases(&state, &cpu, &copy);
     }
     if (copy_initialized) {
-        dspic33_destroy(&copy);
+        dspic33_release(&copy);
     }
     if (initialized) {
-        dspic33_destroy(&cpu);
+        dspic33_release(&cpu);
     }
-    printf("[spi-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
-           state.cases, state.passed, state.failed);
-    return state.failed == 0u ? 0 : 1;
+    return test_finish(&state);
 }

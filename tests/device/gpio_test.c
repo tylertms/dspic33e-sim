@@ -609,7 +609,7 @@ static void change_notification_dma_lifecycle_cases(TestState* state, Dspic33* c
            !change_notification_flag(cpu) && change_notification_flag(&copy) &&
                cpu->io.gpio_cn_reference[1] != copy.io.gpio_cn_reference[1],
            "copied change-notification references diverge independently");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 
     dspic33_load_program_word(cpu, 0u, 0xfe0000u);
     cpu->pc = 0u;
@@ -799,7 +799,7 @@ static void lifecycle_cases(TestState* state, Dspic33* cpu) {
                    (copy.io.gpio_driven[1] & 0x0002u) == 0u &&
                    (cpu->io.gpio_driven[1] & 0x0002u) != 0u,
                "copied GPIO drive masks diverge independently");
-        dspic33_destroy(&copy);
+        dspic33_release(&copy);
     }
 
     dspic33_gpio_input(cpu, 3u, 0u);
@@ -840,9 +840,7 @@ int main(void) {
         change_notification_qualification_cases(&state, &cpu);
         change_notification_interrupt_cases(&state, &cpu);
         change_notification_dma_lifecycle_cases(&state, &cpu);
-        dspic33_destroy(&cpu);
+        dspic33_release(&cpu);
     }
-    printf("[gpio-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
-           state.cases, state.passed, state.failed);
-    return state.failed == 0u ? 0 : 1;
+    return test_finish(&state);
 }

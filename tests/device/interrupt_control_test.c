@@ -927,10 +927,7 @@ int main(void) {
     priority_control_cases(&state, &source);
     variable_latency_erratum_cases(&state, &source, &copy);
     lifecycle_cases(&state, &source, &copy);
-    printf("[interrupt-control-summary] cases=%" PRIu32 " passed=%" PRIu32
-           " failed=%" PRIu32 "\n",
-           state.cases, state.passed, state.failed);
-    dspic33_destroy(&copy);
-    dspic33_destroy(&source);
-    return state.failed == 0u ? 0 : 1;
+    dspic33_release(&copy);
+    dspic33_release(&source);
+    return test_finish(&state);
 }

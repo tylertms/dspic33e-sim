@@ -870,7 +870,7 @@ static void copy_cases(TestState* state, Dspic33* cpu) {
            dspic33_step(cpu) == DSPIC33_RUNNING && !interrupt_flag(cpu, 0u) &&
                cpu->events.count == 0u,
            "warm reset cancels pending timer interrupt");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 }
 
 static void api_failure_cases(TestState* state, Dspic33* cpu) {
@@ -914,9 +914,7 @@ int main(void) {
         dma_trigger_cases(&state, &cpu);
         copy_cases(&state, &cpu);
         api_failure_cases(&state, &cpu);
-        dspic33_destroy(&cpu);
+        dspic33_release(&cpu);
     }
-    printf("[timer-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
-           state.cases, state.passed, state.failed);
-    return state.failed == 0u ? 0 : 1;
+    return test_finish(&state);
 }

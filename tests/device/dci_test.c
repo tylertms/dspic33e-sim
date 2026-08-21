@@ -1360,7 +1360,7 @@ static void pps_bcg_cases(TestState* state, Dspic33* cpu) {
                dspic33_dci_pin(&copy, PPS_CLOCK_OUTPUT_PIN, &copy_high) &&
                high == copy_high,
            "copy preserves standalone BCG phase");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
     dspic33_write_word(cpu, DCI_PMD, DCI_PMD_MASK);
     expect(state,
            dspic33_device_advance(cpu, 1u) &&
@@ -1447,7 +1447,7 @@ static void pps_internal_sample_lifecycle_cases(TestState* state, Dspic33* cpu) 
                dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0x8000u &&
                dspic33_read_word(&copy, DCI_RECEIVE_BASE) == 0xf000u,
            "copied CSDI samplers shift physical inputs independently");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 }
 
 static void pps_selection_cases(TestState* state, Dspic33* cpu) {
@@ -1680,7 +1680,7 @@ static void pps_lifecycle_cases(TestState* state, Dspic33* cpu) {
            dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0xa500u &&
                dspic33_read_word(&copy, DCI_RECEIVE_BASE) == 0xa500u,
            "copied PPS DCI shift completes independently");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 
     dspic33_reset(cpu, 0u);
     configure_serial_pins(cpu);
@@ -2323,7 +2323,7 @@ static void lifecycle_cases(TestState* state, Dspic33* cpu) {
                    dspic33_read_word(&copy, DCI_RECEIVE_BASE) == 0x1357u &&
                    cpu->events.count == 1u,
                "copied DCI event executes independently");
-        dspic33_destroy(&copy);
+        dspic33_release(&copy);
     }
 
     dspic33_reset(cpu, 0u);
@@ -2417,9 +2417,7 @@ int main(void) {
         disable_timing_cases(&state, &cpu);
         internal_clock_lifecycle_cases(&state, &cpu);
         lifecycle_cases(&state, &cpu);
-        dspic33_destroy(&cpu);
+        dspic33_release(&cpu);
     }
-    printf("[dci-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
-           state.cases, state.passed, state.failed);
-    return state.failed == 0u ? 0 : 1;
+    return test_finish(&state);
 }

@@ -567,7 +567,7 @@ static void input_capture_synchronization_lifecycle_cases(TestState* state,
                interrupt_flag(cpu, 15u) == interrupt_flag(&copy, 15u) &&
                cpu->events.count == copy.events.count,
            "batched input capture synchronization matches stepped execution");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 }
 
 static void alternate_clock_batch_cases(TestState* state, Dspic33* cpu) {
@@ -624,7 +624,7 @@ static void alternate_clock_batch_cases(TestState* state, Dspic33* cpu) {
                interrupt_flag(cpu, 15u) == interrupt_flag(&copy, 15u) &&
                cpu->events.count == copy.events.count,
            "batched timer synchronization matches stepped execution");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 }
 
 static void timer_clock_synchronization_cases(TestState* state, Dspic33* cpu) {
@@ -1078,7 +1078,7 @@ static void synchronization_lifecycle_cases(TestState* state, Dspic33* cpu) {
            cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR &&
                (dspic33_read_word(cpu, 0x0996u) & 7u) == 0u && cpu->events.count == 0u,
            "trigger reschedule failure aborts OC channel");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 }
 
 static void channel_trigger_matrix_cases(TestState* state, Dspic33* cpu) {
@@ -1488,7 +1488,7 @@ static void lifecycle_cases(TestState* state, Dspic33* cpu) {
                !dspic33_output_compare_output(cpu, 0u, &high) &&
                cpu->events.count == 0u && !interrupt_flag(cpu, 0u),
            "delayed OC schedule failure aborts the pipeline");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 }
 
 int main(void) {
@@ -1516,9 +1516,7 @@ int main(void) {
         trigger_source_negative_cases(&state, &cpu);
         coexistence_cases(&state, &cpu);
         lifecycle_cases(&state, &cpu);
-        dspic33_destroy(&cpu);
+        dspic33_release(&cpu);
     }
-    printf("[output-compare-sync-summary] cases=%u passed=%u failed=%u\n", state.cases,
-           state.passed, state.failed);
-    return state.failed == 0u ? 0 : 1;
+    return test_finish(&state);
 }

@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+typedef struct Dspic33 Dspic33;
+
 #define DSPIC33_DATA_SIZE 0x100000u
 #define DSPIC33_PROGRAM_LIMIT 0x55800u
 #define DSPIC33_AUXILIARY_PROGRAM_BASE 0x7fc000u
@@ -732,6 +734,19 @@ typedef enum {
     DSPIC33_SILICON_RESULT_UNDEFINED
 } Dspic33StopReason;
 
+typedef struct {
+    uint64_t instruction_limit;
+    uint64_t cycle_limit;
+} Dspic33RunLimits;
+
+typedef struct {
+    Dspic33StopReason stop;
+    uint64_t instructions;
+    uint64_t cycles;
+    uint32_t pc;
+    uint32_t opcode;
+} Dspic33Result;
+
 typedef enum {
     DSPIC33_POWER_ACTIVE,
     DSPIC33_POWER_SLEEP,
@@ -782,115 +797,7 @@ typedef struct {
     bool reset_pending;
 } Dspic33Watchdog;
 
-typedef struct {
-    uint32_t* program;
-    uint32_t* auxiliary_program;
-    uint32_t* persistent_program;
-    uint32_t write_latches[DSPIC33_WRITE_LATCH_WORDS];
-    uint8_t* data;
-    uint8_t configuration[DSPIC33_CONFIGURATION_SIZE];
-    uint16_t w[16];
-    uint16_t shadow_w[4];
-    uint16_t initialized_working_registers;
-    uint16_t shadow_status;
-    int64_t accumulator[2];
-    uint32_t pc;
-    uint16_t sr;
-    uint16_t corcon;
-    uint16_t splim;
-    bool splim_enabled;
-    uint16_t rcount;
-    uint16_t dcount;
-    uint32_t dostart;
-    uint32_t doend;
-    uint16_t tblpag;
-    uint16_t dsrpag;
-    uint16_t dswpag;
-    uint16_t disicnt;
-    uint16_t call_depth;
-    uint8_t interrupt_depth;
-    uint8_t repeat_active;
-    bool repeat_psv_started;
-    bool repeat_psv_reentry;
-    uint8_t do_depth;
-    uint32_t repeat_pc;
-    uint32_t do_start[4];
-    uint32_t do_end[4];
-    uint16_t do_count[4];
-    uint8_t do_terminate[4];
-    uint64_t nested_do_interrupt_cycle;
-    uint32_t nested_do_interrupt_end;
-    uint32_t nested_do_extra_decrement_end;
-    uint8_t nested_do_interrupt_depth;
-    uint8_t nested_do_interrupt_priority;
-    uint8_t nested_do_extra_decrement_depth;
-    bool nested_do_interrupt_armed;
-    uint16_t flash_read_connecting_words;
-    bool flash_read_erratum_armed;
-    bool flash_read_erratum_candidate;
-    bool flash_read_connecting_ends_repeat;
-    bool instruction_rmw;
-    bool instruction_rmw_read_valid;
-    uint32_t instruction_rmw_read_address;
-    uint8_t instruction_rmw_read_width;
-    uint8_t* var_write_domains;
-    uint64_t instructions;
-    uint64_t cycles;
-    uint64_t device_cycles;
-    uint32_t unsupported_opcode;
-    uint16_t last_interrupt;
-    uint32_t last_interrupt_return;
-    uint64_t interrupt_count;
-    uint64_t software_reset_count;
-    uint64_t illegal_reset_count;
-    uint64_t trap_count;
-    uint32_t last_trap_return;
-    uint16_t reset_interrupt;
-    uint16_t last_trap;
-    Dspic33PendingSoftTrap pending_soft_traps[4];
-    uint32_t address_error_return;
-    uint32_t current_instruction_pc;
-    bool instruction_active;
-    bool instruction_advancing;
-    bool interrupt_entry_active;
-    uint8_t interrupt_entry_overlap;
-    uint8_t current_instruction_cycles;
-    uint16_t instruction_working_register_writes;
-    uint16_t instruction_source_address_registers;
-    uint16_t previous_working_register_writes;
-    bool non_cpu_sfr_read;
-    bool psv_read;
-    bool psv_repeat_optimized;
-    bool address_error;
-    bool address_error_access_allowed;
-    bool address_error_working_state_completed;
-    bool address_error_accumulator_state_completed;
-    bool address_error_control_state_completed;
-    uint32_t sequential_program_hole_pc;
-    bool reset_occurred;
-    bool reset_instruction_timing;
-    bool illegal_reset;
-    bool reset_locked;
-    bool stop_on_trap;
-    bool async_events_enabled;
-    uint16_t interrupt_log_irq[16];
-    uint32_t interrupt_log_entry[16];
-    uint32_t interrupt_log_return[16];
-    uint16_t interrupt_deferred[DSPIC33_IRQ_GROUP_COUNT];
-    uint16_t interrupt_deferred_next[DSPIC33_IRQ_GROUP_COUNT];
-    uint8_t gie_disable_deferred;
-    uint8_t gie_disable_deferred_next;
-    Dspic33Nvm nvm;
-    Dspic33Oscillator oscillator;
-    Dspic33Watchdog watchdog;
-    Dspic33EventQueue events;
-    uint8_t qei_inputs[DSPIC33_QEI_COUNT];
-    Dspic33Io io;
-    Dspic33PowerState power_state;
-    Dspic33StopReason stop_reason;
-} Dspic33;
-
-bool dspic33_initialize(Dspic33* cpu);
+Dspic33* dspic33_create(void);
 void dspic33_set_working_register(Dspic33* cpu, uint8_t reg, uint16_t value);
 void dspic33_destroy(Dspic33* cpu);
 bool dspic33_copy(Dspic33* destination, const Dspic33* source);
@@ -1025,6 +932,7 @@ void dspic33_adc_input(Dspic33* cpu, uint8_t channel, uint16_t value);
 bool dspic33_gpio_drive(Dspic33* cpu, uint8_t port, uint16_t value, uint16_t mask);
 bool dspic33_gpio_release(Dspic33* cpu, uint8_t port, uint16_t mask);
 bool dspic33_gpio_pin(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* high);
+bool dspic33_gpio_signal(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* high);
 bool dspic33_oscillator_pin(const Dspic33* cpu, bool* clock_output, uint64_t* edges);
 bool dspic33_reference_clock_pin(const Dspic33* cpu, uint8_t pin,
                                  uint64_t primary_edges, uint64_t* edges);
@@ -1037,6 +945,20 @@ Dspic33StopReason dspic33_step(Dspic33* cpu);
 Dspic33StopReason dspic33_run(Dspic33* cpu, uint64_t instruction_limit);
 Dspic33StopReason dspic33_run_until(Dspic33* cpu, uint32_t stop_address,
                                     uint64_t instruction_limit);
+Dspic33Result dspic33_step_result(Dspic33* cpu);
+Dspic33Result dspic33_run_with_limits(Dspic33* cpu, Dspic33RunLimits limits);
+uint32_t dspic33_get_register(const Dspic33* cpu, uint8_t reg);
+uint32_t dspic33_get_program_counter(const Dspic33* cpu);
+uint64_t dspic33_get_instruction_count(const Dspic33* cpu);
+uint64_t dspic33_get_cycle_count(const Dspic33* cpu);
+Dspic33StopReason dspic33_get_stop(const Dspic33* cpu);
+uint32_t dspic33_get_fault_address(const Dspic33* cpu);
+uint64_t dspic33_get_interrupt_count(const Dspic33* cpu);
+uint16_t dspic33_get_last_interrupt(const Dspic33* cpu);
+uint8_t dspic33_get_interrupt_depth(const Dspic33* cpu);
+void dspic33_set_stop_on_trap(Dspic33* cpu, bool enabled);
+bool dspic33_begin_call(Dspic33* cpu, uint32_t address, bool async_events);
+bool dspic33_seed_data(Dspic33* cpu, uint32_t address, const void* data, size_t size);
 const char* dspic33_stop_reason_name(Dspic33StopReason reason);
 
 #endif

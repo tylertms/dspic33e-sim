@@ -17527,6 +17527,18 @@ bool dspic33_gpio_pin(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* high)
     return true;
 }
 
+bool dspic33_gpio_signal(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* high) {
+    if (cpu == NULL || port >= DSPIC33_GPIO_PORT_COUNT || bit >= 16u || high == NULL) {
+        return false;
+    }
+    const uint16_t mask = (uint16_t)(1u << bit);
+    if ((cpu->io.gpio_driven[port] & mask) != 0u) {
+        *high = (cpu->io.gpio[port] & mask) != 0u;
+        return true;
+    }
+    return dspic33_gpio_pin(cpu, port, bit, high);
+}
+
 bool dspic33_oscillator_pin(const Dspic33* cpu, bool* clock_output, uint64_t* edges) {
     if (clock_output == NULL || edges == NULL || !oscillator_pin_owned(cpu)) {
         return false;

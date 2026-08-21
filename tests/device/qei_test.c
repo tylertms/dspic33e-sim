@@ -1292,7 +1292,7 @@ static void pps_cases(TestState* state, Dspic33* cpu) {
                    (dspic33_read_word(&copy, (uint16_t)(bases[0] + 2u)) & 1u) != 0u,
                "copied QEI PPS routing and input state diverge independently");
         if (initialized) {
-            dspic33_destroy(&copy);
+            dspic33_release(&copy);
         }
     }
 
@@ -1570,7 +1570,7 @@ static void copy_cases(TestState* state, Dspic33* cpu) {
            dspic33_device_advance(cpu, 1u) && dspic33_device_advance(&copy, 1u) &&
                cpu->io.qei.pmd_disabled[0] && copy.io.qei.pmd_disabled[0],
            "copied QEI PMD transition completes independently");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 }
 
 static void index_direction_erratum_cases(TestState* state, Dspic33* cpu) {
@@ -1626,9 +1626,7 @@ int main(void) {
         index_direction_erratum_cases(&state, &cpu);
         pmd_cases(&state, &cpu);
         copy_cases(&state, &cpu);
-        dspic33_destroy(&cpu);
+        dspic33_release(&cpu);
     }
-    printf("[qei-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
-           state.cases, state.passed, state.failed);
-    return state.failed == 0u ? 0 : 1;
+    return test_finish(&state);
 }

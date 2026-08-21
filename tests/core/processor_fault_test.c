@@ -2489,7 +2489,7 @@ static void nested_do_interrupt_erratum_cases(TestState* state, Dspic33* cpu) {
     complete_first_nested_do_interrupt_entry(state, &copy, false, true);
     complete_nested_do_interrupt_case(state, cpu, true);
     complete_nested_do_interrupt_case(state, &copy, true);
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 
     prepare_nested_do_interrupt_case(state, cpu, 0x208u, false);
     enter_first_nested_do_interrupt(state, cpu, true, 0u, false);
@@ -2534,10 +2534,7 @@ int main(void) {
         standalone_divide_zero_cases(&state, &cpu);
         repeat_interrupt_cases(&state, &cpu);
         nested_do_interrupt_erratum_cases(&state, &cpu);
-        dspic33_destroy(&cpu);
+        dspic33_release(&cpu);
     }
-    printf("[processor-fault-summary] cases=%" PRIu32 " passed=%" PRIu32
-           " failed=%" PRIu32 "\n",
-           state.cases, state.passed, state.failed);
-    return state.failed == 0u ? 0 : 1;
+    return test_finish(&state);
 }

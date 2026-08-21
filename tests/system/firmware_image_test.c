@@ -1,0 +1,136 @@
+#include <stdint.h>
+#include <string.h>
+
+#include "dspic33_firmware_image.h"
+#include "test.h"
+
+enum {
+    ELF_HEADER_SIZE = 52,
+    ELF_SECTION_SIZE = 40,
+    IMAGE_SIZE = ELF_HEADER_SIZE + 2 * ELF_SECTION_SIZE + 4,
+    SYMBOL_OFFSET = ELF_HEADER_SIZE + 3 * ELF_SECTION_SIZE,
+    STRING_OFFSET = SYMBOL_OFFSET + 16,
+    SYMBOL_IMAGE_SIZE = STRING_OFFSET + 7,
+};
+
+static void write16(uint8_t* data, size_t offset, uint16_t value) {
+    data[offset] = (uint8_t)value;
+    data[offset + 1u] = (uint8_t)(value >> 8u);
+}
+
+static void write32(uint8_t* data, size_t offset, uint32_t value) {
+    data[offset] = (uint8_t)value;
+    data[offset + 1u] = (uint8_t)(value >> 8u);
+    data[offset + 2u] = (uint8_t)(value >> 16u);
+    data[offset + 3u] = (uint8_t)(value >> 24u);
+}
+
+static void initialize_image(uint8_t* image) {
+    memset(image, 0, IMAGE_SIZE);
+    image[0] = 0x7fu;
+    image[1] = 'E';
+    image[2] = 'L';
+    image[3] = 'F';
+    image[4] = 1u;
+    image[5] = 1u;
+    write16(image, 16u, 2u);
+    write16(image, 18u, 118u);
+    write32(image, 24u, 0x100u);
+    write32(image, 32u, ELF_HEADER_SIZE);
+    write16(image, 46u, ELF_SECTION_SIZE);
+    write16(image, 48u, 2u);
+
+    const size_t section = ELF_HEADER_SIZE + ELF_SECTION_SIZE;
+    write32(image, section + 4u, 1u);
+    write32(image, section + 8u, 0x40000000u);
+    write32(image, section + 12u, 0x100u);
+    write32(image, section + 16u, ELF_HEADER_SIZE + 2u * ELF_SECTION_SIZE);
+    write32(image, section + 20u, 4u);
+    write32(image, ELF_HEADER_SIZE + 2u * ELF_SECTION_SIZE, 0x00123456u);
+}
+
+static void initialize_symbol_image(uint8_t* image) {
+    memset(image, 0, SYMBOL_IMAGE_SIZE);
+    image[0] = 0x7fu;
+    image[1] = 'E';
+    image[2] = 'L';
+    image[3] = 'F';
+    image[4] = 1u;
+    image[5] = 1u;
+    write16(image, 16u, 2u);
+    write16(image, 18u, 118u);
+    write32(image, 32u, ELF_HEADER_SIZE);
+    write16(image, 46u, ELF_SECTION_SIZE);
+    write16(image, 48u, 3u);
+
+    size_t section = ELF_HEADER_SIZE + ELF_SECTION_SIZE;
+    write32(image, section + 4u, 2u);
+    write32(image, section + 16u, SYMBOL_OFFSET);
+    write32(image, section + 20u, 16u);
+    write32(image, section + 24u, 2u);
+    write32(image, section + 36u, 16u);
+
+    section += ELF_SECTION_SIZE;
+    write32(image, section + 16u, STRING_OFFSET);
+    write32(image, section + 20u, 7u);
+    write32(image, SYMBOL_OFFSET, 1u);
+    write32(image, SYMBOL_OFFSET + 4u, 0x1234u);
+    memcpy(image + STRING_OFFSET, "\0_test", 7u);
+}
+
+static void test_binary(TestState* state, Dspic33* cpu) {
+    const uint8_t image[] = {0x56u, 0x34u, 0x12u, 0u};
+    uint32_t entry = UINT32_MAX;
+    expect(state, dspic33_load_binary_data(cpu, image, sizeof(image), 0x200u, &entry),
+           "dspic33_load_binary_data(cpu, image, sizeof(image), 0x200u, &entry)");
+    expect(state, entry == 0x100u, "entry == 0x100u");
+    expect(state, dspic33_read_program_word(cpu, 0x100u) == 0x00123456u,
+           "dspic33_read_program_word(cpu, 0x100u) == 0x00123456u");
+    expect(state, !dspic33_load_binary_data(cpu, image, 3u, 0u, &entry),
+           "!dspic33_load_binary_data(cpu, image, 3u, 0u, &entry)");
+    expect(state, !dspic33_load_binary_data(cpu, image, sizeof(image), 2u, &entry),
+           "!dspic33_load_binary_data(cpu, image, sizeof(image), 2u, &entry)");
+    expect(state, dspic33_load_binary_data(cpu, image, sizeof(image), 0x204u, NULL),
+           "dspic33_load_binary_data(cpu, image, sizeof(image), 0x204u, NULL)");
+}
+
+static void test_elf(TestState* state, Dspic33* cpu) {
+    uint8_t image[IMAGE_SIZE];
+    initialize_image(image);
+    uint32_t entry = UINT32_MAX;
+    expect(state, dspic33_load_elf_data(cpu, image, sizeof(image), &entry),
+           "dspic33_load_elf_data(cpu, image, sizeof(image), &entry)");
+    expect(state, entry == 0x100u, "entry == 0x100u");
+    expect(state, dspic33_read_program_word(cpu, 0x100u) == 0x00123456u,
+           "dspic33_read_program_word(cpu, 0x100u) == 0x00123456u");
+    image[0] = 0u;
+    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry),
+           "!dspic33_load_elf_data(cpu, image, sizeof(image), &entry)");
+    initialize_image(image);
+    expect(state, dspic33_load_elf_data(cpu, image, sizeof(image), NULL),
+           "dspic33_load_elf_data(cpu, image, sizeof(image), NULL)");
+}
+
+static void test_symbol(TestState* state) {
+    uint8_t image[SYMBOL_IMAGE_SIZE];
+    initialize_symbol_image(image);
+    uint32_t address = UINT32_MAX;
+    expect(state, dspic33_elf_symbol_data(image, sizeof(image), "test", &address),
+           "dspic33_elf_symbol_data(image, sizeof(image), test, &address)");
+    expect(state, address == 0x1234u, "address == 0x1234u");
+    expect(state, !dspic33_elf_symbol_data(image, sizeof(image), "missing", &address),
+           "!dspic33_elf_symbol_data(image, sizeof(image), missing, &address)");
+    expect(state, !dspic33_elf_symbol_data(image, sizeof(image), NULL, &address),
+           "!dspic33_elf_symbol_data(image, sizeof(image), NULL, &address)");
+}
+
+int main(void) {
+    TestState state = {0};
+    Dspic33* cpu = dspic33_create();
+    expect(&state, cpu != NULL, "cpu != NULL");
+    test_binary(&state, cpu);
+    test_elf(&state, cpu);
+    test_symbol(&state);
+    dspic33_destroy(cpu);
+    return test_finish(&state);
+}

@@ -96,11 +96,15 @@ bool dspic33_load_elf_data(Dspic33* cpu, const void* data, size_t size,
                            uint32_t* entry_address) {
     ElfImage image;
     char error[160];
-    if (cpu == NULL || entry_address == NULL ||
-        !elf_image_open_data(&image, data, size, error, sizeof(error))) {
+    if (cpu == NULL || !elf_image_open_data(&image, data, size, error, sizeof(error))) {
         return false;
     }
     const bool loaded = elf_image_load_program(&image, cpu, error, sizeof(error));
+    if (loaded && entry_address != NULL) {
+        const uint8_t* bytes = image.bytes + 24u;
+        *entry_address = (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8u) |
+                         ((uint32_t)bytes[2] << 16u) | ((uint32_t)bytes[3] << 24u);
+    }
     elf_image_close(&image);
     return loaded;
 }
@@ -110,8 +114,7 @@ bool dspic33_load_binary_data(Dspic33* cpu, const void* data, size_t size,
     const uint8_t* bytes = data;
     size_t offset;
     if (cpu == NULL || bytes == NULL || size == 0u || (size & 3u) != 0u ||
-        (load_address & 3u) != 0u || size > UINT32_MAX - load_address ||
-        entry_address == NULL) {
+        (load_address & 3u) != 0u || size > UINT32_MAX - load_address) {
         return false;
     }
     for (offset = 0u; offset < size; offset += 4u) {
@@ -132,7 +135,9 @@ bool dspic33_load_binary_data(Dspic33* cpu, const void* data, size_t size,
             return false;
         }
     }
-    *entry_address = load_address / 2u;
+    if (entry_address != NULL) {
+        *entry_address = load_address / 2u;
+    }
     return true;
 }
 

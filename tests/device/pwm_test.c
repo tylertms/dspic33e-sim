@@ -618,7 +618,7 @@ static void b1_update_cases(TestState* state, Dspic33* cpu) {
         dspic33_device_advance(&copy, 4u);
         expect(state, copy.io.pwm_active_duty[0][0] == cpu->io.pwm_active_duty[0][0],
                "copied B1 PWM second boundary");
-        dspic33_destroy(&copy);
+        dspic33_release(&copy);
     }
     dspic33_reset(cpu, 0u);
     expect(state, cpu->io.pwm_period_update == 0u && cpu->io.pwm_timing_update == 0u,
@@ -1069,7 +1069,7 @@ static void pmd_cases(TestState* state, Dspic33* cpu) {
                copy.io.pwm_pmd_disabled == cpu->io.pwm_pmd_disabled &&
                    copy.io.pwm_pmd_generation[6] == cpu->io.pwm_pmd_generation[6],
                "PWM PMD state survives copy");
-        dspic33_destroy(&copy);
+        dspic33_release(&copy);
     }
     cpu->program[0x0200u / 2u] = 0xfe0000u;
     cpu->pc = 0x0200u;
@@ -1318,7 +1318,7 @@ static void boundary_cases(TestState* state, Dspic33* cpu) {
     dspic33_device_advance(&copy, 4u);
     expect(state, copy.io.pwm_master_counter[0] == cpu->io.pwm_master_counter[0],
            "advance copied PWM counter");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 
     dspic33_reset(cpu, 0u);
     expect(state,
@@ -1377,8 +1377,6 @@ int main(void) {
     pmd_cases(&state, &cpu);
     pin_cases(&state, &cpu);
     boundary_cases(&state, &cpu);
-    printf("[pwm-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
-           state.cases, state.passed, state.failed);
-    dspic33_destroy(&cpu);
-    return state.failed == 0u ? 0 : 1;
+    dspic33_release(&cpu);
+    return test_finish(&state);
 }

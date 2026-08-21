@@ -685,7 +685,7 @@ static void lifecycle_cases(TestState* state, Dspic33* cpu) {
     expect(state,
            cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR && cpu->events.count == 0u,
            "capture scheduling overflow reports queue error");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 }
 
 static void pmd_channel_cases(TestState* state, Dspic33* cpu) {
@@ -875,7 +875,7 @@ static void pmd_lifecycle_cases(TestState* state, Dspic33* cpu) {
            cpu->io.input_capture.pmd_disabled == 1u &&
                copy.io.input_capture.pmd_disabled == 1u,
            "copy retains pending capture PMD state");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 
     dspic33_reset(cpu, 0u);
     configure_capture(cpu, 0u, 0u, false);
@@ -1252,7 +1252,7 @@ static void sync_trigger_cases(TestState* state, Dspic33* cpu) {
                cpu->io.input_capture.sync_reset_pending == 0u &&
                    cpu->io.input_capture.sync_output_high == 0x00ffu,
                "reset clears pending sync and restores off outputs high");
-        dspic33_destroy(&stepped);
+        dspic33_release(&stepped);
     }
 }
 
@@ -1275,9 +1275,7 @@ int main(void) {
         pmd_lifecycle_cases(&state, &cpu);
         timer_source_cases(&state, &cpu);
         sync_trigger_cases(&state, &cpu);
-        dspic33_destroy(&cpu);
+        dspic33_release(&cpu);
     }
-    printf("[input-capture-summary] cases=%u passed=%u failed=%u\n", state.cases,
-           state.passed, state.failed);
-    return state.failed == 0u ? 0 : 1;
+    return test_finish(&state);
 }

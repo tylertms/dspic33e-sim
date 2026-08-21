@@ -40,6 +40,6 @@ int main(void) {
            "master-clear SFR snapshot");
     printf("[sfr-reset] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);
-    dspic33_destroy(&cpu);
-    return state.failed == 0u ? 0 : 1;
+    dspic33_release(&cpu);
+    return test_finish(&state);
 }

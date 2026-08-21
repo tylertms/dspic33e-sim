@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include "dspic33.h"
+#include "dspic33_internal.h"
 #include "dspic33ep512mu810_data.h"
 #include "dspic33ep512mu810_sfr_cases.h"
 
@@ -217,7 +217,7 @@ static SfrMapCensus inspect_sfr_map(Dspic33* cpu) {
         inspect_map_condition(&census, dspic33_read_word(&copy, 0x0a9cu) == 0u, 0x0a9cu,
                               "copy-read");
         census.lifecycle_checks += 2u;
-        dspic33_destroy(&copy);
+        dspic33_release(&copy);
     }
     dspic33_reset(cpu, 0u);
     inspect_map_condition(&census, dspic33_read_word(cpu, 0x0a9cu) == 0u, 0x0a9cu,
@@ -714,7 +714,7 @@ int main(void) {
                                    &dspic33_sfr_protected_access_expectations[index]);
     }
     map_census = inspect_sfr_map(&cpu);
-    dspic33_destroy(&cpu);
+    dspic33_release(&cpu);
     print_inventory(&census);
     print_side_effect_expectations();
     print_access_summary(&census);

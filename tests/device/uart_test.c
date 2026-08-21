@@ -924,7 +924,7 @@ static void physical_lifecycle_cases(TestState* state, Dspic33* cpu) {
                    dspic33_gpio_pin(&copy, 3u, 0u, &copy_high) &&
                    source_high == copy_high,
                "UART PPS copied transmit phase matches");
-        dspic33_destroy(&copy);
+        dspic33_release(&copy);
     }
 
     dspic33_reset(cpu, 0u);
@@ -1003,7 +1003,7 @@ static void disable_copy_and_api_cases(TestState* state, Dspic33* cpu) {
                dspic33_uart_transmit(&copy, 0u, &second) &&
                first.value == second.value && first.data_bits == second.data_bits,
            "copied UART output matches");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 
     dspic33_reset(cpu, 0u);
     configure(cpu, 0u, 0x8000u, 0x0400u, 0u);
@@ -1105,9 +1105,7 @@ int main(void) {
         physical_auto_baud_cases(&state, &cpu);
         break_rmw_erratum_cases(&state, &cpu);
         disable_copy_and_api_cases(&state, &cpu);
-        dspic33_destroy(&cpu);
+        dspic33_release(&cpu);
     }
-    printf("[uart-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
-           state.cases, state.passed, state.failed);
-    return state.failed == 0u ? 0 : 1;
+    return test_finish(&state);
 }

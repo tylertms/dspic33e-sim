@@ -971,7 +971,7 @@ static void copy_cases(TestState* state, Dspic33* cpu) {
                dspic33_read_word(cpu, 0x0760u) == 0u &&
                cpu->io.adc_pmd_disabled == 0u && cpu->events.count == 0u,
            "warm reset cancels adc PMD transition");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 }
 
 static void simultaneous_channel_erratum_cases(TestState* state, Dspic33* cpu) {
@@ -1041,8 +1041,6 @@ int main(void) {
     analog_pin_cases(&state, &cpu);
     simultaneous_channel_erratum_cases(&state, &cpu);
     copy_cases(&state, &cpu);
-    printf("[adc-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
-           state.cases, state.passed, state.failed);
-    dspic33_destroy(&cpu);
-    return state.failed == 0u ? 0 : 1;
+    dspic33_release(&cpu);
+    return test_finish(&state);
 }

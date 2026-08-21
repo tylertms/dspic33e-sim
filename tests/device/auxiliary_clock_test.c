@@ -675,10 +675,7 @@ int main(void) {
     configuration_matrix_cases(&state, &source);
     clock_lock_cases(&state, &source);
     lifecycle_cases(&state, &source, &copy);
-    printf("[auxiliary-clock-summary] cases=%" PRIu32 " passed=%" PRIu32
-           " failed=%" PRIu32 "\n",
-           state.cases, state.passed, state.failed);
-    dspic33_destroy(&copy);
-    dspic33_destroy(&source);
-    return state.failed == 0u ? 0 : 1;
+    dspic33_release(&copy);
+    dspic33_release(&source);
+    return test_finish(&state);
 }

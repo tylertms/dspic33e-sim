@@ -692,7 +692,7 @@ static void calibration_cases(TestState* state, Dspic33* cpu) {
                        !cpu->io.rtcc.calibration_pending &&
                        !copy.io.rtcc.calibration_pending,
                    "copied RTCC calibrations complete independently");
-            dspic33_destroy(&copy);
+            dspic33_release(&copy);
         }
     }
 
@@ -997,7 +997,7 @@ static void lifecycle_cases(TestState* state, Dspic33* cpu) {
            dspic33_device_advance(cpu, 1u) && !cpu->io.rtcc.pmd_disabled &&
                cpu->events.count == 0u,
            "stale RTCC PMD event cannot override latest state");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 }
 
 static void long_sequence_cases(TestState* state, Dspic33* cpu) {
@@ -1035,9 +1035,7 @@ int main(void) {
         interrupt_output_power_cases(&state, &cpu);
         lifecycle_cases(&state, &cpu);
         long_sequence_cases(&state, &cpu);
-        dspic33_destroy(&cpu);
+        dspic33_release(&cpu);
     }
-    printf("[rtcc-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
-           state.cases, state.passed, state.failed);
-    return state.failed == 0u ? 0 : 1;
+    return test_finish(&state);
 }

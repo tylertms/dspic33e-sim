@@ -1154,7 +1154,7 @@ static void pmd_cases(TestState* state, Dspic33* cpu) {
                copy.io.usb_pmd_disabled == cpu->io.usb_pmd_disabled &&
                    copy.io.usb_pmd_generation == cpu->io.usb_pmd_generation,
                "USB PMD lifecycle survives copy");
-        dspic33_destroy(&copy);
+        dspic33_release(&copy);
     }
     expect(state, dspic33_load_program_word(cpu, 0u, OPCODE_RESET),
            "load warm reset for USB PMD");
@@ -1294,7 +1294,7 @@ static void copy_and_reset_cases(TestState* state, Dspic33* cpu) {
                (dspic33_read_word(cpu, IR) & 0x0010u) == 0u &&
                (dspic33_read_word(&copy, IR) & 0x0010u) == 0u,
            "copied B1 USB idle state suppresses repeated UIDLE");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
     dspic33_reset(cpu, 0u);
     expect(state,
            cpu->io.usb_tx.count == 0u && cpu->io.usb_status_count == 0u &&
@@ -1325,8 +1325,6 @@ int main(void) {
     pmd_cases(&state, &cpu);
     power_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);
-    printf("[usb-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
-           state.cases, state.passed, state.failed);
-    dspic33_destroy(&cpu);
-    return state.failed == 0u ? 0 : 1;
+    dspic33_release(&cpu);
+    return test_finish(&state);
 }

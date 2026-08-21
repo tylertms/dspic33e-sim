@@ -218,7 +218,7 @@ static void configuration_table_view_cases(TestState* state, Dspic33* cpu) {
                read_table(&copy, addresses[0], TBLRDL_W2_W3, &value) &&
                    value == (uint8_t)loaded[0],
                "copy preserves CPU configuration view");
-        dspic33_destroy(&copy);
+        dspic33_release(&copy);
     }
 }
 
@@ -1030,7 +1030,7 @@ static void auxiliary_access_and_execution_cases(TestState* state, Dspic33* cpu)
                dspic33_step(&copy) == DSPIC33_RUNNING && copy.reset_locked &&
                    copy.instructions == instructions,
                "copied B1 protected reset remains locked");
-        dspic33_destroy(&copy);
+        dspic33_release(&copy);
     }
     dspic33_reset(cpu, 0u);
     expect(state, !cpu->reset_locked && !cpu->illegal_reset,
@@ -1137,7 +1137,7 @@ static void auxiliary_access_and_execution_cases(TestState* state, Dspic33* cpu)
                dspic33_read_program_word(&copy, DSPIC33_AUXILIARY_PROGRAM_BASE) ==
                    0x00010203u,
                "reset preserves auxiliary Flash");
-        dspic33_destroy(&copy);
+        dspic33_release(&copy);
     }
 }
 
@@ -1699,7 +1699,7 @@ static void codeguard_origin_capture_cases(TestState* state, Dspic33* cpu) {
                    program_word(&copy, target) == 0x00654321u &&
                    cpu->nvm.auxiliary_origin && copy.nvm.auxiliary_origin,
                "CodeGuard copied auxiliary origins complete independently");
-        dspic33_destroy(&copy);
+        dspic33_release(&copy);
     }
 }
 
@@ -2275,7 +2275,7 @@ static void reset_copy_and_failure_cases(TestState* state, Dspic33* cpu) {
                "copied event programs captured pair");
         expect(state, cpu->nvm.active && program_word(cpu, 0x3600u) == 0x00ffffffu,
                "source operation remains independent");
-        dspic33_destroy(&copy);
+        dspic33_release(&copy);
     }
 
     dspic33_reset(cpu, 0u);
@@ -2452,7 +2452,7 @@ static void deferred_reset_cases(TestState* state, Dspic33* cpu) {
                        0x00010203u &&
                    !interrupt_flag(cpu) && !interrupt_flag(&copy),
                "copied configuration-mismatch resets follow NVM completion");
-        dspic33_destroy(&copy);
+        dspic33_release(&copy);
     }
 
     dspic33_reset(cpu, 0u);
@@ -2647,7 +2647,7 @@ static void persistent_program_alias_cases(TestState* state, Dspic33* cpu) {
                program_word(cpu, PERSISTENT_PROGRAM_BASE + 0x200u) == 0x00445566u &&
                    program_word(&copy, PERSISTENT_PROGRAM_BASE + 0x200u) == 0x00112233u,
                "copied persistent aliases diverge independently");
-        dspic33_destroy(&copy);
+        dspic33_release(&copy);
     }
 
     dspic33_load_program_word(cpu, PERSISTENT_PROGRAM_BASE + 0x400u, 0x00123456u);
@@ -2692,9 +2692,7 @@ int main(void) {
         async_suppression_cases(&state, &cpu);
         reset_copy_and_failure_cases(&state, &cpu);
         deferred_reset_cases(&state, &cpu);
-        dspic33_destroy(&cpu);
+        dspic33_release(&cpu);
     }
-    printf("[nvm-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
-           state.cases, state.passed, state.failed);
-    return state.failed == 0u ? 0 : 1;
+    return test_finish(&state);
 }

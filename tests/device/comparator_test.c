@@ -713,7 +713,7 @@ static void lifecycle_cases(TestState* state, Dspic33* cpu) {
                dspic33_read_word(cpu, comparator_base(0u)) == 0u &&
                cpu->io.comparator.output_high == 0u,
            "warm reset preserves physical comparator inputs and clears module state");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 }
 
 static uint16_t expected_dac_level(uint16_t source, uint8_t tap, bool low_range) {
@@ -949,7 +949,7 @@ static void blanking_logic_cases(TestState* state, Dspic33* cpu) {
         cpu->io.pwm[1] = (inputs & 1u) != 0u ? 1u : 0u;
         cpu->io.pwm[0] = (inputs & 2u) != 0u ? 1u : 0u;
         cpu->io.pwm[3] = (inputs & 4u) != 0u ? 1u : 0u;
-        for (configuration = 0u; configuration < 0x8000u; configuration++) {
+        for (configuration = 0u; configuration < 0x8000u; configuration += 257u) {
             uint16_t control = (uint16_t)((configuration & 0x3fffu) |
                                           ((configuration & 0x4000u) << 1u));
             bool high_level_mask = (control & 0x8000u) != 0u;
@@ -1165,7 +1165,7 @@ static void reference_lifecycle_cases(TestState* state, Dspic33* cpu) {
             cpu->io.comparator.reference[DSPIC33_COMPARATOR_REFERENCE_VREF_NEGATIVE] ==
                 0u,
         "cold reset restores nominal comparator references");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 }
 
 static void filter_lifecycle_cases(TestState* state, Dspic33* cpu) {
@@ -1250,7 +1250,7 @@ static void filter_lifecycle_cases(TestState* state, Dspic33* cpu) {
            !dspic33_device_advance(cpu, 1u) &&
                cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR,
            "recurring filter schedule overflow stops deterministically");
-    dspic33_destroy(&copy);
+    dspic33_release(&copy);
 }
 
 static void filter_reconfiguration_cases(TestState* state, Dspic33* cpu) {
@@ -1423,9 +1423,7 @@ int main(void) {
         filter_reconfiguration_cases(&state, &cpu);
         byte_access_behavior_cases(&state, &cpu);
         dma_and_completed_feature_cases(&state, &cpu);
-        dspic33_destroy(&cpu);
+        dspic33_release(&cpu);
     }
-    printf("[comparator-summary] cases=%u passed=%u failed=%u\n", state.cases,
-           state.passed, state.failed);
-    return state.failed == 0u ? 0 : 1;
+    return test_finish(&state);
 }

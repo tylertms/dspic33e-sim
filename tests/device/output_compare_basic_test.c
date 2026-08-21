@@ -925,9 +925,7 @@ int main(void) {
         output_control_cases(&state, &cpu);
         channel_mode_matrix_cases(&state, &cpu);
         one_shot_restart_cases(&state, &cpu);
-        dspic33_destroy(&cpu);
+        dspic33_release(&cpu);
     }
-    printf("[output-compare-basic-summary] cases=%u passed=%u failed=%u\n", state.cases,
-           state.passed, state.failed);
-    return state.failed == 0u ? 0 : 1;
+    return test_finish(&state);
 }
