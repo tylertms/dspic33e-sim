@@ -49,11 +49,11 @@ ctest --test-dir build/simulator --parallel --output-on-failure
 
 The `tests` directory has this structure:
 
-- `cpu/processor` contains separate fault, timing, data-encoding, and control-encoding tests.
-- `cpu/event_scheduler_test.c` contains event and public-state tests.
+- `core/processor` contains separate fault, timing, data-encoding, and control-encoding tests.
+- `core/event_scheduler_test.c` contains event and public-state tests.
 - `device` contains register and peripheral tests.
+- `system` contains firmware-runner tests and fixtures.
 - `support` contains shared test data and the small assertion helper.
-- `runner_smoke.hex` is the firmware-runner fixture.
 
 The device tests include interrupt, reset, copy, power, lifecycle, and error cases.
 
@@ -63,7 +63,7 @@ Run one test group:
 
 ```
 ctest --test-dir build/simulator -L unit --parallel --output-on-failure
-ctest --test-dir build/simulator -L cpu --parallel --output-on-failure
+ctest --test-dir build/simulator -L core --parallel --output-on-failure
 ctest --test-dir build/simulator -L device --parallel --output-on-failure
 ctest --test-dir build/simulator -L system --parallel --output-on-failure
 ```

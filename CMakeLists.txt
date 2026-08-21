@@ -78,23 +78,23 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     endfunction()
 
     dspic33e_add_test(
-        event_scheduler tests/cpu/event_scheduler_test.c "cpu;integration"
+        event_scheduler tests/core/event_scheduler_test.c "core;integration"
     )
     dspic33e_add_test(
-        processor_fault tests/cpu/processor/processor_fault_test.c
-        "cpu;integration"
+        processor_fault tests/core/processor/processor_fault_test.c
+        "core;integration"
     )
     dspic33e_add_test(
-        processor_timing tests/cpu/processor/processor_timing_test.c
-        "cpu;integration"
+        processor_timing tests/core/processor/processor_timing_test.c
+        "core;integration"
     )
     dspic33e_add_test(
-        processor_data tests/cpu/processor/processor_data_test.c
-        "cpu;integration"
+        processor_data tests/core/processor/processor_data_test.c
+        "core;integration"
     )
     dspic33e_add_test(
-        processor_control tests/cpu/processor/processor_control_test.c
-        "cpu;integration"
+        processor_control tests/core/processor/processor_control_test.c
+        "core;integration"
     )
 
     dspic33e_add_test(adc tests/device/adc_test.c "device;integration")
@@ -182,7 +182,8 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
         NAME dspic33e_firmware_runner_smoke_test
         COMMAND
             dspic33e_firmware_runner
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/runner_smoke.hex 0 --stop 2
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/system/runner_smoke.hex 0 --stop
+            2
             --max-instructions 10
     )
     set_tests_properties(
