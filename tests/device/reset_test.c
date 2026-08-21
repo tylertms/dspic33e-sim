@@ -50,16 +50,15 @@ static bool configure_primary_frc_reset(Dspic33* cpu) {
 }
 
 static bool start_nvm_pair(Dspic33* cpu, uint32_t address, uint32_t value) {
-    static const uint32_t sequence[] = {MOVE_KEY_55, WRITE_NVM_KEY, MOVE_KEY_AA,
-                                        WRITE_NVM_KEY, SET_NVM_WRITE};
+    static const uint32_t sequence[] = {MOVE_KEY_55, WRITE_NVM_KEY, MOVE_KEY_AA, WRITE_NVM_KEY,
+                                        SET_NVM_WRITE};
     size_t index;
     dspic33_write_word(cpu, NVM_ADDRESS, (uint16_t)address);
     dspic33_write_word(cpu, NVM_ADDRESS_HIGH, (uint16_t)(address >> 16u));
     dspic33_write_word(cpu, NVM_CONTROL, NVM_WRITE_ENABLE | 1u);
     cpu->write_latches[0] = value;
     for (index = 0u; index < sizeof(sequence) / sizeof(sequence[0]); index++) {
-        dspic33_load_program_word(cpu, NVM_SEQUENCE_BASE + (uint32_t)index * 2u,
-                                  sequence[index]);
+        dspic33_load_program_word(cpu, NVM_SEQUENCE_BASE + (uint32_t)index * 2u, sequence[index]);
     }
     cpu->pc = NVM_SEQUENCE_BASE;
     for (index = 0u; index < sizeof(sequence) / sizeof(sequence[0]); index++) {
@@ -97,8 +96,7 @@ static void master_clear_register_cases(TestState* state, Dspic33* cpu) {
     cpu->data[0x1000u] = 0xa5u;
     cpu->data[0x2fffu] = 0x5au;
     dspic33_load_program_word(cpu, 0x0200u, 0x00123456u);
-    expect(state, dspic33_gpio_drive(cpu, 0u, 0x0001u, 0x0001u),
-           "drive external pin before MCLR");
+    expect(state, dspic33_gpio_drive(cpu, 0u, 0x0001u, 0x0001u), "drive external pin before MCLR");
     instructions = cpu->instructions;
     cycles = cpu->cycles;
     device_cycles = cpu->device_cycles;
@@ -119,15 +117,11 @@ static void master_clear_register_cases(TestState* state, Dspic33* cpu) {
            "MCLR resets ordinary peripheral controls");
     expect(state, (dspic33_read_word(cpu, INTERRUPT_CONTROL_TWO) & 0xc01fu) == 0u,
            "MCLR applies target-specific INTCON2 reset");
-    expect(state,
-           raw_word(cpu, PORT_A_LATCH) == 0x8601u &&
-               raw_word(cpu, ADC1_BUFFER) == 0xa55au,
+    expect(state, raw_word(cpu, PORT_A_LATCH) == 0x8601u && raw_word(cpu, ADC1_BUFFER) == 0xa55au,
            "MCLR preserves device-pack unchanged SFRs");
     expect(state,
-           raw_word(cpu, RTCC_ALARM) == 0x1234u &&
-               raw_word(cpu, RTCC_ALARM_CONTROL) == 0x91a5u &&
-               raw_word(cpu, RTCC_VALUE) == 0x5678u &&
-               raw_word(cpu, RTCC_CONTROL) == 0x8123u,
+           raw_word(cpu, RTCC_ALARM) == 0x1234u && raw_word(cpu, RTCC_ALARM_CONTROL) == 0x91a5u &&
+               raw_word(cpu, RTCC_VALUE) == 0x5678u && raw_word(cpu, RTCC_CONTROL) == 0x8123u,
            "MCLR preserves RTCC registers");
     expect(state,
            cpu->io.rtcc.calendar[0] == 0x5678u && cpu->io.rtcc.alarm[0] == 0x1234u &&
@@ -190,8 +184,7 @@ static void brown_out_clock_cases(TestState* state, Dspic33* cpu) {
                raw_word(cpu, MAIN_OSCILLATOR_TUNING) == 0x002au &&
                raw_word(cpu, RTCC_CONTROL) == 0x8123u,
            "BOR preserves POR-only oscillator and RTCC registers");
-    expect(state, cpu->events.count == 0u,
-           "BOR cancels stale main oscillator transition");
+    expect(state, cpu->events.count == 0u, "BOR cancels stale main oscillator transition");
 }
 
 static void nvm_reset_cases(TestState* state, Dspic33* cpu) {
@@ -199,13 +192,11 @@ static void nvm_reset_cases(TestState* state, Dspic33* cpu) {
     expect(state, configure_primary_frc_reset(cpu), "configure NVM reset vector");
     dspic33_reset(cpu, 0u);
     dspic33_load_program_word(cpu, 0x3000u, 0x00ffffffu);
-    expect(state, start_nvm_pair(cpu, 0x3000u, 0x00123456u),
-           "start NVM operation before MCLR");
+    expect(state, start_nvm_pair(cpu, 0x3000u, 0x00123456u), "start NVM operation before MCLR");
     dspic33_mclr_reset(cpu);
     expect(state, cpu->nvm.active && cpu->nvm.reset_pending && cpu->pc == 0x040au,
            "MCLR defers while RTSP is active");
-    expect(state, dspic33_device_advance(cpu, 2u),
-           "complete NVM operation before deferred MCLR");
+    expect(state, dspic33_device_advance(cpu, 2u), "complete NVM operation before deferred MCLR");
     expect(state,
            !cpu->nvm.active && !cpu->nvm.reset_pending && cpu->pc == 0u &&
                dspic33_read_program_word(cpu, 0x3000u) == 0x00123456u &&
@@ -216,8 +207,7 @@ static void nvm_reset_cases(TestState* state, Dspic33* cpu) {
 
     dspic33_reset(cpu, 0u);
     dspic33_load_program_word(cpu, 0x3200u, 0x00ffffffu);
-    expect(state, start_nvm_pair(cpu, 0x3200u, 0x00654321u),
-           "start NVM operation before BOR");
+    expect(state, start_nvm_pair(cpu, 0x3200u, 0x00654321u), "start NVM operation before BOR");
     dspic33_brown_out_reset(cpu);
     expect(state,
            !cpu->nvm.active && !cpu->nvm.reset_pending && cpu->events.count == 0u &&
@@ -243,8 +233,7 @@ static void copy_cases(TestState* state, Dspic33* source, Dspic33* copy) {
            raw_word(source, PORT_A_LATCH) == raw_word(copy, PORT_A_LATCH) &&
                raw_word(source, ADC1_BUFFER) == raw_word(copy, ADC1_BUFFER) &&
                source->data[0x1000u] == copy->data[0x1000u] &&
-               dspic33_read_word(source, RESET_CONTROL) ==
-                   dspic33_read_word(copy, RESET_CONTROL),
+               dspic33_read_word(source, RESET_CONTROL) == dspic33_read_word(copy, RESET_CONTROL),
            "copied state resets independently and identically");
 }
 
@@ -269,8 +258,7 @@ static void reset_vector_cases(TestState* state, Dspic33* cpu, Dspic33* protecte
            "configure protected auxiliary reset vector");
     dspic33_mclr_reset(protected_cpu);
     expect(state,
-           protected_cpu->pc == 0u && protected_cpu->reset_locked &&
-               protected_cpu->illegal_reset &&
+           protected_cpu->pc == 0u && protected_cpu->reset_locked && protected_cpu->illegal_reset &&
                (dspic33_read_word(protected_cpu, RESET_CONTROL) & 0x4080u) == 0x4080u,
            "B1 protected auxiliary MCLR enters security reset");
     dspic33_brown_out_reset(protected_cpu);
@@ -284,26 +272,23 @@ static void trap_conflict_cases(TestState* state, Dspic33* cpu) {
     uint64_t instructions;
     uint64_t cycles;
     dspic33_reset(cpu, 0u);
-    expect(state, configure_primary_frc_reset(cpu),
-           "configure primary trap conflict reset vector");
+    expect(state, configure_primary_frc_reset(cpu), "configure primary trap conflict reset vector");
     dspic33_reset(cpu, 0u);
     dspic33_load_program_word(cpu, 0x0004u, 0x000300u);
     dspic33_load_program_word(cpu, 0x0300u, OPCODE_NOP);
     dspic33_set_working_register(cpu, 15u, 0x5000u);
     dspic33_raise_oscillator_fail_trap(cpu);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == 0u &&
-               cpu->pc == 0x0302u && (cpu->corcon & 0x0008u) != 0u &&
-               (cpu->sr & 0x00e0u) == 0x00e0u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == 0u && cpu->pc == 0x0302u &&
+               (cpu->corcon & 0x0008u) != 0u && (cpu->sr & 0x00e0u) == 0x00e0u,
            "oscillator hard trap establishes priority fifteen");
     instructions = cpu->instructions;
     cycles = cpu->cycles;
     dspic33_set_generic_hard_trap_source(cpu, true);
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0u &&
-               (dspic33_read_word(cpu, RESET_CONTROL) & 0x8000u) != 0u &&
-               !cpu->illegal_reset && cpu->instructions == instructions &&
-               cpu->cycles == cycles && cpu->w[15] == 0x1000u,
+               (dspic33_read_word(cpu, RESET_CONTROL) & 0x8000u) != 0u && !cpu->illegal_reset &&
+               cpu->instructions == instructions && cpu->cycles == cycles && cpu->w[15] == 0x1000u,
            "lower-priority hard trap causes conflict reset without continuation");
 
     dspic33_reset(cpu, 0u);
@@ -314,30 +299,26 @@ static void trap_conflict_cases(TestState* state, Dspic33* cpu) {
     dspic33_set_working_register(cpu, 15u, 0x5000u);
     dspic33_set_generic_hard_trap_source(cpu, true);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == 2u &&
-               cpu->pc == 0x0302u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == 2u && cpu->pc == 0x0302u,
            "generic hard trap establishes priority thirteen");
     dspic33_raise_oscillator_fail_trap(cpu);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == 0u &&
-               cpu->pc == 0x0322u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == 0u && cpu->pc == 0x0322u &&
                (dspic33_read_word(cpu, RESET_CONTROL) & 0x8000u) == 0u,
            "higher-priority hard trap nests without conflict reset");
 
     dspic33_reset(cpu, 0u);
-    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3000u,
-                              0x00ffffffu);
-    expect(state,
-           start_nvm_pair(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3000u, 0x00123456u),
+    dspic33_load_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3000u, 0x00ffffffu);
+    expect(state, start_nvm_pair(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3000u, 0x00123456u),
            "start opposite-segment NVM operation before trap conflict");
     cpu->corcon |= 0x0008u;
     cpu->sr = (uint16_t)((cpu->sr & ~0x00e0u) | 0x00e0u);
     dspic33_set_generic_hard_trap_source(cpu, true);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && !cpu->nvm.active &&
-               !cpu->nvm.reset_pending && cpu->pc == 0u &&
-               dspic33_read_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE +
-                                                  0x3000u) == 0x00123456u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && !cpu->nvm.active && !cpu->nvm.reset_pending &&
+               cpu->pc == 0u &&
+               dspic33_read_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE + 0x3000u) ==
+                   0x00123456u &&
                (dspic33_read_word(cpu, RESET_CONTROL) & 0x8000u) != 0u,
            "trap conflict reset follows active RTSP completion");
 
@@ -349,8 +330,7 @@ static void trap_conflict_cases(TestState* state, Dspic33* cpu) {
     cpu->pc = 0x0200u;
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0u && cpu->cycles == 0u &&
-               cpu->corcon == 0x0020u &&
-               (dspic33_read_word(cpu, RESET_CONTROL) & 0x8000u) != 0u,
+               cpu->corcon == 0x0020u && (dspic33_read_word(cpu, RESET_CONTROL) & 0x8000u) != 0u,
            "direct lower-priority hard trap resets without stale state or timing");
 }
 

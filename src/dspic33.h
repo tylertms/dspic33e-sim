@@ -12,16 +12,15 @@ typedef struct Dspic33 Dspic33;
 #define DSPIC33_AUXILIARY_PROGRAM_BASE 0x7fc000u
 #define DSPIC33_AUXILIARY_PROGRAM_LIMIT 0x800000u
 #define DSPIC33_PROGRAM_WORDS (DSPIC33_PROGRAM_LIMIT / 2u)
-#define DSPIC33_AUXILIARY_PROGRAM_WORDS                                                \
+#define DSPIC33_AUXILIARY_PROGRAM_WORDS                                                            \
     ((DSPIC33_AUXILIARY_PROGRAM_LIMIT - DSPIC33_AUXILIARY_PROGRAM_BASE) / 2u)
 #define DSPIC33_PERSISTENT_PROGRAM_BASE 0x1000000u
 #define DSPIC33_PERSISTENT_PROGRAM_LIMIT 0x1010000u
-#define DSPIC33_PERSISTENT_PROGRAM_WORDS                                               \
+#define DSPIC33_PERSISTENT_PROGRAM_WORDS                                                           \
     ((DSPIC33_PERSISTENT_PROGRAM_LIMIT - DSPIC33_PERSISTENT_PROGRAM_BASE) / 2u)
 #define DSPIC33_WRITE_LATCH_BASE 0xfa0000u
 #define DSPIC33_WRITE_LATCH_LIMIT 0xfa0100u
-#define DSPIC33_WRITE_LATCH_WORDS                                                      \
-    ((DSPIC33_WRITE_LATCH_LIMIT - DSPIC33_WRITE_LATCH_BASE) / 2u)
+#define DSPIC33_WRITE_LATCH_WORDS ((DSPIC33_WRITE_LATCH_LIMIT - DSPIC33_WRITE_LATCH_BASE) / 2u)
 #define DSPIC33_CONFIGURATION_BASE 0xf80000u
 #define DSPIC33_CONFIGURATION_SIZE 0x20u
 #define DSPIC33_IRQ_COUNT 143u
@@ -747,11 +746,7 @@ typedef struct {
     uint32_t opcode;
 } Dspic33Result;
 
-typedef enum {
-    DSPIC33_POWER_ACTIVE,
-    DSPIC33_POWER_SLEEP,
-    DSPIC33_POWER_IDLE
-} Dspic33PowerState;
+typedef enum { DSPIC33_POWER_ACTIVE, DSPIC33_POWER_SLEEP, DSPIC33_POWER_IDLE } Dspic33PowerState;
 
 typedef struct {
     uint32_t vector;
@@ -807,8 +802,7 @@ void dspic33_brown_out_reset(Dspic33* cpu);
 void dspic33_watchdog_advance_lprc(Dspic33* cpu, uint64_t ticks);
 bool dspic33_load_program_word(Dspic33* cpu, uint32_t address, uint32_t word);
 bool dspic33_program_range_implemented(uint32_t address, uint32_t size);
-bool dspic33_codeguard_admit_program_flow(Dspic33* cpu, uint32_t origin,
-                                          uint32_t target);
+bool dspic33_codeguard_admit_program_flow(Dspic33* cpu, uint32_t origin, uint32_t target);
 void dspic33_cancel_flash_read_sequence(Dspic33* cpu);
 void dspic33_raise_program_vector_error(Dspic33* cpu, uint32_t return_pc);
 void dspic33_complete_nvm(Dspic33* cpu);
@@ -821,10 +815,10 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value);
 void dspic33_write_word(Dspic33* cpu, uint32_t address, uint16_t value);
 uint8_t dspic33_read_byte(Dspic33* cpu, uint32_t address);
 uint16_t dspic33_read_word(Dspic33* cpu, uint32_t address);
-bool dspic33_schedule(Dspic33* cpu, Dspic33EventType type, uint16_t source,
-                      uint32_t value, uint64_t delay);
-bool dspic33_schedule_external(Dspic33* cpu, Dspic33EventType type, uint16_t source,
-                               uint32_t value, uint64_t delay);
+bool dspic33_schedule(Dspic33* cpu, Dspic33EventType type, uint16_t source, uint32_t value,
+                      uint64_t delay);
+bool dspic33_schedule_external(Dspic33* cpu, Dspic33EventType type, uint16_t source, uint32_t value,
+                               uint64_t delay);
 void dspic33_reorder_events(Dspic33* cpu);
 void dspic33_raise_interrupt(Dspic33* cpu, uint16_t irq);
 void dspic33_raise_oscillator_fail_trap(Dspic33* cpu);
@@ -832,14 +826,14 @@ bool dspic33_oscillator_failure_detected(Dspic33* cpu);
 void dspic33_set_generic_hard_trap_source(Dspic33* cpu, bool active);
 void dspic33_set_generic_soft_trap_source(Dspic33* cpu, bool active);
 bool dspic33_uart_receive(Dspic33* cpu, uint8_t channel, uint8_t value, uint64_t delay);
-bool dspic33_uart_receive_frame(Dspic33* cpu, uint8_t channel,
-                                const Dspic33UartFrame* frame, uint64_t delay);
+bool dspic33_uart_receive_frame(Dspic33* cpu, uint8_t channel, const Dspic33UartFrame* frame,
+                                uint64_t delay);
 bool dspic33_uart_set_cts(Dspic33* cpu, uint8_t channel, bool clear, uint64_t delay);
 bool dspic33_uart_transmit(Dspic33* cpu, uint8_t channel, Dspic33UartFrame* frame);
 bool dspic33_spi_receive(Dspic33* cpu, uint8_t channel, uint16_t value, uint64_t delay);
 bool dspic33_spi_select(Dspic33* cpu, uint8_t channel, bool selected, uint64_t delay);
-bool dspic33_spi_pin_input(Dspic33* cpu, uint8_t channel, bool clock_high,
-                           bool data_high, bool select_high);
+bool dspic33_spi_pin_input(Dspic33* cpu, uint8_t channel, bool clock_high, bool data_high,
+                           bool select_high);
 bool dspic33_spi_transmit(Dspic33* cpu, uint8_t channel, uint8_t* value);
 bool dspic33_spi_clock_output(const Dspic33* cpu, uint8_t channel, bool* high);
 bool dspic33_spi_data_output(const Dspic33* cpu, uint8_t channel, bool* high);
@@ -851,36 +845,28 @@ bool dspic33_i2c_respond(Dspic33* cpu, uint8_t channel, uint8_t value, bool ackn
 bool dspic33_i2c_status(Dspic33* cpu, uint8_t channel, uint16_t status);
 bool dspic33_i2c_slave_start(Dspic33* cpu, uint8_t channel, uint16_t address, bool read,
                              bool ten_bit, uint64_t delay);
-bool dspic33_i2c_slave_write(Dspic33* cpu, uint8_t channel, uint8_t value,
-                             uint64_t delay);
-bool dspic33_i2c_slave_read(Dspic33* cpu, uint8_t channel, bool acknowledge,
-                            uint64_t delay);
+bool dspic33_i2c_slave_write(Dspic33* cpu, uint8_t channel, uint8_t value, uint64_t delay);
+bool dspic33_i2c_slave_read(Dspic33* cpu, uint8_t channel, bool acknowledge, uint64_t delay);
 bool dspic33_i2c_slave_stop(Dspic33* cpu, uint8_t channel, uint64_t delay);
 bool dspic33_i2c_collision(Dspic33* cpu, uint8_t channel, uint64_t delay);
 bool dspic33_i2c_transmit(Dspic33* cpu, uint8_t channel, Dspic33I2cTransfer* transfer);
 bool dspic33_i2c_pin(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* high);
-bool dspic33_dma_request(Dspic33* cpu, uint8_t request, uint16_t indirect_address,
-                         uint64_t delay);
+bool dspic33_dma_request(Dspic33* cpu, uint8_t request, uint16_t indirect_address, uint64_t delay);
 bool dspic33_cpu_rmw_matches(const Dspic33* cpu, uint32_t address, uint8_t width);
 bool dspic33_pmp_respond(Dspic33* cpu, uint16_t value, uint64_t delay);
 bool dspic33_pmp_transmit(Dspic33* cpu, Dspic33PmpTransfer* transfer);
 bool dspic33_pmp_slave_read(Dspic33* cpu, uint8_t address, uint64_t delay);
-bool dspic33_pmp_slave_write(Dspic33* cpu, uint8_t address, uint8_t value,
-                             uint64_t delay);
+bool dspic33_pmp_slave_write(Dspic33* cpu, uint8_t address, uint8_t value, uint64_t delay);
 void dspic33_device_power_state_changed(Dspic33* cpu);
-bool dspic33_input_capture_input(Dspic33* cpu, uint8_t channel, bool high,
-                                 uint64_t delay);
+bool dspic33_input_capture_input(Dspic33* cpu, uint8_t channel, bool high, uint64_t delay);
 bool dspic33_input_capture_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t delay);
 void dspic33_configuration_mismatch_reset(Dspic33* cpu);
 bool dspic33_output_compare_output(const Dspic33* cpu, uint8_t channel, bool* high);
 bool dspic33_output_compare_pin(const Dspic33* cpu, uint8_t pin, bool* high);
-bool dspic33_output_compare_fault(Dspic33* cpu, uint8_t source, bool high,
-                                  uint64_t delay);
-bool dspic33_output_compare_fault_pin(Dspic33* cpu, uint8_t pin, bool high,
-                                      uint64_t delay);
-bool dspic33_comparator_input(Dspic33* cpu, uint8_t comparator,
-                              Dspic33ComparatorInput input, uint16_t level,
-                              uint64_t delay);
+bool dspic33_output_compare_fault(Dspic33* cpu, uint8_t source, bool high, uint64_t delay);
+bool dspic33_output_compare_fault_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t delay);
+bool dspic33_comparator_input(Dspic33* cpu, uint8_t comparator, Dspic33ComparatorInput input,
+                              uint16_t level, uint64_t delay);
 bool dspic33_comparator_reference(Dspic33* cpu, Dspic33ComparatorReference reference,
                                   uint16_t level, uint64_t delay);
 bool dspic33_comparator_output(const Dspic33* cpu, uint8_t comparator, bool* high);
@@ -906,27 +892,23 @@ bool dspic33_pwm_sync_pin(const Dspic33* cpu, uint8_t pin, bool* high);
 bool dspic33_pwm_output(const Dspic33* cpu, uint8_t generator, bool high);
 bool dspic33_can_receive(Dspic33* cpu, uint8_t channel, const Dspic33CanFrame* frame,
                          uint64_t delay);
-bool dspic33_can_error(Dspic33* cpu, uint8_t channel, bool transmit, uint8_t count,
-                       uint64_t delay);
+bool dspic33_can_error(Dspic33* cpu, uint8_t channel, bool transmit, uint8_t count, uint64_t delay);
 bool dspic33_can_invalid(Dspic33* cpu, uint8_t channel, uint64_t delay);
 bool dspic33_can_transmit(Dspic33* cpu, uint8_t channel, Dspic33CanFrame* frame);
 bool dspic33_can_pin(const Dspic33* cpu, uint8_t pin, bool* high);
 bool dspic33_can_input_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t delay);
-bool dspic33_usb_receive(Dspic33* cpu, uint8_t endpoint, const uint8_t* data,
-                         uint16_t size, uint64_t delay);
-bool dspic33_usb_token(Dspic33* cpu, uint8_t address, uint8_t endpoint,
-                       Dspic33UsbPid pid, const uint8_t* data, uint16_t size,
-                       bool data1, uint64_t delay);
-bool dspic33_usb_receive_toggle(Dspic33* cpu, uint8_t endpoint, const uint8_t* data,
-                                uint16_t size, bool data1, uint64_t delay);
-bool dspic33_usb_setup(Dspic33* cpu, uint8_t endpoint, const uint8_t* data,
-                       uint16_t size, uint64_t delay);
+bool dspic33_usb_receive(Dspic33* cpu, uint8_t endpoint, const uint8_t* data, uint16_t size,
+                         uint64_t delay);
+bool dspic33_usb_token(Dspic33* cpu, uint8_t address, uint8_t endpoint, Dspic33UsbPid pid,
+                       const uint8_t* data, uint16_t size, bool data1, uint64_t delay);
+bool dspic33_usb_receive_toggle(Dspic33* cpu, uint8_t endpoint, const uint8_t* data, uint16_t size,
+                                bool data1, uint64_t delay);
+bool dspic33_usb_setup(Dspic33* cpu, uint8_t endpoint, const uint8_t* data, uint16_t size,
+                       uint64_t delay);
 bool dspic33_usb_request(Dspic33* cpu, uint8_t endpoint, uint64_t delay);
-bool dspic33_usb_host_response(Dspic33* cpu, Dspic33UsbHandshake handshake,
-                               const uint8_t* data, uint16_t size, bool data1,
-                               uint64_t delay);
-bool dspic33_usb_bus(Dspic33* cpu, Dspic33UsbBusEvent event, uint16_t value,
-                     uint64_t delay);
+bool dspic33_usb_host_response(Dspic33* cpu, Dspic33UsbHandshake handshake, const uint8_t* data,
+                               uint16_t size, bool data1, uint64_t delay);
+bool dspic33_usb_bus(Dspic33* cpu, Dspic33UsbBusEvent event, uint16_t value, uint64_t delay);
 bool dspic33_usb_transmit(Dspic33* cpu, Dspic33UsbPacket* packet);
 void dspic33_adc_input(Dspic33* cpu, uint8_t channel, uint16_t value);
 bool dspic33_gpio_drive(Dspic33* cpu, uint8_t port, uint16_t value, uint16_t mask);
@@ -934,12 +916,11 @@ bool dspic33_gpio_release(Dspic33* cpu, uint8_t port, uint16_t mask);
 bool dspic33_gpio_pin(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* high);
 bool dspic33_gpio_signal(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* high);
 bool dspic33_oscillator_pin(const Dspic33* cpu, bool* clock_output, uint64_t* edges);
-bool dspic33_reference_clock_pin(const Dspic33* cpu, uint8_t pin,
-                                 uint64_t primary_edges, uint64_t* edges);
+bool dspic33_reference_clock_pin(const Dspic33* cpu, uint8_t pin, uint64_t primary_edges,
+                                 uint64_t* edges);
 void dspic33_gpio_input(Dspic33* cpu, uint8_t port, uint16_t value);
 void dspic33_set_async_events(Dspic33* cpu, bool enabled);
-void dspic33_check_stack_address(Dspic33* cpu, int32_t address, bool wrapped,
-                                 uint8_t delay);
+void dspic33_check_stack_address(Dspic33* cpu, int32_t address, bool wrapped, uint8_t delay);
 void dspic33_set_math_error_source(Dspic33* cpu, bool active);
 Dspic33StopReason dspic33_step(Dspic33* cpu);
 Dspic33StopReason dspic33_run(Dspic33* cpu, uint64_t instruction_limit);

@@ -24,8 +24,8 @@ static void program_target_address_error_cases(TestState* state, Dspic33* cpu) {
            "unimplemented literal CALL target traps in four cycles");
     expect(state,
            cpu->last_trap_return == 2u && cpu->w[15] == 0x5008u &&
-               dspic33_read_word(cpu, 0x5000u) == 5u &&
-               dspic33_read_word(cpu, 0x5004u) == 2u && (cpu->corcon & 0x0004u) == 0u,
+               dspic33_read_word(cpu, 0x5000u) == 5u && dspic33_read_word(cpu, 0x5004u) == 2u &&
+               (cpu->corcon & 0x0004u) == 0u,
            "literal CALL completes return push before target trap");
 
     reset_processor_test(cpu, 0u);
@@ -37,8 +37,7 @@ static void program_target_address_error_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 4u,
            "unimplemented GOTO.L target traps in four cycles");
     expect(state,
-           cpu->last_trap_return == 2u && cpu->w[15] == 0x5004u &&
-               (cpu->corcon & 0x0004u) != 0u,
+           cpu->last_trap_return == 2u && cpu->w[15] == 0x5004u && (cpu->corcon & 0x0004u) != 0u,
            "GOTO.L target trap preserves registers and SFA");
 
     reset_processor_test(cpu, 0u);
@@ -64,8 +63,8 @@ static void program_target_address_error_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 5u,
            "unimplemented RETURN target traps in five cycles");
     expect(state,
-           cpu->last_trap_return == 2u && cpu->w[15] == 0x5004u &&
-               cpu->call_depth == 0u && (cpu->corcon & 0x0004u) == 0u,
+           cpu->last_trap_return == 2u && cpu->w[15] == 0x5004u && cpu->call_depth == 0u &&
+               (cpu->corcon & 0x0004u) == 0u,
            "RETURN completes frame pop before target trap");
 
     reset_processor_test(cpu, 0u);
@@ -92,8 +91,8 @@ static void program_target_address_error_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 5u,
            "unimplemented RETLW target traps in five cycles");
     expect(state,
-           cpu->last_trap_return == 2u && cpu->w[2] == 0x0123u &&
-               cpu->w[15] == 0x5004u && cpu->call_depth == 0u,
+           cpu->last_trap_return == 2u && cpu->w[2] == 0x0123u && cpu->w[15] == 0x5004u &&
+               cpu->call_depth == 0u,
            "RETLW completes frame pop and literal before target trap");
 
     reset_processor_test(cpu, 0u);
@@ -118,8 +117,7 @@ static void program_target_address_error_cases(TestState* state, Dspic33* cpu) {
     expect(state,
            cpu->last_trap_return == 0x557ecu && cpu->w[15] == 0x5008u &&
                dspic33_read_word(cpu, 0x5000u) == 0x57edu &&
-               dspic33_read_word(cpu, 0x5002u) == 0x0005u &&
-               (cpu->corcon & 0x0004u) == 0u,
+               dspic33_read_word(cpu, 0x5002u) == 0x0005u && (cpu->corcon & 0x0004u) == 0u,
            "literal RCALL completes return push before target trap");
 
     reset_processor_test(cpu, 0u);
@@ -135,8 +133,8 @@ static void program_target_address_error_cases(TestState* state, Dspic33* cpu) {
     cpu->pc = 0x557dau;
     cpu->sr &= (uint16_t)~0x0002u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x557dcu &&
-               cpu->cycles == 1u && cpu->last_trap == UINT16_MAX,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x557dcu && cpu->cycles == 1u &&
+               cpu->last_trap == UINT16_MAX,
            "untaken conditional BRA skips target validation in one cycle");
 
     reset_processor_test(cpu, 0u);
@@ -152,17 +150,15 @@ static void program_target_address_error_cases(TestState* state, Dspic33* cpu) {
     cpu->pc = 0x557dau;
     cpu->sr = 0x0800u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x557dcu &&
-               cpu->cycles == 1u && cpu->last_trap == UINT16_MAX,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x557dcu && cpu->cycles == 1u &&
+               cpu->last_trap == UINT16_MAX,
            "untaken accumulator BRA ignores combined overflow status");
 
     reset_processor_test(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_GOTO_0X300);
     load_instruction(state, cpu, 2u, 0u);
     load_instruction(state, cpu, 0x300u, OPCODE_NOP);
-    expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x300u &&
-               cpu->cycles == 4u,
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x300u && cpu->cycles == 4u,
            "implemented literal GOTO target remains valid");
 
     reset_processor_test(cpu, 0x557feu);
@@ -173,11 +169,10 @@ static void program_target_address_error_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x5002u, 0x5a5au);
     cpu->corcon |= 0x0004u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x300u &&
-               cpu->cycles == 4u && cpu->w[15] == 0x5000u &&
-               dspic33_read_word(cpu, 0x5000u) == 0xa5a5u &&
-               dspic33_read_word(cpu, 0x5002u) == 0x5a5au &&
-               (cpu->corcon & 0x0004u) != 0u && cpu->sequential_program_hole_pc == 0u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x300u && cpu->cycles == 4u &&
+               cpu->w[15] == 0x5000u && dspic33_read_word(cpu, 0x5000u) == 0xa5a5u &&
+               dspic33_read_word(cpu, 0x5002u) == 0x5a5au && (cpu->corcon & 0x0004u) != 0u &&
+               cpu->sequential_program_hole_pc == 0u,
            "boundary GOTO reads zero extension without sequential provenance");
 
     reset_processor_test(cpu, 0u);
@@ -186,8 +181,8 @@ static void program_target_address_error_cases(TestState* state, Dspic33* cpu) {
     load_instruction(state, cpu, 0x300u, OPCODE_NOP);
     cpu->w[15] = 0x5000u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x300u &&
-               cpu->cycles == 4u && dspic33_read_word(cpu, 0x5000u) == 4u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x300u && cpu->cycles == 4u &&
+               dspic33_read_word(cpu, 0x5000u) == 4u,
            "implemented literal CALL target remains valid");
 
     reset_processor_test(cpu, 0x557feu);
@@ -196,11 +191,11 @@ static void program_target_address_error_cases(TestState* state, Dspic33* cpu) {
     cpu->w[15] = 0x5000u;
     cpu->corcon |= 0x0004u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x300u &&
-               cpu->cycles == 4u && cpu->w[15] == 0x5004u && cpu->call_depth == 1u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x300u && cpu->cycles == 4u &&
+               cpu->w[15] == 0x5004u && cpu->call_depth == 1u &&
                dspic33_read_word(cpu, 0x5000u) == 0x5803u &&
-               dspic33_read_word(cpu, 0x5002u) == 0x0005u &&
-               (cpu->corcon & 0x0004u) == 0u && cpu->sequential_program_hole_pc == 0u,
+               dspic33_read_word(cpu, 0x5002u) == 0x0005u && (cpu->corcon & 0x0004u) == 0u &&
+               cpu->sequential_program_hole_pc == 0u,
            "boundary CALL stacks hole return and clears sequential provenance");
 
     reset_processor_test(cpu, 0x557feu);
@@ -210,13 +205,12 @@ static void program_target_address_error_cases(TestState* state, Dspic33* cpu) {
     load_instruction(state, cpu, 0x300u, OPCODE_RETURN);
     cpu->corcon |= 0x0004u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x300u &&
-               cpu->cycles == 4u && cpu->sequential_program_hole_pc == 0u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x300u && cpu->cycles == 4u &&
+               cpu->sequential_program_hole_pc == 0u,
            "boundary CALL prepares explicit return to program hole");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 10u &&
-               cpu->last_trap == 1u && cpu->last_trap_return == 0x302u &&
-               cpu->call_depth == 0u && cpu->w[15] == 0x5004u &&
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 10u && cpu->last_trap == 1u &&
+               cpu->last_trap_return == 0x302u && cpu->call_depth == 0u && cpu->w[15] == 0x5004u &&
                cpu->sequential_program_hole_pc == 0u,
            "boundary CALL return validates hole target without provenance reuse");
 
@@ -224,9 +218,7 @@ static void program_target_address_error_cases(TestState* state, Dspic33* cpu) {
     load_instruction(state, cpu, 0u, OPCODE_GOTO_W0);
     load_instruction(state, cpu, 0x300u, OPCODE_NOP);
     cpu->w[0] = 0x300u;
-    expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x300u &&
-               cpu->cycles == 4u,
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x300u && cpu->cycles == 4u,
            "implemented GOTO Wn target remains valid");
 
     reset_processor_test(cpu, 0u);
@@ -235,12 +227,11 @@ static void program_target_address_error_cases(TestState* state, Dspic33* cpu) {
     cpu->w[0] = 0xc000u;
     cpu->w[1] = 0x007fu;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x7fc000u &&
-               cpu->cycles == 4u && cpu->last_trap == UINT16_MAX,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x7fc000u && cpu->cycles == 4u &&
+               cpu->last_trap == UINT16_MAX,
            "auxiliary GOTO.L target is accepted");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING &&
-               cpu->pc == DSPIC33_AUXILIARY_PROGRAM_BASE + 2u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == DSPIC33_AUXILIARY_PROGRAM_BASE + 2u,
            "auxiliary target executes through mapped Flash");
 
     reset_processor_test(cpu, 0u);
@@ -249,8 +240,8 @@ static void program_target_address_error_cases(TestState* state, Dspic33* cpu) {
     cpu->w[0] = 0x300u;
     cpu->w[15] = 0x5000u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x300u &&
-               cpu->cycles == 4u && dspic33_read_word(cpu, 0x5000u) == 2u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x300u && cpu->cycles == 4u &&
+               dspic33_read_word(cpu, 0x5000u) == 2u,
            "implemented CALL Wn target remains valid");
 
     reset_processor_test(cpu, 0u);
@@ -284,8 +275,8 @@ static void program_read_address_error_cases(TestState* state, Dspic33* cpu) {
     cpu->w[2] = 0x0200u;
     cpu->disicnt = 6u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[3] == 0xcdefu &&
-               cpu->cycles == 5u && cpu->disicnt == 1u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[3] == 0xcdefu && cpu->cycles == 5u &&
+               cpu->disicnt == 1u,
            "implemented table read consumes five cycles");
 
     reset_processor_test(cpu, 0u);
@@ -321,8 +312,8 @@ static void program_read_address_error_cases(TestState* state, Dspic33* cpu) {
     cpu->w[2] = 0x5800u;
     cpu->w[3] = 0xa5a5u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->w[2] == 0x5800u &&
-               cpu->w[3] == 0u && cpu->cycles == 5u,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->w[2] == 0x5800u && cpu->w[3] == 0u &&
+               cpu->cycles == 5u,
            "unimplemented high table word read returns zero in five cycles");
 
     reset_processor_test(cpu, 0u);
@@ -332,8 +323,8 @@ static void program_read_address_error_cases(TestState* state, Dspic33* cpu) {
     cpu->w[2] = 0x5800u;
     cpu->w[3] = 0xa5a5u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->w[2] == 0x5800u &&
-               cpu->w[3] == 0xa500u && cpu->cycles == 5u,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->w[2] == 0x5800u && cpu->w[3] == 0xa500u &&
+               cpu->cycles == 5u,
            "unimplemented high table byte read clears the low byte in five cycles");
 
     reset_processor_test(cpu, 0u);
@@ -343,8 +334,8 @@ static void program_read_address_error_cases(TestState* state, Dspic33* cpu) {
     cpu->w[2] = 0x5801u;
     cpu->w[3] = 0xa5a5u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->w[2] == 0x5801u &&
-               cpu->w[3] == 0xa500u && cpu->cycles == 5u,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->w[2] == 0x5801u && cpu->w[3] == 0xa500u &&
+               cpu->cycles == 5u,
            "unimplemented low table byte read accepts odd source in five cycles");
 
     reset_processor_test(cpu, 0u);
@@ -358,8 +349,7 @@ static void program_read_address_error_cases(TestState* state, Dspic33* cpu) {
            "unimplemented table read and odd destination coalesce in five cycles");
     expect(state,
            cpu->w[2] == 0x5802u && cpu->w[4] == 0x1001u &&
-               dspic33_read_word(cpu, 0x1000u) == 0xa5a5u &&
-               cpu->last_trap_return == 2u,
+               dspic33_read_word(cpu, 0x1000u) == 0xa5a5u && cpu->last_trap_return == 2u,
            "table read collision completes source and inhibits destination state");
 
     reset_processor_test(cpu, 0u);
@@ -371,8 +361,7 @@ static void program_read_address_error_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles == 5u,
            "unimplemented table read through stack pointer traps in five cycles");
     expect(state,
-           cpu->w[2] == 0x5800u && cpu->w[15] == 0x5006u &&
-               dspic33_read_word(cpu, 0x5000u) == 0u &&
+           cpu->w[2] == 0x5800u && cpu->w[15] == 0x5006u && dspic33_read_word(cpu, 0x5000u) == 0u &&
                dspic33_read_word(cpu, 0x5002u) == 2u,
            "stack destination update and zero write precede the trap frame");
 
@@ -390,8 +379,7 @@ static void program_read_address_error_cases(TestState* state, Dspic33* cpu) {
     load_instruction(state, cpu, 0x557feu, OPCODE_NOP);
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == DSPIC33_PROGRAM_LIMIT &&
-               cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT &&
-               cpu->cycles == 1u,
+               cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT && cpu->cycles == 1u,
            "one-word sequential execution enters the program hole");
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x55802u &&
@@ -407,8 +395,8 @@ static void program_read_address_error_cases(TestState* state, Dspic33* cpu) {
     load_instruction(state, cpu, 2u, 2u);
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 4u && cpu->cycles == 2u &&
-               cpu->do_depth == 1u && cpu->do_count[0] == 0u &&
-               cpu->do_start[0] == 4u && cpu->do_end[0] == 8u,
+               cpu->do_depth == 1u && cpu->do_count[0] == 0u && cpu->do_start[0] == 4u &&
+               cpu->do_end[0] == 8u,
            "literal DO initializes loop state in two cycles");
 
     reset_processor_test(cpu, 0u);
@@ -417,8 +405,8 @@ static void program_read_address_error_cases(TestState* state, Dspic33* cpu) {
     cpu->w[0] = 1u;
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 4u && cpu->cycles == 2u &&
-               cpu->do_depth == 1u && cpu->do_count[0] == 1u &&
-               cpu->do_start[0] == 4u && cpu->do_end[0] == 8u,
+               cpu->do_depth == 1u && cpu->do_count[0] == 1u && cpu->do_start[0] == 4u &&
+               cpu->do_end[0] == 8u,
            "register DO initializes loop state in two cycles");
 
     reset_processor_test(cpu, 0x557fcu);
@@ -430,9 +418,8 @@ static void program_read_address_error_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x5000u, 0xa5a5u);
     dspic33_write_word(cpu, 0x5002u, 0x5a5au);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->pc == 0x000340u &&
-               cpu->cycles == 2u && cpu->last_trap == 1u &&
-               cpu->last_trap_return == 0x557feu && cpu->do_depth == 1u &&
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->pc == 0x000340u && cpu->cycles == 2u &&
+               cpu->last_trap == 1u && cpu->last_trap_return == 0x557feu && cpu->do_depth == 1u &&
                cpu->do_count[0] == 1u && cpu->do_start[0] == DSPIC33_PROGRAM_LIMIT &&
                cpu->do_end[0] == 0x55804u && cpu->dcount == 1u &&
                cpu->dostart == DSPIC33_PROGRAM_LIMIT && cpu->doend == 0x55804u,
@@ -441,8 +428,7 @@ static void program_read_address_error_cases(TestState* state, Dspic33* cpu) {
            cpu->w[15] == 0x5004u && dspic33_read_word(cpu, 0x5000u) == 0x57feu &&
                dspic33_read_word(cpu, 0x5002u) == 0x0f05u &&
                (dspic33_read_word(cpu, 0x08c0u) & 0x0008u) != 0u &&
-               dspic33_read_word(cpu, 0x08c8u) == 0x0e01u &&
-               cpu->sequential_program_hole_pc == 0u,
+               dspic33_read_word(cpu, 0x08c8u) == 0x0e01u && cpu->sequential_program_hole_pc == 0u,
            "DO program-hole trap stacks extension PC and clears provenance");
 
     reset_processor_test(cpu, 0x557f8u);
@@ -450,58 +436,46 @@ static void program_read_address_error_cases(TestState* state, Dspic33* cpu) {
     load_instruction(state, cpu, 0x557fau, 2u);
     load_instruction(state, cpu, 0x557fcu, OPCODE_NOP);
     load_instruction(state, cpu, 0x557feu, OPCODE_NOP);
-    expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x557fcu &&
-               cpu->cycles == 2u,
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x557fcu && cpu->cycles == 2u,
            "DO with program-hole end initializes normally");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x557fcu &&
-               cpu->dcount == 0u && cpu->last_trap == UINT16_MAX && cpu->cycles == 5u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x557fcu && cpu->dcount == 0u &&
+               cpu->last_trap == UINT16_MAX && cpu->cycles == 5u,
            "DO program-hole end executes zero and starts final iteration");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x55802u &&
-               cpu->do_depth == 0u && (cpu->sr & 0x0200u) == 0u &&
-               (cpu->corcon & 0x0700u) == 0u && cpu->cycles == 8u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x55802u && cpu->do_depth == 0u &&
+               (cpu->sr & 0x0200u) == 0u && (cpu->corcon & 0x0700u) == 0u && cpu->cycles == 8u,
            "DO program-hole final iteration exits normally");
 
     reset_processor_test(cpu, 0x557feu);
     load_instruction(state, cpu, 0x557feu, OPCODE_REPEAT_2);
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == DSPIC33_PROGRAM_LIMIT &&
-               cpu->rcount == 2u && cpu->repeat_active != 0u &&
-               (cpu->sr & 0x0010u) != 0u &&
-               cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT &&
-               cpu->cycles == 1u,
+               cpu->rcount == 2u && cpu->repeat_active != 0u && (cpu->sr & 0x0010u) != 0u &&
+               cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT && cpu->cycles == 1u,
            "REPEAT initializes a program-hole target");
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == DSPIC33_PROGRAM_LIMIT &&
-               cpu->rcount == 1u && cpu->repeat_active != 0u &&
-               (cpu->sr & 0x0010u) != 0u &&
-               cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT &&
-               cpu->cycles == 2u,
+               cpu->rcount == 1u && cpu->repeat_active != 0u && (cpu->sr & 0x0010u) != 0u &&
+               cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT && cpu->cycles == 2u,
            "REPEAT retains provenance for a program-hole rewind");
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == DSPIC33_PROGRAM_LIMIT &&
-               cpu->rcount == 0u && cpu->repeat_active != 0u &&
-               (cpu->sr & 0x0010u) == 0u &&
-               cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT &&
-               cpu->cycles == 3u,
+               cpu->rcount == 0u && cpu->repeat_active != 0u && (cpu->sr & 0x0010u) == 0u &&
+               cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT && cpu->cycles == 3u,
            "REPEAT clears RA when the counter reaches zero");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x55802u &&
-               cpu->rcount == 0u && cpu->repeat_active == 0u &&
-               (cpu->sr & 0x0010u) == 0u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x55802u && cpu->rcount == 0u &&
+               cpu->repeat_active == 0u && (cpu->sr & 0x0010u) == 0u &&
                cpu->sequential_program_hole_pc == 0x55802u && cpu->cycles == 4u,
            "REPEAT executes the final program-hole iteration once");
 
     reset_processor_test(cpu, DSPIC33_PROGRAM_LIMIT);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_PROGRAM_BOUNDS &&
-               cpu->sequential_program_hole_pc == 0u && cpu->cycles == 0u,
+           dspic33_step(cpu) == DSPIC33_PROGRAM_BOUNDS && cpu->sequential_program_hole_pc == 0u &&
+               cpu->cycles == 0u,
            "direct host entry into program hole remains a bounds stop");
 
     reset_processor_test(cpu, 0x557feu);
@@ -510,8 +484,7 @@ static void program_read_address_error_cases(TestState* state, Dspic33* cpu) {
            "sequential provenance prepares exact next hole address");
     cpu->pc = 0x55802u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_PROGRAM_BOUNDS &&
-               cpu->sequential_program_hole_pc == 0u,
+           dspic33_step(cpu) == DSPIC33_PROGRAM_BOUNDS && cpu->sequential_program_hole_pc == 0u,
            "host PC rewrite cannot reuse stale sequential provenance");
 
     reset_processor_test(cpu, 0x557feu);
@@ -526,8 +499,8 @@ static void program_read_address_error_cases(TestState* state, Dspic33* cpu) {
     dspic33_raise_interrupt(cpu, 0u);
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000302u &&
-               cpu->interrupt_log_entry[0] == DSPIC33_PROGRAM_LIMIT &&
-               cpu->w[15] == 0x5004u && dspic33_read_word(cpu, 0x5000u) == 0x5800u &&
+               cpu->interrupt_log_entry[0] == DSPIC33_PROGRAM_LIMIT && cpu->w[15] == 0x5004u &&
+               dspic33_read_word(cpu, 0x5000u) == 0x5800u &&
                dspic33_read_word(cpu, 0x5002u) == 0x0005u &&
                cpu->sequential_program_hole_pc == 0u && cpu->cycles == 11u,
            "interrupt redirects and stacks program hole PC without provenance leak");
@@ -563,13 +536,10 @@ static void program_read_address_error_cases(TestState* state, Dspic33* cpu) {
     cpu->pending_soft_traps[0].delay = 1u;
     cpu->pending_soft_traps[0].active = true;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == 1u &&
-               cpu->pc == 0x000340u && cpu->w[15] == 0x5004u &&
-               cpu->sequential_program_hole_pc == 0u && cpu->cycles == 1u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->last_trap == 1u && cpu->pc == 0x000340u &&
+               cpu->w[15] == 0x5004u && cpu->sequential_program_hole_pc == 0u && cpu->cycles == 1u,
            "unimplemented soft-trap vector dispatches Address Error");
-    expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000342u &&
-               cpu->cycles == 2u,
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000342u && cpu->cycles == 2u,
            "Address Error handler continues after invalid soft-trap vector");
 
     reset_processor_test(cpu, 0u);
@@ -577,13 +547,11 @@ static void program_read_address_error_cases(TestState* state, Dspic33* cpu) {
     cpu->pc = DSPIC33_AUXILIARY_PROGRAM_BASE - 2u;
     cpu->sequential_program_hole_pc = cpu->pc;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING &&
-               cpu->pc == DSPIC33_AUXILIARY_PROGRAM_BASE &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == DSPIC33_AUXILIARY_PROGRAM_BASE &&
                cpu->sequential_program_hole_pc == 0u && cpu->cycles == 1u,
            "sequential hole provenance ends at auxiliary program boundary");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING &&
-               cpu->pc == DSPIC33_AUXILIARY_PROGRAM_BASE + 2u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == DSPIC33_AUXILIARY_PROGRAM_BASE + 2u,
            "auxiliary program boundary enters implemented Flash");
 }
 
@@ -641,16 +609,15 @@ static void skip_boundary_cases(TestState* state, Dspic33* cpu) {
     cpu->sr = 0x0103u;
     cpu->corcon = 0x0020u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->pc == 0x340u &&
-               cpu->cycles == 2u && cpu->last_trap == 1u &&
-               cpu->last_trap_return == DSPIC33_PROGRAM_LIMIT && cpu->w[15] == 0x5004u,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->pc == 0x340u && cpu->cycles == 2u &&
+               cpu->last_trap == 1u && cpu->last_trap_return == DSPIC33_PROGRAM_LIMIT &&
+               cpu->w[15] == 0x5004u,
            "one-word boundary skip raises Address Error in two cycles");
     expect(state,
            dspic33_read_word(cpu, 0x5000u) == 0x5800u &&
                dspic33_read_word(cpu, 0x5002u) == 0x0305u &&
                (dspic33_read_word(cpu, 0x08c0u) & 0x0008u) != 0u &&
-               dspic33_read_word(cpu, 0x08c8u) == 0x0e01u &&
-               cpu->sequential_program_hole_pc == 0u,
+               dspic33_read_word(cpu, 0x08c8u) == 0x0e01u && cpu->sequential_program_hole_pc == 0u,
            "boundary skip stacks exact hole PC and hard-trap state");
 
     reset_processor_test(cpu, 0x557fcu);
@@ -660,9 +627,7 @@ static void skip_boundary_cases(TestState* state, Dspic33* cpu) {
     load_instruction(state, cpu, 0x557feu, OPCODE_NOP);
     dspic33_set_working_register(cpu, 4u, 0x1000u);
     dspic33_write_word(cpu, 0x1000u, 0u);
-    expect(state,
-           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->w[4] == 0x1002u &&
-               cpu->cycles == 2u,
+    expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->w[4] == 0x1002u && cpu->cycles == 2u,
            "boundary skip trap preserves completed indirect source update");
 
     reset_processor_test(cpu, 0x557fau);
@@ -674,8 +639,8 @@ static void skip_boundary_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x5000u, 0xa5a5u);
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == DSPIC33_PROGRAM_LIMIT &&
-               cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT &&
-               cpu->cycles == 3u && cpu->w[15] == 0x5000u && cpu->call_depth == 0u &&
+               cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT && cpu->cycles == 3u &&
+               cpu->w[15] == 0x5000u && cpu->call_depth == 0u &&
                dspic33_read_word(cpu, 0x5000u) == 0xa5a5u,
            "two-word boundary skip enters the program hole in three cycles");
     expect(state,
@@ -698,8 +663,8 @@ static void skip_boundary_cases(TestState* state, Dspic33* cpu) {
     dspic33_raise_interrupt(cpu, 0u);
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x302u &&
-               cpu->interrupt_log_entry[0] == DSPIC33_PROGRAM_LIMIT &&
-               cpu->w[15] == 0x5004u && dspic33_read_word(cpu, 0x5000u) == 0x5800u &&
+               cpu->interrupt_log_entry[0] == DSPIC33_PROGRAM_LIMIT && cpu->w[15] == 0x5004u &&
+               dspic33_read_word(cpu, 0x5000u) == 0x5800u &&
                dspic33_read_word(cpu, 0x5002u) == 0x0005u &&
                cpu->sequential_program_hole_pc == 0u && cpu->cycles == 13u,
            "interrupt clears two-word skip provenance and stacks hole PC");
@@ -716,9 +681,8 @@ static void skip_boundary_cases(TestState* state, Dspic33* cpu) {
            "excluded skipped extension collision retains bounds behavior");
 }
 
-static void compare_skip_truth_case(TestState* state, Dspic33* cpu, uint32_t opcode,
-                                    uint16_t left, uint16_t right, bool taken,
-                                    const char* name) {
+static void compare_skip_truth_case(TestState* state, Dspic33* cpu, uint32_t opcode, uint16_t left,
+                                    uint16_t right, bool taken, const char* name) {
     reset_processor_test(cpu, 0u);
     load_instruction(state, cpu, 0u, opcode | 1u);
     load_instruction(state, cpu, 2u, OPCODE_NOP);
@@ -727,8 +691,8 @@ static void compare_skip_truth_case(TestState* state, Dspic33* cpu, uint32_t opc
     cpu->sr = 0x010fu;
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == (taken ? 4u : 2u) &&
-               cpu->cycles == (taken ? 2u : 1u) && cpu->w[0] == left &&
-               cpu->w[1] == right && cpu->sr == 0x010fu,
+               cpu->cycles == (taken ? 2u : 1u) && cpu->w[0] == left && cpu->w[1] == right &&
+               cpu->sr == 0x010fu,
            name);
 }
 
@@ -737,41 +701,34 @@ static void compare_skip_cases(TestState* state, Dspic33* cpu) {
                             "CPSEQ word takes equal comparison");
     compare_skip_truth_case(state, cpu, OPCODE_CPSEQ, 0x1234u, 0x4321u, false,
                             "CPSEQ word rejects unequal comparison");
-    compare_skip_truth_case(state, cpu, OPCODE_CPSEQ | OPCODE_COMPARE_SKIP_BYTE,
-                            0x80ffu, 0x7fffu, true,
-                            "CPSEQ byte ignores high-byte difference");
-    compare_skip_truth_case(state, cpu, OPCODE_CPSEQ | OPCODE_COMPARE_SKIP_BYTE,
-                            0x8000u, 0x0001u, false,
-                            "CPSEQ byte rejects unequal low bytes");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSEQ | OPCODE_COMPARE_SKIP_BYTE, 0x80ffu, 0x7fffu,
+                            true, "CPSEQ byte ignores high-byte difference");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSEQ | OPCODE_COMPARE_SKIP_BYTE, 0x8000u, 0x0001u,
+                            false, "CPSEQ byte rejects unequal low bytes");
     compare_skip_truth_case(state, cpu, OPCODE_CPSNE, 0x1234u, 0x4321u, true,
                             "CPSNE word takes unequal comparison");
     compare_skip_truth_case(state, cpu, OPCODE_CPSNE, 0x1234u, 0x1234u, false,
                             "CPSNE word rejects equal comparison");
-    compare_skip_truth_case(state, cpu, OPCODE_CPSNE | OPCODE_COMPARE_SKIP_BYTE,
-                            0x80ffu, 0x7fffu, false,
-                            "CPSNE byte ignores high-byte difference");
-    compare_skip_truth_case(state, cpu, OPCODE_CPSNE | OPCODE_COMPARE_SKIP_BYTE,
-                            0x8000u, 0x0001u, true,
-                            "CPSNE byte takes unequal low bytes");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSNE | OPCODE_COMPARE_SKIP_BYTE, 0x80ffu, 0x7fffu,
+                            false, "CPSNE byte ignores high-byte difference");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSNE | OPCODE_COMPARE_SKIP_BYTE, 0x8000u, 0x0001u,
+                            true, "CPSNE byte takes unequal low bytes");
     compare_skip_truth_case(state, cpu, OPCODE_CPSGT, 0x0001u, 0xffffu, true,
                             "CPSGT word uses signed greater-than");
     compare_skip_truth_case(state, cpu, OPCODE_CPSGT, 0xffffu, 0x0001u, false,
                             "CPSGT word rejects signed reverse order");
-    compare_skip_truth_case(state, cpu, OPCODE_CPSGT | OPCODE_COMPARE_SKIP_BYTE,
-                            0x007fu, 0x0080u, true,
-                            "CPSGT byte uses signed greater-than");
-    compare_skip_truth_case(state, cpu, OPCODE_CPSGT | OPCODE_COMPARE_SKIP_BYTE,
-                            0x0080u, 0x007fu, false,
-                            "CPSGT byte rejects signed reverse order");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSGT | OPCODE_COMPARE_SKIP_BYTE, 0x007fu, 0x0080u,
+                            true, "CPSGT byte uses signed greater-than");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSGT | OPCODE_COMPARE_SKIP_BYTE, 0x0080u, 0x007fu,
+                            false, "CPSGT byte rejects signed reverse order");
     compare_skip_truth_case(state, cpu, OPCODE_CPSLT, 0xffffu, 0x0001u, true,
                             "CPSLT word uses signed less-than");
     compare_skip_truth_case(state, cpu, OPCODE_CPSLT, 0x0001u, 0xffffu, false,
                             "CPSLT word rejects signed reverse order");
-    compare_skip_truth_case(state, cpu, OPCODE_CPSLT | OPCODE_COMPARE_SKIP_BYTE,
-                            0x0080u, 0x007fu, true, "CPSLT byte uses signed less-than");
-    compare_skip_truth_case(state, cpu, OPCODE_CPSLT | OPCODE_COMPARE_SKIP_BYTE,
-                            0x007fu, 0x0080u, false,
-                            "CPSLT byte rejects signed reverse order");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSLT | OPCODE_COMPARE_SKIP_BYTE, 0x0080u, 0x007fu,
+                            true, "CPSLT byte uses signed less-than");
+    compare_skip_truth_case(state, cpu, OPCODE_CPSLT | OPCODE_COMPARE_SKIP_BYTE, 0x007fu, 0x0080u,
+                            false, "CPSLT byte rejects signed reverse order");
 
     reset_processor_test(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_CPSEQ | 1u);
@@ -794,9 +751,8 @@ static void compare_skip_cases(TestState* state, Dspic33* cpu) {
     cpu->w[15] = 0x5000u;
     cpu->w[14] = 0x5000u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 4u &&
-               cpu->w[15] == 0x5000u && cpu->call_depth == 0u &&
-               cpu->illegal_reset_count == 0u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 4u && cpu->w[15] == 0x5000u &&
+               cpu->call_depth == 0u && cpu->illegal_reset_count == 0u,
            "CPSEQ treats W15 as comparison data without pointer side effects");
 
     reset_processor_test(cpu, 0x557fcu);
@@ -809,9 +765,8 @@ static void compare_skip_cases(TestState* state, Dspic33* cpu) {
     cpu->sr = 0x010fu;
     cpu->corcon = 0x0020u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->pc == 0x340u &&
-               cpu->cycles == 2u && cpu->last_trap == 1u &&
-               cpu->last_trap_return == 0x557feu && cpu->w[15] == 0x5004u,
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->pc == 0x340u && cpu->cycles == 2u &&
+               cpu->last_trap == 1u && cpu->last_trap_return == 0x557feu && cpu->w[15] == 0x5004u,
            "CPSEQ boundary skip traps with caller-specific return PC");
     expect(state,
            dspic33_read_word(cpu, 0x5000u) == 0x57feu &&
@@ -829,8 +784,7 @@ static void compare_skip_cases(TestState* state, Dspic33* cpu) {
     cpu->w[15] = 0x5000u;
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == DSPIC33_PROGRAM_LIMIT &&
-               cpu->cycles == 3u &&
-               cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT &&
+               cpu->cycles == 3u && cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT &&
                cpu->w[15] == 0x5000u && cpu->call_depth == 0u,
            "CPSEQ two-word boundary skip establishes sequential provenance");
     load_instruction(state, cpu, 0x000014u, 0x000300u);
@@ -865,8 +819,7 @@ static void compare_skip_cases(TestState* state, Dspic33* cpu) {
     cpu->w[1] = 1u;
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == DSPIC33_PROGRAM_LIMIT &&
-               cpu->cycles == 1u &&
-               cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT,
+               cpu->cycles == 1u && cpu->sequential_program_hole_pc == DSPIC33_PROGRAM_LIMIT,
            "untaken last-word CPSEQ enters the hole sequentially in one cycle");
 
     reset_processor_test(cpu, 0x557feu);
@@ -906,9 +859,8 @@ static void compare_branch_target_cases(TestState* state, Dspic33* cpu) {
     cpu->sr = 0x010fu;
     cpu->corcon = 0x0020u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->pc == 0x340u &&
-               cpu->cycles == 5u && cpu->last_trap == 1u &&
-               cpu->last_trap_return == 0x557c4u && cpu->w[0] == 0x5a5au &&
+           dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->pc == 0x340u && cpu->cycles == 5u &&
+               cpu->last_trap == 1u && cpu->last_trap_return == 0x557c4u && cpu->w[0] == 0x5a5au &&
                cpu->w[1] == 0x5a5au,
            "taken compare branch validates an unimplemented target");
 
@@ -918,8 +870,8 @@ static void compare_branch_target_cases(TestState* state, Dspic33* cpu) {
     cpu->w[1] = 0xa5a5u;
     cpu->sr = 0x010fu;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x557c4u &&
-               cpu->cycles == 1u && cpu->last_trap == UINT16_MAX && cpu->sr == 0x010fu,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x557c4u && cpu->cycles == 1u &&
+               cpu->last_trap == UINT16_MAX && cpu->sr == 0x010fu,
            "untaken compare branch does not validate its encoded target");
 }
 
@@ -930,9 +882,8 @@ static void prepare_timer_source(Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0108u, 0xaaaau);
 }
 
-static void completed_source_address_error_case(TestState* state, Dspic33* cpu,
-                                                uint32_t opcode, uint16_t stacked_flags,
-                                                const char* execution,
+static void completed_source_address_error_case(TestState* state, Dspic33* cpu, uint32_t opcode,
+                                                uint16_t stacked_flags, const char* execution,
                                                 const char* completion) {
     reset_processor_test(cpu, 0u);
     prepare_address_trap(state, cpu);
@@ -1015,8 +966,7 @@ static void address_error_cases(TestState* state, Dspic33* cpu) {
     cpu->w[1] = 0x1001u;
     cpu->w[2] = 0xa5a5u;
     expect_address_trap(state, cpu, "odd post-decrement word write traps");
-    expect(state, cpu->w[1] == 0x1001u,
-           "odd post-decrement write inhibits address update");
+    expect(state, cpu->w[1] == 0x1001u, "odd post-decrement write inhibits address update");
 
     reset_processor_test(cpu, 0u);
     prepare_address_trap(state, cpu);
@@ -1024,8 +974,7 @@ static void address_error_cases(TestState* state, Dspic33* cpu) {
     cpu->w[1] = 0x1003u;
     cpu->w[2] = 0xa5a5u;
     expect_address_trap(state, cpu, "odd pre-decrement word write traps");
-    expect(state, cpu->w[1] == 0x1003u,
-           "odd pre-decrement write inhibits address update");
+    expect(state, cpu->w[1] == 0x1003u, "odd pre-decrement write inhibits address update");
 
     reset_processor_test(cpu, 0u);
     prepare_address_trap(state, cpu);
@@ -1073,8 +1022,7 @@ static void address_error_cases(TestState* state, Dspic33* cpu) {
     load_instruction(state, cpu, 0u, OPCODE_MOV_BYTE_W1_POST_INCREMENT_W2);
     dspic33_write_byte(cpu, 0x1001u, 0x5au);
     cpu->w[1] = 0x1001u;
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "odd ordinary byte access remains valid");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "odd ordinary byte access remains valid");
     expect(state, cpu->w[1] == 0x1002u && (cpu->w[2] & 0x00ffu) == 0x005au,
            "odd ordinary byte access reads and updates pointer");
 
@@ -1083,8 +1031,7 @@ static void address_error_cases(TestState* state, Dspic33* cpu) {
     load_instruction(state, cpu, 0x0200u, 0xabcdefu);
     cpu->tblpag = 0u;
     cpu->w[2] = 0x0201u;
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "odd table pointer remains valid");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "odd table pointer remains valid");
     expect(state, cpu->w[2] == 0x0201u && cpu->w[3] == 0xcdefu,
            "table word read masks table pointer bit zero");
     expect(state, (dspic33_read_word(cpu, 0x08c0u) & 0x0008u) == 0u,
@@ -1096,8 +1043,7 @@ static void data_map_address_error_cases(TestState* state, Dspic33* cpu) {
     load_instruction(state, cpu, 0u, OPCODE_MOV_W1_POST_INCREMENT_W2);
     dspic33_write_word(cpu, 0xdffeu, 0xa5a5u);
     cpu->w[1] = 0xdffeu;
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "last implemented word read completes");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "last implemented word read completes");
     expect(state, cpu->w[1] == 0xe000u && cpu->w[2] == 0xa5a5u,
            "last implemented word read updates result and pointer");
 
@@ -1105,8 +1051,7 @@ static void data_map_address_error_cases(TestState* state, Dspic33* cpu) {
     load_instruction(state, cpu, 0u, OPCODE_MOV_W2_W1_POST_INCREMENT);
     cpu->w[1] = 0xdffeu;
     cpu->w[2] = 0x5a5au;
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "last implemented word write completes");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "last implemented word write completes");
     expect(state, cpu->w[1] == 0xe000u && dspic33_read_word(cpu, 0xdffeu) == 0x5a5au,
            "last implemented word write updates memory and pointer");
 
@@ -1118,8 +1063,7 @@ static void data_map_address_error_cases(TestState* state, Dspic33* cpu) {
     cpu->w[2] = 0x5a5au;
     expect_address_trap(state, cpu, "first unimplemented word read traps");
     expect(state,
-           cpu->w[1] == 0xe002u && cpu->w[2] == 0u &&
-               dspic33_read_word(cpu, 0xe000u) == 0xbeefu,
+           cpu->w[1] == 0xe002u && cpu->w[2] == 0u && dspic33_read_word(cpu, 0xe000u) == 0xbeefu,
            "unimplemented read returns zero and preserves raw backing");
 
     reset_processor_test(cpu, 0u);
@@ -1142,8 +1086,8 @@ static void data_map_address_error_cases(TestState* state, Dspic33* cpu) {
     cpu->w[2] = 0x5a5au;
     expect_address_trap(state, cpu, "last unimplemented word read traps");
     expect(state,
-           cpu->w[1] == 0x8000u && cpu->w[2] == 0u && cpu->dsrpag == 2u &&
-               cpu->dswpag == 1u && dspic33_read_word(cpu, 0xfffeu) == 0xbeefu,
+           cpu->w[1] == 0x8000u && cpu->w[2] == 0u && cpu->dsrpag == 2u && cpu->dswpag == 1u &&
+               dspic33_read_word(cpu, 0xfffeu) == 0xbeefu,
            "unimplemented read advances EDS read page only");
 
     reset_processor_test(cpu, 0u);
@@ -1154,8 +1098,8 @@ static void data_map_address_error_cases(TestState* state, Dspic33* cpu) {
     cpu->w[2] = 0xa5a5u;
     expect_address_trap(state, cpu, "last unimplemented word write traps");
     expect(state,
-           cpu->w[1] == 0x8000u && cpu->w[2] == 0xa5a5u && cpu->dsrpag == 1u &&
-               cpu->dswpag == 2u && dspic33_read_word(cpu, 0xfffeu) == 0xbeefu,
+           cpu->w[1] == 0x8000u && cpu->w[2] == 0xa5a5u && cpu->dsrpag == 1u && cpu->dswpag == 2u &&
+               dspic33_read_word(cpu, 0xfffeu) == 0xbeefu,
            "unimplemented write advances EDS write page only");
 
     reset_processor_test(cpu, 0u);
@@ -1166,16 +1110,14 @@ static void data_map_address_error_cases(TestState* state, Dspic33* cpu) {
     cpu->w[2] = 0xa5a5u;
     expect_address_trap(state, cpu, "unimplemented byte read traps");
     expect(state,
-           cpu->w[1] == 0xe001u && cpu->w[2] == 0xa500u &&
-               dspic33_read_byte(cpu, 0xe000u) == 0x5au,
+           cpu->w[1] == 0xe001u && cpu->w[2] == 0xa500u && dspic33_read_byte(cpu, 0xe000u) == 0x5au,
            "unimplemented byte read returns zero and updates pointer");
 
     reset_processor_test(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_MOV_W1_POST_INCREMENT_W2);
     cpu->w[1] = 0x0056u;
     cpu->w[2] = 0x5a5au;
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "unused SFR hole read remains valid");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "unused SFR hole read remains valid");
     expect(state, cpu->w[1] == 0x0058u && cpu->w[2] == 0u,
            "unused SFR hole reads zero and updates pointer");
 
@@ -1199,8 +1141,7 @@ static void pseudo_linear_page_cases(TestState* state, Dspic33* cpu) {
     cpu->dsrpag = 0x0200u;
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
            "execute byte pre-increment page transition");
-    expect(state,
-           cpu->w[1] == 0x8000u && cpu->w[2] == 0x125au && cpu->dsrpag == 0x0201u,
+    expect(state, cpu->w[1] == 0x8000u && cpu->w[2] == 0x125au && cpu->dsrpag == 0x0201u,
            "byte pre-increment reads the new PSV page");
 
     reset_processor_test(cpu, 0u);
@@ -1212,8 +1153,7 @@ static void pseudo_linear_page_cases(TestState* state, Dspic33* cpu) {
     cpu->dsrpag = 0x0200u;
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
            "execute byte post-increment page transition");
-    expect(state,
-           cpu->w[1] == 0x8000u && cpu->w[2] == 0x12a5u && cpu->dsrpag == 0x0201u,
+    expect(state, cpu->w[1] == 0x8000u && cpu->w[2] == 0x12a5u && cpu->dsrpag == 0x0201u,
            "byte post-increment reads the original PSV page");
 
     reset_processor_test(cpu, 0u);
@@ -1225,8 +1165,7 @@ static void pseudo_linear_page_cases(TestState* state, Dspic33* cpu) {
     cpu->dsrpag = 0x0201u;
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
            "execute byte pre-decrement page transition");
-    expect(state,
-           cpu->w[1] == 0xffffu && cpu->w[2] == 0x12a5u && cpu->dsrpag == 0x0200u,
+    expect(state, cpu->w[1] == 0xffffu && cpu->w[2] == 0x12a5u && cpu->dsrpag == 0x0200u,
            "byte pre-decrement reads the new PSV page");
 
     reset_processor_test(cpu, 0u);
@@ -1238,8 +1177,7 @@ static void pseudo_linear_page_cases(TestState* state, Dspic33* cpu) {
     cpu->dsrpag = 0x0201u;
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
            "execute byte post-decrement page transition");
-    expect(state,
-           cpu->w[1] == 0xffffu && cpu->w[2] == 0x125au && cpu->dsrpag == 0x0200u,
+    expect(state, cpu->w[1] == 0xffffu && cpu->w[2] == 0x125au && cpu->dsrpag == 0x0200u,
            "byte post-decrement reads the original PSV page");
 
     reset_processor_test(cpu, 0u);
@@ -1249,8 +1187,8 @@ static void pseudo_linear_page_cases(TestState* state, Dspic33* cpu) {
     cpu->w[1] = 0xfffeu;
     cpu->dsrpag = 0x0200u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x8000u &&
-               cpu->w[2] == 0x5566u && cpu->dsrpag == 0x0201u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x8000u && cpu->w[2] == 0x5566u &&
+               cpu->dsrpag == 0x0201u,
            "word pre-increment reads after the page transition");
 
     reset_processor_test(cpu, 0u);
@@ -1260,8 +1198,8 @@ static void pseudo_linear_page_cases(TestState* state, Dspic33* cpu) {
     cpu->w[1] = 0xfffeu;
     cpu->dsrpag = 0x0200u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x8000u &&
-               cpu->w[2] == 0x2233u && cpu->dsrpag == 0x0201u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x8000u && cpu->w[2] == 0x2233u &&
+               cpu->dsrpag == 0x0201u,
            "word post-increment reads before the page transition");
 
     reset_processor_test(cpu, 0u);
@@ -1270,8 +1208,8 @@ static void pseudo_linear_page_cases(TestState* state, Dspic33* cpu) {
     cpu->w[1] = 0xfffeu;
     cpu->dsrpag = 0x01ffu;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0u &&
-               cpu->w[2] == 0x1111u && cpu->dsrpag == 0x01ffu,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0u && cpu->w[2] == 0x1111u &&
+               cpu->dsrpag == 0x01ffu,
            "last EDS read page overflows into base data space");
 
     reset_processor_test(cpu, 0u);
@@ -1280,8 +1218,8 @@ static void pseudo_linear_page_cases(TestState* state, Dspic33* cpu) {
     cpu->w[1] = 0xfffeu;
     cpu->dsrpag = 0x03ffu;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0u &&
-               cpu->w[2] == 0x2222u && cpu->dsrpag == 0x03ffu,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0u && cpu->w[2] == 0x2222u &&
+               cpu->dsrpag == 0x03ffu,
            "last PSV read page overflows into base data space");
 
     reset_processor_test(cpu, 0u);
@@ -1290,8 +1228,8 @@ static void pseudo_linear_page_cases(TestState* state, Dspic33* cpu) {
     cpu->w[1] = 0xfffeu;
     cpu->dsrpag = 0u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0u &&
-               cpu->w[2] == 0x5555u && cpu->dsrpag == 0u && !cpu->address_error,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0u && cpu->w[2] == 0x5555u &&
+               cpu->dsrpag == 0u && !cpu->address_error,
            "page zero pre-increment wraps into base data space");
 
     reset_processor_test(cpu, 0u);
@@ -1300,8 +1238,8 @@ static void pseudo_linear_page_cases(TestState* state, Dspic33* cpu) {
     cpu->w[1] = 0x8000u;
     cpu->dsrpag = 0x0001u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x7ffeu &&
-               cpu->w[2] == 0x3333u && cpu->dsrpag == 0x0001u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x7ffeu && cpu->w[2] == 0x3333u &&
+               cpu->dsrpag == 0x0001u,
            "first EDS read page underflows into base data space");
 
     reset_processor_test(cpu, 0u);
@@ -1310,8 +1248,8 @@ static void pseudo_linear_page_cases(TestState* state, Dspic33* cpu) {
     cpu->w[1] = 0x8000u;
     cpu->dsrpag = 0x0200u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x7ffeu &&
-               cpu->w[2] == 0x4444u && cpu->dsrpag == 0x0200u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x7ffeu && cpu->w[2] == 0x4444u &&
+               cpu->dsrpag == 0x0200u,
            "first PSV read page underflows into base data space");
 
     reset_processor_test(cpu, 0x0600u);
@@ -1321,8 +1259,8 @@ static void pseudo_linear_page_cases(TestState* state, Dspic33* cpu) {
     cpu->w[1] = 0xfffeu;
     cpu->dsrpag = 0x02ffu;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x8000u &&
-               cpu->w[2] == 0x005au && cpu->dsrpag == 0x0300u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x8000u && cpu->w[2] == 0x005au &&
+               cpu->dsrpag == 0x0300u,
            "PSV low-word page transitions into high-byte page");
 
     reset_processor_test(cpu, 0u);
@@ -1331,8 +1269,8 @@ static void pseudo_linear_page_cases(TestState* state, Dspic33* cpu) {
     cpu->w[1] = 0x8000u;
     cpu->dsrpag = 0x0300u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0xfffeu &&
-               cpu->w[2] == 0x5a5au && cpu->dsrpag == 0x02ffu,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0xfffeu && cpu->w[2] == 0x5a5au &&
+               cpu->dsrpag == 0x02ffu,
            "PSV high-byte page underflows into low-word page");
 
     reset_processor_test(cpu, 0u);
@@ -1341,8 +1279,8 @@ static void pseudo_linear_page_cases(TestState* state, Dspic33* cpu) {
     cpu->w[2] = 0x6666u;
     cpu->dswpag = 0x01ffu;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[0] == 0x6666u &&
-               cpu->w[1] == 0u && cpu->dswpag == 0x01ffu,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[0] == 0x6666u && cpu->w[1] == 0u &&
+               cpu->dswpag == 0x01ffu,
            "last EDS write page overflows into base data space");
 
     reset_processor_test(cpu, 0u);
@@ -1352,8 +1290,8 @@ static void pseudo_linear_page_cases(TestState* state, Dspic33* cpu) {
     cpu->w[2] = 0x7777u;
     cpu->dswpag = 0x0001u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x7ffeu &&
-               cpu->dswpag == 0x0001u && dspic33_read_word(cpu, 0x7ffeu) == 0x7777u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x7ffeu && cpu->dswpag == 0x0001u &&
+               dspic33_read_word(cpu, 0x7ffeu) == 0x7777u,
            "first EDS write page underflows into base data space");
 
     reset_processor_test(cpu, 0u);
@@ -1366,20 +1304,19 @@ static void pseudo_linear_page_cases(TestState* state, Dspic33* cpu) {
     cpu->w[1] = 0xfffeu;
     cpu->dsrpag = 0x0200u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0xfff8u &&
-               cpu->w[2] == 0x6666u && cpu->dsrpag == 0x0200u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0xfff8u && cpu->w[2] == 0x6666u &&
+               cpu->dsrpag == 0x0200u,
            "modulo wrap leaves the PSV page unchanged");
 
     reset_processor_test(cpu, 0x0600u);
     load_instruction(state, cpu, 0x0600u, OPCODE_MOV_W1_W0_OFFSET_W2);
-    expect(state, dspic33_load_program_word(cpu, 0u, 0x00abcdu),
-           "load indexed wrap PSV value");
+    expect(state, dspic33_load_program_word(cpu, 0u, 0x00abcdu), "load indexed wrap PSV value");
     cpu->w[0] = 2u;
     cpu->w[1] = 0xfffeu;
     cpu->dsrpag = 0x0200u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0xfffeu &&
-               cpu->w[2] == 0xabcdu && cpu->dsrpag == 0x0200u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0xfffeu && cpu->w[2] == 0xabcdu &&
+               cpu->dsrpag == 0x0200u,
            "indexed overflow wraps within the current PSV page");
 
     reset_processor_test(cpu, 0x0600u);
@@ -1390,8 +1327,8 @@ static void pseudo_linear_page_cases(TestState* state, Dspic33* cpu) {
     cpu->w[1] = 0x8000u;
     cpu->dsrpag = 0x0200u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x8000u &&
-               cpu->w[2] == 0xbcdeu && cpu->dsrpag == 0x0200u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x8000u && cpu->w[2] == 0xbcdeu &&
+               cpu->dsrpag == 0x0200u,
            "indexed underflow wraps within the current PSV page");
 
     reset_processor_test(cpu, 0x0600u);
@@ -1400,8 +1337,8 @@ static void pseudo_linear_page_cases(TestState* state, Dspic33* cpu) {
     cpu->w[15] = 0xfffeu;
     cpu->dsrpag = 0x0200u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[15] == 0xfffeu &&
-               cpu->w[2] == 2u && cpu->dsrpag == 0x0200u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[15] == 0xfffeu && cpu->w[2] == 2u &&
+               cpu->dsrpag == 0x0200u,
            "indexed W15 overflow remains in base data space");
 
     reset_processor_test(cpu, 0x0600u);
@@ -1411,8 +1348,8 @@ static void pseudo_linear_page_cases(TestState* state, Dspic33* cpu) {
     cpu->w[15] = 0x8000u;
     cpu->dsrpag = 0x0200u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[15] == 0x8000u &&
-               cpu->w[2] == 0xdef0u && cpu->dsrpag == 0x0200u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[15] == 0x8000u && cpu->w[2] == 0xdef0u &&
+               cpu->dsrpag == 0x0200u,
            "indexed W15 underflow remains in base data space");
 
     reset_processor_test(cpu, 0u);
@@ -1422,8 +1359,7 @@ static void pseudo_linear_page_cases(TestState* state, Dspic33* cpu) {
     cpu->w[2] = 0xa5a5u;
     cpu->dswpag = 0x0002u;
     expect_address_trap(state, cpu, "pre-decrement write page transition traps");
-    expect(state,
-           cpu->w[1] == 0xfffeu && cpu->w[2] == 0xa5a5u && cpu->dswpag == 0x0001u,
+    expect(state, cpu->w[1] == 0xfffeu && cpu->w[2] == 0xa5a5u && cpu->dswpag == 0x0001u,
            "write page transition completes pointer and DSWPAG before trap");
 
     reset_processor_test(cpu, 0u);
@@ -1435,9 +1371,8 @@ static void pseudo_linear_page_cases(TestState* state, Dspic33* cpu) {
     cpu->w[1] = 0xfffcu;
     cpu->dsrpag = 0x0200u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x8000u &&
-               cpu->w[2] == 0x5566u && cpu->w[3] == 0x7788u && cpu->dsrpag == 0x0201u &&
-               !cpu->address_error,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x8000u && cpu->w[2] == 0x5566u &&
+               cpu->w[3] == 0x7788u && cpu->dsrpag == 0x0201u && !cpu->address_error,
            "MOV.D pre-increment reads both words from the new page");
 
     reset_processor_test(cpu, 0u);
@@ -1463,9 +1398,8 @@ static void pseudo_linear_page_cases(TestState* state, Dspic33* cpu) {
     cpu->w[1] = 0x7ffeu;
     cpu->dsrpag = 0x0200u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x7ffeu &&
-               cpu->w[2] == 0x1111u && cpu->w[3] == 0x2222u && cpu->dsrpag == 0x0200u &&
-               !cpu->address_error,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[1] == 0x7ffeu && cpu->w[2] == 0x1111u &&
+               cpu->w[3] == 0x2222u && cpu->dsrpag == 0x0200u && !cpu->address_error,
            "MOV.D independently maps the high word into the PSV window");
 
     reset_processor_test(cpu, 0u);
@@ -1510,8 +1444,7 @@ static void page_zero_address_error_cases(TestState* state, Dspic33* cpu) {
     expect_address_trap(state, cpu, "page-zero word read traps");
     expect(state,
            cpu->w[1] == 0x9002u && cpu->w[2] == 0x5a5au &&
-               dspic33_read_word(cpu, 0x1000u) == 0x5a5au && cpu->dsrpag == 0u &&
-               cpu->dswpag == 1u,
+               dspic33_read_word(cpu, 0x1000u) == 0x5a5au && cpu->dsrpag == 0u && cpu->dswpag == 1u,
            "page-zero word read completes through DSRPAG alias");
 
     reset_processor_test(cpu, 0u);
@@ -1525,8 +1458,7 @@ static void page_zero_address_error_cases(TestState* state, Dspic33* cpu) {
     expect_address_trap(state, cpu, "page-zero word write traps");
     expect(state,
            cpu->w[1] == 0x9002u && cpu->w[2] == 0xa5a5u &&
-               dspic33_read_word(cpu, 0x1000u) == 0xa5a5u && cpu->dsrpag == 1u &&
-               cpu->dswpag == 0u,
+               dspic33_read_word(cpu, 0x1000u) == 0xa5a5u && cpu->dsrpag == 1u && cpu->dswpag == 0u,
            "page-zero word write completes through DSWPAG alias");
 
     reset_processor_test(cpu, 0u);
@@ -1540,8 +1472,7 @@ static void page_zero_address_error_cases(TestState* state, Dspic33* cpu) {
     expect_address_trap(state, cpu, "page-zero byte read traps");
     expect(state,
            cpu->w[1] == 0x9002u && cpu->w[2] == 0xa55au &&
-               dspic33_read_word(cpu, 0x1000u) == 0x5a5au && cpu->dsrpag == 0u &&
-               cpu->dswpag == 1u,
+               dspic33_read_word(cpu, 0x1000u) == 0x5a5au && cpu->dsrpag == 0u && cpu->dswpag == 1u,
            "page-zero byte read completes through DSRPAG alias");
 
     reset_processor_test(cpu, 0u);
@@ -1555,8 +1486,7 @@ static void page_zero_address_error_cases(TestState* state, Dspic33* cpu) {
     expect_address_trap(state, cpu, "page-zero byte write traps");
     expect(state,
            cpu->w[1] == 0x9002u && cpu->w[2] == 0xa5a5u &&
-               dspic33_read_word(cpu, 0x1000u) == 0xa55au && cpu->dsrpag == 1u &&
-               cpu->dswpag == 0u,
+               dspic33_read_word(cpu, 0x1000u) == 0xa55au && cpu->dsrpag == 1u && cpu->dswpag == 0u,
            "page-zero byte write completes through DSWPAG alias");
 
     reset_processor_test(cpu, 0u);
@@ -1606,16 +1536,14 @@ static void page_zero_address_error_cases(TestState* state, Dspic33* cpu) {
     cpu->io.dma_transfer_active = false;
 }
 
-static void unimplemented_data_page_address_error_cases(TestState* state,
-                                                        Dspic33* cpu) {
+static void unimplemented_data_page_address_error_cases(TestState* state, Dspic33* cpu) {
     reset_processor_test(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_MOV_W1_POST_INCREMENT_W2);
     dspic33_write_word(cpu, 0x9000u, 0x5a5au);
     cpu->dsrpag = 1u;
     cpu->w[1] = 0x9000u;
     cpu->w[2] = 0xa5a5u;
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "implemented EDS page word read completes");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "implemented EDS page word read completes");
     expect(state, cpu->w[1] == 0x9002u && cpu->w[2] == 0x5a5au,
            "implemented EDS page word read updates result and pointer");
 
@@ -1635,8 +1563,7 @@ static void unimplemented_data_page_address_error_cases(TestState* state,
     dspic33_write_word(cpu, 0x9000u, 0x5a5au);
     cpu->dsrpag = 1u;
     cpu->w[2] = 0xa5a5u;
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "direct high-file page-one read completes");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "direct high-file page-one read completes");
     expect(state, cpu->w[2] == 0x5a5au && !cpu->address_error,
            "direct high-file page-one read uses implemented memory");
 
@@ -1680,8 +1607,8 @@ static void unimplemented_data_page_address_error_cases(TestState* state,
     cpu->w[2] = 0xa5a5u;
     expect_address_trap(state, cpu, "unimplemented EDS page word read traps");
     expect(state,
-           cpu->w[1] == 0x9002u && cpu->w[2] == 0u && cpu->dsrpag == 2u &&
-               cpu->dswpag == 1u && dspic33_read_word(cpu, 0x11000u) == 0x5a5au,
+           cpu->w[1] == 0x9002u && cpu->w[2] == 0u && cpu->dsrpag == 2u && cpu->dswpag == 1u &&
+               dspic33_read_word(cpu, 0x11000u) == 0x5a5au,
            "unimplemented EDS word read returns zero and completes pointer update");
 
     reset_processor_test(cpu, 0u);
@@ -1694,8 +1621,8 @@ static void unimplemented_data_page_address_error_cases(TestState* state,
     cpu->w[2] = 0xa5a5u;
     expect_address_trap(state, cpu, "unimplemented EDS page word write traps");
     expect(state,
-           cpu->w[1] == 0x9002u && cpu->w[2] == 0xa5a5u && cpu->dsrpag == 1u &&
-               cpu->dswpag == 2u && dspic33_read_word(cpu, 0x11000u) == 0x5a5au,
+           cpu->w[1] == 0x9002u && cpu->w[2] == 0xa5a5u && cpu->dsrpag == 1u && cpu->dswpag == 2u &&
+               dspic33_read_word(cpu, 0x11000u) == 0x5a5au,
            "unimplemented EDS word write preserves source and raw backing");
 
     reset_processor_test(cpu, 0u);
@@ -1804,12 +1731,10 @@ static void w15_write_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "execute odd W15 literal");
     expect(state, cpu->w[15] == 0x5000u, "literal write clears W15 low bit");
     cpu->w[0] = 0x5001u;
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "execute odd W15 register move");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "execute odd W15 register move");
     expect(state, cpu->w[15] == 0x5000u, "register move clears W15 low bit");
     cpu->w[0] = 0x0001u;
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "execute odd W15 byte register move");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "execute odd W15 byte register move");
     expect(state, cpu->w[15] == 0x5000u, "byte register move clears W15 low bit");
     dspic33_write_byte(cpu, 0x001eu, 0x01u);
     expect(state, cpu->w[15] == 0x5000u, "byte alias write clears W15 low bit");
@@ -1818,23 +1743,19 @@ static void w15_write_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x5000u, 0x2211u);
     dspic33_write_word(cpu, 0x5002u, 0x4433u);
     cpu->w[15] = 0x5000u;
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "execute W15 byte post-increment");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "execute W15 byte post-increment");
     expect(state, cpu->w[15] == 0x5000u && (cpu->w[0] & 0x00ffu) == 0x0011u,
            "W15 byte post-increment retains even pointer and old address");
     cpu->w[15] = 0x5000u;
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "execute W15 byte pre-increment");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "execute W15 byte pre-increment");
     expect(state, cpu->w[15] == 0x5000u && (cpu->w[1] & 0x00ffu) == 0x0022u,
            "W15 byte pre-increment uses transient odd address");
     cpu->w[15] = 0x5002u;
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "execute W15 byte post-decrement");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "execute W15 byte post-decrement");
     expect(state, cpu->w[15] == 0x5000u && (cpu->w[2] & 0x00ffu) == 0x0033u,
            "W15 byte post-decrement retains old address");
     cpu->w[15] = 0x5002u;
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "execute W15 byte pre-decrement");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "execute W15 byte pre-decrement");
     expect(state, cpu->w[15] == 0x5000u && (cpu->w[3] & 0x00ffu) == 0x0022u,
            "W15 byte pre-decrement uses transient odd address");
 }
@@ -1848,19 +1769,14 @@ static void valid_stack_frame_cases(TestState* state, Dspic33* cpu) {
     cpu->w[14] = 0x4444u;
     cpu->w[15] = 0x5000u;
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "execute valid LNK");
-    expect(state,
-           cpu->w[14] == 0x5002u && cpu->w[15] == 0x5002u &&
-               (cpu->corcon & 0x0004u) != 0u,
+    expect(state, cpu->w[14] == 0x5002u && cpu->w[15] == 0x5002u && (cpu->corcon & 0x0004u) != 0u,
            "valid LNK updates frame state");
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "execute valid ULNK");
-    expect(state,
-           cpu->w[14] == 0x4444u && cpu->w[15] == 0x5000u &&
-               (cpu->corcon & 0x0004u) == 0u,
+    expect(state, cpu->w[14] == 0x4444u && cpu->w[15] == 0x5000u && (cpu->corcon & 0x0004u) == 0u,
            "valid ULNK restores frame state");
     expect(state, dspic33_read_word(cpu, 0x08c0u) == 0u,
            "valid frame operations do not set STKERR");
-    expect(state, active_pending_traps(cpu) == 0u,
-           "valid frame operations do not schedule traps");
+    expect(state, active_pending_traps(cpu) == 0u, "valid frame operations do not schedule traps");
 }
 
 static void invalid_lnk_case(TestState* state, Dspic33* cpu) {
@@ -1924,10 +1840,8 @@ static void simultaneous_trap_case(TestState* state, Dspic33* cpu) {
     dspic33_check_stack_address(cpu, 0x5102, false, 2u);
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
            "schedule simultaneous stack and math traps");
-    expect(state, active_pending_traps(cpu) == 2u,
-           "simultaneous trap sources remain distinct");
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "service simultaneous trap boundary");
+    expect(state, active_pending_traps(cpu) == 2u, "simultaneous trap sources remain distinct");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "service simultaneous trap boundary");
     expect(state, cpu->last_trap == 3u && cpu->pc == 0x000300u,
            "simultaneous trap boundary chooses stack priority");
     pending = pending_trap(cpu, 4u);
@@ -1951,15 +1865,12 @@ static void earlier_deadline_case(TestState* state, Dspic33* cpu) {
     cpu->w[15] = 0x5000u;
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "schedule earlier math trap");
     dspic33_check_stack_address(cpu, 0x5102, false, 2u);
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "service earlier math deadline");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "service earlier math deadline");
     expect(state, cpu->last_trap == 4u && cpu->pc == 0x000320u,
            "earlier math deadline precedes later stack priority");
     pending = pending_trap(cpu, 3u);
-    expect(state, pending != NULL && pending->delay == 1u,
-           "later stack deadline remains pending");
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "advance math handler to stack deadline");
+    expect(state, pending != NULL && pending->delay == 1u, "later stack deadline remains pending");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "advance math handler to stack deadline");
     expect(state, cpu->last_trap == 3u && cpu->pc == 0x000300u && cpu->trap_count == 2u,
            "ready stack trap preempts math handler");
 }
@@ -1970,8 +1881,7 @@ static void repeat_exception_cases(TestState* state, Dspic33* cpu) {
                                               OPCODE_DIVF_W2_W3};
     size_t index;
 
-    for (index = 0u; index < sizeof(divide_opcodes) / sizeof(divide_opcodes[0]);
-         index++) {
+    for (index = 0u; index < sizeof(divide_opcodes) / sizeof(divide_opcodes[0]); index++) {
         reset_processor_test(cpu, 0x200u);
         load_instruction(state, cpu, 0x00000cu, 0x000320u);
         load_instruction(state, cpu, 0x200u, 0x090011u);
@@ -1984,19 +1894,17 @@ static void repeat_exception_cases(TestState* state, Dspic33* cpu) {
         cpu->w[5] = 0x5555u;
         cpu->w[15] = 0x5000u;
         cpu->stop_on_trap = true;
-        expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-               "initialize repeated divide");
+        expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "initialize repeated divide");
         expect(state,
-               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x202u &&
-                   cpu->rcount == 16u && cpu->repeat_active != 0u &&
+               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x202u && cpu->rcount == 16u &&
+                   cpu->repeat_active != 0u &&
                    (dspic33_read_word(cpu, 0x08c0u) & 0x0050u) == 0x0050u &&
                    pending_trap(cpu, 4u) != NULL && pending_trap(cpu, 4u)->delay == 1u,
                "first divide cycle latches delayed math trap");
         expect(state,
                dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->last_trap == 4u &&
-                   cpu->last_trap_return == 0x202u && cpu->pc == 0x000320u &&
-                   cpu->rcount == 15u && cpu->repeat_active == 0u &&
-                   (cpu->sr & 0x0010u) == 0u && cpu->cycles == 3u,
+                   cpu->last_trap_return == 0x202u && cpu->pc == 0x000320u && cpu->rcount == 15u &&
+                   cpu->repeat_active == 0u && (cpu->sr & 0x0010u) == 0u && cpu->cycles == 3u,
                "second divide cycle enters math trap");
         expect(state,
                cpu->w[15] == 0x5004u && dspic33_read_word(cpu, 0x5000u) == 0x202u &&
@@ -2032,8 +1940,7 @@ static void repeat_exception_cases(TestState* state, Dspic33* cpu) {
         expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
                "execute unaffected signed double divide overflow");
     }
-    expect(state, (cpu->sr & 0x0004u) != 0u,
-           "unaffected signed double divide overflow sets OV");
+    expect(state, (cpu->sr & 0x0004u) != 0u, "unaffected signed double divide overflow sets OV");
 
     reset_processor_test(cpu, 0x200u);
     load_instruction(state, cpu, 0x00000cu, 0x000300u);
@@ -2044,38 +1951,34 @@ static void repeat_exception_cases(TestState* state, Dspic33* cpu) {
     cpu->w[3] = 0u;
     cpu->w[15] = 0x5000u;
     cpu->stop_on_trap = false;
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "initialize recursive math repeat");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "initialize recursive math repeat");
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "latch recursive math source");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000300u &&
-               cpu->trap_count == 1u && cpu->rcount == 15u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000300u && cpu->trap_count == 1u &&
+               cpu->rcount == 15u,
            "enter first repeated divide math trap");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000300u &&
-               cpu->trap_count == 2u && cpu->last_trap_return == 0x202u &&
-               cpu->rcount == 15u && cpu->w[15] == 0x5004u && cpu->cycles == 8u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000300u && cpu->trap_count == 2u &&
+               cpu->last_trap_return == 0x202u && cpu->rcount == 15u && cpu->w[15] == 0x5004u &&
+               cpu->cycles == 8u,
            "uncleared MATHERR re-enters before repeated instruction");
     dspic33_write_word(cpu, 0x08c0u, 0x0040u);
-    expect(state,
-           dspic33_read_word(cpu, 0x08c0u) == 0x0040u && pending_trap(cpu, 4u) == NULL,
+    expect(state, dspic33_read_word(cpu, 0x08c0u) == 0x0040u && pending_trap(cpu, 4u) == NULL,
            "clearing MATHERR preserves cause and clears level source");
     dspic33_write_word(cpu, 0x08c0u, 0u);
     expect(state, dspic33_read_word(cpu, 0x08c0u) == 0u,
            "software clears independent DIV0ERR cause");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x202u &&
-               cpu->repeat_active != 0u && cpu->repeat_pc == 0x202u &&
-               cpu->rcount == 15u && (cpu->sr & 0x0010u) != 0u && cpu->cycles == 14u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x202u && cpu->repeat_active != 0u &&
+               cpu->repeat_pc == 0x202u && cpu->rcount == 15u && (cpu->sr & 0x0010u) != 0u &&
+               cpu->cycles == 14u,
            "RETFIE restores suspended repeat state");
 
     dspic33_write_word(cpu, 0x08c0u, 0x0010u);
-    expect(state,
-           dspic33_read_word(cpu, 0x08c0u) == 0x0010u && pending_trap(cpu, 4u) == NULL,
+    expect(state, dspic33_read_word(cpu, 0x08c0u) == 0x0010u && pending_trap(cpu, 4u) == NULL,
            "software MATHERR stores status without creating a trap source");
     dspic33_write_word(cpu, 0x08c0u, 0u);
-    expect(state,
-           dspic33_read_word(cpu, 0x08c0u) == 0u && pending_trap(cpu, 4u) == NULL,
+    expect(state, dspic33_read_word(cpu, 0x08c0u) == 0u && pending_trap(cpu, 4u) == NULL,
            "software MATHERR clear cancels pending level source");
 
     reset_processor_test(cpu, 0x200u);
@@ -2083,11 +1986,9 @@ static void repeat_exception_cases(TestState* state, Dspic33* cpu) {
     load_instruction(state, cpu, 0x202u, OPCODE_DIV_SW_W2_W3);
     cpu->w[2] = 42u;
     cpu->w[3] = 0u;
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "initialize short repeated divide");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "initialize short repeated divide");
     while (cpu->repeat_active != 0u) {
-        expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-               "execute short repeated divide cycle");
+        expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "execute short repeated divide cycle");
     }
     expect(state, dspic33_read_word(cpu, 0x08c0u) == 0u && cpu->trap_count == 0u,
            "repeat count below seventeen does not latch DIV0");
@@ -2100,8 +2001,7 @@ static void repeat_exception_cases(TestState* state, Dspic33* cpu) {
     cpu->w[3] = 0u;
     cpu->w[15] = 0x5000u;
     cpu->stop_on_trap = true;
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "initialize long repeated divide");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "initialize long repeated divide");
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->rcount == 17u,
            "leading nonstandard divide iteration completes without trap");
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->rcount == 16u,
@@ -2118,21 +2018,18 @@ static void repeat_exception_cases(TestState* state, Dspic33* cpu) {
     load_instruction(state, cpu, 0x000300u, OPCODE_NOP);
     load_instruction(state, cpu, 0x000302u, OPCODE_RETFIE);
     cpu->w[15] = 0x5000u;
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "initialize interruptible repeat");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "initialize interruptible repeat");
     dspic33_write_word(cpu, 0x0820u, 0x0001u);
     dspic33_write_word(cpu, 0x0840u, 0x0004u);
     dspic33_raise_interrupt(cpu, 0u);
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000302u &&
-               cpu->repeat_active == 0u && cpu->rcount == 2u &&
-               (cpu->sr & 0x0010u) == 0u &&
+               cpu->repeat_active == 0u && cpu->rcount == 2u && (cpu->sr & 0x0010u) == 0u &&
                (dspic33_read_word(cpu, 0x5002u) & 0x1000u) != 0u,
            "interrupt entry suspends repeat and stacks RA");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x202u &&
-               cpu->repeat_active != 0u && cpu->repeat_pc == 0x202u &&
-               cpu->rcount == 2u && (cpu->sr & 0x0010u) != 0u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x202u && cpu->repeat_active != 0u &&
+               cpu->repeat_pc == 0x202u && cpu->rcount == 2u && (cpu->sr & 0x0010u) != 0u,
            "interrupt RETFIE restores repeat state");
 }
 
@@ -2142,8 +2039,7 @@ static void standalone_divide_zero_cases(TestState* state, Dspic33* cpu) {
                                               OPCODE_DIVF_W2_W3};
     size_t index;
 
-    for (index = 0u; index < sizeof(divide_opcodes) / sizeof(divide_opcodes[0]);
-         index++) {
+    for (index = 0u; index < sizeof(divide_opcodes) / sizeof(divide_opcodes[0]); index++) {
         reset_processor_test(cpu, 0x0200u);
         load_instruction(state, cpu, 0x0200u, divide_opcodes[index]);
         cpu->w[0] = 0xaaaau;
@@ -2153,9 +2049,8 @@ static void standalone_divide_zero_cases(TestState* state, Dspic33* cpu) {
         cpu->w[4] = 0x4444u;
         expect(state,
                dspic33_step(cpu) == DSPIC33_RUNNING &&
-                   (dspic33_read_word(cpu, 0x08c0u) & 0x0050u) == 0x0050u &&
-                   cpu->w[0] == 0xaaaau && cpu->w[1] == 0xbbbbu &&
-                   pending_trap(cpu, 4u) != NULL,
+                   (dspic33_read_word(cpu, 0x08c0u) & 0x0050u) == 0x0050u && cpu->w[0] == 0xaaaau &&
+                   cpu->w[1] == 0xbbbbu && pending_trap(cpu, 4u) != NULL,
                "standalone divide by zero latches first-cycle math error");
     }
 }
@@ -2174,47 +2069,41 @@ static void repeat_interrupt_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0822u, 0x0010u);
     dspic33_write_word(cpu, 0x084au, 0x0004u);
     dspic33_write_word(cpu, 0x08c2u, 0x8000u);
-    expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->disicnt == 2u &&
-               cpu->cycles == 1u,
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->disicnt == 2u && cpu->cycles == 1u,
            "DISI initializes integrated repeat interrupt window");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->disicnt == 1u &&
-               cpu->cycles == 2u && (dspic33_read_word(cpu, 0x0802u) & 0x0010u) != 0u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->disicnt == 1u && cpu->cycles == 2u &&
+               (dspic33_read_word(cpu, 0x0802u) & 0x0010u) != 0u,
            "word IFS write consumes one disabled cycle");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->disicnt == 0u &&
-               cpu->repeat_active != 0u && cpu->repeat_pc == 0x206u &&
-               cpu->rcount == 2u && cpu->cycles == 3u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->disicnt == 0u && cpu->repeat_active != 0u &&
+               cpu->repeat_pc == 0x206u && cpu->rcount == 2u && cpu->cycles == 3u,
            "REPEAT consumes final disabled cycle");
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000302u &&
                cpu->last_interrupt == 20u && cpu->w[15] == 0x5004u &&
                dspic33_read_word(cpu, 0x5000u) == 0x206u &&
-               (dspic33_read_word(cpu, 0x5002u) & 0x1000u) != 0u &&
-               cpu->repeat_active == 0u && cpu->rcount == 2u &&
-               (cpu->sr & 0x00f0u) == 0x0080u && cpu->cycles == 12u,
+               (dspic33_read_word(cpu, 0x5002u) & 0x1000u) != 0u && cpu->repeat_active == 0u &&
+               cpu->rcount == 2u && (cpu->sr & 0x00f0u) == 0x0080u && cpu->cycles == 12u,
            "integrated interrupt suspends repeat at target");
     dspic33_write_word(cpu, 0x0802u, 0u);
     dspic33_write_word(cpu, 0x0822u, 0u);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x206u &&
-               cpu->w[15] == 0x5000u && cpu->repeat_active != 0u &&
-               cpu->repeat_pc == 0x206u && cpu->rcount == 2u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x206u && cpu->w[15] == 0x5000u &&
+               cpu->repeat_active != 0u && cpu->repeat_pc == 0x206u && cpu->rcount == 2u &&
                (cpu->sr & 0x0010u) != 0u && cpu->cycles == 18u,
            "integrated RETFIE restores repeat state in six cycles");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 1u &&
-               cpu->rcount == 1u && cpu->pc == 0x206u && cpu->cycles == 19u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 1u && cpu->rcount == 1u &&
+               cpu->pc == 0x206u && cpu->cycles == 19u,
            "restored repeat executes first target");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 2u &&
-               cpu->rcount == 0u && cpu->pc == 0x206u && cpu->cycles == 20u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 2u && cpu->rcount == 0u &&
+               cpu->pc == 0x206u && cpu->cycles == 20u,
            "restored repeat executes second target");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 3u &&
-               cpu->repeat_active == 0u && cpu->pc == 0x208u &&
-               (cpu->sr & 0x0010u) == 0u && cpu->cycles == 21u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 3u && cpu->repeat_active == 0u &&
+               cpu->pc == 0x208u && (cpu->sr & 0x0010u) == 0u && cpu->cycles == 21u,
            "restored repeat completes all targets");
 
     reset_processor_test(cpu, 0x200u);
@@ -2238,31 +2127,30 @@ static void repeat_interrupt_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
            "arm repeat before early-termination interrupt");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000302u &&
-               cpu->w[15] == 0x5004u && cpu->rcount == 2u && cpu->repeat_active == 0u &&
-               (cpu->sr & 0x00f0u) == 0x0080u && cpu->cycles == 12u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000302u && cpu->w[15] == 0x5004u &&
+               cpu->rcount == 2u && cpu->repeat_active == 0u && (cpu->sr & 0x00f0u) == 0x0080u &&
+               cpu->cycles == 12u,
            "early-termination handler observes suspended repeat");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000304u &&
-               cpu->rcount == 0u && cpu->cycles == 13u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000304u && cpu->rcount == 0u &&
+               cpu->cycles == 13u,
            "handler clears suspended RCOUNT");
     dspic33_write_word(cpu, 0x0802u, 0u);
     dspic33_write_word(cpu, 0x0822u, 0u);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x206u &&
-               cpu->w[15] == 0x5000u && cpu->repeat_active != 0u &&
-               cpu->repeat_pc == 0x206u && cpu->rcount == 0u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x206u && cpu->w[15] == 0x5000u &&
+               cpu->repeat_active != 0u && cpu->repeat_pc == 0x206u && cpu->rcount == 0u &&
                (cpu->sr & 0x0010u) != 0u && cpu->cycles == 19u,
            "RETFIE restores prefetched target after RCOUNT clear");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 1u &&
-               cpu->pc == 0x208u && cpu->rcount == 0u && cpu->repeat_active == 0u &&
-               (cpu->sr & 0x0010u) == 0u && cpu->cycles == 20u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 1u && cpu->pc == 0x208u &&
+               cpu->rcount == 0u && cpu->repeat_active == 0u && (cpu->sr & 0x0010u) == 0u &&
+               cpu->cycles == 20u,
            "cleared repeat executes final prefetched target once");
 }
 
-static void prepare_nested_do_interrupt_case(TestState* state, Dspic33* cpu,
-                                             uint32_t entry, bool nesting_disabled) {
+static void prepare_nested_do_interrupt_case(TestState* state, Dspic33* cpu, uint32_t entry,
+                                             bool nesting_disabled) {
     uint32_t address;
     reset_processor_test(cpu, entry);
     for (address = 0x204u; address <= 0x208u; address += 2u) {
@@ -2296,28 +2184,25 @@ static void complete_first_nested_do_interrupt_entry(TestState* state, Dspic33* 
                                                      bool expected_armed,
                                                      bool expected_extra_decrement) {
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x302u &&
-               cpu->cycles == 10u && cpu->interrupt_depth == 1u &&
-               (cpu->nested_do_extra_decrement_depth != 0u) ==
-                   expected_extra_decrement &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x302u && cpu->cycles == 10u &&
+               cpu->interrupt_depth == 1u &&
+               (cpu->nested_do_extra_decrement_depth != 0u) == expected_extra_decrement &&
                cpu->nested_do_interrupt_armed == expected_armed,
            "first DO-loop interrupt entry evaluates nested request timing");
     dspic33_write_word(cpu, 0x0800u, (uint16_t)(dspic33_read_word(cpu, 0x0800u) & ~1u));
 }
 
-static void enter_first_nested_do_interrupt(TestState* state, Dspic33* cpu,
-                                            bool expected_armed, uint8_t nested_delay,
-                                            bool expected_extra_decrement) {
+static void enter_first_nested_do_interrupt(TestState* state, Dspic33* cpu, bool expected_armed,
+                                            uint8_t nested_delay, bool expected_extra_decrement) {
     dspic33_raise_interrupt(cpu, 0u);
     expect(state, cpu->nested_do_interrupt_armed == expected_armed,
            "first DO-loop interrupt request records the erratum window");
     if (nested_delay != 0u) {
-        expect(state,
-               dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 1u, 0u, nested_delay),
+        expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 1u, 0u, nested_delay),
                "schedule higher-priority request inside interrupt entry");
     }
-    complete_first_nested_do_interrupt_entry(
-        state, cpu, expected_armed && nested_delay == 0u, expected_extra_decrement);
+    complete_first_nested_do_interrupt_entry(state, cpu, expected_armed && nested_delay == 0u,
+                                             expected_extra_decrement);
 }
 
 static void complete_nested_do_interrupt_case(TestState* state, Dspic33* cpu,
@@ -2335,8 +2220,7 @@ static void complete_nested_do_interrupt_case(TestState* state, Dspic33* cpu,
         expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
                "nested DO-loop interrupt handlers return normally");
     }
-    expect(state, cpu->interrupt_depth == 0u,
-           "nested DO-loop interrupt stack fully unwinds");
+    expect(state, cpu->interrupt_depth == 0u, "nested DO-loop interrupt stack fully unwinds");
     main_steps = (uint8_t)(((0x208u - cpu->pc) / 2u) + 1u);
     for (index = 0u; index < main_steps; index++) {
         expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
@@ -2345,10 +2229,8 @@ static void complete_nested_do_interrupt_case(TestState* state, Dspic33* cpu,
     expect(state,
            cpu->pc == 0x204u && cpu->do_depth == 1u &&
                cpu->dcount == (expected_extra_decrement ? 1u : 2u) &&
-               cpu->do_count[0] == cpu->dcount &&
-               cpu->nested_do_extra_decrement_depth == 0u &&
-               cpu->nested_do_extra_decrement_end == 0u &&
-               !cpu->nested_do_interrupt_armed,
+               cpu->do_count[0] == cpu->dcount && cpu->nested_do_extra_decrement_depth == 0u &&
+               cpu->nested_do_extra_decrement_end == 0u && !cpu->nested_do_interrupt_armed,
            "DO-loop iteration applies only the documented nested decrement");
 }
 
@@ -2368,16 +2250,13 @@ static void nested_do_interrupt_erratum_cases(TestState* state, Dspic33* cpu) {
                dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 1u, 0u, 5u),
            "schedule both interrupts from the executing DO instruction");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x208u &&
-               cpu->cycles == 1u && cpu->interrupt_depth == 0u &&
-               cpu->nested_do_interrupt_armed &&
-               cpu->nested_do_interrupt_end == 0x208u &&
-               cpu->nested_do_interrupt_depth == 1u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x208u && cpu->cycles == 1u &&
+               cpu->interrupt_depth == 0u && cpu->nested_do_interrupt_armed &&
+               cpu->nested_do_interrupt_end == 0x208u && cpu->nested_do_interrupt_depth == 1u,
            "penultimate DO instruction event records the executing address");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x302u &&
-               cpu->cycles == 11u && cpu->interrupt_depth == 1u &&
-               cpu->nested_do_extra_decrement_depth == 1u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x302u && cpu->cycles == 11u &&
+               cpu->interrupt_depth == 1u && cpu->nested_do_extra_decrement_depth == 1u &&
                !cpu->nested_do_interrupt_armed,
            "scheduled higher-priority request reaches the exact entry-cycle deadline");
     dspic33_write_word(cpu, 0x0800u, (uint16_t)(dspic33_read_word(cpu, 0x0800u) & ~1u));
@@ -2389,14 +2268,12 @@ static void nested_do_interrupt_erratum_cases(TestState* state, Dspic33* cpu) {
                dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 1u, 0u, 5u),
            "schedule nested requests from the final DO instruction");
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x204u &&
-               cpu->dcount == 2u && cpu->nested_do_interrupt_armed &&
-               cpu->nested_do_interrupt_end == 0x208u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x204u && cpu->dcount == 2u &&
+               cpu->nested_do_interrupt_armed && cpu->nested_do_interrupt_end == 0x208u,
            "final DO instruction event survives the loop-back PC update");
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x302u &&
-               cpu->nested_do_extra_decrement_depth == 1u &&
-               !cpu->nested_do_interrupt_armed,
+               cpu->nested_do_extra_decrement_depth == 1u && !cpu->nested_do_interrupt_armed,
            "final DO instruction request participates in the four-cycle erratum");
 
     prepare_nested_do_interrupt_case(state, cpu, 0x204u, false);
@@ -2410,8 +2287,7 @@ static void nested_do_interrupt_erratum_cases(TestState* state, Dspic33* cpu) {
            "earlier DO instruction event does not arm the erratum");
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x302u &&
-               cpu->nested_do_extra_decrement_depth == 0u &&
-               !cpu->nested_do_interrupt_armed,
+               cpu->nested_do_extra_decrement_depth == 0u && !cpu->nested_do_interrupt_armed,
            "entry-time second request cannot become a replacement first request");
 
     for (divisor_index = 0u; divisor_index < sizeof(divisors) / sizeof(divisors[0]);
@@ -2429,15 +2305,12 @@ static void nested_do_interrupt_erratum_cases(TestState* state, Dspic33* cpu) {
                "divided DO instruction records its interrupt request cycle");
         expect(state,
                dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x302u &&
-                   cpu->nested_do_extra_decrement_depth == 1u &&
-                   !cpu->nested_do_interrupt_armed,
+                   cpu->nested_do_extra_decrement_depth == 1u && !cpu->nested_do_interrupt_armed,
                "DOZE and ROI preserve the four-instruction-cycle erratum window");
     }
 
-    for (entry_index = 0u; entry_index < sizeof(entries) / sizeof(entries[0]);
-         entry_index++) {
-        for (delay_index = 0u; delay_index < sizeof(delays) / sizeof(delays[0]);
-             delay_index++) {
+    for (entry_index = 0u; entry_index < sizeof(entries) / sizeof(entries[0]); entry_index++) {
+        for (delay_index = 0u; delay_index < sizeof(delays) / sizeof(delays[0]); delay_index++) {
             prepare_nested_do_interrupt_case(state, cpu, entries[entry_index], false);
             enter_first_nested_do_interrupt(state, cpu, true, delays[delay_index],
                                             delays[delay_index] == 4u);
@@ -2452,21 +2325,16 @@ static void nested_do_interrupt_erratum_cases(TestState* state, Dspic33* cpu) {
     prepare_nested_do_interrupt_case(state, cpu, 0x208u, false);
     enter_first_nested_do_interrupt(state, cpu, true, 0u, false);
     dspic33_write_word(cpu, 0x0820u, 0u);
-    for (delay_index = 0u; cpu->interrupt_depth != 0u && delay_index < 8u;
-         delay_index++) {
+    for (delay_index = 0u; cpu->interrupt_depth != 0u && delay_index < 8u; delay_index++) {
         expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
                "single DO-loop interrupt handler returns normally");
     }
-    expect(state,
-           cpu->interrupt_depth == 0u && cpu->pc == 0x208u &&
-               cpu->nested_do_interrupt_armed,
+    expect(state, cpu->interrupt_depth == 0u && cpu->pc == 0x208u && cpu->nested_do_interrupt_armed,
            "single DO-loop interrupt retains its window until the loop boundary");
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->dcount == 2u &&
-               !cpu->nested_do_interrupt_armed &&
-               cpu->nested_do_interrupt_cycle == 0u &&
-               cpu->nested_do_interrupt_end == 0u &&
-               cpu->nested_do_interrupt_depth == 0u &&
+               !cpu->nested_do_interrupt_armed && cpu->nested_do_interrupt_cycle == 0u &&
+               cpu->nested_do_interrupt_end == 0u && cpu->nested_do_interrupt_depth == 0u &&
                cpu->nested_do_interrupt_priority == 0u,
            "DO-loop boundary expires an unused nested-interrupt window");
 
@@ -2498,10 +2366,8 @@ static void nested_do_interrupt_erratum_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0820u, 0u);
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->software_reset_count == 1u &&
-               !cpu->nested_do_interrupt_armed &&
-               cpu->nested_do_interrupt_cycle == 0u &&
-               cpu->nested_do_interrupt_end == 0u &&
-               cpu->nested_do_interrupt_depth == 0u &&
+               !cpu->nested_do_interrupt_armed && cpu->nested_do_interrupt_cycle == 0u &&
+               cpu->nested_do_interrupt_end == 0u && cpu->nested_do_interrupt_depth == 0u &&
                cpu->nested_do_interrupt_priority == 0u &&
                cpu->nested_do_extra_decrement_depth == 0u &&
                cpu->nested_do_extra_decrement_end == 0u,

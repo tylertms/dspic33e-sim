@@ -49,8 +49,7 @@ static void period_cases(TestState* state, Dspic33* cpu) {
         for (postscaler = 0u; postscaler < 16u; postscaler++) {
             uint32_t period = (prescaler != 0u ? 128u : 32u) << postscaler;
             uint8_t configuration =
-                (uint8_t)(FWDTEN | WINDIS | (prescaler != 0u ? WDTPRE : 0u) |
-                          postscaler);
+                (uint8_t)(FWDTEN | WINDIS | (prescaler != 0u ? WDTPRE : 0u) | postscaler);
             configure(cpu, configuration);
             dspic33_reset(cpu, 0u);
             expect(state, cpu->watchdog.ticks == 0u && (rcon(cpu) & WDTO) == 0u,
@@ -62,9 +61,8 @@ static void period_cases(TestState* state, Dspic33* cpu) {
                    "period does not expire one edge early");
             dspic33_watchdog_advance_lprc(cpu, 1u);
             expect(state,
-                   cpu->watchdog.ticks == 0u && (rcon(cpu) & WDTO) != 0u &&
-                       cpu->pc == 0u && cpu->software_reset_count == 0u &&
-                       cpu->illegal_reset_count == 0u,
+                   cpu->watchdog.ticks == 0u && (rcon(cpu) & WDTO) != 0u && cpu->pc == 0u &&
+                       cpu->software_reset_count == 0u && cpu->illegal_reset_count == 0u,
                    "period expires at exact divider product as hardware reset");
         }
     }
@@ -85,8 +83,7 @@ static void software_enable_cases(TestState* state, Dspic33* cpu) {
     expect(state, cpu->watchdog.ticks == 31u && (rcon(cpu) & WDTO) == 0u,
            "software-enabled watchdog counts");
     dspic33_write_word(cpu, RCON, rcon(cpu));
-    expect(state, cpu->watchdog.ticks == 31u,
-           "repeated software enable does not restart counter");
+    expect(state, cpu->watchdog.ticks == 31u, "repeated software enable does not restart counter");
     dspic33_watchdog_advance_lprc(cpu, 1u);
     expect(state, (rcon(cpu) & (WDTO | SWDTEN)) == WDTO,
            "watchdog reset records timeout and clears software enable");
@@ -97,8 +94,7 @@ static void software_enable_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     dspic33_watchdog_advance_lprc(cpu, 7u);
     dspic33_write_word(cpu, RCON, (uint16_t)(rcon(cpu) & ~SWDTEN));
-    expect(state, cpu->watchdog.ticks == 7u,
-           "hardware enable ignores software control writes");
+    expect(state, cpu->watchdog.ticks == 7u, "hardware enable ignores software control writes");
     dspic33_watchdog_advance_lprc(cpu, 25u);
     expect(state, (rcon(cpu) & WDTO) != 0u,
            "hardware-enabled watchdog expires with software bit clear");
@@ -110,8 +106,8 @@ static void software_enable_cases(TestState* state, Dspic33* cpu) {
     expect(state, execute(cpu, OPCODE_RESET) == DSPIC33_RUNNING,
            "software reset executes while watchdog enabled");
     expect(state,
-           cpu->watchdog.ticks == 0u && (rcon(cpu) & SWDTEN) == 0u &&
-               (rcon(cpu) & WDTO) == 0u && cpu->software_reset_count == 1u,
+           cpu->watchdog.ticks == 0u && (rcon(cpu) & SWDTEN) == 0u && (rcon(cpu) & WDTO) == 0u &&
+               cpu->software_reset_count == 1u,
            "software reset clears watchdog enable and counter");
 
     configure(cpu, (uint8_t)(FWDTEN | WINDIS));
@@ -121,16 +117,14 @@ static void software_enable_cases(TestState* state, Dspic33* cpu) {
            "software reset follows watchdog reset");
     expect(state, (rcon(cpu) & (WDTO | SWR)) == (WDTO | SWR),
            "later reset preserves sticky watchdog cause");
-    expect(state,
-           execute(cpu, OPCODE_CLRWDT) == DSPIC33_RUNNING && (rcon(cpu) & WDTO) != 0u,
+    expect(state, execute(cpu, OPCODE_CLRWDT) == DSPIC33_RUNNING && (rcon(cpu) & WDTO) != 0u,
            "CLRWDT does not clear sticky timeout cause");
 
     configure(cpu, WINDIS);
     dspic33_reset(cpu, 0u);
     configure(cpu, (uint8_t)(FWDTEN | WINDIS));
     dspic33_watchdog_advance_lprc(cpu, 32u);
-    expect(state, (rcon(cpu) & WDTO) != 0u,
-           "configuration enable takes effect without reset");
+    expect(state, (rcon(cpu) & WDTO) != 0u, "configuration enable takes effect without reset");
     dspic33_reset(cpu, 0u);
     dspic33_watchdog_advance_lprc(cpu, 7u);
     configure(cpu, WINDIS);
@@ -154,9 +148,8 @@ static void window_cases(TestState* state, Dspic33* cpu) {
         dspic33_reset(cpu, 0u);
         dspic33_watchdog_advance_lprc(cpu, threshold);
         expect(state,
-               execute(cpu, OPCODE_CLRWDT) == DSPIC33_RUNNING &&
-                   (rcon(cpu) & WDTO) == 0u && cpu->watchdog.ticks == 0u &&
-                   cpu->pc == 2u,
+               execute(cpu, OPCODE_CLRWDT) == DSPIC33_RUNNING && (rcon(cpu) & WDTO) == 0u &&
+                   cpu->watchdog.ticks == 0u && cpu->pc == 2u,
                "windowed clear at last-quarter boundary restarts counter");
     }
 
@@ -164,14 +157,13 @@ static void window_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     dspic33_watchdog_advance_lprc(cpu, 1u);
     expect(state,
-           execute(cpu, OPCODE_CLRWDT) == DSPIC33_RUNNING &&
-               cpu->watchdog.ticks == 0u && (rcon(cpu) & WDTO) == 0u,
+           execute(cpu, OPCODE_CLRWDT) == DSPIC33_RUNNING && cpu->watchdog.ticks == 0u &&
+               (rcon(cpu) & WDTO) == 0u,
            "nonwindowed clear is legal throughout period");
 
     configure(cpu, 0u);
     dspic33_reset(cpu, 0u);
-    expect(state,
-           execute(cpu, OPCODE_CLRWDT) == DSPIC33_RUNNING && (rcon(cpu) & WDTO) == 0u,
+    expect(state, execute(cpu, OPCODE_CLRWDT) == DSPIC33_RUNNING && (rcon(cpu) & WDTO) == 0u,
            "disabled windowed watchdog accepts clear");
 }
 
@@ -179,8 +171,7 @@ static void power_cases(TestState* state, Dspic33* cpu) {
     configure(cpu, (uint8_t)(FWDTEN | WINDIS));
     dspic33_reset(cpu, 0u);
     dspic33_watchdog_advance_lprc(cpu, 10u);
-    expect(state, execute(cpu, OPCODE_SLEEP) == DSPIC33_SLEEPING,
-           "PWRSAV enters Sleep");
+    expect(state, execute(cpu, OPCODE_SLEEP) == DSPIC33_SLEEPING, "PWRSAV enters Sleep");
     expect(state,
            cpu->power_state == DSPIC33_POWER_SLEEP && cpu->watchdog.ticks == 0u &&
                (rcon(cpu) & SLEEP) != 0u,
@@ -192,9 +183,8 @@ static void power_cases(TestState* state, Dspic33* cpu) {
            "watchdog continues counting in Sleep");
     dspic33_watchdog_advance_lprc(cpu, 1u);
     expect(state,
-           cpu->power_state == DSPIC33_POWER_ACTIVE &&
-               cpu->stop_reason == DSPIC33_RUNNING && cpu->pc == 2u &&
-               cpu->watchdog.ticks == 0u &&
+           cpu->power_state == DSPIC33_POWER_ACTIVE && cpu->stop_reason == DSPIC33_RUNNING &&
+               cpu->pc == 2u && cpu->watchdog.ticks == 0u &&
                (rcon(cpu) & (WDTO | SLEEP)) == (WDTO | SLEEP),
            "Sleep timeout wakes after PWRSAV without reset");
     expect(state, cpu->software_reset_count == 0u && cpu->illegal_reset_count == 0u,
@@ -212,8 +202,7 @@ static void power_cases(TestState* state, Dspic33* cpu) {
            "Idle entry clears watchdog counter");
     dspic33_watchdog_advance_lprc(cpu, 32u);
     expect(state,
-           cpu->power_state == DSPIC33_POWER_ACTIVE && cpu->pc == 2u &&
-               cpu->watchdog.ticks == 0u &&
+           cpu->power_state == DSPIC33_POWER_ACTIVE && cpu->pc == 2u && cpu->watchdog.ticks == 0u &&
                (rcon(cpu) & (WDTO | IDLE)) == (WDTO | IDLE),
            "Idle timeout wakes after PWRSAV without reset");
 
@@ -223,8 +212,7 @@ static void power_cases(TestState* state, Dspic33* cpu) {
     execute(cpu, OPCODE_IDLE);
     dspic33_watchdog_advance_lprc(cpu, 32u);
     expect(state,
-           cpu->power_state == DSPIC33_POWER_ACTIVE &&
-               dspic33_read_word(cpu, 0x0744u) == 0x9800u,
+           cpu->power_state == DSPIC33_POWER_ACTIVE && dspic33_read_word(cpu, 0x0744u) == 0x9800u,
            "watchdog wake preserves DOZE and ROI state");
 
     dspic33_reset(cpu, 0u);
@@ -238,8 +226,8 @@ static void power_cases(TestState* state, Dspic33* cpu) {
     dspic33_raise_interrupt(cpu, 3u);
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->interrupt_count == 1u &&
-               cpu->last_interrupt == 3u && cpu->pc == 0x0302u &&
-               cpu->trap_count == 0u && !cpu->illegal_reset,
+               cpu->last_interrupt == 3u && cpu->pc == 0x0302u && cpu->trap_count == 0u &&
+               !cpu->illegal_reset,
            "interrupt wakes processor from Idle");
     expect(state, cpu->power_state == DSPIC33_POWER_ACTIVE && cpu->watchdog.ticks == 0u,
            "interrupt wake clears watchdog counter");
@@ -269,8 +257,7 @@ static void lifecycle_cases(TestState* state, Dspic33* source, Dspic33* copy) {
            dspic33_schedule(source, DSPIC33_EVENT_OSCILLATOR, 0u, 1u, 1u) &&
                dspic33_device_advance(source, 1u),
            "clock switch completion event executes");
-    expect(state, source->watchdog.ticks == 0u,
-           "clock switch completion clears watchdog counter");
+    expect(state, source->watchdog.ticks == 0u, "clock switch completion clears watchdog counter");
 
     dspic33_watchdog_advance_lprc(source, 11u);
     dspic33_reset(copy, 0u);
@@ -284,8 +271,7 @@ static void lifecycle_cases(TestState* state, Dspic33* source, Dspic33* copy) {
     expect(state, (rcon(source) & WDTO) != 0u && (rcon(copy) & WDTO) == 0u,
            "source timeout does not affect copied watchdog");
     dspic33_watchdog_advance_lprc(copy, 14u);
-    expect(state, (rcon(copy) & WDTO) != 0u,
-           "copied watchdog reaches its independent timeout");
+    expect(state, (rcon(copy) & WDTO) != 0u, "copied watchdog reaches its independent timeout");
 
     dspic33_reset(source, 0u);
     dspic33_watchdog_advance_lprc(source, 9u);
@@ -308,8 +294,7 @@ static void nvm_cases(TestState* state, Dspic33* cpu) {
     expect(state, cpu->watchdog.reset_pending, "active NVM defers watchdog reset");
     expect(state, cpu->nvm.active && cpu->pc == 0x0020u && (rcon(cpu) & WDTO) == 0u,
            "deferred timeout leaves NVM and CPU state intact");
-    expect(state, dspic33_device_advance(cpu, 1u),
-           "NVM remains active before completion");
+    expect(state, dspic33_device_advance(cpu, 1u), "NVM remains active before completion");
     expect(state, cpu->watchdog.reset_pending && cpu->pc == 0x0020u,
            "deferred reset remains pending before NVM completion");
     expect(state, dspic33_device_advance(cpu, 1u), "NVM completion executes");

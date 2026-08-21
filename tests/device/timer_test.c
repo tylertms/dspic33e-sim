@@ -18,8 +18,7 @@ static const uint16_t timer_controls[DSPIC33_TIMER_COUNT] = {
 static const uint16_t timer_holding_registers[4] = {0x0108u, 0x0116u, 0x0124u, 0x0132u};
 static const uint16_t timer_masks[DSPIC33_TIMER_COUNT] = {
     0xa076u, 0xa07au, 0xa072u, 0xa07au, 0xa072u, 0xa07au, 0xa072u, 0xa07au, 0xa072u};
-static const uint8_t timer_irqs[DSPIC33_TIMER_COUNT] = {3u,  7u,  8u,  27u, 28u,
-                                                        47u, 48u, 51u, 52u};
+static const uint8_t timer_irqs[DSPIC33_TIMER_COUNT] = {3u, 7u, 8u, 27u, 28u, 47u, 48u, 51u, 52u};
 
 static uint16_t stored_word(const Dspic33* cpu, uint16_t address) {
     return (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[address + 1u] << 8u));
@@ -35,12 +34,11 @@ static void clear_interrupt(Dspic33* cpu, uint8_t timer) {
     uint8_t irq = timer_irqs[timer];
     uint16_t address = (uint16_t)(0x0800u + (irq / 16u) * 2u);
     uint16_t bit = (uint16_t)(1u << (irq % 16u));
-    dspic33_write_word(cpu, address,
-                       (uint16_t)(dspic33_read_word(cpu, address) & ~bit));
+    dspic33_write_word(cpu, address, (uint16_t)(dspic33_read_word(cpu, address) & ~bit));
 }
 
-static void configure_16_bit(Dspic33* cpu, uint8_t timer, uint16_t counter,
-                             uint16_t period, uint16_t control) {
+static void configure_16_bit(Dspic33* cpu, uint8_t timer, uint16_t counter, uint16_t period,
+                             uint16_t control) {
     dspic33_write_word(cpu, timer_controls[timer], 0u);
     dspic33_write_word(cpu, timer_registers[timer], counter);
     dspic33_write_word(cpu, timer_periods[timer], period);
@@ -48,8 +46,7 @@ static void configure_16_bit(Dspic33* cpu, uint8_t timer, uint16_t counter,
     dspic33_write_word(cpu, timer_controls[timer], (uint16_t)(control | 0x8000u));
 }
 
-static void configure_dma(Dspic33* cpu, uint8_t request, uint16_t source,
-                          uint16_t destination) {
+static void configure_dma(Dspic33* cpu, uint8_t request, uint16_t source, uint16_t destination) {
     dspic33_write_word(cpu, 0x0b00u, 0u);
     dspic33_write_word(cpu, 0x0b02u, request);
     dspic33_write_word(cpu, 0x0b04u, source);
@@ -64,27 +61,22 @@ static void register_cases(TestState* state, Dspic33* cpu) {
     uint8_t pair;
     dspic33_reset(cpu, 0u);
     for (timer = 0u; timer < DSPIC33_TIMER_COUNT; timer++) {
-        expect(state, dspic33_read_word(cpu, timer_periods[timer]) == 0xffffu,
-               "period reset");
-        expect(state, dspic33_read_word(cpu, timer_controls[timer]) == 0u,
-               "control reset");
+        expect(state, dspic33_read_word(cpu, timer_periods[timer]) == 0xffffu, "period reset");
+        expect(state, dspic33_read_word(cpu, timer_controls[timer]) == 0u, "control reset");
         dspic33_write_word(cpu, timer_controls[timer], 0xffffu);
-        expect(state,
-               dspic33_read_word(cpu, timer_controls[timer]) == timer_masks[timer],
+        expect(state, dspic33_read_word(cpu, timer_controls[timer]) == timer_masks[timer],
                "control mask");
         dspic33_write_word(cpu, timer_controls[timer], 0u);
         dspic33_write_word(cpu, timer_registers[timer], 0x5aa5u);
         dspic33_write_word(cpu, timer_periods[timer], 0xa55au);
         expect(state, dspic33_read_word(cpu, timer_registers[timer]) == 0x5aa5u,
                "counter read write");
-        expect(state, dspic33_read_word(cpu, timer_periods[timer]) == 0xa55au,
-               "period read write");
+        expect(state, dspic33_read_word(cpu, timer_periods[timer]) == 0xa55au, "period read write");
     }
     for (pair = 0u; pair < 4u; pair++) {
         dspic33_write_word(cpu, timer_holding_registers[pair], 0xa500u + pair);
         expect(state,
-               dspic33_read_word(cpu, timer_holding_registers[pair]) ==
-                   (uint16_t)(0xa500u + pair),
+               dspic33_read_word(cpu, timer_holding_registers[pair]) == (uint16_t)(0xa500u + pair),
                "holding register read write");
     }
 }
@@ -95,12 +87,10 @@ static void internal_counting_cases(TestState* state, Dspic33* cpu) {
         dspic33_reset(cpu, 0u);
         configure_16_bit(cpu, timer, 0u, 9u, 0u);
         expect(state, dspic33_device_advance(cpu, 8u), "advance before match");
-        expect(state, dspic33_read_word(cpu, timer_registers[timer]) == 8u,
-               "counter before match");
+        expect(state, dspic33_read_word(cpu, timer_registers[timer]) == 8u, "counter before match");
         expect(state, !interrupt_flag(cpu, timer), "no early interrupt");
         expect(state, dspic33_device_advance(cpu, 1u), "advance to match");
-        expect(state, dspic33_read_word(cpu, timer_registers[timer]) == 9u,
-               "counter holds period");
+        expect(state, dspic33_read_word(cpu, timer_registers[timer]) == 9u, "counter holds period");
         expect(state, !interrupt_flag(cpu, timer), "interrupt delayed after match");
         expect(state, dspic33_device_advance(cpu, 1u), "advance after match");
         expect(state, dspic33_read_word(cpu, timer_registers[timer]) == 0u,
@@ -110,8 +100,7 @@ static void internal_counting_cases(TestState* state, Dspic33* cpu) {
         expect(state, dspic33_device_advance(cpu, 25u), "advance multiple periods");
         expect(state, interrupt_flag(cpu, timer),
                "multiple period advance observes elapsed interrupt delay");
-        expect(state, dspic33_device_advance(cpu, 1u),
-               "advance after multiple periods");
+        expect(state, dspic33_device_advance(cpu, 1u), "advance after multiple periods");
         expect(state, dspic33_read_word(cpu, timer_registers[timer]) == 6u,
                "multiple period remainder");
         expect(state, interrupt_flag(cpu, timer), "multiple period interrupt");
@@ -175,12 +164,9 @@ static void interrupt_delay_cases(TestState* state, Dspic33* cpu) {
     for (timer = 0u; timer < DSPIC33_TIMER_COUNT; timer++) {
         dspic33_reset(cpu, 0u);
         configure_16_bit(cpu, timer, 0u, 10u, 0u);
-        expect(state, dspic33_device_advance(cpu, 10u),
-               "advance timer to period match");
-        expect(state, !interrupt_flag(cpu, timer),
-               "timer interrupt remains clear at period match");
-        expect(state, dspic33_device_advance(cpu, 1u),
-               "advance timer interrupt instruction delay");
+        expect(state, dspic33_device_advance(cpu, 10u), "advance timer to period match");
+        expect(state, !interrupt_flag(cpu, timer), "timer interrupt remains clear at period match");
+        expect(state, dspic33_device_advance(cpu, 1u), "advance timer interrupt instruction delay");
         expect(state, interrupt_flag(cpu, timer),
                "timer interrupt sets one instruction cycle after match");
 
@@ -233,8 +219,7 @@ static void gate_cases(TestState* state, Dspic33* cpu) {
         expect(state, dspic33_timer_gate(cpu, timer, true, 0u), "queue open gate");
         expect(state, dspic33_device_advance(cpu, 0u), "open gate");
         expect(state, dspic33_device_advance(cpu, 5u), "advance open gate");
-        expect(state, dspic33_read_word(cpu, timer_registers[timer]) == 5u,
-               "open gate counts");
+        expect(state, dspic33_read_word(cpu, timer_registers[timer]) == 5u, "open gate counts");
         expect(state, !interrupt_flag(cpu, timer), "open gate no interrupt");
         expect(state, dspic33_timer_gate(cpu, timer, false, 0u), "queue close gate");
         expect(state, dspic33_device_advance(cpu, 0u), "close gate");
@@ -247,8 +232,7 @@ static void gate_cases(TestState* state, Dspic33* cpu) {
         dspic33_device_advance(cpu, 3u);
         expect(state, dspic33_read_word(cpu, timer_registers[timer]) == 0u,
                "gated timer resets after period");
-        expect(state, !interrupt_flag(cpu, timer),
-               "gated period does not raise interrupt");
+        expect(state, !interrupt_flag(cpu, timer), "gated period does not raise interrupt");
         dspic33_timer_gate(cpu, timer, false, 0u);
         dspic33_device_advance(cpu, 0u);
         expect(state, interrupt_flag(cpu, timer),
@@ -263,8 +247,7 @@ static void external_clock_cases(TestState* state, Dspic33* cpu) {
         uint32_t pulses_to_match = expected_first == 0u ? 3u : 2u;
         dspic33_reset(cpu, 0u);
         configure_16_bit(cpu, timer, 0u, 2u, 0x0002u);
-        expect(state, dspic33_timer_pulse(cpu, timer, 1u, 0u),
-               "queue first external edge");
+        expect(state, dspic33_timer_pulse(cpu, timer, 1u, 0u), "queue first external edge");
         expect(state, dspic33_device_advance(cpu, 0u), "apply first external edge");
         expect(state, dspic33_read_word(cpu, timer_registers[timer]) == expected_first,
                "external first edge behavior");
@@ -276,15 +259,13 @@ static void external_clock_cases(TestState* state, Dspic33* cpu) {
         expect(state, dspic33_read_word(cpu, timer_registers[timer]) == 2u,
                "external counter reaches period");
         expect(state, !interrupt_flag(cpu, timer), "external match interrupt delayed");
-        expect(state, dspic33_timer_pulse(cpu, timer, 1u, 0u),
-               "queue external reset edge");
+        expect(state, dspic33_timer_pulse(cpu, timer, 1u, 0u), "queue external reset edge");
         expect(state, dspic33_device_advance(cpu, 0u), "apply external reset edge");
         expect(state, dspic33_read_word(cpu, timer_registers[timer]) == 0u,
                "external counter resets");
         expect(state, !interrupt_flag(cpu, timer),
                "external interrupt waits for instruction cycle");
-        expect(state, dspic33_device_advance(cpu, 1u),
-               "advance external interrupt delay");
+        expect(state, dspic33_device_advance(cpu, 1u), "advance external interrupt delay");
         expect(state, interrupt_flag(cpu, timer), "external period interrupt");
 
         dspic33_reset(cpu, 0u);
@@ -292,8 +273,7 @@ static void external_clock_cases(TestState* state, Dspic33* cpu) {
         dspic33_timer_pulse(cpu, timer, 4u, 0u);
         dspic33_device_advance(cpu, 0u);
         expect(state,
-               dspic33_read_word(cpu, timer_registers[timer]) ==
-                   (uint16_t)(expected_first + 3u),
+               dspic33_read_word(cpu, timer_registers[timer]) == (uint16_t)(expected_first + 3u),
                "counter mode ignores gate selection");
     }
 }
@@ -303,22 +283,18 @@ static void delayed_event_cases(TestState* state, Dspic33* cpu) {
     configure_16_bit(cpu, 2u, 0u, 100u, 0x0002u);
     expect(state, dspic33_timer_pulse(cpu, 2u, 4u, 5u), "queue delayed pulses");
     expect(state, dspic33_device_advance(cpu, 4u), "advance before delayed pulses");
-    expect(state, dspic33_read_word(cpu, timer_registers[2]) == 0u,
-           "delayed pulses remain queued");
+    expect(state, dspic33_read_word(cpu, timer_registers[2]) == 0u, "delayed pulses remain queued");
     expect(state, dspic33_device_advance(cpu, 1u), "advance to delayed pulses");
-    expect(state, dspic33_read_word(cpu, timer_registers[2]) == 4u,
-           "delayed pulses apply");
+    expect(state, dspic33_read_word(cpu, timer_registers[2]) == 4u, "delayed pulses apply");
 
     dspic33_reset(cpu, 0u);
     configure_16_bit(cpu, 0u, 0u, 100u, 0x0040u);
     expect(state, dspic33_timer_gate(cpu, 0u, true, 3u), "queue delayed gate");
     dspic33_device_advance(cpu, 2u);
-    expect(state, dspic33_read_word(cpu, timer_registers[0]) == 0u,
-           "delayed gate stays closed");
+    expect(state, dspic33_read_word(cpu, timer_registers[0]) == 0u, "delayed gate stays closed");
     dspic33_device_advance(cpu, 1u);
     dspic33_device_advance(cpu, 2u);
-    expect(state, dspic33_read_word(cpu, timer_registers[0]) == 2u,
-           "delayed gate opens");
+    expect(state, dspic33_read_word(cpu, timer_registers[0]) == 2u, "delayed gate opens");
 }
 
 static void pps_input_cases(TestState* state, Dspic33* cpu) {
@@ -334,17 +310,14 @@ static void pps_input_cases(TestState* state, Dspic33* cpu) {
         dspic33_gpio_drive(cpu, 3u, 0u, 1u);
         dspic33_write_word(cpu, mapping_address, selection);
         configure_16_bit(cpu, timer, 0u, 100u, 0x0002u);
-        expect(state, dspic33_gpio_drive(cpu, 3u, 1u, 1u),
-               "drive timer PPS input high");
+        expect(state, dspic33_gpio_drive(cpu, 3u, 1u, 1u), "drive timer PPS input high");
         expect(state, dspic33_read_word(cpu, timer_registers[timer]) == first_count,
                "timer PPS first-edge rule follows timer type");
         expect(state, dspic33_gpio_drive(cpu, 3u, 0u, 1u), "drive timer PPS input low");
-        expect(state, dspic33_gpio_drive(cpu, 3u, 1u, 1u),
-               "drive second timer PPS edge");
+        expect(state, dspic33_gpio_drive(cpu, 3u, 1u, 1u), "drive second timer PPS edge");
         expect(state, dspic33_read_word(cpu, timer_registers[timer]) == second_count,
                "timer PPS rising edge counts");
-        expect(state, dspic33_gpio_drive(cpu, 3u, 1u, 1u),
-               "repeat stable timer PPS level");
+        expect(state, dspic33_gpio_drive(cpu, 3u, 1u, 1u), "repeat stable timer PPS level");
         expect(state, dspic33_read_word(cpu, timer_registers[timer]) == second_count,
                "stable timer PPS level does not recount");
 
@@ -389,8 +362,7 @@ static void pps_input_cases(TestState* state, Dspic33* cpu) {
     configure_16_bit(cpu, 1u, 0u, 100u, 0x0040u);
     dspic33_gpio_drive(cpu, 3u, 1u, 1u);
     dspic33_device_advance(cpu, 5u);
-    expect(state, dspic33_read_word(cpu, timer_registers[1]) == 5u,
-           "timer PPS gate high counts");
+    expect(state, dspic33_read_word(cpu, timer_registers[1]) == 5u, "timer PPS gate high counts");
     dspic33_gpio_drive(cpu, 3u, 0u, 1u);
     expect(state, interrupt_flag(cpu, 1u), "timer PPS falling gate raises interrupt");
     dspic33_device_advance(cpu, 5u);
@@ -403,8 +375,7 @@ static void timer1_pin_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0e2eu, 0x4000u);
     dspic33_gpio_drive(cpu, 2u, 0u, 0x4000u);
     configure_16_bit(cpu, 0u, 0u, 100u, 0x0002u);
-    expect(state, dspic33_gpio_drive(cpu, 2u, 0x4000u, 0x4000u),
-           "drive fixed Timer1 input high");
+    expect(state, dspic33_gpio_drive(cpu, 2u, 0x4000u, 0x4000u), "drive fixed Timer1 input high");
     expect(state, dspic33_read_word(cpu, timer_registers[0]) == 0u,
            "fixed Timer1 first edge synchronizes");
     dspic33_gpio_drive(cpu, 2u, 0u, 0x4000u);
@@ -443,18 +414,14 @@ static void pps_event_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x06a6u, 64u);
     configure_16_bit(cpu, 1u, 0u, 100u, 0x0002u);
     expect(state,
-           dspic33_input_capture_pin(cpu, 64u, false, 0u) &&
-               dspic33_device_advance(cpu, 0u) &&
-               dspic33_input_capture_pin(cpu, 64u, true, 0u) &&
-               dspic33_device_advance(cpu, 1u),
+           dspic33_input_capture_pin(cpu, 64u, false, 0u) && dspic33_device_advance(cpu, 0u) &&
+               dspic33_input_capture_pin(cpu, 64u, true, 0u) && dspic33_device_advance(cpu, 1u),
            "PPS event API drives first Timer2 edge");
     expect(state, dspic33_read_word(cpu, timer_registers[1]) == 0u,
            "PPS event API follows Type B synchronization");
     expect(state,
-           dspic33_input_capture_pin(cpu, 64u, false, 0u) &&
-               dspic33_device_advance(cpu, 0u) &&
-               dspic33_input_capture_pin(cpu, 64u, true, 0u) &&
-               dspic33_device_advance(cpu, 1u),
+           dspic33_input_capture_pin(cpu, 64u, false, 0u) && dspic33_device_advance(cpu, 0u) &&
+               dspic33_input_capture_pin(cpu, 64u, true, 0u) && dspic33_device_advance(cpu, 1u),
            "PPS event API drives second Timer2 edge");
     expect(state, dspic33_read_word(cpu, timer_registers[1]) == 1u,
            "PPS event API clocks mapped timer");
@@ -463,10 +430,8 @@ static void pps_event_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0e2eu, 0u);
     configure_16_bit(cpu, 0u, 0u, 100u, 0x0002u);
     expect(state,
-           dspic33_input_capture_pin(cpu, 62u, false, 0u) &&
-               dspic33_device_advance(cpu, 0u) &&
-               dspic33_input_capture_pin(cpu, 62u, true, 0u) &&
-               dspic33_device_advance(cpu, 1u),
+           dspic33_input_capture_pin(cpu, 62u, false, 0u) && dspic33_device_advance(cpu, 0u) &&
+               dspic33_input_capture_pin(cpu, 62u, true, 0u) && dspic33_device_advance(cpu, 1u),
            "PPS event API drives fixed Timer1 edge");
     expect(state, dspic33_read_word(cpu, timer_registers[0]) == 0u,
            "fixed Timer1 event follows synchronization rule");
@@ -515,8 +480,7 @@ static void paired_timer_cases(TestState* state, Dspic33* cpu) {
                "paired counter holds period");
         expect(state, !interrupt_flag(cpu, high), "paired interrupt delayed");
         expect(state, dspic33_device_advance(cpu, 1u), "advance paired after match");
-        expect(state, dspic33_read_word(cpu, timer_registers[low]) == 0u,
-               "paired counter resets");
+        expect(state, dspic33_read_word(cpu, timer_registers[low]) == 0u, "paired counter resets");
         expect(state, !interrupt_flag(cpu, low) && interrupt_flag(cpu, high),
                "paired counter uses high interrupt");
 
@@ -560,8 +524,7 @@ static void paired_mode_cases(TestState* state, Dspic33* cpu) {
         expect(state, !interrupt_flag(cpu, high),
                "paired external interrupt waits for instruction cycle");
         dspic33_device_advance(cpu, 1u);
-        expect(state, interrupt_flag(cpu, high),
-               "paired external counter uses high interrupt");
+        expect(state, interrupt_flag(cpu, high), "paired external counter uses high interrupt");
 
         dspic33_reset(cpu, 0u);
         dspic33_write_word(cpu, timer_periods[low], 100u);
@@ -577,8 +540,7 @@ static void paired_mode_cases(TestState* state, Dspic33* cpu) {
                "paired open gate counts");
         dspic33_timer_gate(cpu, low, false, 0u);
         dspic33_device_advance(cpu, 0u);
-        expect(state, interrupt_flag(cpu, high),
-               "paired falling gate uses high interrupt");
+        expect(state, interrupt_flag(cpu, high), "paired falling gate uses high interrupt");
 
         dspic33_reset(cpu, 0u);
         dspic33_write_word(cpu, timer_periods[low], 0u);
@@ -591,8 +553,7 @@ static void paired_mode_cases(TestState* state, Dspic33* cpu) {
                dspic33_read_word(cpu, timer_registers[low]) == 0u &&
                    dspic33_read_word(cpu, timer_registers[high]) == 0u,
                "paired zero period holds zero");
-        expect(state, !interrupt_flag(cpu, high),
-               "paired zero period suppresses interrupt");
+        expect(state, !interrupt_flag(cpu, high), "paired zero period suppresses interrupt");
     }
 }
 
@@ -603,15 +564,13 @@ static void power_mode_cases(TestState* state, Dspic33* cpu) {
         configure_16_bit(cpu, timer, 0u, 100u, 0u);
         cpu->power_state = DSPIC33_POWER_IDLE;
         dspic33_device_advance(cpu, 3u);
-        expect(state, dspic33_read_word(cpu, timer_registers[timer]) == 3u,
-               "timer runs in idle");
+        expect(state, dspic33_read_word(cpu, timer_registers[timer]) == 3u, "timer runs in idle");
 
         dspic33_reset(cpu, 0u);
         configure_16_bit(cpu, timer, 0u, 100u, 0x2000u);
         cpu->power_state = DSPIC33_POWER_IDLE;
         dspic33_device_advance(cpu, 3u);
-        expect(state, dspic33_read_word(cpu, timer_registers[timer]) == 0u,
-               "timer stops in idle");
+        expect(state, dspic33_read_word(cpu, timer_registers[timer]) == 0u, "timer stops in idle");
 
         dspic33_reset(cpu, 0u);
         configure_16_bit(cpu, timer, 0u, 100u, 0u);
@@ -657,8 +616,7 @@ static void pmd_cases(TestState* state, Dspic33* cpu) {
         dspic33_write_word(cpu, 0x0760u, pmd_mask);
         expect(state, cpu->io.timer_pmd_disabled == 0u,
                "timer PMD request waits one instruction cycle");
-        expect(state, dspic33_device_advance(cpu, 1u),
-               "advance timer PMD disable boundary");
+        expect(state, dspic33_device_advance(cpu, 1u), "advance timer PMD disable boundary");
         expect(state,
                cpu->io.timer_pmd_disabled == (uint16_t)(1u << timer) &&
                    dspic33_read_word(cpu, timer_controls[timer]) == 0u &&
@@ -673,8 +631,7 @@ static void pmd_cases(TestState* state, Dspic33* cpu) {
                    stored_word(cpu, timer_periods[timer]) == 100u,
                "timer PMD blocks writes and holds counter");
         dspic33_write_word(cpu, 0x0760u, 0u);
-        expect(state, dspic33_device_advance(cpu, 1u),
-               "advance timer PMD enable boundary");
+        expect(state, dspic33_device_advance(cpu, 1u), "advance timer PMD enable boundary");
         expect(state,
                cpu->io.timer_pmd_disabled == 0u &&
                    dspic33_read_word(cpu, timer_registers[timer]) == 1u,
@@ -690,8 +647,7 @@ static void pmd_cases(TestState* state, Dspic33* cpu) {
     dspic33_device_advance(cpu, 1u);
     dspic33_device_advance(cpu, 2u);
     expect(state,
-           cpu->io.timer_pmd_disabled == 0x0002u &&
-               stored_word(cpu, timer_registers[1]) == 1u,
+           cpu->io.timer_pmd_disabled == 0x0002u && stored_word(cpu, timer_registers[1]) == 1u,
            "paired timer stops when low timer is PMD-disabled");
 
     dspic33_reset(cpu, 0u);
@@ -700,8 +656,7 @@ static void pmd_cases(TestState* state, Dspic33* cpu) {
     dspic33_device_advance(cpu, 1u);
     dspic33_device_advance(cpu, 2u);
     expect(state,
-           cpu->io.timer_pmd_disabled == 0x0004u &&
-               stored_word(cpu, timer_registers[1]) == 1u,
+           cpu->io.timer_pmd_disabled == 0x0004u && stored_word(cpu, timer_registers[1]) == 1u,
            "paired timer stops when high timer is PMD-disabled");
 
     dspic33_reset(cpu, 0u);
@@ -710,13 +665,10 @@ static void pmd_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0760u, 0x0800u);
     dspic33_device_advance(cpu, 7u);
     expect(state,
-           cpu->io.timer_pmd_disabled == 0u &&
-               dspic33_read_word(cpu, timer_registers[0]) == 7u,
+           cpu->io.timer_pmd_disabled == 0u && dspic33_read_word(cpu, timer_registers[0]) == 7u,
            "DOZE scales timer PMD instruction boundary");
     dspic33_device_advance(cpu, 1u);
-    expect(state,
-           cpu->io.timer_pmd_disabled == 1u &&
-               stored_word(cpu, timer_registers[0]) == 8u,
+    expect(state, cpu->io.timer_pmd_disabled == 1u && stored_word(cpu, timer_registers[0]) == 8u,
            "timer PMD completes at divided instruction boundary");
 
     dspic33_reset(cpu, 0u);
@@ -733,15 +685,13 @@ static void pmd_cases(TestState* state, Dspic33* cpu) {
     cpu->io.timer_pmd_generation[0] = 0x7fffu;
     dspic33_write_word(cpu, 0x0760u, 0x0800u);
     expect(state,
-           dspic33_device_advance(cpu, 1u) &&
-               cpu->io.timer_pmd_generation[0] == 0x8000u &&
+           dspic33_device_advance(cpu, 1u) && cpu->io.timer_pmd_generation[0] == 0x8000u &&
                cpu->io.timer_pmd_disabled == 0x0001u && cpu->events.count == 0u,
            "timer PMD disable applies across the high generation bit");
     cpu->io.timer_pmd_generation[0] = 0x7fffu;
     dspic33_write_word(cpu, 0x0760u, 0u);
     expect(state,
-           dspic33_device_advance(cpu, 1u) &&
-               cpu->io.timer_pmd_generation[0] == 0x8000u &&
+           dspic33_device_advance(cpu, 1u) && cpu->io.timer_pmd_generation[0] == 0x8000u &&
                cpu->io.timer_pmd_disabled == 0u && cpu->events.count == 0u,
            "timer PMD enable applies across the high generation bit");
 
@@ -759,8 +709,7 @@ static void pmd_cases(TestState* state, Dspic33* cpu) {
     cpu->device_cycles = UINT64_MAX;
     dspic33_write_word(cpu, 0x0760u, 0x0800u);
     expect(state,
-           cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR &&
-               dspic33_read_word(cpu, 0x0760u) == 0u &&
+           cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR && dspic33_read_word(cpu, 0x0760u) == 0u &&
                cpu->io.timer_pmd_disabled == 0u && cpu->events.count == 0u,
            "timer PMD scheduling failure rolls back request");
 }
@@ -770,8 +719,7 @@ static void doze_interrupt_delay_cases(TestState* state, Dspic33* cpu) {
     configure_16_bit(cpu, 0u, 0u, 4u, 0u);
     expect(state, dspic33_device_advance_instruction(cpu, 1u, 8u),
            "advance divided instruction across timer match");
-    expect(state,
-           dspic33_read_word(cpu, timer_registers[0]) == 3u && !interrupt_flag(cpu, 0u),
+    expect(state, dspic33_read_word(cpu, timer_registers[0]) == 3u && !interrupt_flag(cpu, 0u),
            "timer interrupt delay uses CPU instruction domain under DOZE");
     expect(state, dspic33_device_advance_instruction(cpu, 1u, 8u),
            "advance next divided instruction");
@@ -814,8 +762,7 @@ static void dma_trigger_cases(TestState* state, Dspic33* cpu) {
         expect(state,
                stored_word(cpu, TIMER_DMA_WRITE_PAD) ==
                        (supported ? (uint16_t)(0x5100u + timer) : 0u) &&
-                   cpu->io.dma_index[0] == 0u &&
-                   ((cpu->io.dma_active & 1u) != 0u) == supported,
+                   cpu->io.dma_index[0] == 0u && ((cpu->io.dma_active & 1u) != 0u) == supported,
                supported ? "TMR2 through TMR5 period requests DMA"
                          : "unsupported timer period does not request DMA");
         expect(state, !interrupt_flag(cpu, timer), "timer DMA precedes interrupt flag");
@@ -833,8 +780,7 @@ static void copy_cases(TestState* state, Dspic33* cpu) {
     configure_16_bit(cpu, 1u, 7u, 100u, 0x0012u);
     dspic33_timer_gate(cpu, 1u, true, 4u);
     expect(state, dspic33_copy(&copy, cpu), "copy timer state");
-    expect(state, copy.io.timer_enabled == cpu->io.timer_enabled,
-           "copy timer enabled state");
+    expect(state, copy.io.timer_enabled == cpu->io.timer_enabled, "copy timer enabled state");
     expect(state, copy.io.timer_fraction[1] == cpu->io.timer_fraction[1],
            "copy timer prescaler state");
     expect(state, copy.events.count == cpu->events.count, "copy timer events");
@@ -856,8 +802,7 @@ static void copy_cases(TestState* state, Dspic33* cpu) {
     dspic33_load_program_word(cpu, 0u, RESET_OPCODE);
     cpu->pc = 0u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_read_word(cpu, 0x0760u) == 0u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_read_word(cpu, 0x0760u) == 0u &&
                cpu->io.timer_pmd_disabled == 0u && cpu->events.count == 0u,
            "warm reset cancels timer PMD transition");
 
@@ -882,8 +827,8 @@ static void api_failure_cases(TestState* state, Dspic33* cpu) {
            "timer APIs reject invalid requests");
     cpu->device_cycles = UINT64_MAX;
     expect(state,
-           !dspic33_timer_pulse(cpu, 0u, 1u, 1u) &&
-               !dspic33_timer_gate(cpu, 0u, true, 1u) && cpu->events.count == 0u,
+           !dspic33_timer_pulse(cpu, 0u, 1u, 1u) && !dspic33_timer_gate(cpu, 0u, true, 1u) &&
+               cpu->events.count == 0u,
            "timer APIs reject overflowing deadlines");
 }
 

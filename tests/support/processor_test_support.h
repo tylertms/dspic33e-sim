@@ -213,16 +213,13 @@ enum {
 
 static inline void load_instruction(TestState* state, Dspic33* cpu, uint32_t address,
                                     uint32_t opcode) {
-    expect(state, dspic33_load_program_word(cpu, address, opcode),
-           "load processor instruction");
+    expect(state, dspic33_load_program_word(cpu, address, opcode), "load processor instruction");
 }
 
-static inline void expect_step_cycles(TestState* state, Dspic33* cpu,
-                                      uint64_t expected_cycles, const char* name) {
+static inline void expect_step_cycles(TestState* state, Dspic33* cpu, uint64_t expected_cycles,
+                                      const char* name) {
     uint64_t before = cpu->cycles;
-    expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING &&
-               cpu->cycles - before == expected_cycles,
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles - before == expected_cycles,
            name);
 }
 
@@ -234,8 +231,7 @@ static inline void reset_processor_test(Dspic33* cpu, uint32_t entry) {
     }
 }
 
-static inline void expect_illegal_reset(TestState* state, Dspic33* cpu,
-                                        const char* execution) {
+static inline void expect_illegal_reset(TestState* state, Dspic33* cpu, const char* execution) {
     uint8_t reg;
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, execution);
     expect(state,
@@ -243,14 +239,13 @@ static inline void expect_illegal_reset(TestState* state, Dspic33* cpu,
                cpu->software_reset_count == 0u && cpu->pc == 0u,
            "illegal condition performs warm reset");
     expect(state,
-           (dspic33_read_word(cpu, 0x0740u) & 0x4000u) != 0u &&
-               cpu->last_trap == UINT16_MAX && cpu->trap_count == 0u,
+           (dspic33_read_word(cpu, 0x0740u) & 0x4000u) != 0u && cpu->last_trap == UINT16_MAX &&
+               cpu->trap_count == 0u,
            "illegal condition records reset without trap");
     for (reg = 0u; reg < 15u; reg++) {
         expect(state, cpu->w[reg] == 0u, "illegal reset clears working register");
     }
-    expect(state,
-           cpu->w[15] == 0x1000u && cpu->initialized_working_registers == 0x8000u,
+    expect(state, cpu->w[15] == 0x1000u && cpu->initialized_working_registers == 0x8000u,
            "illegal reset restores stack and initialization state");
 }
 
@@ -267,11 +262,9 @@ static inline void prepare_address_trap(TestState* state, Dspic33* cpu) {
     cpu->stop_on_trap = true;
 }
 
-static inline void expect_address_trap(TestState* state, Dspic33* cpu,
-                                       const char* execution) {
+static inline void expect_address_trap(TestState* state, Dspic33* cpu, const char* execution) {
     expect(state, dspic33_step(cpu) == DSPIC33_TRAPPED, execution);
-    expect(state,
-           cpu->last_trap == 1u && cpu->last_trap_return == 2u && cpu->pc == 0x000340u,
+    expect(state, cpu->last_trap == 1u && cpu->last_trap_return == 2u && cpu->pc == 0x000340u,
            "address error enters hard trap");
     expect(state,
            (dspic33_read_word(cpu, 0x08c0u) & 0x0008u) != 0u &&
@@ -290,20 +283,18 @@ static inline uint16_t active_pending_traps(const Dspic33* cpu) {
     return count;
 }
 
-static inline const Dspic33PendingSoftTrap* pending_trap(const Dspic33* cpu,
-                                                         uint16_t trap) {
+static inline const Dspic33PendingSoftTrap* pending_trap(const Dspic33* cpu, uint16_t trap) {
     size_t index;
     for (index = 0u; index < 4u; index++) {
-        if (cpu->pending_soft_traps[index].active &&
-            cpu->pending_soft_traps[index].trap == trap) {
+        if (cpu->pending_soft_traps[index].active && cpu->pending_soft_traps[index].trap == trap) {
             return &cpu->pending_soft_traps[index];
         }
     }
     return NULL;
 }
 
-static inline void expect_dsp_matrix_case(TestState* state, bool condition,
-                                          uint32_t opcode, const char* domain) {
+static inline void expect_dsp_matrix_case(TestState* state, bool condition, uint32_t opcode,
+                                          const char* domain) {
     state->cases++;
     if (condition) {
         state->passed++;
@@ -313,8 +304,7 @@ static inline void expect_dsp_matrix_case(TestState* state, bool condition,
     printf("[processor-failed] %s opcode=%06" PRIx32 "\n", domain, opcode);
 }
 
-static inline void run_invalid_binary_matrix_case(TestState* state, Dspic33* cpu,
-                                                  uint32_t opcode) {
+static inline void run_invalid_binary_matrix_case(TestState* state, Dspic33* cpu, uint32_t opcode) {
     uint64_t illegal_resets;
     bool matches;
     uint8_t reg;
@@ -327,14 +317,12 @@ static inline void run_invalid_binary_matrix_case(TestState* state, Dspic33* cpu
     cpu->stop_reason = DSPIC33_RUNNING;
     cpu->splim_enabled = false;
     for (reg = 0u; reg < 16u; reg++) {
-        dspic33_set_working_register(cpu, reg,
-                                     (uint16_t)(0x5000u + (uint16_t)reg * 2u));
+        dspic33_set_working_register(cpu, reg, (uint16_t)(0x5000u + (uint16_t)reg * 2u));
     }
     dspic33_write_word(cpu, 0x5000u, 0xa5a5u);
     illegal_resets = cpu->illegal_reset_count;
-    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
-              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset &&
-              cpu->illegal_reset_count == illegal_resets + 1u &&
+    matches = dspic33_load_program_word(cpu, 0u, opcode) && dspic33_step(cpu) == DSPIC33_RUNNING &&
+              cpu->illegal_reset && cpu->illegal_reset_count == illegal_resets + 1u &&
               cpu->last_trap == UINT16_MAX && cpu->pc == 0u && cpu->w[15] == 0x1000u &&
               cpu->initialized_working_registers == 0x8000u &&
               (dspic33_read_word(cpu, 0x0740u) & 0x4000u) != 0u &&

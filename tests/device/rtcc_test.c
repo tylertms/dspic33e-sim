@@ -70,9 +70,8 @@ static bool authorize_calendar_write(Dspic33* cpu) {
 static void enable_clock(Dspic33* cpu) {
     cpu->data[0x0742u] |= 0x02u;
     if (authorize_calendar_write(cpu)) {
-        dspic33_write_word(
-            cpu, RTCC_CONTROL,
-            (uint16_t)(dspic33_read_word(cpu, RTCC_CONTROL) | RTCC_ENABLE));
+        dspic33_write_word(cpu, RTCC_CONTROL,
+                           (uint16_t)(dspic33_read_word(cpu, RTCC_CONTROL) | RTCC_ENABLE));
     }
 }
 
@@ -80,10 +79,9 @@ static void configure_interrupt(Dspic33* cpu, uint8_t priority) {
     dspic33_write_word(
         cpu, RTCC_ENABLE_ADDRESS,
         (uint16_t)(dspic33_read_word(cpu, RTCC_ENABLE_ADDRESS) | RTCC_INTERRUPT_BIT));
-    dspic33_write_word(
-        cpu, RTCC_PRIORITY_ADDRESS,
-        (uint16_t)((dspic33_read_word(cpu, RTCC_PRIORITY_ADDRESS) & 0xf8ffu) |
-                   ((uint16_t)priority << 8u)));
+    dspic33_write_word(cpu, RTCC_PRIORITY_ADDRESS,
+                       (uint16_t)((dspic33_read_word(cpu, RTCC_PRIORITY_ADDRESS) & 0xf8ffu) |
+                                  ((uint16_t)priority << 8u)));
     cpu->program[(0x0014u + RTCC_IRQ * 2u) / 2u] = RTCC_VECTOR;
     cpu->w[15] = 0x1800u;
 }
@@ -116,17 +114,14 @@ static void reset_access_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_read_word(cpu, RTCC_ALARM_CONTROL) == 0u, "ALCFGRPT reset");
     expect(state, dspic33_read_word(cpu, RTCC_CONTROL) == 0u, "RCFGCAL reset");
     expect(state, dspic33_read_word(cpu, RTCC_PAD_CONTROL) == 0u, "PADCFG1 reset");
-    expect(state, !cpu->io.rtcc.alarm_output && !cpu->io.rtcc.pmd_disabled,
-           "RTCC runtime reset");
+    expect(state, !cpu->io.rtcc.alarm_output && !cpu->io.rtcc.pmd_disabled, "RTCC runtime reset");
     dspic33_write_word(cpu, RTCC_ALARM_CONTROL, UINT16_MAX);
-    expect(state, dspic33_read_word(cpu, RTCC_ALARM_CONTROL) == UINT16_MAX,
-           "ALCFGRPT access mask");
+    expect(state, dspic33_read_word(cpu, RTCC_ALARM_CONTROL) == UINT16_MAX, "ALCFGRPT access mask");
     dspic33_write_word(cpu, RTCC_CONTROL, UINT16_MAX);
     expect(state, dspic33_read_word(cpu, RTCC_CONTROL) == 0x07ffu,
            "RCFGCAL protected and access masks");
     dspic33_write_word(cpu, RTCC_PAD_CONTROL, UINT16_MAX);
-    expect(state, dspic33_read_word(cpu, RTCC_PAD_CONTROL) == 0x0003u,
-           "PADCFG1 access mask");
+    expect(state, dspic33_read_word(cpu, RTCC_PAD_CONTROL) == 0x0003u, "PADCFG1 access mask");
     expect(state, !dspic33_rtcc_clock(cpu, 0u, 0u), "reject zero RTCC edge batch");
     expect(state, !dspic33_rtcc_output(cpu, NULL), "reject null RTCC output");
 }
@@ -138,16 +133,13 @@ static void authorization_cases(TestState* state, Dspic33* cpu) {
            "RTCWREN and RTCEN reject unkeyed write");
     expect(state, authorize_calendar_write(cpu), "canonical RTCWREN sequence");
     expect(state, cpu->nvm.key_stage == 0u, "RTCWREN consumes NVMKEY state");
-    dspic33_write_word(cpu, RTCC_CONTROL,
-                       (uint16_t)(RTCC_WRITE_ENABLE | RTCC_ENABLE | 0x0300u));
+    dspic33_write_word(cpu, RTCC_CONTROL, (uint16_t)(RTCC_WRITE_ENABLE | RTCC_ENABLE | 0x0300u));
     expect(state,
-           (dspic33_read_word(cpu, RTCC_CONTROL) &
-            (RTCC_WRITE_ENABLE | RTCC_ENABLE | 0x0300u)) ==
+           (dspic33_read_word(cpu, RTCC_CONTROL) & (RTCC_WRITE_ENABLE | RTCC_ENABLE | 0x0300u)) ==
                (RTCC_WRITE_ENABLE | RTCC_ENABLE | 0x0300u),
            "RTCWREN permits protected configuration");
     dspic33_write_word(cpu, RTCC_CONTROL, 0u);
-    expect(state, dspic33_read_word(cpu, RTCC_CONTROL) == 0u,
-           "software clears RTCWREN and RTCEN");
+    expect(state, dspic33_read_word(cpu, RTCC_CONTROL) == 0u, "software clears RTCWREN and RTCEN");
 
     dspic33_reset(cpu, 0u);
     load_write_enable_sequence(cpu);
@@ -189,10 +181,8 @@ static void authorization_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0800u, 0x0002u);
     dspic33_write_word(cpu, 0x0820u, 0x0002u);
     dspic33_write_word(cpu, 0x0840u, 0x0030u);
-    expect(state, dspic33_device_service_interrupt(cpu),
-           "interrupt after RTCWREN keys");
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "execute RTCWREN after interrupt");
+    expect(state, dspic33_device_service_interrupt(cpu), "interrupt after RTCWREN keys");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "execute RTCWREN after interrupt");
     expect(state, (dspic33_read_word(cpu, RTCC_CONTROL) & RTCC_WRITE_ENABLE) == 0u,
            "interrupt invalidates RTCWREN keys");
 
@@ -217,25 +207,20 @@ static void pointer_read_cases(TestState* state, Dspic33* cpu) {
         cpu->data[RTCC_CONTROL + 1u] = pointer;
         expect(state, dspic33_read_word(cpu, RTCC_VALUE) == calendar_masks[pointer],
                "RTCVAL word read masks selected calendar value");
-        expect(state,
-               ((dspic33_read_word(cpu, RTCC_CONTROL) >> 8u) & 3u) == expected_pointer,
+        expect(state, ((dspic33_read_word(cpu, RTCC_CONTROL) >> 8u) & 3u) == expected_pointer,
                "RTCVAL word read decrements RTCPTR once");
 
         cpu->data[RTCC_CONTROL + 1u] = pointer;
-        expect(state,
-               dspic33_read_byte(cpu, RTCC_VALUE) == (uint8_t)calendar_masks[pointer],
+        expect(state, dspic33_read_byte(cpu, RTCC_VALUE) == (uint8_t)calendar_masks[pointer],
                "RTCVAL low-byte read returns selected calendar byte");
-        expect(state,
-               ((dspic33_read_word(cpu, RTCC_CONTROL) >> 8u) & 3u) == expected_pointer,
+        expect(state, ((dspic33_read_word(cpu, RTCC_CONTROL) >> 8u) & 3u) == expected_pointer,
                "RTCVAL low-byte read decrements RTCPTR");
 
         cpu->data[RTCC_CONTROL + 1u] = pointer;
         expect(state,
-               dspic33_read_byte(cpu, RTCC_VALUE + 1u) ==
-                   (uint8_t)(calendar_masks[pointer] >> 8u),
+               dspic33_read_byte(cpu, RTCC_VALUE + 1u) == (uint8_t)(calendar_masks[pointer] >> 8u),
                "RTCVAL high-byte read returns selected calendar byte");
-        expect(state,
-               ((dspic33_read_word(cpu, RTCC_CONTROL) >> 8u) & 3u) == expected_pointer,
+        expect(state, ((dspic33_read_word(cpu, RTCC_CONTROL) >> 8u) & 3u) == expected_pointer,
                "RTCVAL high-byte read decrements RTCPTR");
 
         dspic33_reset(cpu, 0u);
@@ -245,19 +230,13 @@ static void pointer_read_cases(TestState* state, Dspic33* cpu) {
         cpu->data[RTCC_ALARM_CONTROL + 1u] = pointer;
         expect(state, dspic33_read_word(cpu, RTCC_ALARM_VALUE) == alarm_masks[pointer],
                "ALRMVAL word read handles selected alarm slot");
-        expect(state,
-               ((dspic33_read_word(cpu, RTCC_ALARM_CONTROL) >> 8u) & 3u) ==
-                   expected_pointer,
+        expect(state, ((dspic33_read_word(cpu, RTCC_ALARM_CONTROL) >> 8u) & 3u) == expected_pointer,
                "ALRMVAL word read decrements ALRMPTR once");
 
         cpu->data[RTCC_ALARM_CONTROL + 1u] = pointer;
-        expect(state,
-               dspic33_read_byte(cpu, RTCC_ALARM_VALUE) ==
-                   (uint8_t)alarm_masks[pointer],
+        expect(state, dspic33_read_byte(cpu, RTCC_ALARM_VALUE) == (uint8_t)alarm_masks[pointer],
                "ALRMVAL low-byte read returns selected alarm byte");
-        expect(state,
-               ((dspic33_read_word(cpu, RTCC_ALARM_CONTROL) >> 8u) & 3u) ==
-                   expected_pointer,
+        expect(state, ((dspic33_read_word(cpu, RTCC_ALARM_CONTROL) >> 8u) & 3u) == expected_pointer,
                "ALRMVAL low-byte read decrements ALRMPTR");
 
         cpu->data[RTCC_ALARM_CONTROL + 1u] = pointer;
@@ -265,9 +244,7 @@ static void pointer_read_cases(TestState* state, Dspic33* cpu) {
                dspic33_read_byte(cpu, RTCC_ALARM_VALUE + 1u) ==
                    (uint8_t)(alarm_masks[pointer] >> 8u),
                "ALRMVAL high-byte read returns selected alarm byte");
-        expect(state,
-               ((dspic33_read_word(cpu, RTCC_ALARM_CONTROL) >> 8u) & 3u) ==
-                   expected_pointer,
+        expect(state, ((dspic33_read_word(cpu, RTCC_ALARM_CONTROL) >> 8u) & 3u) == expected_pointer,
                "ALRMVAL high-byte read decrements ALRMPTR");
     }
 }
@@ -283,22 +260,18 @@ static void pointer_write_cases(TestState* state, Dspic33* cpu) {
         dspic33_write_word(cpu, RTCC_VALUE, UINT16_MAX);
         expect(state, cpu->io.rtcc.calendar[pointer] == calendar_masks[pointer],
                "RTCVAL word write masks selected calendar value");
-        expect(state,
-               ((dspic33_read_word(cpu, RTCC_CONTROL) >> 8u) & 3u) == expected_pointer,
+        expect(state, ((dspic33_read_word(cpu, RTCC_CONTROL) >> 8u) & 3u) == expected_pointer,
                "RTCVAL word write decrements RTCPTR");
 
         dspic33_reset(cpu, 0u);
         cpu->data[RTCC_ALARM_CONTROL + 1u] = pointer;
         dspic33_write_word(cpu, RTCC_ALARM_VALUE, UINT16_MAX);
         expect(state,
-               pointer < 3u
-                   ? cpu->io.rtcc.alarm[pointer] == alarm_masks[pointer]
-                   : cpu->io.rtcc.alarm[0] == 0u && cpu->io.rtcc.alarm[1] == 0u &&
-                         cpu->io.rtcc.alarm[2] == 0u,
+               pointer < 3u ? cpu->io.rtcc.alarm[pointer] == alarm_masks[pointer]
+                            : cpu->io.rtcc.alarm[0] == 0u && cpu->io.rtcc.alarm[1] == 0u &&
+                                  cpu->io.rtcc.alarm[2] == 0u,
                "ALRMVAL write handles selected alarm slot");
-        expect(state,
-               ((dspic33_read_word(cpu, RTCC_ALARM_CONTROL) >> 8u) & 3u) ==
-                   expected_pointer,
+        expect(state, ((dspic33_read_word(cpu, RTCC_ALARM_CONTROL) >> 8u) & 3u) == expected_pointer,
                "ALRMVAL write decrements ALRMPTR");
     }
 
@@ -326,8 +299,7 @@ static void pointer_write_cases(TestState* state, Dspic33* cpu) {
     cpu->io.rtcc.alarm[2] = 0x0102u;
     dspic33_write_word(cpu, RTCC_ALARM_CONTROL, 0x0200u);
     dspic33_write_byte(cpu, RTCC_ALARM_VALUE, 0x15u);
-    expect(state, cpu->io.rtcc.alarm[2] == 0x0115u,
-           "ALRMVAL low-byte write updates selected byte");
+    expect(state, cpu->io.rtcc.alarm[2] == 0x0115u, "ALRMVAL low-byte write updates selected byte");
     expect(state, (dspic33_read_word(cpu, RTCC_ALARM_CONTROL) & 0x0300u) == 0x0200u,
            "ALRMVAL low-byte write preserves pointer");
     dspic33_write_byte(cpu, RTCC_ALARM_VALUE + 1u, 0x12u);
@@ -345,8 +317,7 @@ static void transfer_context_cases(TestState* state, Dspic33* cpu) {
         uint16_t* slot;
         dspic33_reset(cpu, 0u);
         if (alarm == 0u) {
-            expect(state, authorize_calendar_write(cpu),
-                   "authorize transfer-context RTCVAL write");
+            expect(state, authorize_calendar_write(cpu), "authorize transfer-context RTCVAL write");
             dspic33_write_word(cpu, RTCC_CONTROL, RTCC_WRITE_ENABLE | 0x0200u);
             slot = &cpu->io.rtcc.calendar[2];
         } else {
@@ -358,8 +329,7 @@ static void transfer_context_cases(TestState* state, Dspic33* cpu) {
         cpu->io.dma_transfer_width = 1u;
         dspic33_write_byte(cpu, value_address, 0x15u);
         cpu->io.dma_transfer_active = false;
-        expect(state, *slot == 0x0115u,
-               "internal byte-low transfer context updates RTCC window");
+        expect(state, *slot == 0x0115u, "internal byte-low transfer context updates RTCC window");
         expect(state, (dspic33_read_word(cpu, control_address) & 0x0300u) == 0x0200u,
                "internal byte-low transfer context preserves RTCC pointer");
 
@@ -367,8 +337,7 @@ static void transfer_context_cases(TestState* state, Dspic33* cpu) {
         cpu->io.dma_transfer_width = 1u;
         dspic33_write_byte(cpu, value_address + 1u, 0x12u);
         cpu->io.dma_transfer_active = false;
-        expect(state, *slot == 0x1215u,
-               "internal byte-high transfer context updates RTCC window");
+        expect(state, *slot == 0x1215u, "internal byte-high transfer context updates RTCC window");
         expect(state, (dspic33_read_word(cpu, control_address) & 0x0300u) == 0x0100u,
                "internal byte-high transfer context decrements RTCC pointer");
 
@@ -381,8 +350,7 @@ static void transfer_context_cases(TestState* state, Dspic33* cpu) {
         cpu->io.dma_transfer_width = 2u;
         dspic33_write_word(cpu, value_address, 0x1231u);
         cpu->io.dma_transfer_active = false;
-        expect(state, *slot == 0x1231u,
-               "internal word transfer context updates RTCC window");
+        expect(state, *slot == 0x1231u, "internal word transfer context updates RTCC window");
         expect(state, (dspic33_read_word(cpu, control_address) & 0x0300u) == 0x0100u,
                "internal word transfer context decrements RTCC pointer once");
     }
@@ -405,8 +373,7 @@ static void calendar_cases(TestState* state, Dspic33* cpu) {
     for (index = 0u; index < sizeof(transitions) / sizeof(transitions[0]); index++) {
         dspic33_reset(cpu, 0u);
         enable_clock(cpu);
-        memcpy(cpu->io.rtcc.calendar, transitions[index].before,
-               sizeof(transitions[index].before));
+        memcpy(cpu->io.rtcc.calendar, transitions[index].before, sizeof(transitions[index].before));
         expect(state, clock_edges(cpu, 32768u), "schedule calendar second");
         expect(state,
                memcmp(cpu->io.rtcc.calendar, transitions[index].after,
@@ -427,8 +394,8 @@ static void calendar_cases(TestState* state, Dspic33* cpu) {
            "RTCSYNC asserts for final 32 edges");
     expect(state, clock_edges(cpu, 32u), "complete synchronized second");
     expect(state,
-           cpu->io.rtcc.prescaler == 0u && (dspic33_read_word(cpu, RTCC_CONTROL) &
-                                            (RTCC_SYNC | RTCC_HALF_SECOND)) == 0u,
+           cpu->io.rtcc.prescaler == 0u &&
+               (dspic33_read_word(cpu, RTCC_CONTROL) & (RTCC_SYNC | RTCC_HALF_SECOND)) == 0u,
            "second rollover clears status");
 
     dspic33_reset(cpu, 0u);
@@ -456,16 +423,14 @@ static void alarm_cases(TestState* state, Dspic33* cpu) {
         expect(state, clock_edges(cpu, 1u), "advance alarm comparison edge");
         expect(state, interrupt_flag(cpu), "matching alarm raises RTCCIF");
         expect(state, cpu->io.rtcc.alarm_output, "matching alarm toggles output");
-        expect(state,
-               (dspic33_read_word(cpu, RTCC_ALARM_CONTROL) & RTCC_ALARM_ENABLE) == 0u,
+        expect(state, (dspic33_read_word(cpu, RTCC_ALARM_CONTROL) & RTCC_ALARM_ENABLE) == 0u,
                "single alarm disables after match");
     }
 
     dspic33_reset(cpu, 0u);
     enable_clock(cpu);
     set_calendar(cpu, 0x0000u, 0x0000u, 0x0101u, 0x0000u);
-    dspic33_write_word(cpu, RTCC_ALARM_CONTROL,
-                       RTCC_ALARM_ENABLE | RTCC_ALARM_CHIME | 2u);
+    dspic33_write_word(cpu, RTCC_ALARM_CONTROL, RTCC_ALARM_ENABLE | RTCC_ALARM_CHIME | 2u);
     expect(state, clock_edges(cpu, 16384u), "chime half-second event");
     expect(state,
            (dspic33_read_word(cpu, RTCC_ALARM_CONTROL) & 0x00ffu) == 1u &&
@@ -522,8 +487,8 @@ static void calibration_cases(TestState* state, Dspic33* cpu) {
                    !cpu->io.rtcc.calibration_pending,
                "signed RTCC calibration adjusts the prescaler");
         expect(state,
-               clock_edges(cpu, remaining_edges) &&
-                   cpu->io.rtcc.calendar[0] == 0x0101u && cpu->io.rtcc.prescaler == 0u,
+               clock_edges(cpu, remaining_edges) && cpu->io.rtcc.calendar[0] == 0x0101u &&
+                   cpu->io.rtcc.prescaler == 0u,
                "RTCC calibration adjusts the next-second duration");
     }
 
@@ -577,8 +542,8 @@ static void calibration_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_byte(cpu, RTCC_CONTROL, 1u);
     cpu->io.rtcc.prescaler = 32767u;
     expect(state,
-           clock_edges(cpu, 1u) && clock_edges(cpu, 100u) &&
-               cpu->io.rtcc.prescaler == 100u && cpu->io.rtcc.calibration_pending,
+           clock_edges(cpu, 1u) && clock_edges(cpu, 100u) && cpu->io.rtcc.prescaler == 100u &&
+               cpu->io.rtcc.calibration_pending,
            "RTCC calibration advances before disable");
     dspic33_write_word(cpu, RTCC_CONTROL,
                        (uint16_t)(dspic33_read_word(cpu, RTCC_CONTROL) & ~RTCC_ENABLE));
@@ -655,8 +620,7 @@ static void calibration_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_byte(cpu, RTCC_CONTROL, 1u);
     cpu->io.rtcc.prescaler = 32767u;
     expect(state,
-           clock_edges(cpu, 1u) && clock_edges(cpu, 100u) &&
-               cpu->io.rtcc.calibration_pending,
+           clock_edges(cpu, 1u) && clock_edges(cpu, 100u) && cpu->io.rtcc.calibration_pending,
            "RTCC calibration advances before warm reset");
     dspic33_load_program_word(cpu, 0u, RESET_OPCODE);
     cpu->pc = 0u;
@@ -689,8 +653,7 @@ static void calibration_cases(TestState* state, Dspic33* cpu) {
                    "advance copied RTCC calibrations");
             expect(state,
                    cpu->io.rtcc.prescaler == 516u && copy.io.rtcc.prescaler == 516u &&
-                       !cpu->io.rtcc.calibration_pending &&
-                       !copy.io.rtcc.calibration_pending,
+                       !cpu->io.rtcc.calibration_pending && !copy.io.rtcc.calibration_pending,
                    "copied RTCC calibrations complete independently");
             dspic33_release(&copy);
         }
@@ -754,8 +717,8 @@ static void interrupt_output_power_cases(TestState* state, Dspic33* cpu) {
                "low-or-equal RTCC alarm wakes without interrupt frame");
         cpu->sr = 0u;
         expect(state,
-               dspic33_device_service_interrupt(cpu) &&
-                   cpu->last_interrupt == RTCC_IRQ && cpu->interrupt_count == 1u,
+               dspic33_device_service_interrupt(cpu) && cpu->last_interrupt == RTCC_IRQ &&
+                   cpu->interrupt_count == 1u,
                "retained RTCCIF vectors after lowering IPL");
     }
 
@@ -769,8 +732,7 @@ static void interrupt_output_power_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0840u, 0x0040u);
     dspic33_write_word(cpu, 0x0800u, 0x0002u);
     expect(state,
-           dspic33_device_wake(cpu) && cpu->last_interrupt == 1u &&
-               cpu->interrupt_count == 1u,
+           dspic33_device_wake(cpu) && cpu->last_interrupt == 1u && cpu->interrupt_count == 1u,
            "concurrent higher-priority IRQ wins wake vector");
     expect(state, interrupt_flag(cpu), "concurrent higher IRQ retains RTCCIF");
 
@@ -783,9 +745,8 @@ static void interrupt_output_power_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x08c2u, 0u);
     cpu->power_state = DSPIC33_POWER_SLEEP;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING &&
-               cpu->power_state == DSPIC33_POWER_ACTIVE && cpu->interrupt_count == 0u &&
-               interrupt_flag(cpu),
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->power_state == DSPIC33_POWER_ACTIVE &&
+               cpu->interrupt_count == 0u && interrupt_flag(cpu),
            "GIE-disabled RTCC alarm wakes without vectoring");
     expect(state, cpu->last_interrupt == UINT16_MAX && cpu->w[15] == 0x1800u,
            "GIE-disabled wake leaves control state unchanged");
@@ -800,9 +761,8 @@ static void interrupt_output_power_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, RTCC_ALARM_CONTROL, RTCC_ALARM_ENABLE);
     clock_edges(cpu, 16384u);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING &&
-               cpu->power_state == DSPIC33_POWER_ACTIVE && cpu->interrupt_count == 0u &&
-               cpu->disicnt == 1u && interrupt_flag(cpu),
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->power_state == DSPIC33_POWER_ACTIVE &&
+               cpu->interrupt_count == 0u && cpu->disicnt == 1u && interrupt_flag(cpu),
            "DISI masks RTCC vector while allowing Sleep wake");
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->interrupt_count == 0u &&
@@ -834,8 +794,7 @@ static void interrupt_output_power_cases(TestState* state, Dspic33* cpu) {
     set_calendar(cpu, 0x0000u, 0x0000u, 0x0101u, 0x0000u);
     dspic33_write_word(cpu, RTCC_ALARM_CONTROL, RTCC_ALARM_ENABLE);
     expect(state, clock_edges(cpu, 16384u), "raise equal-priority sleep alarm");
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "equal-priority alarm wakes processor");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "equal-priority alarm wakes processor");
     expect(state,
            cpu->power_state == DSPIC33_POWER_ACTIVE && interrupt_flag(cpu) &&
                cpu->interrupt_count == 0u && cpu->w[15] == 0x1800u,
@@ -849,11 +808,9 @@ static void interrupt_output_power_cases(TestState* state, Dspic33* cpu) {
     set_calendar(cpu, 0x0000u, 0x0000u, 0x0101u, 0x0000u);
     dspic33_write_word(cpu, RTCC_ALARM_CONTROL, RTCC_ALARM_ENABLE);
     clock_edges(cpu, 16384u);
-    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
-           "higher-priority alarm wakes and vectors");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "higher-priority alarm wakes and vectors");
     expect(state,
-           cpu->last_interrupt == RTCC_IRQ && cpu->interrupt_count == 1u &&
-               cpu->w[15] == 0x1804u,
+           cpu->last_interrupt == RTCC_IRQ && cpu->interrupt_count == 1u && cpu->w[15] == 0x1804u,
            "higher-priority alarm stacks interrupt frame");
 
     dspic33_reset(cpu, 0u);
@@ -865,32 +822,25 @@ static void interrupt_output_power_cases(TestState* state, Dspic33* cpu) {
     expect(state, clock_edges(cpu, 16384u), "advance RTCC alarm while Idle");
     expect(state,
            cpu->io.rtcc.prescaler == 16384u && interrupt_flag(cpu) &&
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
-               cpu->power_state == DSPIC33_POWER_ACTIVE &&
+               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->power_state == DSPIC33_POWER_ACTIVE &&
                cpu->last_interrupt == RTCC_IRQ,
            "RTCC continues in Idle and alarm wakes through vector");
 
     dspic33_reset(cpu, 0u);
     enable_clock(cpu);
-    dspic33_write_word(
-        cpu, RTCC_CONTROL,
-        (uint16_t)(dspic33_read_word(cpu, RTCC_CONTROL) | RTCC_OUTPUT_ENABLE));
+    dspic33_write_word(cpu, RTCC_CONTROL,
+                       (uint16_t)(dspic33_read_word(cpu, RTCC_CONTROL) | RTCC_OUTPUT_ENABLE));
     expect(state, dspic33_rtcc_output(cpu, &high) && !high, "alarm output starts low");
     dspic33_write_word(cpu, RTCC_ALARM_CONTROL, RTCC_ALARM_ENABLE);
     clock_edges(cpu, 16384u);
-    expect(state, dspic33_rtcc_output(cpu, &high) && high,
-           "alarm event drives RTCC output");
+    expect(state, dspic33_rtcc_output(cpu, &high) && high, "alarm event drives RTCC output");
     dspic33_write_word(cpu, RTCC_PAD_CONTROL, 0x0002u);
-    expect(state, dspic33_rtcc_output(cpu, &high) && high,
-           "RTSECSEL selects half-second output");
+    expect(state, dspic33_rtcc_output(cpu, &high) && high, "RTSECSEL selects half-second output");
     clock_edges(cpu, 16384u);
-    expect(state, dspic33_rtcc_output(cpu, &high) && !high,
-           "seconds output follows HALFSEC");
-    dspic33_write_word(
-        cpu, RTCC_CONTROL,
-        (uint16_t)(dspic33_read_word(cpu, RTCC_CONTROL) & ~RTCC_OUTPUT_ENABLE));
-    expect(state, !dspic33_rtcc_output(cpu, &high),
-           "RTCOE disables logical output API");
+    expect(state, dspic33_rtcc_output(cpu, &high) && !high, "seconds output follows HALFSEC");
+    dspic33_write_word(cpu, RTCC_CONTROL,
+                       (uint16_t)(dspic33_read_word(cpu, RTCC_CONTROL) & ~RTCC_OUTPUT_ENABLE));
+    expect(state, !dspic33_rtcc_output(cpu, &high), "RTCOE disables logical output API");
 
     dspic33_reset(cpu, 0u);
     enable_clock(cpu);
@@ -930,8 +880,7 @@ static void lifecycle_cases(TestState* state, Dspic33* cpu) {
            "advance original and copied RTCC");
     expect(state,
            memcmp(&copy.io.rtcc, &cpu->io.rtcc, sizeof(cpu->io.rtcc)) == 0 &&
-               dspic33_read_word(&copy, RTCC_CONTROL) ==
-                   dspic33_read_word(cpu, RTCC_CONTROL),
+               dspic33_read_word(&copy, RTCC_CONTROL) == dspic33_read_word(cpu, RTCC_CONTROL),
            "copy preserves RTCC runtime and registers");
 
     dspic33_reset(cpu, 0u);
@@ -948,8 +897,7 @@ static void lifecycle_cases(TestState* state, Dspic33* cpu) {
            cpu->io.rtcc.calendar[0] == 0x1234u && cpu->io.rtcc.calendar[3] == 0x0026u &&
                cpu->io.rtcc.prescaler == 123u,
            "warm reset preserves calendar and prescaler");
-    expect(state,
-           dspic33_read_word(cpu, RTCC_CONTROL) == (RTCC_ENABLE | RTCC_WRITE_ENABLE),
+    expect(state, dspic33_read_word(cpu, RTCC_CONTROL) == (RTCC_ENABLE | RTCC_WRITE_ENABLE),
            "warm reset preserves RCFGCAL");
     expect(state, dspic33_read_word(cpu, RTCC_ALARM_CONTROL) == 0x91a5u,
            "warm reset preserves alarm control");
@@ -969,13 +917,11 @@ static void lifecycle_cases(TestState* state, Dspic33* cpu) {
     expect(state, cpu->io.rtcc.calendar[0] == 0u && cpu->io.rtcc.calendar[3] == 0u,
            "POR clears deterministic calendar state");
     expect(state, dspic33_device_advance(cpu, 5u), "advance after RTCC POR");
-    expect(state, cpu->io.rtcc.prescaler == 0u,
-           "stale RTCC event cannot advance after POR");
+    expect(state, cpu->io.rtcc.prescaler == 0u, "stale RTCC event cannot advance after POR");
 
     dspic33_reset(cpu, 0u);
     cpu->device_cycles = UINT64_MAX;
-    expect(state, !dspic33_rtcc_clock(cpu, 1u, 1u),
-           "RTCC edge scheduling reports overflow");
+    expect(state, !dspic33_rtcc_clock(cpu, 1u, 1u), "RTCC edge scheduling reports overflow");
     expect(state, cpu->events.count == 0u && cpu->io.rtcc.prescaler == 0u,
            "failed RTCC edge schedule leaves state unchanged");
     dspic33_write_word(cpu, RTCC_PMD_ADDRESS, RTCC_PMD);
@@ -994,8 +940,7 @@ static void lifecycle_cases(TestState* state, Dspic33* cpu) {
     expect(state, cpu->io.rtcc.pmd_generation == 2u && cpu->events.count == 2u,
            "rapid RTCC PMD toggle queues generations");
     expect(state,
-           dspic33_device_advance(cpu, 1u) && !cpu->io.rtcc.pmd_disabled &&
-               cpu->events.count == 0u,
+           dspic33_device_advance(cpu, 1u) && !cpu->io.rtcc.pmd_disabled && cpu->events.count == 0u,
            "stale RTCC PMD event cannot override latest state");
     dspic33_release(&copy);
 }
@@ -1011,8 +956,7 @@ static void long_sequence_cases(TestState* state, Dspic33* cpu) {
         expect(state, clock_edges(cpu, 32768u), "advance RTCC long sequence second");
         expect(state,
                cpu->io.rtcc.calendar[0] ==
-                   (uint16_t)(((expected_minute / 10u * 16u + expected_minute % 10u)
-                               << 8u) |
+                   (uint16_t)(((expected_minute / 10u * 16u + expected_minute % 10u) << 8u) |
                               (expected_second / 10u * 16u + expected_second % 10u)),
                "RTCC long sequence calendar value");
     }

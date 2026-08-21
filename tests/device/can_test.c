@@ -45,16 +45,13 @@ static bool interrupt_flag(Dspic33* cpu, uint8_t irq) {
 static void clear_interrupt_flag(Dspic33* cpu, uint8_t irq) {
     uint16_t address = (uint16_t)(0x0800u + (irq / 16u) * 2u);
     uint16_t flag = (uint16_t)(1u << (irq % 16u));
-    dspic33_write_word(cpu, address,
-                       (uint16_t)(dspic33_read_word(cpu, address) & ~flag));
+    dspic33_write_word(cpu, address, (uint16_t)(dspic33_read_word(cpu, address) & ~flag));
 }
 
-static uint16_t dma_base(uint8_t channel) {
-    return (uint16_t)(0x0b00u + channel * 0x10u);
-}
+static uint16_t dma_base(uint8_t channel) { return (uint16_t)(0x0b00u + channel * 0x10u); }
 
-static void configure_dma(Dspic33* cpu, uint8_t channel, uint16_t control,
-                          uint8_t request, uint32_t memory, uint16_t pad) {
+static void configure_dma(Dspic33* cpu, uint8_t channel, uint16_t control, uint8_t request,
+                          uint32_t memory, uint16_t pad) {
     uint16_t base = dma_base(channel);
     dspic33_write_word(cpu, base, 0u);
     dspic33_write_word(cpu, (uint16_t)(base + 2u), request);
@@ -68,8 +65,7 @@ static void configure_dma(Dspic33* cpu, uint8_t channel, uint16_t control,
 static void select_window(Dspic33* cpu, uint8_t channel, bool filter) {
     uint16_t base = bases[channel];
     uint16_t control = dspic33_read_word(cpu, base);
-    dspic33_write_word(cpu, base,
-                       filter ? (uint16_t)(control | 1u) : (uint16_t)(control & ~1u));
+    dspic33_write_word(cpu, base, filter ? (uint16_t)(control | 1u) : (uint16_t)(control & ~1u));
 }
 
 static uint64_t mode_transition_cycles(Dspic33* cpu, uint8_t channel) {
@@ -78,8 +74,8 @@ static uint64_t mode_transition_cycles(Dspic33* cpu, uint8_t channel) {
     uint16_t config2 = dspic33_read_word(cpu, (uint16_t)(base + 0x12u));
     uint16_t control = dspic33_read_word(cpu, base);
     uint64_t prescaler = (config1 & 0x003fu) + 1u;
-    uint64_t quanta = 1u + (config2 & 7u) + 1u + ((config2 >> 3u) & 7u) + 1u +
-                      ((config2 >> 8u) & 7u) + 1u;
+    uint64_t quanta =
+        1u + (config2 & 7u) + 1u + ((config2 >> 3u) & 7u) + 1u + ((config2 >> 8u) & 7u) + 1u;
     uint64_t clock_divisor = (control & 0x0800u) != 0u ? 2u : 1u;
     return 11u * prescaler * quanta * clock_divisor;
 }
@@ -96,9 +92,9 @@ static void set_mode(Dspic33* cpu, uint8_t channel, uint8_t mode) {
     dspic33_device_advance(cpu, mode_transition_cycles(cpu, channel));
 }
 
-static void configure_filter(Dspic33* cpu, uint8_t channel, uint8_t filter,
-                             uint32_t identifier, bool extended, uint32_t mask,
-                             bool match_type, uint8_t buffer, uint8_t mask_index) {
+static void configure_filter(Dspic33* cpu, uint8_t channel, uint8_t filter, uint32_t identifier,
+                             bool extended, uint32_t mask, bool match_type, uint8_t buffer,
+                             uint8_t mask_index) {
     uint16_t base = bases[channel];
     uint32_t sid = extended ? (identifier >> 18u) & 0x7ffu : identifier & 0x7ffu;
     uint32_t eid = identifier & 0x3ffffu;
@@ -116,8 +112,7 @@ static void configure_filter(Dspic33* cpu, uint8_t channel, uint8_t filter,
     }
     select_window(cpu, channel, true);
     dspic33_write_word(cpu, (uint16_t)(base + 0x30u + mask_index * 4u), receive_mask);
-    dspic33_write_word(cpu, (uint16_t)(base + 0x32u + mask_index * 4u),
-                       (uint16_t)mask_eid);
+    dspic33_write_word(cpu, (uint16_t)(base + 0x32u + mask_index * 4u), (uint16_t)mask_eid);
     dspic33_write_word(cpu, (uint16_t)(base + 0x40u + filter * 4u), filter_sid);
     dspic33_write_word(cpu, (uint16_t)(base + 0x42u + filter * 4u), (uint16_t)eid);
     address = (uint16_t)(base + (filter < 8u ? 0x18u : 0x1au));
@@ -136,11 +131,11 @@ static void enable_filter(Dspic33* cpu, uint8_t channel, uint16_t enabled) {
     dspic33_write_word(cpu, (uint16_t)(bases[channel] + 0x14u), enabled);
 }
 
-static void configure_receive(Dspic33* cpu, uint8_t channel, uint32_t memory,
-                              uint8_t dmabs, uint8_t fifo_start) {
+static void configure_receive(Dspic33* cpu, uint8_t channel, uint32_t memory, uint8_t dmabs,
+                              uint8_t fifo_start) {
     uint16_t base = bases[channel];
-    configure_dma(cpu, (uint8_t)(channel * 2u), 0x0020u, receive_requests[channel],
-                  memory, (uint16_t)(base + 0x40u));
+    configure_dma(cpu, (uint8_t)(channel * 2u), 0x0020u, receive_requests[channel], memory,
+                  (uint16_t)(base + 0x40u));
     dspic33_write_byte(cpu, (uint16_t)(base + 6u), fifo_start);
     dspic33_write_byte(cpu, (uint16_t)(base + 7u), (uint8_t)(dmabs << 5u));
 }
@@ -168,13 +163,12 @@ static void fifo_control_write_cases(TestState* state, Dspic33* cpu) {
 }
 
 static void configure_transmit(Dspic33* cpu, uint8_t channel, uint32_t memory) {
-    configure_dma(cpu, (uint8_t)(channel * 2u + 1u), 0x2020u,
-                  transmit_requests[channel], memory,
+    configure_dma(cpu, (uint8_t)(channel * 2u + 1u), 0x2020u, transmit_requests[channel], memory,
                   (uint16_t)(bases[channel] + 0x42u));
 }
 
-static Dspic33CanFrame frame(uint32_t identifier, bool extended, bool remote,
-                             uint8_t length, uint8_t seed) {
+static Dspic33CanFrame frame(uint32_t identifier, bool extended, bool remote, uint8_t length,
+                             uint8_t seed) {
     Dspic33CanFrame result;
     uint8_t index;
     memset(&result, 0, sizeof(result));
@@ -188,11 +182,9 @@ static Dspic33CanFrame frame(uint32_t identifier, bool extended, bool remote,
     return result;
 }
 
-static void write_transmit_frame(Dspic33* cpu, uint32_t memory,
-                                 const Dspic33CanFrame* value) {
+static void write_transmit_frame(Dspic33* cpu, uint32_t memory, const Dspic33CanFrame* value) {
     uint16_t words[8] = {0};
-    uint32_t sid =
-        value->extended ? (value->identifier >> 18u) & 0x7ffu : value->identifier;
+    uint32_t sid = value->extended ? (value->identifier >> 18u) & 0x7ffu : value->identifier;
     uint32_t eid = value->identifier & 0x3ffffu;
     words[0] = (uint16_t)(sid << 2u);
     if (value->extended) {
@@ -217,8 +209,7 @@ static void write_transmit_frame(Dspic33* cpu, uint32_t memory,
 static void clear_receive_flag(Dspic33* cpu, uint8_t channel, uint8_t buffer) {
     uint16_t address = (uint16_t)(bases[channel] + 0x20u + (buffer >= 16u ? 2u : 0u));
     uint16_t value = dspic33_read_word(cpu, address);
-    dspic33_write_word(cpu, address,
-                       (uint16_t)(value & ~(uint16_t)(1u << (buffer & 15u))));
+    dspic33_write_word(cpu, address, (uint16_t)(value & ~(uint16_t)(1u << (buffer & 15u))));
 }
 
 static bool receive_full(Dspic33* cpu, uint8_t channel, uint8_t buffer) {
@@ -241,13 +232,11 @@ static void register_cases(TestState* state, Dspic33* cpu) {
     for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
         uint16_t base = bases[channel];
         expect(state, dspic33_read_word(cpu, base) == 0x0480u, "control reset");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 4u)) == 0x0040u,
-               "vector reset");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 4u)) == 0x0040u, "vector reset");
         expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x14u)) == 0x003fu,
                "filter enable reset");
         dspic33_write_word(cpu, (uint16_t)(base + 2u), 0xffffu);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 2u)) == 0x001fu,
-               "control two mask");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 2u)) == 0x001fu, "control two mask");
         dspic33_write_byte(cpu, (uint16_t)(base + 6u), 0xffu);
         dspic33_write_byte(cpu, (uint16_t)(base + 7u), 0xffu);
         expect(state, dspic33_read_word(cpu, (uint16_t)(base + 6u)) == 0xe01fu,
@@ -256,11 +245,9 @@ static void register_cases(TestState* state, Dspic33* cpu) {
         expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x0cu)) == 0x00efu,
                "interrupt enable mask");
         dspic33_write_word(cpu, (uint16_t)(base + 0x10u), 0xffffu);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x10u)) == 0x00ffu,
-               "baud one mask");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x10u)) == 0x00ffu, "baud one mask");
         dspic33_write_word(cpu, (uint16_t)(base + 0x12u), 0xffffu);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x12u)) == 0x47ffu,
-               "baud two mask");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x12u)) == 0x47ffu, "baud two mask");
         select_window(cpu, channel, true);
         dspic33_write_word(cpu, (uint16_t)(base + 0x40u), 0xffffu);
         expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x40u)) == 0xffebu,
@@ -269,8 +256,7 @@ static void register_cases(TestState* state, Dspic33* cpu) {
         expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x42u)) == 0xa55au,
                "filter EID write");
         select_window(cpu, channel, false);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x40u)) == 0u,
-               "window isolation");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x40u)) == 0u, "window isolation");
         dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0xffffu);
         expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) == 0x8f8fu,
                "buffer control mask");
@@ -303,19 +289,17 @@ static void register_access_cases(TestState* state, Dspic33* cpu) {
         dspic33_write_word(cpu, (uint16_t)(base + 0x0eu), 0u);
         preserved = dspic33_read_word(cpu, (uint16_t)(base + 0x0eu)) == 0x5aa5u;
         dspic33_write_word(cpu, (uint16_t)(base + 0x0eu), 0xffffu);
-        expect(state,
-               preserved && dspic33_read_word(cpu, (uint16_t)(base + 0x0eu)) == 0x5aa5u,
+        expect(state, preserved && dspic33_read_word(cpu, (uint16_t)(base + 0x0eu)) == 0x5aa5u,
                "error counters reject CPU writes");
 
-        dspic33_write_word(
-            cpu, base, (uint16_t)((dspic33_read_word(cpu, base) & ~0x07e0u) | 0x02e0u));
+        dspic33_write_word(cpu, base,
+                           (uint16_t)((dspic33_read_word(cpu, base) & ~0x07e0u) | 0x02e0u));
         expect(state,
                (dspic33_read_word(cpu, base) & 0x07e0u) == 0x0280u &&
                    dspic33_device_advance(cpu, mode_transition_cycles(cpu, channel)) &&
                    (dspic33_read_word(cpu, base) & 0x07e0u) == 0x0240u,
                "requested mode controls operating mode");
-        dspic33_write_word(cpu, base,
-                           (uint16_t)(dspic33_read_word(cpu, base) | 0x00a0u));
+        dspic33_write_word(cpu, base, (uint16_t)(dspic33_read_word(cpu, base) | 0x00a0u));
         expect(state, (dspic33_read_word(cpu, base) & 0x07e0u) == 0x0240u,
                "operating mode rejects direct writes");
 
@@ -323,10 +307,8 @@ static void register_access_cases(TestState* state, Dspic33* cpu) {
         select_window(cpu, channel, false);
         dspic33_write_word(cpu, (uint16_t)(base + 0x0cu), 1u);
         dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x8989u);
-        dspic33_write_word(cpu, base,
-                           (uint16_t)(dspic33_read_word(cpu, base) | 0x1000u));
-        expect(state,
-               (dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) & 0x4848u) == 0x4040u,
+        dspic33_write_word(cpu, base, (uint16_t)(dspic33_read_word(cpu, base) | 0x1000u));
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) & 0x4848u) == 0x4040u,
                "abort all marks pending transmissions aborted");
         expect(state,
                (dspic33_read_word(cpu, base) & 0x1000u) == 0u &&
@@ -347,8 +329,7 @@ static void register_access_cases(TestState* state, Dspic33* cpu) {
         dspic33_write_byte(cpu, (uint16_t)(receive_data + 1u), 0xc3u);
         expect(state, dspic33_read_word(cpu, receive_data) == 0xc33cu,
                "receive data CPU byte access");
-        active = dspic33_can_receive(cpu, channel, &input, 0u) &&
-                 dspic33_device_advance(cpu, 0u);
+        active = dspic33_can_receive(cpu, channel, &input, 0u) && dspic33_device_advance(cpu, 0u);
         expect(state,
                active && (cpu->io.can_rx_busy & (uint8_t)(1u << channel)) != 0u &&
                    dspic33_read_word(cpu, receive_data) == received_words[0] &&
@@ -357,12 +338,10 @@ static void register_access_cases(TestState* state, Dspic33* cpu) {
         dspic33_write_word(cpu, receive_data, 0xc55cu);
         expect(state, dspic33_read_word(cpu, receive_data) == received_words[0],
                "receive stream survives concurrent CPU write");
-        expect(state, dspic33_device_advance(cpu, 32u),
-               "receive stream completion advance");
+        expect(state, dspic33_device_advance(cpu, 32u), "receive stream completion advance");
         exact = true;
         for (index = 0u; index < 8u; index++) {
-            exact =
-                exact && memory_word(cpu, memory + index * 2u) == received_words[index];
+            exact = exact && memory_word(cpu, memory + index * 2u) == received_words[index];
         }
         expect(state, exact, "receive stream DMA words");
         expect(state,
@@ -387,9 +366,7 @@ static void interrupt_flag_write_zero_cases(TestState* state, Dspic33* cpu) {
             for (requested = 0u; requested <= UINT16_MAX; requested += 257u) {
                 write_memory_word(cpu, address, previous);
                 dspic33_write_word(cpu, address, (uint16_t)requested);
-                expect(state,
-                       dspic33_read_word(cpu, address) ==
-                           (uint16_t)(previous & requested),
+                expect(state, dspic33_read_word(cpu, address) == (uint16_t)(previous & requested),
                        "interrupt flag write-zero clear domain");
             }
         }
@@ -410,11 +387,9 @@ static void standard_filter_domain(TestState* state, Dspic33* cpu) {
     for (identifier = 0u; identifier <= 0x7ffu; identifier++) {
         bool accepted = (identifier & mask) == (expected & mask);
         input = frame(identifier, false, false, 2u, (uint8_t)identifier);
-        expect(state, dspic33_can_receive(cpu, 0u, &input, 0u),
-               "standard domain schedule");
+        expect(state, dspic33_can_receive(cpu, 0u, &input, 0u), "standard domain schedule");
         expect(state, dspic33_device_advance(cpu, 32u), "standard domain advance");
-        expect(state, receive_full(cpu, 0u, 0u) == accepted,
-               "standard domain filter result");
+        expect(state, receive_full(cpu, 0u, 0u) == accepted, "standard domain filter result");
         if (accepted) {
             expect(state, memory_word(cpu, 0x2000u) == (uint16_t)(identifier << 2u),
                    "standard domain identifier storage");
@@ -424,19 +399,17 @@ static void standard_filter_domain(TestState* state, Dspic33* cpu) {
 }
 
 static void extended_filter_cases(TestState* state, Dspic33* cpu) {
-    static const uint32_t identifiers[] = {
-        0u, 1u, 0x3ffffu, 0x40000u, 0x1ffffffu, 0x10000000u, 0x15555555u, 0x1fffffffu};
+    static const uint32_t identifiers[] = {0u,         1u,          0x3ffffu,    0x40000u,
+                                           0x1ffffffu, 0x10000000u, 0x15555555u, 0x1fffffffu};
     uint8_t channel;
     uint8_t index;
     for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-        for (index = 0u; index < sizeof(identifiers) / sizeof(identifiers[0]);
-             index++) {
+        for (index = 0u; index < sizeof(identifiers) / sizeof(identifiers[0]); index++) {
             uint32_t identifier = identifiers[index];
             Dspic33CanFrame input = frame(identifier, true, false, 8u, index);
             dspic33_reset(cpu, 0u);
             configure_receive(cpu, channel, 0x3000u, 6u, 0u);
-            configure_filter(cpu, channel, 3u, identifier, true, 0x1fffffffu, true, 6u,
-                             1u);
+            configure_filter(cpu, channel, 3u, identifier, true, 0x1fffffffu, true, 6u, 1u);
             enable_filter(cpu, channel, 1u << 3u);
             select_window(cpu, channel, false);
             set_mode(cpu, channel, 0u);
@@ -467,15 +440,13 @@ static void payload_and_remote_cases(TestState* state, Dspic33* cpu) {
             for (remote = 0u; remote < 2u; remote++) {
                 for (length = 0u; length <= 8u; length++) {
                     uint32_t identifier = extended != 0u ? 0x1234567u : 0x567u;
-                    Dspic33CanFrame input =
-                        frame(identifier, extended != 0u, remote != 0u, length,
-                              (uint8_t)(0x20u + length));
+                    Dspic33CanFrame input = frame(identifier, extended != 0u, remote != 0u, length,
+                                                  (uint8_t)(0x20u + length));
                     uint8_t index;
                     dspic33_reset(cpu, 0u);
                     configure_receive(cpu, channel, 0x4000u, 4u, 0u);
                     configure_filter(cpu, channel, 0u, identifier, extended != 0u,
-                                     extended != 0u ? 0x1fffffffu : 0x7ffu, true, 2u,
-                                     0u);
+                                     extended != 0u ? 0x1fffffffu : 0x7ffu, true, 2u, 0u);
                     enable_filter(cpu, channel, 1u);
                     select_window(cpu, channel, false);
                     set_mode(cpu, channel, 0u);
@@ -483,21 +454,16 @@ static void payload_and_remote_cases(TestState* state, Dspic33* cpu) {
                            dspic33_can_receive(cpu, channel, &input, 0u) &&
                                dspic33_device_advance(cpu, 32u),
                            "payload transfer");
-                    expect(state, (memory_word(cpu, 0x4024u) & 0x0fu) == length,
-                           "payload length");
+                    expect(state, (memory_word(cpu, 0x4024u) & 0x0fu) == length, "payload length");
                     for (index = 0u; index < length; index++) {
-                        uint16_t word =
-                            memory_word(cpu, (uint32_t)(0x4026u + (index / 2u) * 2u));
-                        expect(state,
-                               (uint8_t)(word >> ((index & 1u) * 8u)) ==
-                                   input.data[index],
+                        uint16_t word = memory_word(cpu, (uint32_t)(0x4026u + (index / 2u) * 2u));
+                        expect(state, (uint8_t)(word >> ((index & 1u) * 8u)) == input.data[index],
                                "payload byte");
                     }
                     expect(state,
-                           extended != 0u ? ((memory_word(cpu, 0x4024u) & 0x0200u) !=
-                                             0u) == (remote != 0u)
-                                          : ((memory_word(cpu, 0x4020u) & 2u) != 0u) ==
-                                                (remote != 0u),
+                           extended != 0u
+                               ? ((memory_word(cpu, 0x4024u) & 0x0200u) != 0u) == (remote != 0u)
+                               : ((memory_word(cpu, 0x4020u) & 2u) != 0u) == (remote != 0u),
                            "remote encoding");
                 }
             }
@@ -531,16 +497,14 @@ static void devicenet_cases(TestState* state, Dspic33* cpu) {
             configure_filter(cpu, 0u, 0u, 0x321u, false, 0x7ffu, true, 0u, 0u);
             select_window(cpu, 0u, true);
             dspic33_write_word(cpu, 0x0430u, (uint16_t)((0x7ffu << 5u) | 8u));
-            dspic33_write_word(cpu, 0x0440u,
-                               (uint16_t)((0x321u << 5u) | (data >> 16u)));
+            dspic33_write_word(cpu, 0x0440u, (uint16_t)((0x321u << 5u) | (data >> 16u)));
             dspic33_write_word(cpu, 0x0442u, (uint16_t)data);
             enable_filter(cpu, 0u, 1u);
             dspic33_write_word(cpu, 0x0402u, bits);
             select_window(cpu, 0u, false);
             set_mode(cpu, 0u, 0u);
             expect(state,
-                   dspic33_can_receive(cpu, 0u, &input, 0u) &&
-                       dspic33_device_advance(cpu, 32u),
+                   dspic33_can_receive(cpu, 0u, &input, 0u) && dspic33_device_advance(cpu, 32u),
                    "DeviceNet matching transfer");
             expect(state, receive_full(cpu, 0u, 0u), "DeviceNet match");
         }
@@ -552,12 +516,10 @@ static void direct_buffer_cases(TestState* state, Dspic33* cpu) {
     uint8_t buffer;
     for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
         for (buffer = 0u; buffer <= 14u; buffer++) {
-            Dspic33CanFrame input =
-                frame((uint32_t)(0x200u + buffer), false, false, 4u, buffer);
+            Dspic33CanFrame input = frame((uint32_t)(0x200u + buffer), false, false, 4u, buffer);
             dspic33_reset(cpu, 0u);
             configure_receive(cpu, channel, 0x6000u, 6u, 0u);
-            configure_filter(cpu, channel, 0u, input.identifier, false, 0x7ffu, true,
-                             buffer, 0u);
+            configure_filter(cpu, channel, 0u, input.identifier, false, 0x7ffu, true, buffer, 0u);
             enable_filter(cpu, channel, 1u);
             select_window(cpu, channel, false);
             set_mode(cpu, channel, 0u);
@@ -570,9 +532,7 @@ static void direct_buffer_cases(TestState* state, Dspic33* cpu) {
                    memory_word(cpu, (uint32_t)(0x6000u + buffer * 16u)) ==
                        (uint16_t)(input.identifier << 2u),
                    "direct buffer address");
-            expect(state,
-                   (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 0x0au)) & 2u) !=
-                       0u,
+            expect(state, (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 0x0au)) & 2u) != 0u,
                    "direct receive event");
         }
     }
@@ -596,12 +556,10 @@ static void fifo_cases(TestState* state, Dspic33* cpu) {
             Dspic33CanFrame input = frame(0x456u, false, false, 1u, index);
             uint8_t buffer = (uint8_t)(start + index);
             expect(state,
-                   dspic33_can_receive(cpu, 0u, &input, 0u) &&
-                       dspic33_device_advance(cpu, 32u),
+                   dspic33_can_receive(cpu, 0u, &input, 0u) && dspic33_device_advance(cpu, 32u),
                    "FIFO transfer");
             expect(state, receive_full(cpu, 0u, buffer), "FIFO full sequence");
-            expect(state,
-                   memory_word(cpu, (uint32_t)(0x7000u + buffer * 16u + 6u)) == index,
+            expect(state, memory_word(cpu, (uint32_t)(0x7000u + buffer * 16u + 6u)) == index,
                    "FIFO payload sequence");
         }
         expect(state, ((dspic33_read_word(cpu, 0x0408u) >> 8u) & 0x3fu) == start,
@@ -609,12 +567,10 @@ static void fifo_cases(TestState* state, Dspic33* cpu) {
         {
             Dspic33CanFrame overflow = frame(0x456u, false, false, 1u, 0xeeu);
             expect(state,
-                   dspic33_can_receive(cpu, 0u, &overflow, 0u) &&
-                       dspic33_device_advance(cpu, 2u),
+                   dspic33_can_receive(cpu, 0u, &overflow, 0u) && dspic33_device_advance(cpu, 2u),
                    "FIFO overflow transfer attempt");
             expect(state,
-                   (dspic33_read_word(cpu,
-                                      (uint16_t)(0x0428u + (start >= 16u ? 2u : 0u))) &
+                   (dspic33_read_word(cpu, (uint16_t)(0x0428u + (start >= 16u ? 2u : 0u))) &
                     (uint16_t)(1u << (start & 15u))) != 0u,
                    "FIFO overflow flag");
             expect(state, (dspic33_read_word(cpu, 0x040au) & 4u) != 0u,
@@ -630,8 +586,7 @@ static void select_transmit_buffer(Dspic33* cpu, uint8_t channel, uint8_t buffer
     uint16_t address = (uint16_t)(bases[channel] + 0x30u + (buffer / 2u) * 2u);
     uint8_t shift = (uint8_t)((buffer & 1u) * 8u);
     uint16_t value = dspic33_read_word(cpu, address);
-    value =
-        (uint16_t)((value & ~(uint16_t)(0xffu << shift)) | (uint16_t)(0x80u << shift));
+    value = (uint16_t)((value & ~(uint16_t)(0xffu << shift)) | (uint16_t)(0x80u << shift));
     dspic33_write_word(cpu, address, value);
 }
 
@@ -641,9 +596,8 @@ static bool transmit_buffer_selected(Dspic33* cpu, uint8_t channel, uint8_t buff
     return ((dspic33_read_word(cpu, address) >> shift) & 0x80u) != 0u;
 }
 
-static void fifo_overflow_advancement_case(TestState* state, Dspic33* cpu,
-                                           uint8_t channel, bool listen_all, bool full,
-                                           bool wrap) {
+static void fifo_overflow_advancement_case(TestState* state, Dspic33* cpu, uint8_t channel,
+                                           bool listen_all, bool full, bool wrap) {
     uint16_t base = bases[channel];
     uint32_t memory = (uint32_t)(0xf000u + channel * 0x100u);
     Dspic33CanFrame input = frame(0x456u, false, false, 1u, 0x80u);
@@ -659,12 +613,9 @@ static void fifo_overflow_advancement_case(TestState* state, Dspic33* cpu,
     set_mode(cpu, channel, listen_all ? 7u : 0u);
     if (wrap) {
         expect(state,
-               dspic33_can_receive(cpu, channel, &input, 0u) &&
-                   dspic33_device_advance(cpu, 32u),
+               dspic33_can_receive(cpu, channel, &input, 0u) && dspic33_device_advance(cpu, 32u),
                "FIFO overflow wrap preparation");
-        expect(state,
-               ((dspic33_read_word(cpu, (uint16_t)(base + 8u)) >> 8u) & 0x3fu) ==
-                   buffer,
+        expect(state, ((dspic33_read_word(cpu, (uint16_t)(base + 8u)) >> 8u) & 0x3fu) == buffer,
                "FIFO overflow wrap pointer preparation");
         clear_receive_flag(cpu, channel, 2u);
     }
@@ -675,17 +626,13 @@ static void fifo_overflow_advancement_case(TestState* state, Dspic33* cpu,
     }
     write_memory_word(cpu, memory + buffer * 16u, 0xa55au);
     fnrb = (uint16_t)(dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x003fu);
-    expect(state,
-           dspic33_can_receive(cpu, channel, &input, 0u) &&
-               dspic33_device_advance(cpu, 2u),
+    expect(state, dspic33_can_receive(cpu, channel, &input, 0u) && dspic33_device_advance(cpu, 2u),
            "FIFO overflow receive attempt");
     expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 0x28u)) & flag) != 0u,
            "FIFO overflow buffer flag");
     expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 4u) != 0u,
            "FIFO overflow event flag");
-    expect(state,
-           ((dspic33_read_word(cpu, (uint16_t)(base + 8u)) >> 8u) & 0x3fu) ==
-               expected_next,
+    expect(state, ((dspic33_read_word(cpu, (uint16_t)(base + 8u)) >> 8u) & 0x3fu) == expected_next,
            "FIFO overflow advances write pointer");
     expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x003fu) == fnrb,
            "FIFO overflow preserves next read pointer");
@@ -706,8 +653,8 @@ static void fifo_overflow_advancement_cases(TestState* state, Dspic33* cpu) {
             for (cause = 0u; cause < 2u; cause++) {
                 uint8_t wrap;
                 for (wrap = 0u; wrap < 2u; wrap++) {
-                    fifo_overflow_advancement_case(state, cpu, channel, mode != 0u,
-                                                   cause == 0u, wrap != 0u);
+                    fifo_overflow_advancement_case(state, cpu, channel, mode != 0u, cause == 0u,
+                                                   wrap != 0u);
                 }
             }
         }
@@ -754,8 +701,7 @@ static void receive_overflow_write_zero_prior_domain(TestState* state, Dspic33* 
                     write_memory_word(cpu, address, previous);
                     dspic33_write_word(cpu, address, (uint16_t)requested);
                     expect(state,
-                           dspic33_read_word(cpu, address) ==
-                               (uint16_t)(previous & requested),
+                           dspic33_read_word(cpu, address) == (uint16_t)(previous & requested),
                            "receive overflow write-zero prior domain");
                 }
             }
@@ -773,8 +719,7 @@ static void receive_flag_read_pointer_cases(TestState* state, Dspic33* cpu) {
             uint8_t start = (uint8_t)(size / 2u);
             uint8_t buffer;
             for (buffer = start; buffer < size; buffer++) {
-                uint16_t address =
-                    (uint16_t)(bases[channel] + 0x20u + (buffer >= 16u ? 2u : 0u));
+                uint16_t address = (uint16_t)(bases[channel] + 0x20u + (buffer >= 16u ? 2u : 0u));
                 uint16_t bit = (uint16_t)(1u << (buffer & 15u));
                 uint16_t fifo_address = (uint16_t)(bases[channel] + 8u);
                 uint8_t expected = buffer + 1u == size ? start : (uint8_t)(buffer + 1u);
@@ -782,13 +727,10 @@ static void receive_flag_read_pointer_cases(TestState* state, Dspic33* cpu) {
                 configure_receive(cpu, channel, 0xf800u, selection, start);
                 select_window(cpu, channel, false);
                 write_memory_word(cpu, address, bit);
-                write_memory_word(cpu, fifo_address,
-                                  (uint16_t)(((uint16_t)start << 8u) | 0x003fu));
+                write_memory_word(cpu, fifo_address, (uint16_t)(((uint16_t)start << 8u) | 0x003fu));
                 dspic33_write_word(cpu, address, (uint16_t)~bit);
-                expect(state, dspic33_read_word(cpu, address) == 0u,
-                       "FIFO receive flag clear");
-                expect(state,
-                       (dspic33_read_word(cpu, fifo_address) & 0x003fu) == expected,
+                expect(state, dspic33_read_word(cpu, address) == 0u, "FIFO receive flag clear");
+                expect(state, (dspic33_read_word(cpu, fifo_address) & 0x003fu) == expected,
                        "FIFO receive flag advances read pointer");
                 expect(state,
                        (dspic33_read_word(cpu, fifo_address) & 0x3f00u) ==
@@ -804,19 +746,17 @@ static void receive_flag_read_pointer_cases(TestState* state, Dspic33* cpu) {
                 configure_receive(cpu, channel, 0xf800u, selection, start);
                 select_window(cpu, channel, false);
                 write_memory_word(cpu, address, bit);
-                write_memory_word(cpu, fifo_address,
-                                  (uint16_t)(((uint16_t)start << 8u) | 0x003eu));
+                write_memory_word(cpu, fifo_address, (uint16_t)(((uint16_t)start << 8u) | 0x003eu));
                 dspic33_write_word(cpu, address, (uint16_t)~bit);
-                expect(state,
-                       (dspic33_read_word(cpu, fifo_address) & 0x003fu) == 0x003eu,
+                expect(state, (dspic33_read_word(cpu, fifo_address) & 0x003fu) == 0x003eu,
                        "direct receive flag preserves FIFO read pointer");
             }
         }
     }
 }
 
-static void fifo_interrupt_boundary_case(TestState* state, Dspic33* cpu,
-                                         uint8_t channel, bool wrap, uint8_t relation) {
+static void fifo_interrupt_boundary_case(TestState* state, Dspic33* cpu, uint8_t channel, bool wrap,
+                                         uint8_t relation) {
     uint16_t base = bases[channel];
     uint16_t fifo_address = (uint16_t)(base + 8u);
     uint16_t interrupt_address = (uint16_t)(base + 0x0au);
@@ -842,35 +782,27 @@ static void fifo_interrupt_boundary_case(TestState* state, Dspic33* cpu,
     set_mode(cpu, channel, 0u);
     for (index = 0u; index < preparation; index++) {
         expect(state,
-               dspic33_can_receive(cpu, channel, &input, 0u) &&
-                   dspic33_device_advance(cpu, 32u),
+               dspic33_can_receive(cpu, channel, &input, 0u) && dspic33_device_advance(cpu, 32u),
                "FIFO interrupt boundary preparation");
     }
-    write_memory_word(
-        cpu, fifo_address,
-        (uint16_t)((dspic33_read_word(cpu, fifo_address) & 0x3f00u) | fnrb));
-    dspic33_write_word(
-        cpu, interrupt_address,
-        (uint16_t)(dspic33_read_word(cpu, interrupt_address) & ~0x000au));
+    write_memory_word(cpu, fifo_address,
+                      (uint16_t)((dspic33_read_word(cpu, fifo_address) & 0x3f00u) | fnrb));
+    dspic33_write_word(cpu, interrupt_address,
+                       (uint16_t)(dspic33_read_word(cpu, interrupt_address) & ~0x000au));
     dspic33_write_word(cpu, (uint16_t)(base + 0x0cu), 0x0008u);
     clear_interrupt_flag(cpu, event_irqs[channel]);
-    expect(state,
-           dspic33_can_receive(cpu, channel, &input, 0u) &&
-               dspic33_device_advance(cpu, 32u),
+    expect(state, dspic33_can_receive(cpu, channel, &input, 0u) && dspic33_device_advance(cpu, 32u),
            "FIFO interrupt boundary receive");
-    expect(state,
-           ((dspic33_read_word(cpu, fifo_address) >> 8u) & 0x003fu) == expected_fbp,
+    expect(state, ((dspic33_read_word(cpu, fifo_address) >> 8u) & 0x003fu) == expected_fbp,
            "FIFO interrupt uses updated write pointer");
     expect(state, (dspic33_read_word(cpu, fifo_address) & 0x003fu) == fnrb,
            "FIFO interrupt preserves read pointer");
-    expect(state,
-           ((dspic33_read_word(cpu, interrupt_address) & 0x0008u) != 0u) == asserted,
+    expect(state, ((dspic33_read_word(cpu, interrupt_address) & 0x0008u) != 0u) == asserted,
            "FIFO interrupt boundary result");
     expect(state, interrupt_flag(cpu, event_irqs[channel]) == asserted,
            "FIFO interrupt boundary IFS result");
     expect(state,
-           (dspic33_read_word(cpu, (uint16_t)(base + 4u)) & 0x007fu) ==
-               (asserted ? 0x44u : 0x40u),
+           (dspic33_read_word(cpu, (uint16_t)(base + 4u)) & 0x007fu) == (asserted ? 0x44u : 0x40u),
            "FIFO interrupt boundary vector result");
 }
 
@@ -888,8 +820,8 @@ static void fifo_interrupt_boundary_cases(TestState* state, Dspic33* cpu) {
     }
 }
 
-static void receive_flag_hardware_event_case(TestState* state, Dspic33* cpu,
-                                             uint8_t channel, uint8_t target) {
+static void receive_flag_hardware_event_case(TestState* state, Dspic33* cpu, uint8_t channel,
+                                             uint8_t target) {
     uint16_t base = bases[channel];
     uint16_t fifo_address = (uint16_t)(base + 8u);
     uint16_t interrupt_address = (uint16_t)(base + 0x0au);
@@ -906,21 +838,15 @@ static void receive_flag_hardware_event_case(TestState* state, Dspic33* cpu,
     select_window(cpu, channel, false);
     set_mode(cpu, channel, 0u);
     for (buffer = target; buffer < 32u; buffer++) {
-        Dspic33CanFrame input =
-            frame(0x456u, false, false, 1u, (uint8_t)(0x20u + buffer));
+        Dspic33CanFrame input = frame(0x456u, false, false, 1u, (uint8_t)(0x20u + buffer));
         uint8_t expected_fbp = buffer == 31u ? target : (uint8_t)(buffer + 1u);
         expect(state,
-               dspic33_can_receive(cpu, channel, &input, 0u) &&
-                   dspic33_device_advance(cpu, 32u),
+               dspic33_can_receive(cpu, channel, &input, 0u) && dspic33_device_advance(cpu, 32u),
                "receive flag hardware fill event");
-        expect(state, receive_full(cpu, channel, buffer),
-               "receive flag hardware sets RXFUL");
-        expect(state,
-               memory_word(cpu, memory + buffer * 16u + 6u) ==
-                   (uint8_t)(0x20u + buffer),
+        expect(state, receive_full(cpu, channel, buffer), "receive flag hardware sets RXFUL");
+        expect(state, memory_word(cpu, memory + buffer * 16u + 6u) == (uint8_t)(0x20u + buffer),
                "receive flag hardware stores message");
-        expect(state,
-               ((dspic33_read_word(cpu, fifo_address) >> 8u) & 0x003fu) == expected_fbp,
+        expect(state, ((dspic33_read_word(cpu, fifo_address) >> 8u) & 0x003fu) == expected_fbp,
                "receive flag hardware advances write pointer");
         expect(state, (dspic33_read_word(cpu, fifo_address) & 0x003fu) == target,
                "receive flag hardware preserves read pointer");
@@ -936,24 +862,20 @@ static void receive_flag_hardware_event_case(TestState* state, Dspic33* cpu,
         Dspic33CanFrame overflow = frame(0x456u, false, false, 1u, 0xe0u);
         uint8_t expected_fbp = target == 31u ? target : (uint8_t)(target + 1u);
         expect(state,
-               dspic33_can_receive(cpu, channel, &overflow, 0u) &&
-                   dspic33_device_advance(cpu, 2u),
+               dspic33_can_receive(cpu, channel, &overflow, 0u) && dspic33_device_advance(cpu, 2u),
                "receive overflow hardware event");
-        expect(state, receive_full(cpu, channel, target),
-               "receive overflow preserves RXFUL");
+        expect(state, receive_full(cpu, channel, target), "receive overflow preserves RXFUL");
         expect(state, (dspic33_read_word(cpu, overflow_address) & target_bit) != 0u,
                "receive overflow hardware sets RXOVF");
         expect(state, (dspic33_read_word(cpu, interrupt_address) & 0x0004u) != 0u,
                "receive overflow hardware sets RBOVIF");
-        expect(state,
-               ((dspic33_read_word(cpu, fifo_address) >> 8u) & 0x003fu) == expected_fbp,
+        expect(state, ((dspic33_read_word(cpu, fifo_address) >> 8u) & 0x003fu) == expected_fbp,
                "receive overflow advances write pointer");
         expect(state, (dspic33_read_word(cpu, fifo_address) & 0x003fu) == target,
                "receive overflow preserves read pointer");
         for (word = 0u; word < 8u; word++) {
             expect(state,
-                   memory_word(cpu, memory + target * 16u + word * 2u) ==
-                       preserved_words[word],
+                   memory_word(cpu, memory + target * 16u + word * 2u) == preserved_words[word],
                    "receive overflow loses complete message");
         }
     }
@@ -978,19 +900,15 @@ static void overflow_and_fallback_cases(TestState* state, Dspic33* cpu) {
     enable_filter(cpu, 0u, 3u);
     select_window(cpu, 0u, false);
     set_mode(cpu, 0u, 0u);
-    expect(state,
-           dspic33_can_receive(cpu, 0u, &input, 0u) && dspic33_device_advance(cpu, 32u),
+    expect(state, dspic33_can_receive(cpu, 0u, &input, 0u) && dspic33_device_advance(cpu, 32u),
            "fallback first transfer");
     expect(state, receive_full(cpu, 0u, 1u), "fallback first buffer");
-    expect(state,
-           dspic33_can_receive(cpu, 0u, &input, 0u) && dspic33_device_advance(cpu, 32u),
+    expect(state, dspic33_can_receive(cpu, 0u, &input, 0u) && dspic33_device_advance(cpu, 32u),
            "fallback second transfer");
     expect(state, receive_full(cpu, 0u, 2u), "fallback second buffer");
-    expect(state,
-           dspic33_can_receive(cpu, 0u, &input, 0u) && dspic33_device_advance(cpu, 2u),
+    expect(state, dspic33_can_receive(cpu, 0u, &input, 0u) && dspic33_device_advance(cpu, 2u),
            "fallback overflow attempt");
-    expect(state, (dspic33_read_word(cpu, 0x0428u) & 2u) != 0u,
-           "fallback lowest overflow");
+    expect(state, (dspic33_read_word(cpu, 0x0428u) & 2u) != 0u, "fallback lowest overflow");
 }
 
 static void transmission_cases(TestState* state, Dspic33* cpu) {
@@ -1003,13 +921,13 @@ static void transmission_cases(TestState* state, Dspic33* cpu) {
                 uint16_t base = bases[channel];
                 uint32_t memory = (uint32_t)(0x9000u + channel * 0x1000u);
                 Dspic33CanFrame expected =
-                    frame(extended != 0u ? 0x1234567u : 0x345u, extended != 0u,
-                          remote != 0u, 8u, (uint8_t)(0x50u + extended * 8u));
+                    frame(extended != 0u ? 0x1234567u : 0x345u, extended != 0u, remote != 0u, 8u,
+                          (uint8_t)(0x50u + extended * 8u));
                 Dspic33CanFrame actual;
                 uint16_t words[8] = {0};
                 uint8_t index;
-                uint32_t sid = expected.extended ? (expected.identifier >> 18u) & 0x7ffu
-                                                 : expected.identifier;
+                uint32_t sid =
+                    expected.extended ? (expected.identifier >> 18u) & 0x7ffu : expected.identifier;
                 uint32_t eid = expected.identifier & 0x3ffffu;
                 words[0] = (uint16_t)(sid << 2u);
                 if (expected.extended) {
@@ -1024,8 +942,7 @@ static void transmission_cases(TestState* state, Dspic33* cpu) {
                 }
                 words[2] |= expected.length;
                 for (index = 0u; index < expected.length; index++) {
-                    words[3u + index / 2u] |= (uint16_t)expected.data[index]
-                                              << ((index & 1u) * 8u);
+                    words[3u + index / 2u] |= (uint16_t)expected.data[index] << ((index & 1u) * 8u);
                 }
                 dspic33_reset(cpu, 0u);
                 configure_transmit(cpu, channel, memory);
@@ -1037,24 +954,18 @@ static void transmission_cases(TestState* state, Dspic33* cpu) {
                 dspic33_write_word(cpu, (uint16_t)(base + 0x0cu), 1u);
                 dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x008bu);
                 expect(state, dspic33_device_advance(cpu, 4096u), "transmit advance");
-                expect(state, dspic33_can_transmit(cpu, channel, &actual),
-                       "transmit queue output");
+                expect(state, dspic33_can_transmit(cpu, channel, &actual), "transmit queue output");
                 expect(state,
                        actual.identifier == expected.identifier &&
                            actual.extended == expected.extended &&
-                           actual.remote == expected.remote &&
-                           actual.length == expected.length,
+                           actual.remote == expected.remote && actual.length == expected.length,
                        "transmit frame header");
-                expect(state, memcmp(actual.data, expected.data, 8u) == 0,
-                       "transmit payload");
-                expect(state,
-                       (dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) & 8u) == 0u,
+                expect(state, memcmp(actual.data, expected.data, 8u) == 0, "transmit payload");
+                expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) & 8u) == 0u,
                        "transmit request clear");
-                expect(state,
-                       (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 1u) != 0u,
+                expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 1u) != 0u,
                        "transmit event flag");
-                expect(state, interrupt_flag(cpu, event_irqs[channel]),
-                       "transmit event interrupt");
+                expect(state, interrupt_flag(cpu, event_irqs[channel]), "transmit event interrupt");
             }
         }
     }
@@ -1066,8 +977,7 @@ static void clock_timing_cases(TestState* state, Dspic33* cpu) {
     static const uint16_t config2_values[] = {0u, 0u, 0u, 0x0311u};
     static const uint64_t completion_cycles[] = {208u, 408u, 408u, 508u};
     for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-        for (uint8_t timing = 0u;
-             timing < sizeof(completion_cycles) / sizeof(completion_cycles[0]);
+        for (uint8_t timing = 0u; timing < sizeof(completion_cycles) / sizeof(completion_cycles[0]);
              timing++) {
             uint16_t base = bases[channel];
             uint32_t memory = (uint32_t)(0xb800u + channel * 0x100u);
@@ -1082,26 +992,22 @@ static void clock_timing_cases(TestState* state, Dspic33* cpu) {
             set_mode(cpu, channel, 4u);
             dspic33_write_word(cpu, (uint16_t)(base + 0x10u), config1_values[timing]);
             dspic33_write_word(cpu, (uint16_t)(base + 0x12u), config2_values[timing]);
-            dspic33_write_word(cpu, base,
-                               (uint16_t)((dspic33_read_word(cpu, base) & ~0x0800u) |
-                                          clock_controls[timing]));
+            dspic33_write_word(
+                cpu, base,
+                (uint16_t)((dspic33_read_word(cpu, base) & ~0x0800u) | clock_controls[timing]));
             set_mode(cpu, channel, 0u);
             dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x008bu);
             expect(state,
-                   dspic33_read_word(cpu, (uint16_t)(base + 0x10u)) ==
-                           config1_values[timing] &&
-                       dspic33_read_word(cpu, (uint16_t)(base + 0x12u)) ==
-                           config2_values[timing] &&
-                       (dspic33_read_word(cpu, base) & 0x0800u) ==
-                           clock_controls[timing],
+                   dspic33_read_word(cpu, (uint16_t)(base + 0x10u)) == config1_values[timing] &&
+                       dspic33_read_word(cpu, (uint16_t)(base + 0x12u)) == config2_values[timing] &&
+                       (dspic33_read_word(cpu, base) & 0x0800u) == clock_controls[timing],
                    "CAN bit timing configuration is retained");
             expect(state,
                    dspic33_device_advance(cpu, completion_cycles[timing] - 1u) &&
                        !dspic33_can_transmit(cpu, channel, &output),
                    "CAN frame remains active before its final bus bit");
             expect(state,
-                   dspic33_device_advance(cpu, 1u) &&
-                       dspic33_can_transmit(cpu, channel, &output) &&
+                   dspic33_device_advance(cpu, 1u) && dspic33_can_transmit(cpu, channel, &output) &&
                        output.identifier == 0u && output.remote && output.length == 0u,
                    "CAN frame completes on its configured B1 clock boundary");
         }
@@ -1134,8 +1040,7 @@ static void stuffed_frame_timing_cases(TestState* state, Dspic33* cpu) {
                        !dspic33_can_transmit(cpu, channel, &output),
                    "stuffed CAN frame remains active before its calculated boundary");
             expect(state,
-                   dspic33_device_advance(cpu, 1u) &&
-                       dspic33_can_transmit(cpu, channel, &output) &&
+                   dspic33_device_advance(cpu, 1u) && dspic33_can_transmit(cpu, channel, &output) &&
                        output.extended == (frame_index != 0u) &&
                        output.length == (frame_index == 0u ? 1u : 8u),
                    "stuffed CAN frame completes on its calculated boundary");
@@ -1162,12 +1067,10 @@ static void transmit_abort_timing_cases(TestState* state, Dspic33* cpu) {
                    (cpu->io.can_tx_busy & (uint8_t)(1u << channel)) != 0u &&
                    !dspic33_can_transmit(cpu, channel, &output),
                "CAN abort test reaches the on-bus interval");
-        dspic33_write_word(cpu, base,
-                           (uint16_t)(dspic33_read_word(cpu, base) | 0x1000u));
+        dspic33_write_word(cpu, base, (uint16_t)(dspic33_read_word(cpu, base) | 0x1000u));
         expect(state,
                (cpu->io.can_tx_busy & (uint8_t)(1u << channel)) == 0u &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) & 0x0048u) ==
-                       0x0040u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) & 0x0048u) == 0x0040u &&
                    dspic33_device_advance(cpu, 1000u) &&
                    !dspic33_can_transmit(cpu, channel, &output),
                "CAN abort cancels the pending on-bus completion");
@@ -1188,8 +1091,7 @@ static void transmit_abort_timing_cases(TestState* state, Dspic33* cpu) {
         dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x0083u);
         expect(state,
                (cpu->io.can_tx_busy & (uint8_t)(1u << channel)) == 0u &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) & 0x0048u) ==
-                       0x0040u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) & 0x0048u) == 0x0040u &&
                    dspic33_device_advance(cpu, 1000u) &&
                    !dspic33_can_transmit(cpu, channel, &output),
                "clearing TXREQ aborts the active CAN transmission");
@@ -1198,10 +1100,8 @@ static void transmit_abort_timing_cases(TestState* state, Dspic33* cpu) {
 
 static void transmit_pps_cases(TestState* state, Dspic33* cpu) {
     bool high;
-    expect(state, !dspic33_can_pin(cpu, 64u, NULL),
-           "CAN output rejects null pin level");
-    expect(state, !dspic33_can_pin(cpu, 63u, &high),
-           "CAN output rejects non-remappable pin");
+    expect(state, !dspic33_can_pin(cpu, 64u, NULL), "CAN output rejects null pin level");
+    expect(state, !dspic33_can_pin(cpu, 63u, &high), "CAN output rejects non-remappable pin");
     for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
         uint16_t base = bases[channel];
         uint32_t memory = (uint32_t)(0xbe00u + channel * 0x100u);
@@ -1217,31 +1117,21 @@ static void transmit_pps_cases(TestState* state, Dspic33* cpu) {
         select_window(cpu, channel, false);
         set_mode(cpu, channel, 0u);
         dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x008bu);
-        expect(state,
-               dspic33_device_advance(cpu, 8u) && dspic33_can_pin(cpu, 64u, &high) &&
-                   !high,
+        expect(state, dspic33_device_advance(cpu, 8u) && dspic33_can_pin(cpu, 64u, &high) && !high,
                "CAN transmit pin drives dominant start of frame");
-        expect(state,
-               dspic33_device_advance(cpu, 20u) && dspic33_can_pin(cpu, 64u, &high) &&
-                   high,
+        expect(state, dspic33_device_advance(cpu, 20u) && dspic33_can_pin(cpu, 64u, &high) && high,
                "CAN transmit pin inserts the sixth complementary stuffed bit");
-        expect(state,
-               dspic33_device_advance(cpu, 4u) && dspic33_can_pin(cpu, 64u, &high) &&
-                   !high,
+        expect(state, dspic33_device_advance(cpu, 4u) && dspic33_can_pin(cpu, 64u, &high) && !high,
                "CAN transmit pin resumes frame data after stuffing");
         dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x0083u);
         expect(state, dspic33_can_pin(cpu, 64u, &high) && high,
                "aborted CAN transmit pin returns recessive");
         dspic33_write_word(cpu, 0x0680u, (uint16_t)(function << 8u));
-        expect(state,
-               !dspic33_can_pin(cpu, 64u, &high) && dspic33_can_pin(cpu, 65u, &high) &&
-                   high,
+        expect(state, !dspic33_can_pin(cpu, 64u, &high) && dspic33_can_pin(cpu, 65u, &high) && high,
                "CAN transmit output follows PPS remapping");
-        dspic33_write_word(
-            cpu, 0x0760u,
-            (uint16_t)(dspic33_read_word(cpu, 0x0760u) | (uint16_t)(2u << channel)));
-        expect(state,
-               dspic33_device_advance(cpu, 1u) && !dspic33_can_pin(cpu, 65u, &high),
+        dspic33_write_word(cpu, 0x0760u,
+                           (uint16_t)(dspic33_read_word(cpu, 0x0760u) | (uint16_t)(2u << channel)));
+        expect(state, dspic33_device_advance(cpu, 1u) && !dspic33_can_pin(cpu, 65u, &high),
                "PMD releases the CAN transmit PPS output");
 
         dspic33_reset(cpu, 0u);
@@ -1253,9 +1143,7 @@ static void transmit_pps_cases(TestState* state, Dspic33* cpu) {
         select_window(cpu, channel, false);
         set_mode(cpu, channel, 0u);
         dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x008bu);
-        expect(state,
-               dspic33_device_advance(cpu, 8u) && dspic33_can_pin(cpu, 64u, &high) &&
-                   !high,
+        expect(state, dspic33_device_advance(cpu, 8u) && dspic33_can_pin(cpu, 64u, &high) && !high,
                "CAN Sleep output test reaches dominant bus phase");
         cpu->power_state = DSPIC33_POWER_SLEEP;
         expect(state, dspic33_can_pin(cpu, 64u, &high) && high,
@@ -1264,15 +1152,13 @@ static void transmit_pps_cases(TestState* state, Dspic33* cpu) {
 }
 
 static bool bridge_can_pins(Dspic33* cpu, uint8_t transmit_channel, uint8_t pin,
-                            uint8_t acknowledge_pin, uint64_t bit_cycles,
-                            int corrupt_bit, bool* acknowledge_observed) {
+                            uint8_t acknowledge_pin, uint64_t bit_cycles, int corrupt_bit,
+                            bool* acknowledge_observed) {
     uint16_t bit = 0u;
-    while ((cpu->io.can_tx_on_bus & (uint8_t)(1u << transmit_channel)) != 0u &&
-           bit < 160u) {
+    while ((cpu->io.can_tx_on_bus & (uint8_t)(1u << transmit_channel)) != 0u && bit < 160u) {
         bool high;
         bool acknowledge_high;
-        if (dspic33_can_pin(cpu, acknowledge_pin, &acknowledge_high) &&
-            !acknowledge_high) {
+        if (dspic33_can_pin(cpu, acknowledge_pin, &acknowledge_high) && !acknowledge_high) {
             *acknowledge_observed = true;
         }
         if (!dspic33_can_pin(cpu, pin, &high)) {
@@ -1290,18 +1176,17 @@ static bool bridge_can_pins(Dspic33* cpu, uint8_t transmit_channel, uint8_t pin,
     return bit != 0u && bit < 160u && dspic33_device_advance(cpu, 32u);
 }
 
-static bool bridge_can_with_final_sample_glitch(
-    Dspic33* cpu, uint8_t transmit_channel, uint8_t transmit_pin,
-    uint8_t acknowledge_pin, uint8_t transmit_receive_pin, uint8_t receive_pin,
-    bool glitch_transmitter, bool* acknowledge_observed) {
+static bool bridge_can_with_final_sample_glitch(Dspic33* cpu, uint8_t transmit_channel,
+                                                uint8_t transmit_pin, uint8_t acknowledge_pin,
+                                                uint8_t transmit_receive_pin, uint8_t receive_pin,
+                                                bool glitch_transmitter,
+                                                bool* acknowledge_observed) {
     uint16_t bit = 0u;
-    while ((cpu->io.can_tx_on_bus & (uint8_t)(1u << transmit_channel)) != 0u &&
-           bit < 160u) {
+    while ((cpu->io.can_tx_on_bus & (uint8_t)(1u << transmit_channel)) != 0u && bit < 160u) {
         bool transmit_high;
         bool acknowledge_high;
         bool bus_high;
-        if (dspic33_can_pin(cpu, acknowledge_pin, &acknowledge_high) &&
-            !acknowledge_high) {
+        if (dspic33_can_pin(cpu, acknowledge_pin, &acknowledge_high) && !acknowledge_high) {
             *acknowledge_observed = true;
         }
         if (!dspic33_can_pin(cpu, transmit_pin, &transmit_high)) {
@@ -1314,15 +1199,13 @@ static bool bridge_can_with_final_sample_glitch(
             return false;
         }
         if (bit == 0u &&
-            !dspic33_can_input_pin(
-                cpu, glitch_transmitter ? transmit_receive_pin : receive_pin, !bus_high,
-                0u)) {
+            !dspic33_can_input_pin(cpu, glitch_transmitter ? transmit_receive_pin : receive_pin,
+                                   !bus_high, 0u)) {
             return false;
         }
         if (!dspic33_device_advance(cpu, 1u) ||
-            !dspic33_can_input_pin(
-                cpu, glitch_transmitter ? transmit_receive_pin : receive_pin, bus_high,
-                0u) ||
+            !dspic33_can_input_pin(cpu, glitch_transmitter ? transmit_receive_pin : receive_pin,
+                                   bus_high, 0u) ||
             !dspic33_device_advance(cpu, 1u)) {
             return false;
         }
@@ -1332,11 +1215,9 @@ static bool bridge_can_with_final_sample_glitch(
 }
 
 static void triple_sample_cases(TestState* state, Dspic33* cpu) {
-    for (uint8_t glitch_transmitter = 0u; glitch_transmitter < 2u;
-         glitch_transmitter++) {
-        Dspic33CanFrame input =
-            frame((uint32_t)(0x360u + glitch_transmitter), false, false, 2u,
-                  (uint8_t)(0x80u + glitch_transmitter * 0x10u));
+    for (uint8_t glitch_transmitter = 0u; glitch_transmitter < 2u; glitch_transmitter++) {
+        Dspic33CanFrame input = frame((uint32_t)(0x360u + glitch_transmitter), false, false, 2u,
+                                      (uint8_t)(0x80u + glitch_transmitter * 0x10u));
         Dspic33CanFrame output;
         bool acknowledge_observed = false;
         dspic33_reset(cpu, 0u);
@@ -1365,8 +1246,7 @@ static void triple_sample_cases(TestState* state, Dspic33* cpu) {
                                                        &acknowledge_observed),
                "CAN triple-sample bridge tolerates one final-sample glitch");
         expect(state,
-               receive_full(cpu, 1u, 0u) &&
-                   (dspic33_read_word(cpu, 0x050eu) & 0x00ffu) == 0u &&
+               receive_full(cpu, 1u, 0u) && (dspic33_read_word(cpu, 0x050eu) & 0x00ffu) == 0u &&
                    memory_word(cpu, 0xda00u) == (uint16_t)(input.identifier << 2u) &&
                    (uint8_t)memory_word(cpu, 0xda06u) == input.data[0] &&
                    (uint8_t)(memory_word(cpu, 0xda06u) >> 8u) == input.data[1],
@@ -1397,32 +1277,26 @@ static void prepare_resynchronization(Dspic33* cpu, uint16_t config1) {
 static void resynchronization_cases(TestState* state, Dspic33* cpu) {
     prepare_resynchronization(cpu, 0u);
     expect(state,
-           cpu->io.can_rx_serial_count[0] == 1u &&
-               dspic33_can_input_pin(cpu, 64u, false, 0u) &&
+           cpu->io.can_rx_serial_count[0] == 1u && dspic33_can_input_pin(cpu, 64u, false, 0u) &&
                dspic33_device_advance(cpu, 2u) && cpu->io.can_rx_serial_count[0] == 1u,
            "early CAN edge shortens Phase Segment 2");
-    expect(state,
-           dspic33_device_advance(cpu, 1u) && cpu->io.can_rx_serial_count[0] == 2u,
+    expect(state, dspic33_device_advance(cpu, 1u) && cpu->io.can_rx_serial_count[0] == 2u,
            "early CAN edge advances the next sample point by one TQ");
 
     prepare_resynchronization(cpu, 0u);
     expect(state,
-           dspic33_device_advance(cpu, 3u) &&
-               dspic33_can_input_pin(cpu, 64u, false, 0u) &&
+           dspic33_device_advance(cpu, 3u) && dspic33_can_input_pin(cpu, 64u, false, 0u) &&
                dspic33_device_advance(cpu, 1u) && cpu->io.can_rx_serial_count[0] == 1u,
            "late CAN edge lengthens Phase Segment 1");
-    expect(state,
-           dspic33_device_advance(cpu, 1u) && cpu->io.can_rx_serial_count[0] == 2u,
+    expect(state, dspic33_device_advance(cpu, 1u) && cpu->io.can_rx_serial_count[0] == 2u,
            "one-TQ SJW limits a late CAN resynchronization");
 
     prepare_resynchronization(cpu, 0x0040u);
     expect(state,
-           dspic33_device_advance(cpu, 3u) &&
-               dspic33_can_input_pin(cpu, 64u, false, 0u) &&
+           dspic33_device_advance(cpu, 3u) && dspic33_can_input_pin(cpu, 64u, false, 0u) &&
                dspic33_device_advance(cpu, 2u) && cpu->io.can_rx_serial_count[0] == 1u,
            "two-TQ SJW permits a larger CAN phase correction");
-    expect(state,
-           dspic33_device_advance(cpu, 1u) && cpu->io.can_rx_serial_count[0] == 2u,
+    expect(state, dspic33_device_advance(cpu, 1u) && cpu->io.can_rx_serial_count[0] == 2u,
            "two-TQ CAN resynchronization reaches its adjusted sample point");
 }
 
@@ -1466,41 +1340,29 @@ static void overload_frame_cases(TestState* state, Dspic33* cpu) {
     set_mode(cpu, 0u, 0u);
     set_mode(cpu, 1u, 0u);
     dspic33_write_word(cpu, 0x0430u, 0x008bu);
-    expect(state, dspic33_device_advance(cpu, 8u),
-           "CAN overload source reaches the bus");
-    expect(state, drive_can_to_intermission(cpu),
-           "valid CAN frame reaches Intermission");
+    expect(state, dspic33_device_advance(cpu, 8u), "CAN overload source reaches the bus");
+    expect(state, drive_can_to_intermission(cpu), "valid CAN frame reaches Intermission");
     expect(state, cpu->io.can_rx_serial_count[1] != 0u,
            "valid CAN serial frame completes before Intermission");
     expect(state,
-           dspic33_can_input_pin(cpu, 64u, false, 0u) &&
-               dspic33_device_advance(cpu, 0u) &&
-               dspic33_can_input_pin(cpu, 64u, true, 0u) &&
-               dspic33_device_advance(cpu, 0u) && dspic33_can_pin(cpu, 65u, &high) &&
-               !high && cpu->io.can_overload_count[1] == 1u,
+           dspic33_can_input_pin(cpu, 64u, false, 0u) && dspic33_device_advance(cpu, 0u) &&
+               dspic33_can_input_pin(cpu, 64u, true, 0u) && dspic33_device_advance(cpu, 0u) &&
+               dspic33_can_pin(cpu, 65u, &high) && !high && cpu->io.can_overload_count[1] == 1u,
            "dominant Intermission edge starts a CAN overload flag");
-    expect(state,
-           dspic33_device_advance(cpu, 23u) && dspic33_can_pin(cpu, 65u, &high) &&
-               !high,
+    expect(state, dspic33_device_advance(cpu, 23u) && dspic33_can_pin(cpu, 65u, &high) && !high,
            "CAN overload flag remains dominant for six bits");
-    expect(state,
-           dspic33_device_advance(cpu, 1u) && dspic33_can_pin(cpu, 65u, &high) && high,
+    expect(state, dspic33_device_advance(cpu, 1u) && dspic33_can_pin(cpu, 65u, &high) && high,
            "CAN overload delimiter becomes recessive after six bits");
-    expect(state,
-           dspic33_device_advance(cpu, 32u) &&
-               (cpu->io.can_intermission_active & 2u) != 0u,
+    expect(state, dspic33_device_advance(cpu, 32u) && (cpu->io.can_intermission_active & 2u) != 0u,
            "CAN overload delimiter is followed by Intermission");
-    expect(
-        state,
-        dspic33_can_input_pin(cpu, 64u, false, 0u) && dspic33_device_advance(cpu, 0u) &&
-            dspic33_can_input_pin(cpu, 64u, true, 0u) &&
-            dspic33_device_advance(cpu, 56u) && cpu->io.can_overload_count[1] == 2u &&
-            (cpu->io.can_intermission_active & 2u) != 0u,
-        "CAN permits two sequential overload frames");
     expect(state,
-           dspic33_can_input_pin(cpu, 64u, false, 0u) &&
-               dspic33_device_advance(cpu, 0u) && dspic33_can_pin(cpu, 65u, &high) &&
-               high && (cpu->io.can_overload_active & 2u) == 0u,
+           dspic33_can_input_pin(cpu, 64u, false, 0u) && dspic33_device_advance(cpu, 0u) &&
+               dspic33_can_input_pin(cpu, 64u, true, 0u) && dspic33_device_advance(cpu, 56u) &&
+               cpu->io.can_overload_count[1] == 2u && (cpu->io.can_intermission_active & 2u) != 0u,
+           "CAN permits two sequential overload frames");
+    expect(state,
+           dspic33_can_input_pin(cpu, 64u, false, 0u) && dspic33_device_advance(cpu, 0u) &&
+               dspic33_can_pin(cpu, 65u, &high) && high && (cpu->io.can_overload_active & 2u) == 0u,
            "CAN suppresses a third sequential overload frame");
 }
 
@@ -1508,13 +1370,11 @@ static bool drive_shared_can_bus(Dspic33* can1, Dspic33* can2, uint8_t active_ch
                                  uint64_t bit_cycles) {
     uint16_t count = 0u;
     Dspic33* active = active_channel == 0u ? can1 : can2;
-    while ((active->io.can_tx_on_bus & (uint8_t)(1u << active_channel)) != 0u &&
-           count < 160u) {
+    while ((active->io.can_tx_on_bus & (uint8_t)(1u << active_channel)) != 0u && count < 160u) {
         bool can1_high;
         bool can2_high;
         bool bus_high;
-        if (!dspic33_can_pin(can1, 65u, &can1_high) ||
-            !dspic33_can_pin(can2, 66u, &can2_high)) {
+        if (!dspic33_can_pin(can1, 65u, &can1_high) || !dspic33_can_pin(can2, 66u, &can2_high)) {
             return false;
         }
         bus_high = can1_high && can2_high;
@@ -1540,8 +1400,7 @@ static void arbitration_field_cases(TestState* state, Dspic33* cpu) {
     contenders[2][1] = frame(0x1550001u, true, false, 0u, 0u);
     contenders[3][0] = frame(0x1550000u, true, false, 0u, 0u);
     contenders[3][1] = frame(0x1550000u, true, true, 0u, 0u);
-    expect(state, dspic33_initialize(&winner),
-           "initialize independent CAN arbitration contender");
+    expect(state, dspic33_initialize(&winner), "initialize independent CAN arbitration contender");
     for (uint8_t index = 0u; index < 4u; index++) {
         Dspic33CanFrame output;
         dspic33_reset(cpu, 0u);
@@ -1570,8 +1429,7 @@ static void arbitration_field_cases(TestState* state, Dspic33* cpu) {
         dspic33_write_word(&winner, 0x0530u, 0x008bu);
         expect(state,
                dspic33_device_advance(cpu, 8u) && dspic33_device_advance(&winner, 8u) &&
-                   (cpu->io.can_tx_on_bus & 1u) != 0u &&
-                   (winner.io.can_tx_on_bus & 2u) != 0u,
+                   (cpu->io.can_tx_on_bus & 1u) != 0u && (winner.io.can_tx_on_bus & 2u) != 0u,
                "CAN arbitration field contenders start together");
         expect(state, drive_shared_can_bus(cpu, &winner, 0u, 4u),
                "CAN arbitration field selects the dominant contender");
@@ -1591,8 +1449,7 @@ static void arbitration_cases(TestState* state, Dspic33* cpu) {
     Dspic33CanFrame lower = frame(0u, false, false, 2u, 0xb0u);
     Dspic33CanFrame output;
     Dspic33 winner;
-    expect(state, dspic33_initialize(&winner),
-           "initialize independent CAN arbitration winner");
+    expect(state, dspic33_initialize(&winner), "initialize independent CAN arbitration winner");
     dspic33_reset(cpu, 0u);
     dspic33_reset(&winner, 0u);
     dspic33_write_word(cpu, 0x0e30u, 0xffffu);
@@ -1625,8 +1482,7 @@ static void arbitration_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(&winner, 0x0530u, 0x008bu);
     expect(state,
            dspic33_device_advance(cpu, 8u) && dspic33_device_advance(&winner, 8u) &&
-               (cpu->io.can_tx_on_bus & 1u) != 0u &&
-               (winner.io.can_tx_on_bus & 2u) != 0u,
+               (cpu->io.can_tx_on_bus & 1u) != 0u && (winner.io.can_tx_on_bus & 2u) != 0u,
            "competing CAN transmissions enter the bus together");
     expect(state, drive_shared_can_bus(cpu, &winner, 1u, 4u),
            "lower identifier wins CAN arbitration");
@@ -1636,13 +1492,11 @@ static void arbitration_cases(TestState* state, Dspic33* cpu) {
                !dspic33_can_transmit(cpu, 0u, &output),
            "losing CAN transmission records TXLARB and begins an automatic retry");
     expect(state,
-           dspic33_can_transmit(&winner, 1u, &output) &&
-               output.identifier == lower.identifier,
+           dspic33_can_transmit(&winner, 1u, &output) && output.identifier == lower.identifier,
            "winning CAN frame completes before the retry");
     expect(state,
            cpu->io.can_rx_serial_count[0] != 0u && dspic33_device_advance(cpu, 7u) &&
-               dspic33_device_advance(&winner, 7u) &&
-               (cpu->io.can_tx_retry_wait & 1u) == 0u &&
+               dspic33_device_advance(&winner, 7u) && (cpu->io.can_tx_retry_wait & 1u) == 0u &&
                (cpu->io.can_tx_on_bus & 1u) != 0u,
            "losing node monitors the winner and retries after intermission");
     expect(state, drive_shared_can_bus(cpu, &winner, 0u, 4u),
@@ -1656,9 +1510,8 @@ static void arbitration_cases(TestState* state, Dspic33* cpu) {
     dspic33_release(&winner);
 }
 
-static bool drive_unacknowledged_can_frame(Dspic33* cpu, uint8_t channel,
-                                           uint8_t transmit_pin, uint8_t receive_pin,
-                                           uint64_t bit_cycles) {
+static bool drive_unacknowledged_can_frame(Dspic33* cpu, uint8_t channel, uint8_t transmit_pin,
+                                           uint8_t receive_pin, uint64_t bit_cycles) {
     uint16_t count = 0u;
     while ((cpu->io.can_tx_on_bus & (uint8_t)(1u << channel)) != 0u && count < 160u) {
         bool high;
@@ -1685,8 +1538,8 @@ static void acknowledge_error_cases(TestState* state, Dspic33* cpu) {
         dspic33_write_word(cpu, 0x0680u, function);
         dspic33_write_word(cpu, 0x06d4u, channel == 0u ? 65u : (uint16_t)(65u << 8u));
         configure_transmit(cpu, channel, memory);
-        Dspic33CanFrame input = frame((uint32_t)(0x240u + channel), false, false, 1u,
-                                      (uint8_t)(0xc0u + channel));
+        Dspic33CanFrame input =
+            frame((uint32_t)(0x240u + channel), false, false, 1u, (uint8_t)(0xc0u + channel));
         write_transmit_frame(cpu, memory, &input);
         select_window(cpu, channel, false);
         dspic33_write_word(cpu, (uint16_t)(base + 0x10u), 0u);
@@ -1700,8 +1553,7 @@ static void acknowledge_error_cases(TestState* state, Dspic33* cpu) {
         expect(state, drive_unacknowledged_can_frame(cpu, channel, 64u, 65u, 4u),
                "unacknowledged CAN frame reaches the ACK slot");
         expect(state,
-               (dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) & 0x0018u) ==
-                       0x0018u &&
+               (dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) & 0x0018u) == 0x0018u &&
                    (dspic33_read_word(cpu, (uint16_t)(base + 0x0eu)) >> 8u) == 8u &&
                    (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 1u) == 0u &&
                    (cpu->io.can_tx_error_active & (uint8_t)(1u << channel)) != 0u &&
@@ -1715,12 +1567,10 @@ static void acknowledge_error_cases(TestState* state, Dspic33* cpu) {
             expect(state, dspic33_initialize(&copy), "initialize CAN error-frame copy");
             expect(state,
                    dspic33_copy(&copy, cpu) && copy.io.can_tx_error_active == 1u &&
-                       copy.io.can_tx_error_start_cycle[0] ==
-                           cpu->io.can_tx_error_start_cycle[0],
+                       copy.io.can_tx_error_start_cycle[0] == cpu->io.can_tx_error_start_cycle[0],
                    "copy preserves active CAN error-frame phase");
             expect(state,
-                   dspic33_device_advance(cpu, 24u) &&
-                       dspic33_device_advance(&copy, 24u) &&
+                   dspic33_device_advance(cpu, 24u) && dspic33_device_advance(&copy, 24u) &&
                        dspic33_can_pin(cpu, 64u, &high) && high &&
                        dspic33_can_pin(&copy, 64u, &copy_high) && copy_high &&
                        copy.io.can_tx_error_active == 1u,
@@ -1728,17 +1578,15 @@ static void acknowledge_error_cases(TestState* state, Dspic33* cpu) {
             dspic33_release(&copy);
         } else {
             expect(state,
-                   dspic33_device_advance(cpu, 24u) &&
-                       dspic33_can_pin(cpu, 64u, &high) && high &&
+                   dspic33_device_advance(cpu, 24u) && dspic33_can_pin(cpu, 64u, &high) && high &&
                        (cpu->io.can_tx_error_active & (uint8_t)(1u << channel)) != 0u,
                    "CAN active error flag is followed by a recessive delimiter");
         }
-        expect(
-            state,
-            dspic33_device_advance(cpu, 52u) &&
-                (cpu->io.can_tx_error_active & (uint8_t)(1u << channel)) == 0u &&
-                (cpu->io.can_tx_on_bus & (uint8_t)(1u << channel)) != 0u,
-            "unacknowledged CAN transmission automatically retries after intermission");
+        expect(state,
+               dspic33_device_advance(cpu, 52u) &&
+                   (cpu->io.can_tx_error_active & (uint8_t)(1u << channel)) == 0u &&
+                   (cpu->io.can_tx_on_bus & (uint8_t)(1u << channel)) != 0u,
+               "unacknowledged CAN transmission automatically retries after intermission");
         dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x0093u);
         expect(state,
                (cpu->io.can_tx_busy & (uint8_t)(1u << channel)) == 0u &&
@@ -1763,11 +1611,9 @@ static void transmit_error_variant_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0412u, 0u);
     set_mode(cpu, 0u, 0u);
     dspic33_write_word(cpu, 0x0430u, 0x008bu);
-    expect(state,
-           dspic33_device_advance(cpu, 8u) && dspic33_can_pin(cpu, 64u, &high) && !high,
+    expect(state, dspic33_device_advance(cpu, 8u) && dspic33_can_pin(cpu, 64u, &high) && !high,
            "CAN dominant-bit mismatch test reaches SOF");
-    expect(state,
-           dspic33_can_input_pin(cpu, 65u, true, 0u) && dspic33_device_advance(cpu, 4u),
+    expect(state, dspic33_can_input_pin(cpu, 65u, true, 0u) && dspic33_device_advance(cpu, 4u),
            "CAN transmitter samples recessive while driving dominant");
     expect(state,
            (dspic33_read_word(cpu, 0x0430u) & 0x0038u) == 0x0018u &&
@@ -1790,14 +1636,12 @@ static void transmit_error_variant_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0412u, 0u);
     set_mode(cpu, 0u, 0u);
     expect(state,
-           dspic33_can_error(cpu, 0u, true, 120u, 0u) &&
-               dspic33_device_advance(cpu, 0u) &&
+           dspic33_can_error(cpu, 0u, true, 120u, 0u) && dspic33_device_advance(cpu, 0u) &&
                (dspic33_read_word(cpu, 0x040eu) >> 8u) == 120u,
            "CAN transmitter reaches the error-passive boundary precursor");
     dspic33_write_word(cpu, 0x0430u, 0x008bu);
     expect(state,
-           dspic33_device_advance(cpu, 8u) &&
-               drive_unacknowledged_can_frame(cpu, 0u, 64u, 65u, 4u),
+           dspic33_device_advance(cpu, 8u) && drive_unacknowledged_can_frame(cpu, 0u, 64u, 65u, 4u),
            "error-passive CAN transmitter encounters a missing ACK");
     expect(state,
            (dspic33_read_word(cpu, 0x040eu) >> 8u) == 128u &&
@@ -1805,8 +1649,7 @@ static void transmit_error_variant_cases(TestState* state, Dspic33* cpu) {
                (dspic33_read_word(cpu, 0x0430u) & 0x0018u) == 0x0018u,
            "missing ACK transitions the CAN transmitter to error-passive");
     expect(state,
-           dspic33_can_pin(cpu, 64u, &high) && high &&
-               (cpu->io.can_tx_error_active & 1u) != 0u,
+           dspic33_can_pin(cpu, 64u, &high) && high && (cpu->io.can_tx_error_active & 1u) != 0u,
            "error-passive CAN flag remains recessive");
     expect(state, dspic33_device_advance(cpu, 99u),
            "error-passive CAN Suspend Transmission advances");
@@ -1815,8 +1658,7 @@ static void transmit_error_variant_cases(TestState* state, Dspic33* cpu) {
     expect(state, (cpu->io.can_tx_on_bus & 1u) == 0u,
            "error-passive CAN transmitter remains off-bus during suspension");
     expect(state,
-           dspic33_device_advance(cpu, 1u) &&
-               (cpu->io.can_tx_error_active & 1u) == 0u &&
+           dspic33_device_advance(cpu, 1u) && (cpu->io.can_tx_error_active & 1u) == 0u &&
                (cpu->io.can_tx_on_bus & 1u) == 0u,
            "error-passive CAN suspension ends after eight additional bits");
     expect(state, dspic33_device_advance(cpu, 8u) && (cpu->io.can_tx_on_bus & 1u) != 0u,
@@ -1878,16 +1720,14 @@ static void receive_error_cases(TestState* state, Dspic33* cpu) {
         expect(state,
                (dspic33_read_word(cpu, 0x050eu) & 0x00ffu) == 1u &&
                    (dspic33_read_word(cpu, 0x050au) & 0x0080u) != 0u &&
-                   (dspic33_read_word(cpu, 0x050au) & 0x0020u) == 0u &&
-                   !receive_full(cpu, 1u, 0u),
+                   (dspic33_read_word(cpu, 0x050au) & 0x0020u) == 0u && !receive_full(cpu, 1u, 0u),
                "CAN receiver error updates REC and IVRIF without B1 ERRIF");
         expect(state, dspic33_can_pin(cpu, 65u, &high) && !high,
                "error-active CAN receiver drives a dominant error flag");
         dspic33_write_word(cpu, 0x0430u, 0x0083u);
         expect(state,
-               dspic33_device_advance(cpu, 24u) && dspic33_can_pin(cpu, 65u, &high) &&
-                   high && dspic33_device_advance(cpu, 32u) &&
-                   (cpu->io.can_rx_error_active & 2u) == 0u,
+               dspic33_device_advance(cpu, 24u) && dspic33_can_pin(cpu, 65u, &high) && high &&
+                   dspic33_device_advance(cpu, 32u) && (cpu->io.can_rx_error_active & 2u) == 0u,
                "CAN receiver error flag ends after its delimiter");
     }
 
@@ -1907,9 +1747,7 @@ static void receive_error_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0512u, 0u);
     set_mode(cpu, 0u, 0u);
     set_mode(cpu, 1u, 0u);
-    expect(state,
-           dspic33_can_error(cpu, 1u, false, 127u, 0u) &&
-               dspic33_device_advance(cpu, 0u),
+    expect(state, dspic33_can_error(cpu, 1u, false, 127u, 0u) && dspic33_device_advance(cpu, 0u),
            "CAN receiver reaches the error-passive boundary precursor");
     dspic33_write_word(cpu, 0x0430u, 0x008bu);
     expect(state,
@@ -1919,15 +1757,13 @@ static void receive_error_cases(TestState* state, Dspic33* cpu) {
            "physical CAN corruption transitions the receiver to error-passive");
     bool high;
     expect(state,
-           dspic33_can_pin(cpu, 65u, &high) && high &&
-               (cpu->io.can_rx_error_active & 2u) != 0u,
+           dspic33_can_pin(cpu, 65u, &high) && high && (cpu->io.can_rx_error_active & 2u) != 0u,
            "error-passive CAN receiver flag remains recessive");
 }
 
 static bool drive_can_recessive_bits(Dspic33* cpu, uint8_t pin, uint16_t count) {
     for (uint16_t bit = 0u; bit < count; bit++) {
-        if (!dspic33_can_input_pin(cpu, pin, true, 0u) ||
-            !dspic33_device_advance(cpu, 4u)) {
+        if (!dspic33_can_input_pin(cpu, pin, true, 0u) || !dspic33_device_advance(cpu, 4u)) {
             return false;
         }
     }
@@ -1946,16 +1782,14 @@ static void bus_off_recovery_cases(TestState* state, Dspic33* cpu) {
         dspic33_write_word(cpu, 0x0680u, function);
         dspic33_write_word(cpu, 0x06d4u, channel == 0u ? 65u : (uint16_t)(65u << 8u));
         configure_transmit(cpu, channel, memory);
-        Dspic33CanFrame input =
-            frame((uint32_t)(0x300u + channel), false, false, 0u, 0u);
+        Dspic33CanFrame input = frame((uint32_t)(0x300u + channel), false, false, 0u, 0u);
         write_transmit_frame(cpu, memory, &input);
         select_window(cpu, channel, false);
         dspic33_write_word(cpu, (uint16_t)(base + 0x10u), 0u);
         dspic33_write_word(cpu, (uint16_t)(base + 0x12u), 0u);
         set_mode(cpu, channel, 0u);
         expect(state,
-               dspic33_can_error(cpu, channel, true, 248u, 0u) &&
-                   dspic33_device_advance(cpu, 0u) &&
+               dspic33_can_error(cpu, channel, true, 248u, 0u) && dspic33_device_advance(cpu, 0u) &&
                    (dspic33_read_word(cpu, (uint16_t)(base + 0x0eu)) >> 8u) == 248u,
                "CAN transmitter reaches the bus-off boundary precursor");
         dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x008bu);
@@ -1963,24 +1797,21 @@ static void bus_off_recovery_cases(TestState* state, Dspic33* cpu) {
                dspic33_device_advance(cpu, 8u) &&
                    drive_unacknowledged_can_frame(cpu, channel, 64u, 65u, 4u) &&
                    (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x2000u) != 0u &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) & 0x0018u) ==
-                       0x0018u,
+                   (dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) & 0x0018u) == 0x0018u,
                "missing ACK at TEC 248 enters CAN bus-off");
         expect(state,
-               dspic33_can_pin(cpu, 64u, &high) && high &&
-                   cpu->io.can_tx_error_active == 0u && cpu->io.can_tx_retry_wait == 0u,
+               dspic33_can_pin(cpu, 64u, &high) && high && cpu->io.can_tx_error_active == 0u &&
+                   cpu->io.can_tx_retry_wait == 0u,
                "bus-off CAN controller releases the bus and suppresses retry");
         expect(state,
                drive_can_recessive_bits(cpu, 65u, 10u) &&
-                   dspic33_can_input_pin(cpu, 65u, false, 0u) &&
-                   dspic33_device_advance(cpu, 4u) &&
+                   dspic33_can_input_pin(cpu, 65u, false, 0u) && dspic33_device_advance(cpu, 4u) &&
                    drive_can_recessive_bits(cpu, 65u, 1407u) &&
                    (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x2000u) != 0u &&
                    cpu->io.can_bus_off_recessive_bits[channel] == 1407u,
                "dominant CAN bit resets the bus-off recovery sequence");
         expect(state,
-               drive_can_recessive_bits(cpu, 65u, 1u) &&
-                   dspic33_device_advance(cpu, 4u) &&
+               drive_can_recessive_bits(cpu, 65u, 1u) && dspic33_device_advance(cpu, 4u) &&
                    (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x3f00u) == 0u &&
                    dspic33_read_word(cpu, (uint16_t)(base + 0x0eu)) == 0u &&
                    (cpu->io.can_tx_on_bus & (uint8_t)(1u << channel)) != 0u,
@@ -2001,8 +1832,7 @@ static void error_counter_recovery_cases(TestState* state, Dspic33* cpu) {
         select_window(cpu, channel, false);
         set_mode(cpu, channel, 0u);
         expect(state,
-               dspic33_can_error(cpu, channel, false, 1u, 0u) &&
-                   dspic33_device_advance(cpu, 0u) &&
+               dspic33_can_error(cpu, channel, false, 1u, 0u) && dspic33_device_advance(cpu, 0u) &&
                    dspic33_can_receive(cpu, channel, &input, 0u) &&
                    dspic33_device_advance(cpu, 32u) &&
                    (dspic33_read_word(cpu, (uint16_t)(base + 0x0eu)) & 0x00ffu) == 0u,
@@ -2014,15 +1844,13 @@ static void error_counter_recovery_cases(TestState* state, Dspic33* cpu) {
         enable_filter(cpu, channel, 1u);
         select_window(cpu, channel, false);
         set_mode(cpu, channel, 0u);
-        expect(state,
-               dspic33_can_error(cpu, channel, false, 128u, 0u) &&
-                   dspic33_device_advance(cpu, 0u) &&
-                   dspic33_can_receive(cpu, channel, &input, 0u) &&
-                   dspic33_device_advance(cpu, 32u) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0eu)) & 0x00ffu) ==
-                       127u &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x0800u) == 0u,
-               "successful CAN reception leaves error-passive in the documented range");
+        expect(
+            state,
+            dspic33_can_error(cpu, channel, false, 128u, 0u) && dspic33_device_advance(cpu, 0u) &&
+                dspic33_can_receive(cpu, channel, &input, 0u) && dspic33_device_advance(cpu, 32u) &&
+                (dspic33_read_word(cpu, (uint16_t)(base + 0x0eu)) & 0x00ffu) == 127u &&
+                (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x0800u) == 0u,
+            "successful CAN reception leaves error-passive in the documented range");
 
         dspic33_reset(cpu, 0u);
         configure_receive(cpu, channel, memory, 4u, 0u);
@@ -2030,8 +1858,8 @@ static void error_counter_recovery_cases(TestState* state, Dspic33* cpu) {
         enable_filter(cpu, channel, 1u);
         select_window(cpu, channel, false);
         set_mode(cpu, channel, 0u);
-        bool prepared = dspic33_can_error(cpu, channel, false, 5u, 0u) &&
-                        dspic33_device_advance(cpu, 0u);
+        bool prepared =
+            dspic33_can_error(cpu, channel, false, 5u, 0u) && dspic33_device_advance(cpu, 0u);
         set_mode(cpu, channel, 3u);
         expect(state,
                prepared && dspic33_can_receive(cpu, channel, &input, 0u) &&
@@ -2044,8 +1872,7 @@ static void error_counter_recovery_cases(TestState* state, Dspic33* cpu) {
 static void receive_pps_cases(TestState* state, Dspic33* cpu) {
     expect(state, !dspic33_can_input_pin(cpu, 63u, true, 0u),
            "CAN input rejects non-remappable pin");
-    for (uint8_t transmit_channel = 0u; transmit_channel < DSPIC33_CAN_COUNT;
-         transmit_channel++) {
+    for (uint8_t transmit_channel = 0u; transmit_channel < DSPIC33_CAN_COUNT; transmit_channel++) {
         uint8_t receive_channel = (uint8_t)(transmit_channel ^ 1u);
         uint8_t pin = (uint8_t)(64u + transmit_channel);
         uint16_t transmit_base = bases[transmit_channel];
@@ -2053,8 +1880,8 @@ static void receive_pps_cases(TestState* state, Dspic33* cpu) {
         uint32_t transmit_memory = (uint32_t)(0xd800u + transmit_channel * 0x100u);
         uint32_t receive_memory = (uint32_t)(0xda00u + transmit_channel * 0x100u);
         Dspic33CanFrame input =
-            frame(transmit_channel == 0u ? 0x345u : 0x1234567u, transmit_channel != 0u,
-                  false, 3u, (uint8_t)(0x60u + transmit_channel * 0x10u));
+            frame(transmit_channel == 0u ? 0x345u : 0x1234567u, transmit_channel != 0u, false, 3u,
+                  (uint8_t)(0x60u + transmit_channel * 0x10u));
         dspic33_reset(cpu, 0u);
         dspic33_write_word(cpu, 0x0e30u, 0xffffu);
         dspic33_write_word(cpu, 0x0e3eu, 0u);
@@ -2080,15 +1907,13 @@ static void receive_pps_cases(TestState* state, Dspic33* cpu) {
         bool acknowledge_observed = false;
         expect(state,
                dspic33_device_advance(cpu, 8u) &&
-                   bridge_can_pins(
-                       cpu, transmit_channel, pin, (uint8_t)(65u - transmit_channel),
-                       transmit_channel == 0u ? 4u : 10u, -1, &acknowledge_observed),
+                   bridge_can_pins(cpu, transmit_channel, pin, (uint8_t)(65u - transmit_channel),
+                                   transmit_channel == 0u ? 4u : 10u, -1, &acknowledge_observed),
                "CAN PPS serial frame bridge advances");
         expect(state,
                receive_full(cpu, receive_channel, 0u) &&
                    cpu->io.can_rx_serial_count[receive_channel] != 0u &&
-                   (cpu->io.can_rx_serial_active & (uint8_t)(1u << receive_channel)) ==
-                       0u,
+                   (cpu->io.can_rx_serial_active & (uint8_t)(1u << receive_channel)) == 0u,
                "CAN PPS receiver accepts a complete stuffed frame");
         expect(state,
                memory_word(cpu, receive_memory) ==
@@ -2097,16 +1922,13 @@ static void receive_pps_cases(TestState* state, Dspic33* cpu) {
                                    << 2u) |
                                   (input.extended ? 3u : 0u)) &&
                    (uint8_t)memory_word(cpu, receive_memory + 6u) == input.data[0] &&
-                   (uint8_t)(memory_word(cpu, receive_memory + 6u) >> 8u) ==
-                       input.data[1],
+                   (uint8_t)(memory_word(cpu, receive_memory + 6u) >> 8u) == input.data[1],
                "CAN PPS receiver preserves header and payload bits");
-        expect(
-            state,
-            acknowledge_observed &&
-                (dspic33_read_word(cpu, (uint16_t)(transmit_base + 0x30u)) & 0x0010u) ==
-                    0u &&
-                (dspic33_read_word(cpu, (uint16_t)(transmit_base + 0x0eu)) >> 8u) == 0u,
-            "CAN PPS receiver drives the acknowledge slot dominant");
+        expect(state,
+               acknowledge_observed &&
+                   (dspic33_read_word(cpu, (uint16_t)(transmit_base + 0x30u)) & 0x0010u) == 0u &&
+                   (dspic33_read_word(cpu, (uint16_t)(transmit_base + 0x0eu)) >> 8u) == 0u,
+               "CAN PPS receiver drives the acknowledge slot dominant");
     }
 
     dspic33_reset(cpu, 0u);
@@ -2131,9 +1953,7 @@ static void receive_pps_cases(TestState* state, Dspic33* cpu) {
            dspic33_device_advance(cpu, 8u) &&
                bridge_can_pins(cpu, 0u, 64u, 65u, 4u, 42, &acknowledge_observed),
            "corrupted CAN PPS frame advances");
-    expect(state,
-           (dspic33_read_word(cpu, 0x050au) & 0x0080u) != 0u &&
-               !receive_full(cpu, 1u, 0u),
+    expect(state, (dspic33_read_word(cpu, 0x050au) & 0x0080u) != 0u && !receive_full(cpu, 1u, 0u),
            "corrupted CAN PPS frame raises IVRIF without receive data");
 }
 
@@ -2147,8 +1967,7 @@ static void receive_pps_qualification_cases(TestState* state, Dspic33* cpu) {
         dspic33_write_word(cpu, 0x06d4u, 64u);
         set_mode(cpu, 0u, mode);
         expect(state,
-               dspic33_can_input_pin(cpu, 64u, false, 0u) &&
-                   dspic33_device_advance(cpu, 0u) &&
+               dspic33_can_input_pin(cpu, 64u, false, 0u) && dspic33_device_advance(cpu, 0u) &&
                    (((cpu->io.can_rx_serial_active & 1u) != 0u) ==
                     (mode == 0u || mode == 3u || mode == 7u)),
                "CAN receive mode qualifies physical start of frame");
@@ -2160,8 +1979,7 @@ static void receive_pps_qualification_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x06d4u, 64u);
     set_mode(cpu, 0u, 0u);
     expect(state,
-           dspic33_can_input_pin(cpu, 64u, false, 0u) &&
-               dspic33_device_advance(cpu, 0u) &&
+           dspic33_can_input_pin(cpu, 64u, false, 0u) && dspic33_device_advance(cpu, 0u) &&
                (cpu->io.can_rx_serial_active & 1u) == 0u,
            "CAN PPS receiver rejects an output pin");
 
@@ -2171,8 +1989,7 @@ static void receive_pps_qualification_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x06d4u, 70u);
     set_mode(cpu, 0u, 0u);
     expect(state,
-           dspic33_can_input_pin(cpu, 70u, false, 0u) &&
-               dspic33_device_advance(cpu, 0u) &&
+           dspic33_can_input_pin(cpu, 70u, false, 0u) && dspic33_device_advance(cpu, 0u) &&
                (cpu->io.can_rx_serial_active & 1u) == 0u,
            "CAN PPS receiver rejects an analog pin");
 
@@ -2182,8 +1999,7 @@ static void receive_pps_qualification_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x06d4u, 65u);
     set_mode(cpu, 0u, 0u);
     expect(state,
-           dspic33_can_input_pin(cpu, 64u, false, 0u) &&
-               dspic33_device_advance(cpu, 0u) &&
+           dspic33_can_input_pin(cpu, 64u, false, 0u) && dspic33_device_advance(cpu, 0u) &&
                (cpu->io.can_rx_serial_active & 1u) == 0u,
            "CAN PPS receiver rejects an unmapped pin");
 
@@ -2194,10 +2010,8 @@ static void receive_pps_qualification_cases(TestState* state, Dspic33* cpu) {
     set_mode(cpu, 0u, 0u);
     dspic33_write_word(cpu, 0x0760u, (uint16_t)(dspic33_read_word(cpu, 0x0760u) | 2u));
     expect(state,
-           dspic33_device_advance(cpu, 1u) &&
-               dspic33_can_input_pin(cpu, 64u, false, 0u) &&
-               dspic33_device_advance(cpu, 0u) &&
-               (cpu->io.can_rx_serial_active & 1u) == 0u,
+           dspic33_device_advance(cpu, 1u) && dspic33_can_input_pin(cpu, 64u, false, 0u) &&
+               dspic33_device_advance(cpu, 0u) && (cpu->io.can_rx_serial_active & 1u) == 0u,
            "PMD suppresses the CAN PPS receiver");
 
     dspic33_reset(cpu, 0u);
@@ -2208,8 +2022,7 @@ static void receive_pps_qualification_cases(TestState* state, Dspic33* cpu) {
     set_mode(cpu, 0u, 0u);
     cpu->power_state = DSPIC33_POWER_SLEEP;
     expect(state,
-           dspic33_can_input_pin(cpu, 64u, false, 0u) &&
-               dspic33_device_advance(cpu, 0u) &&
+           dspic33_can_input_pin(cpu, 64u, false, 0u) && dspic33_device_advance(cpu, 0u) &&
                (dspic33_read_word(cpu, 0x040au) & 0x0040u) == 0u,
            "disabled CAN wake filter rejects physical bus activity");
 
@@ -2221,8 +2034,7 @@ static void receive_pps_qualification_cases(TestState* state, Dspic33* cpu) {
     set_mode(cpu, 0u, 0u);
     cpu->power_state = DSPIC33_POWER_SLEEP;
     expect(state,
-           dspic33_can_input_pin(cpu, 64u, false, 0u) &&
-               dspic33_device_advance(cpu, 0u) &&
+           dspic33_can_input_pin(cpu, 64u, false, 0u) && dspic33_device_advance(cpu, 0u) &&
                (dspic33_read_word(cpu, 0x040au) & 0x0040u) != 0u,
            "enabled CAN wake filter accepts physical bus activity");
 }
@@ -2250,12 +2062,10 @@ static void priority_and_abort_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     select_window(cpu, 0u, false);
     dspic33_write_word(cpu, 0x0430u, 0x8989u);
-    dspic33_write_word(cpu, 0x0400u,
-                       (uint16_t)(dspic33_read_word(cpu, 0x0400u) | 0x1000u));
+    dspic33_write_word(cpu, 0x0400u, (uint16_t)(dspic33_read_word(cpu, 0x0400u) | 0x1000u));
     expect(state, (dspic33_read_word(cpu, 0x0430u) & 0x4848u) == 0x4040u,
            "abort flags and request clear");
-    expect(state, (dspic33_read_word(cpu, 0x0400u) & 0x1000u) == 0u,
-           "abort all self clear");
+    expect(state, (dspic33_read_word(cpu, 0x0400u) & 0x1000u) == 0u, "abort all self clear");
 }
 
 static void mode_and_power_cases(TestState* state, Dspic33* cpu) {
@@ -2272,13 +2082,10 @@ static void mode_and_power_cases(TestState* state, Dspic33* cpu) {
         set_mode(cpu, 0u, mode);
         expect(state, ((dspic33_read_word(cpu, 0x0400u) >> 5u) & 7u) == mode,
                "mode acknowledgement matrix");
-        expect(state,
-               dspic33_can_receive(cpu, 0u, &input, 0u) &&
-                   dspic33_device_advance(cpu, 32u),
+        expect(state, dspic33_can_receive(cpu, 0u, &input, 0u) && dspic33_device_advance(cpu, 32u),
                "mode receive schedule");
         expect(state,
-               receive_full(cpu, 0u, 0u) ==
-                   (mode == 0u || mode == 2u || mode == 3u || mode == 7u),
+               receive_full(cpu, 0u, 0u) == (mode == 0u || mode == 2u || mode == 3u || mode == 7u),
                "mode receive behavior");
     }
     dspic33_reset(cpu, 0u);
@@ -2290,9 +2097,7 @@ static void mode_and_power_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0760u, (uint16_t)(dspic33_read_word(cpu, 0x0760u) | 2u));
     {
         Dspic33CanFrame input = frame(0x234u, false, false, 1u, 0u);
-        expect(state,
-               dspic33_can_receive(cpu, 0u, &input, 0u) &&
-                   dspic33_device_advance(cpu, 32u),
+        expect(state, dspic33_can_receive(cpu, 0u, &input, 0u) && dspic33_device_advance(cpu, 32u),
                "PMD receive schedule");
         expect(state, !receive_full(cpu, 0u, 0u), "PMD blocks receive");
     }
@@ -2301,9 +2106,7 @@ static void mode_and_power_cases(TestState* state, Dspic33* cpu) {
     cpu->power_state = DSPIC33_POWER_SLEEP;
     {
         Dspic33CanFrame input = frame(0x234u, false, false, 1u, 0u);
-        expect(state,
-               dspic33_can_receive(cpu, 0u, &input, 0u) &&
-                   dspic33_device_advance(cpu, 1u),
+        expect(state, dspic33_can_receive(cpu, 0u, &input, 0u) && dspic33_device_advance(cpu, 1u),
                "unfiltered sleep activity schedule");
         expect(state, (dspic33_read_word(cpu, 0x040au) & 0x0040u) == 0u,
                "disabled CAN wake filter rejects sleep activity");
@@ -2314,9 +2117,7 @@ static void mode_and_power_cases(TestState* state, Dspic33* cpu) {
     cpu->power_state = DSPIC33_POWER_SLEEP;
     {
         Dspic33CanFrame input = frame(0x234u, false, false, 1u, 0u);
-        expect(state,
-               dspic33_can_receive(cpu, 0u, &input, 0u) &&
-                   dspic33_device_advance(cpu, 1u),
+        expect(state, dspic33_can_receive(cpu, 0u, &input, 0u) && dspic33_device_advance(cpu, 1u),
                "filtered sleep wake schedule");
         expect(state, (dspic33_read_word(cpu, 0x040au) & 0x0040u) != 0u,
                "enabled CAN wake filter raises wake flag");
@@ -2335,8 +2136,7 @@ static void mode_transition_cases(TestState* state, Dspic33* cpu) {
                (dspic33_read_word(cpu, 0x0400u) & 0x00e0u) == 0x0080u,
            "CAN mode request remains pending before 11 recessive bits");
     expect(state,
-           dspic33_device_advance(cpu, 1u) &&
-               (dspic33_read_word(cpu, 0x0400u) & 0x00e0u) == 0u,
+           dspic33_device_advance(cpu, 1u) && (dspic33_read_word(cpu, 0x0400u) & 0x00e0u) == 0u,
            "CAN mode request completes after 11 recessive bits");
 
     dspic33_reset(cpu, 0u);
@@ -2345,10 +2145,8 @@ static void mode_transition_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x06d4u, 64u);
     request_mode(cpu, 0u, 0u);
     expect(state,
-           dspic33_device_advance(cpu, cycles - 1u) &&
-               dspic33_can_input_pin(cpu, 64u, false, 0u) &&
-               dspic33_device_advance(cpu, 0u) &&
-               dspic33_can_input_pin(cpu, 64u, true, 0u) &&
+           dspic33_device_advance(cpu, cycles - 1u) && dspic33_can_input_pin(cpu, 64u, false, 0u) &&
+               dspic33_device_advance(cpu, 0u) && dspic33_can_input_pin(cpu, 64u, true, 0u) &&
                dspic33_device_advance(cpu, 0u) && dspic33_device_advance(cpu, 1u) &&
                (dspic33_read_word(cpu, 0x0400u) & 0x00e0u) == 0x0080u,
            "dominant CAN input restarts the mode idle boundary");
@@ -2369,8 +2167,7 @@ static void mode_transition_cases(TestState* state, Dspic33* cpu) {
     request_mode(cpu, 0u, 3u);
     expect(state, dspic33_copy(&copy, cpu), "copy pending CAN mode transition");
     expect(state,
-           dspic33_device_advance(cpu, cycles) &&
-               dspic33_device_advance(&copy, cycles) &&
+           dspic33_device_advance(cpu, cycles) && dspic33_device_advance(&copy, cycles) &&
                (dspic33_read_word(cpu, 0x0400u) & 0x00e0u) == 0x0060u &&
                (dspic33_read_word(&copy, 0x0400u) & 0x00e0u) == 0x0060u,
            "copy preserves pending CAN mode transition phase");
@@ -2381,8 +2178,7 @@ static void mode_transition_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     expect(state,
            dspic33_device_advance(cpu, cycles) &&
-               (dspic33_read_word(cpu, 0x0400u) & 0x07e0u) == 0x0480u &&
-               cpu->events.count == 0u,
+               (dspic33_read_word(cpu, 0x0400u) & 0x07e0u) == 0x0480u && cpu->events.count == 0u,
            "reset cancels a pending CAN mode transition");
 
     dspic33_reset(cpu, 0u);
@@ -2444,8 +2240,7 @@ static void physical_debug_mode_cases(TestState* state, Dspic33* cpu) {
                    bridge_can_pins(cpu, 0u, 64u, 65u, 4u, -1, &acknowledge_observed),
                "CAN debug receive mode advances a valid physical frame");
         expect(state,
-               receive_full(cpu, 1u, 0u) &&
-                   (dspic33_read_word(cpu, 0x050eu) & 0x00ffu) == 0u &&
+               receive_full(cpu, 1u, 0u) && (dspic33_read_word(cpu, 0x050eu) & 0x00ffu) == 0u &&
                    (cpu->io.can_rx_error_active & 2u) == 0u,
                "CAN debug receive mode accepts a valid physical frame");
         expect(state, acknowledge_observed == (mode == 7u),
@@ -2480,9 +2275,8 @@ static void physical_debug_mode_cases(TestState* state, Dspic33* cpu) {
                    (receive_full(cpu, 1u, 0u) == (mode == 7u)),
                "CAN listen-all mode transfers an invalid physical frame");
         expect(state,
-               mode == 7u ||
-                   ((dspic33_read_word(cpu, 0x050eu) & 0x00ffu) == 0u &&
-                    (cpu->io.can_rx_error_active & 2u) == 0u && !acknowledge_observed),
+               mode == 7u || ((dspic33_read_word(cpu, 0x050eu) & 0x00ffu) == 0u &&
+                              (cpu->io.can_rx_error_active & 2u) == 0u && !acknowledge_observed),
                "CAN listen-only mode freezes counters and suppresses error output");
     }
 }
@@ -2503,38 +2297,29 @@ static void capture_timestamp_cases(TestState* state, Dspic33* cpu) {
         dspic33_write_word(cpu, 0x0148u, 0u);
         dspic33_write_word(cpu, 0x014au, 0u);
         dspic33_write_word(cpu, 0x0148u, 0x1c03u);
-        dspic33_write_word(cpu, base,
-                           (uint16_t)(dspic33_read_word(cpu, base) | 0x0008u));
+        dspic33_write_word(cpu, base, (uint16_t)(dspic33_read_word(cpu, base) | 0x0008u));
         expect(state,
-               dspic33_can_receive(cpu, channel, &input, 0u) &&
-                   dspic33_device_advance(cpu, 0u) &&
+               dspic33_can_receive(cpu, channel, &input, 0u) && dspic33_device_advance(cpu, 0u) &&
                    (cpu->io.input_capture.input_high & 2u) != 0u,
                "CAN timestamp pulse starts after frame acceptance");
         expect(state,
-               dspic33_device_advance(cpu, 3u) &&
-                   (cpu->io.input_capture.input_high & 2u) != 0u,
+               dspic33_device_advance(cpu, 3u) && (cpu->io.input_capture.input_high & 2u) != 0u,
                "CAN timestamp pulse remains high before one bit time");
         expect(state,
-               dspic33_device_advance(cpu, 1u) &&
-                   cpu->io.input_capture.fifo[1].count == 1u &&
+               dspic33_device_advance(cpu, 1u) && cpu->io.input_capture.fifo[1].count == 1u &&
                    (cpu->io.input_capture.input_high & 2u) == 0u,
                "CAN timestamp pulse clears after one bit time");
         dspic33_write_word(cpu, 0x06aeu, 0x4000u);
         expect(state,
-               dspic33_input_capture_pin(cpu, 64u, false, 0u) &&
-                   dspic33_device_advance(cpu, 0u) &&
-                   dspic33_input_capture_pin(cpu, 64u, true, 0u) &&
-                   dspic33_device_advance(cpu, 1u),
+               dspic33_input_capture_pin(cpu, 64u, false, 0u) && dspic33_device_advance(cpu, 0u) &&
+                   dspic33_input_capture_pin(cpu, 64u, true, 0u) && dspic33_device_advance(cpu, 1u),
                "IC2 pin edge advances while CAN capture is selected");
         expect(state, cpu->io.input_capture.fifo[1].count == 1u,
                "CANCAP disconnects the physical IC2 pin");
-        dspic33_write_word(cpu, base,
-                           (uint16_t)(dspic33_read_word(cpu, base) & ~0x0008u));
+        dspic33_write_word(cpu, base, (uint16_t)(dspic33_read_word(cpu, base) & ~0x0008u));
         expect(state,
-               dspic33_input_capture_pin(cpu, 64u, false, 0u) &&
-                   dspic33_device_advance(cpu, 0u) &&
-                   dspic33_input_capture_pin(cpu, 64u, true, 0u) &&
-                   dspic33_device_advance(cpu, 1u),
+               dspic33_input_capture_pin(cpu, 64u, false, 0u) && dspic33_device_advance(cpu, 0u) &&
+                   dspic33_input_capture_pin(cpu, 64u, true, 0u) && dspic33_device_advance(cpu, 1u),
                "IC2 pin edge advances after CAN capture is cleared");
         expect(state, cpu->io.input_capture.fifo[1].count == 2u,
                "clearing CANCAP restores the physical IC2 pin");
@@ -2547,8 +2332,7 @@ static void capture_timestamp_cases(TestState* state, Dspic33* cpu) {
         set_mode(cpu, channel, 0u);
         dspic33_write_word(cpu, 0x0148u, 0x1c03u);
         expect(state,
-               dspic33_can_receive(cpu, channel, &input, 0u) &&
-                   dspic33_device_advance(cpu, 32u),
+               dspic33_can_receive(cpu, channel, &input, 0u) && dspic33_device_advance(cpu, 32u),
                "disabled CAN timestamp receive schedule");
         expect(state, cpu->io.input_capture.fifo[1].count == 0u,
                "CANCAP clear preserves the IC2 pin source");
@@ -2585,9 +2369,9 @@ static void configure_error_test(Dspic33* cpu, uint8_t channel) {
     dspic33_write_word(cpu, (uint16_t)(bases[channel] + 0x0cu), CAN_INTERRUPT_ERROR);
 }
 
-static void expect_error_step(TestState* state, Dspic33* cpu, uint8_t channel,
-                              bool transmit, uint8_t increment,
-                              uint16_t expected_counts, uint16_t expected_status) {
+static void expect_error_step(TestState* state, Dspic33* cpu, uint8_t channel, bool transmit,
+                              uint8_t increment, uint16_t expected_counts,
+                              uint16_t expected_status) {
     uint16_t status_address = (uint16_t)(bases[channel] + 0x0au);
     uint16_t status;
     expect(state,
@@ -2595,32 +2379,25 @@ static void expect_error_step(TestState* state, Dspic33* cpu, uint8_t channel,
                dspic33_device_advance(cpu, 1u),
            "error counter event schedule");
     status = dspic33_read_word(cpu, status_address);
-    expect(state,
-           dspic33_read_word(cpu, (uint16_t)(bases[channel] + 0x0eu)) ==
-               expected_counts,
+    expect(state, dspic33_read_word(cpu, (uint16_t)(bases[channel] + 0x0eu)) == expected_counts,
            "error counter result");
-    expect(state, (status & CAN_ERROR_STATUS_MASK) == expected_status,
-           "error state result");
-    expect(state, (status & CAN_INTERRUPT_ERROR) == 0u,
-           "B1 error transition leaves ERRIF clear");
+    expect(state, (status & CAN_ERROR_STATUS_MASK) == expected_status, "error state result");
+    expect(state, (status & CAN_INTERRUPT_ERROR) == 0u, "B1 error transition leaves ERRIF clear");
     expect(state, !interrupt_flag(cpu, event_irqs[channel]),
            "B1 error transition does not interrupt");
-    expect(state,
-           (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 4u)) & 0x007fu) == 0x40u,
+    expect(state, (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 4u)) & 0x007fu) == 0x40u,
            "B1 error transition keeps default vector");
 }
 
 static void clear_error_interrupt(TestState* state, Dspic33* cpu, uint8_t channel) {
     uint16_t address = (uint16_t)(bases[channel] + 0x0au);
-    dspic33_write_word(
-        cpu, address,
-        (uint16_t)(dspic33_read_word(cpu, address) & ~CAN_INTERRUPT_ERROR));
+    dspic33_write_word(cpu, address,
+                       (uint16_t)(dspic33_read_word(cpu, address) & ~CAN_INTERRUPT_ERROR));
     clear_interrupt_flag(cpu, event_irqs[channel]);
     expect(state, (dspic33_read_word(cpu, address) & CAN_INTERRUPT_ERROR) == 0u,
            "error flag clear");
     expect(state, !interrupt_flag(cpu, event_irqs[channel]), "error interrupt clear");
-    expect(state,
-           (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 4u)) & 0x007fu) == 0x40u,
+    expect(state, (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 4u)) & 0x007fu) == 0x40u,
            "error vector clear");
 }
 
@@ -2641,8 +2418,7 @@ static void error_threshold_domain(TestState* state, Dspic33* cpu) {
     }
 }
 
-static void receive_error_transition_cases(TestState* state, Dspic33* cpu,
-                                           uint8_t channel) {
+static void receive_error_transition_cases(TestState* state, Dspic33* cpu, uint8_t channel) {
     configure_error_test(cpu, channel);
     expect_error_step(state, cpu, channel, false, 95u, 0x005fu, 0u);
     expect_error_step(state, cpu, channel, false, 1u, 0x0060u,
@@ -2663,16 +2439,15 @@ static void receive_error_transition_cases(TestState* state, Dspic33* cpu,
     expect(state, dspic33_read_word(cpu, (uint16_t)(bases[channel] + 0x0eu)) == 0u,
            "configuration clears receive error counter");
     expect(state,
-           (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 0x0au)) &
-            CAN_ERROR_STATUS_MASK) == 0u,
+           (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 0x0au)) & CAN_ERROR_STATUS_MASK) ==
+               0u,
            "configuration clears receive error state");
     set_mode(cpu, channel, 0u);
     expect_error_step(state, cpu, channel, false, 96u, 0x0060u,
                       CAN_ERROR_WARNING | CAN_RECEIVE_WARNING);
 }
 
-static void transmit_error_transition_cases(TestState* state, Dspic33* cpu,
-                                            uint8_t channel) {
+static void transmit_error_transition_cases(TestState* state, Dspic33* cpu, uint8_t channel) {
     configure_error_test(cpu, channel);
     expect_error_step(state, cpu, channel, true, 95u, 0x5f00u, 0u);
     expect_error_step(state, cpu, channel, true, 1u, 0x6000u,
@@ -2687,25 +2462,22 @@ static void transmit_error_transition_cases(TestState* state, Dspic33* cpu,
                       CAN_ERROR_WARNING | CAN_TRANSMIT_PASSIVE);
     expect_error_step(state, cpu, channel, true, 126u, 0xff00u,
                       CAN_ERROR_WARNING | CAN_TRANSMIT_PASSIVE);
-    expect_error_step(state, cpu, channel, true, 1u, 0xff00u,
-                      CAN_ERROR_WARNING | CAN_BUS_OFF);
+    expect_error_step(state, cpu, channel, true, 1u, 0xff00u, CAN_ERROR_WARNING | CAN_BUS_OFF);
     clear_error_interrupt(state, cpu, channel);
-    expect_error_step(state, cpu, channel, true, 1u, 0xff00u,
-                      CAN_ERROR_WARNING | CAN_BUS_OFF);
+    expect_error_step(state, cpu, channel, true, 1u, 0xff00u, CAN_ERROR_WARNING | CAN_BUS_OFF);
     set_mode(cpu, channel, 4u);
     expect(state, dspic33_read_word(cpu, (uint16_t)(bases[channel] + 0x0eu)) == 0u,
            "configuration clears transmit error counter");
     expect(state,
-           (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 0x0au)) &
-            CAN_ERROR_STATUS_MASK) == 0u,
+           (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 0x0au)) & CAN_ERROR_STATUS_MASK) ==
+               0u,
            "configuration clears bus off state");
     set_mode(cpu, channel, 0u);
     expect_error_step(state, cpu, channel, true, 96u, 0x6000u,
                       CAN_ERROR_WARNING | CAN_TRANSMIT_WARNING);
 }
 
-static void complete_error_test_transmission(TestState* state, Dspic33* cpu,
-                                             uint8_t channel) {
+static void complete_error_test_transmission(TestState* state, Dspic33* cpu, uint8_t channel) {
     uint32_t memory = (uint32_t)(0xe000u + channel * 0x100u);
     Dspic33CanFrame output;
     uint8_t word;
@@ -2715,14 +2487,12 @@ static void complete_error_test_transmission(TestState* state, Dspic33* cpu,
     }
     select_window(cpu, channel, false);
     dspic33_write_word(cpu, (uint16_t)(bases[channel] + 0x30u), 0x008bu);
-    expect(state, dspic33_device_advance(cpu, 4096u),
-           "error recovery transmission advance");
+    expect(state, dspic33_device_advance(cpu, 4096u), "error recovery transmission advance");
     expect(state, dspic33_can_transmit(cpu, channel, &output),
            "error recovery transmission output");
 }
 
-static void transmit_error_descending_entry_cases(TestState* state, Dspic33* cpu,
-                                                  uint8_t channel) {
+static void transmit_error_descending_entry_cases(TestState* state, Dspic33* cpu, uint8_t channel) {
     uint16_t status_address = (uint16_t)(bases[channel] + 0x0au);
     configure_error_test(cpu, channel);
     expect_error_step(state, cpu, channel, true, 128u, 0x8000u,
@@ -2739,8 +2509,7 @@ static void transmit_error_descending_entry_cases(TestState* state, Dspic33* cpu
            "B1 descending error transition leaves ERRIF clear");
     expect(state, !interrupt_flag(cpu, event_irqs[channel]),
            "B1 descending error transition does not interrupt");
-    expect(state,
-           (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 4u)) & 0x007fu) == 0x40u,
+    expect(state, (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 4u)) & 0x007fu) == 0x40u,
            "B1 descending error transition keeps default vector");
     clear_error_interrupt(state, cpu, channel);
     complete_error_test_transmission(state, cpu, channel);
@@ -2754,8 +2523,7 @@ static void transmit_error_descending_entry_cases(TestState* state, Dspic33* cpu
            "within-warning transmission does not set error flag");
     expect(state, !interrupt_flag(cpu, event_irqs[channel]),
            "within-warning transmission does not raise error interrupt");
-    expect(state,
-           (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 4u)) & 0x007fu) == 0x40u,
+    expect(state, (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 4u)) & 0x007fu) == 0x40u,
            "within-warning transmission keeps default vector");
 }
 
@@ -2778,8 +2546,7 @@ static void invalid_message_cases(TestState* state, Dspic33* cpu) {
         set_mode(cpu, channel, 0u);
         dspic33_write_word(cpu, (uint16_t)(base + 0x0cu), 0x0080u);
         clear_interrupt_flag(cpu, event_irqs[channel]);
-        expect(state, dspic33_can_invalid(cpu, channel, 2u),
-               "schedule invalid CAN message");
+        expect(state, dspic33_can_invalid(cpu, channel, 2u), "schedule invalid CAN message");
         expect(state,
                dspic33_device_advance(cpu, 1u) &&
                    (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x0080u) == 0u &&
@@ -2791,9 +2558,8 @@ static void invalid_message_cases(TestState* state, Dspic33* cpu) {
                    interrupt_flag(cpu, event_irqs[channel]) &&
                    (dspic33_read_word(cpu, (uint16_t)(base + 4u)) & 0x007fu) == 0x40u,
                "invalid CAN message raises IVRIF and the event interrupt");
-        dspic33_write_word(
-            cpu, (uint16_t)(base + 0x0au),
-            (uint16_t)(dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & ~0x0080u));
+        dspic33_write_word(cpu, (uint16_t)(base + 0x0au),
+                           (uint16_t)(dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & ~0x0080u));
         clear_interrupt_flag(cpu, event_irqs[channel]);
         expect(state,
                (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x0080u) == 0u &&
@@ -2802,19 +2568,16 @@ static void invalid_message_cases(TestState* state, Dspic33* cpu) {
 
         dspic33_reset(cpu, 0u);
         expect(state,
-               dspic33_can_invalid(cpu, channel, 0u) &&
-                   dspic33_device_advance(cpu, 0u) &&
+               dspic33_can_invalid(cpu, channel, 0u) && dspic33_device_advance(cpu, 0u) &&
                    (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x0080u) == 0u,
                "configuration mode suppresses invalid CAN message events");
 
         dspic33_reset(cpu, 0u);
         set_mode(cpu, channel, 0u);
-        dspic33_write_word(
-            cpu, 0x0760u,
-            (uint16_t)(dspic33_read_word(cpu, 0x0760u) | (uint16_t)(2u << channel)));
+        dspic33_write_word(cpu, 0x0760u,
+                           (uint16_t)(dspic33_read_word(cpu, 0x0760u) | (uint16_t)(2u << channel)));
         expect(state,
-               dspic33_can_invalid(cpu, channel, 0u) &&
-                   dspic33_device_advance(cpu, 1u) &&
+               dspic33_can_invalid(cpu, channel, 0u) && dspic33_device_advance(cpu, 1u) &&
                    (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x0080u) == 0u,
                "PMD-disabled CAN suppresses invalid message events");
     }
@@ -2834,16 +2597,13 @@ static void copy_and_reset_cases(TestState* state, Dspic33* cpu) {
     enable_filter(cpu, 0u, 1u);
     select_window(cpu, 0u, false);
     set_mode(cpu, 0u, 0u);
-    expect(state, dspic33_can_receive(cpu, 0u, &input, 2u),
-           "copy pending receive schedule");
+    expect(state, dspic33_can_receive(cpu, 0u, &input, 2u), "copy pending receive schedule");
     expect(state, dspic33_copy(&copy, cpu), "copy pending CAN state");
-    expect(state,
-           dspic33_device_advance(cpu, 32u) && dspic33_device_advance(&copy, 32u),
+    expect(state, dspic33_device_advance(cpu, 32u) && dspic33_device_advance(&copy, 32u),
            "copy advance");
     expect(state, receive_full(cpu, 0u, 0u) && receive_full(&copy, 0u, 0u),
            "copy receives identically");
-    expect(state, memory_word(cpu, 0xd000u) == memory_word(&copy, 0xd000u),
-           "copy DMA contents");
+    expect(state, memory_word(cpu, 0xd000u) == memory_word(&copy, 0xd000u), "copy DMA contents");
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, 0x0680u, 14u);
     configure_transmit(cpu, 0u, 0xd100u);
@@ -2857,17 +2617,15 @@ static void copy_and_reset_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_device_advance(cpu, 8u) && (cpu->io.can_tx_busy & 1u) != 0u,
            "copy reaches pending CAN bus completion");
     expect(state, dspic33_copy(&copy, cpu), "copy pending CAN bus state");
-    expect(state,
-           dspic33_device_advance(cpu, 20u) && dspic33_device_advance(&copy, 20u),
+    expect(state, dspic33_device_advance(cpu, 20u) && dspic33_device_advance(&copy, 20u),
            "copied CAN bus phases advance");
     bool source_high;
     bool copy_high;
     expect(state,
-           dspic33_can_pin(cpu, 64u, &source_high) &&
-               dspic33_can_pin(&copy, 64u, &copy_high) && source_high && copy_high,
+           dspic33_can_pin(cpu, 64u, &source_high) && dspic33_can_pin(&copy, 64u, &copy_high) &&
+               source_high && copy_high,
            "copy preserves CAN transmit bit phase");
-    expect(state,
-           dspic33_device_advance(cpu, 980u) && dspic33_device_advance(&copy, 980u),
+    expect(state, dspic33_device_advance(cpu, 980u) && dspic33_device_advance(&copy, 980u),
            "copied CAN bus completions advance");
     Dspic33CanFrame source_output;
     Dspic33CanFrame copy_output;
@@ -2882,17 +2640,14 @@ static void copy_and_reset_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x06d4u, 64u);
     set_mode(cpu, 0u, 0u);
     expect(state,
-           dspic33_can_input_pin(cpu, 64u, false, 0u) &&
-               dspic33_device_advance(cpu, 3u) &&
-               cpu->io.can_rx_serial_count[0] == 1u &&
-               (cpu->io.can_rx_serial_active & 1u) != 0u,
+           dspic33_can_input_pin(cpu, 64u, false, 0u) && dspic33_device_advance(cpu, 3u) &&
+               cpu->io.can_rx_serial_count[0] == 1u && (cpu->io.can_rx_serial_active & 1u) != 0u,
            "copy reaches active CAN serial reception");
     expect(state, dspic33_copy(&copy, cpu), "copy active CAN serial state");
     expect(state,
            dspic33_can_input_pin(cpu, 64u, true, 1u) &&
-               dspic33_can_input_pin(&copy, 64u, true, 1u) &&
-               dspic33_device_advance(cpu, 4u) && dspic33_device_advance(&copy, 4u) &&
-               cpu->io.can_rx_serial_count[0] == 2u &&
+               dspic33_can_input_pin(&copy, 64u, true, 1u) && dspic33_device_advance(cpu, 4u) &&
+               dspic33_device_advance(&copy, 4u) && cpu->io.can_rx_serial_count[0] == 2u &&
                copy.io.can_rx_serial_count[0] == 2u &&
                cpu->io.can_rx_serial_bits[0][1] == copy.io.can_rx_serial_bits[0][1],
            "copy preserves CAN serial receive phase");
@@ -2904,16 +2659,15 @@ static void copy_and_reset_cases(TestState* state, Dspic33* cpu) {
     set_mode(cpu, 0u, 0u);
     expect(state,
            dspic33_can_input_pin(cpu, 64u, false, 0u) &&
-               dspic33_can_input_pin(cpu, 64u, true, 0u) &&
-               dspic33_device_advance(cpu, 1u) && cpu->io.can_rx_sample_high[0] == 1u &&
-               cpu->io.can_rx_serial_count[0] == 0u,
+               dspic33_can_input_pin(cpu, 64u, true, 0u) && dspic33_device_advance(cpu, 1u) &&
+               cpu->io.can_rx_sample_high[0] == 1u && cpu->io.can_rx_serial_count[0] == 0u,
            "copy reaches the first CAN majority sample");
     expect(state, dspic33_copy(&copy, cpu) && copy.io.can_rx_sample_high[0] == 1u,
            "copy preserves partial CAN majority state");
     expect(state,
            dspic33_can_input_pin(cpu, 64u, false, 0u) &&
-               dspic33_can_input_pin(&copy, 64u, false, 0u) &&
-               dspic33_device_advance(cpu, 1u) && dspic33_device_advance(&copy, 1u) &&
+               dspic33_can_input_pin(&copy, 64u, false, 0u) && dspic33_device_advance(cpu, 1u) &&
+               dspic33_device_advance(&copy, 1u) &&
                cpu->io.can_rx_sample_high[0] == copy.io.can_rx_sample_high[0],
            "copied CAN majority samples advance together");
     dspic33_release(&copy);
@@ -2922,16 +2676,15 @@ static void copy_and_reset_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0e3eu, 0u);
     dspic33_write_word(cpu, 0x06d4u, 64u);
     expect(state,
-           dspic33_can_input_pin(cpu, 64u, false, 0u) &&
-               dspic33_device_advance(cpu, 0u) && (cpu->io.can_rx_pin_high & 1u) == 0u,
+           dspic33_can_input_pin(cpu, 64u, false, 0u) && dspic33_device_advance(cpu, 0u) &&
+               (cpu->io.can_rx_pin_high & 1u) == 0u,
            "CAN external pin holds a dominant level");
     reset_can_raw(cpu, 0u);
     dspic33_write_word(cpu, 0x0e30u, 0xffffu);
     dspic33_write_word(cpu, 0x0e3eu, 0u);
     dspic33_write_word(cpu, 0x06d4u, 64u);
     expect(state,
-           (cpu->io.can_rx_pin_high & 1u) == 0u &&
-               (cpu->io.can_rx_physical_active & 1u) != 0u,
+           (cpu->io.can_rx_pin_high & 1u) == 0u && (cpu->io.can_rx_physical_active & 1u) != 0u,
            "CAN power-on reset preserves the external pin level");
     dspic33_can_input_pin(cpu, 64u, true, 0u);
     dspic33_device_advance(cpu, 0u);
@@ -2940,33 +2693,25 @@ static void copy_and_reset_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0e3eu, 0u);
     dspic33_write_word(cpu, 0x06d4u, 64u);
     expect(state,
-           (cpu->io.can_rx_pin_high & 1u) != 0u &&
-               (cpu->io.can_rx_physical_active & 1u) != 0u,
+           (cpu->io.can_rx_pin_high & 1u) != 0u && (cpu->io.can_rx_physical_active & 1u) != 0u,
            "CAN warm reset preserves the external pin level");
     dspic33_reset(cpu, 0u);
     expect(state,
            cpu->io.can_rx[0].count == 0u && cpu->io.can_tx[0].count == 0u &&
                cpu->io.can_rx_busy == 0u && cpu->io.can_tx_busy == 0u &&
-               cpu->io.can_rx_serial_active == 0u &&
-               cpu->io.can_rx_serial_count[0] == 0u && cpu->io.can_rx_pin_high == 3u &&
-               cpu->io.can_rx_physical_active == 0u && cpu->io.can_rx_ack == 0u &&
-               cpu->io.can_tx_retry_wait == 0u && cpu->io.can_tx_error_active == 0u &&
-               cpu->io.can_rx_error_active == 0u &&
-               cpu->io.can_intermission_active == 0u &&
-               cpu->io.can_overload_active == 0u &&
+               cpu->io.can_rx_serial_active == 0u && cpu->io.can_rx_serial_count[0] == 0u &&
+               cpu->io.can_rx_pin_high == 3u && cpu->io.can_rx_physical_active == 0u &&
+               cpu->io.can_rx_ack == 0u && cpu->io.can_tx_retry_wait == 0u &&
+               cpu->io.can_tx_error_active == 0u && cpu->io.can_rx_error_active == 0u &&
+               cpu->io.can_intermission_active == 0u && cpu->io.can_overload_active == 0u &&
                cpu->io.can_bus_off_recessive_bits[0] == 0u &&
-               cpu->io.can_bus_off_recessive_bits[1] == 0u &&
-               cpu->io.can_resync_count[0] == 0u && cpu->io.can_resync_count[1] == 0u &&
-               cpu->io.can_intermission_generation[0] == 0u &&
+               cpu->io.can_bus_off_recessive_bits[1] == 0u && cpu->io.can_resync_count[0] == 0u &&
+               cpu->io.can_resync_count[1] == 0u && cpu->io.can_intermission_generation[0] == 0u &&
                cpu->io.can_intermission_generation[1] == 0u &&
-               cpu->io.can_tx_phase_adjustment[0] == 0 &&
-               cpu->io.can_tx_phase_adjustment[1] == 0 &&
-               cpu->io.can_overload_count[0] == 0u &&
-               cpu->io.can_overload_count[1] == 0u &&
-               cpu->io.can_rx_sample_high[0] == 0u &&
-               cpu->io.can_rx_sample_high[1] == 0u &&
-               cpu->io.can_tx_sample_high[0] == 0u &&
-               cpu->io.can_tx_sample_high[1] == 0u,
+               cpu->io.can_tx_phase_adjustment[0] == 0 && cpu->io.can_tx_phase_adjustment[1] == 0 &&
+               cpu->io.can_overload_count[0] == 0u && cpu->io.can_overload_count[1] == 0u &&
+               cpu->io.can_rx_sample_high[0] == 0u && cpu->io.can_rx_sample_high[1] == 0u &&
+               cpu->io.can_tx_sample_high[0] == 0u && cpu->io.can_tx_sample_high[1] == 0u,
            "reset clears CAN runtime");
 }
 

@@ -12,12 +12,9 @@ static const uint16_t bases[DSPIC33_UART_COUNT] = {0x0220u, 0x0230u, 0x0250u, 0x
 static const uint8_t receive_irqs[DSPIC33_UART_COUNT] = {11u, 30u, 82u, 88u};
 static const uint8_t transmit_irqs[DSPIC33_UART_COUNT] = {12u, 31u, 83u, 89u};
 static const uint8_t error_irqs[DSPIC33_UART_COUNT] = {65u, 66u, 81u, 87u};
-static const uint16_t pmd_addresses[DSPIC33_UART_COUNT] = {0x0760u, 0x0760u, 0x0764u,
-                                                           0x0766u};
-static const uint16_t pmd_masks[DSPIC33_UART_COUNT] = {0x0020u, 0x0040u, 0x0008u,
-                                                       0x0020u};
-static const uint16_t pps_registers[DSPIC33_UART_COUNT] = {0x06c4u, 0x06c6u, 0x06d6u,
-                                                           0x06d8u};
+static const uint16_t pmd_addresses[DSPIC33_UART_COUNT] = {0x0760u, 0x0760u, 0x0764u, 0x0766u};
+static const uint16_t pmd_masks[DSPIC33_UART_COUNT] = {0x0020u, 0x0040u, 0x0008u, 0x0020u};
+static const uint16_t pps_registers[DSPIC33_UART_COUNT] = {0x06c4u, 0x06c6u, 0x06d6u, 0x06d8u};
 static const uint8_t tx_functions[DSPIC33_UART_COUNT] = {1u, 3u, 27u, 29u};
 static const uint8_t rts_functions[DSPIC33_UART_COUNT] = {2u, 4u, 28u, 30u};
 
@@ -31,14 +28,12 @@ static void clear_interrupt(Dspic33* cpu, uint8_t irq) {
     dspic33_write_word(cpu, address, (uint16_t)~(uint16_t)(1u << (irq % 16u)));
 }
 
-static uint64_t frame_cycles(uint16_t mode, uint16_t baud,
-                             const Dspic33UartFrame* frame) {
+static uint64_t frame_cycles(uint16_t mode, uint16_t baud, const Dspic33UartFrame* frame) {
     uint64_t clocks = (mode & 0x0008u) != 0u ? 4u : 16u;
-    uint64_t bits =
-        frame->break_signal
-            ? 14u
-            : (uint64_t)(1u + frame->data_bits + frame->stop_bits +
-                         (frame->parity == DSPIC33_UART_PARITY_NONE ? 0u : 1u));
+    uint64_t bits = frame->break_signal
+                        ? 14u
+                        : (uint64_t)(1u + frame->data_bits + frame->stop_bits +
+                                     (frame->parity == DSPIC33_UART_PARITY_NONE ? 0u : 1u));
     return ((uint64_t)baud + 1u) * clocks * bits;
 }
 
@@ -68,9 +63,8 @@ static bool receive_frame(Dspic33* cpu, uint8_t channel, const Dspic33UartFrame*
            dspic33_device_advance(cpu, delay);
 }
 
-static void configure_dma(Dspic33* cpu, uint8_t channel, uint16_t control,
-                          uint8_t request, uint32_t memory, uint16_t pad,
-                          uint16_t count) {
+static void configure_dma(Dspic33* cpu, uint8_t channel, uint16_t control, uint8_t request,
+                          uint32_t memory, uint16_t pad, uint16_t count) {
     uint16_t base = (uint16_t)(0x0b00u + channel * 0x10u);
     dspic33_write_word(cpu, base, 0u);
     dspic33_write_word(cpu, (uint16_t)(base + 2u), request);
@@ -101,15 +95,13 @@ static bool frame_parity(uint16_t value, uint8_t bits, Dspic33UartParity parity)
     return parity == DSPIC33_UART_PARITY_EVEN ? odd : !odd;
 }
 
-static bool drive_uart_level(Dspic33* cpu, bool logical, bool inverted,
-                             uint64_t cycles) {
+static bool drive_uart_level(Dspic33* cpu, bool logical, bool inverted, uint64_t cycles) {
     bool physical = logical != inverted;
     return dspic33_gpio_drive(cpu, 3u, physical ? 1u : 0u, 1u) &&
            dspic33_device_advance(cpu, cycles);
 }
 
-static bool drive_uart_frame(Dspic33* cpu, uint16_t mode, uint16_t baud,
-                             uint16_t value) {
+static bool drive_uart_frame(Dspic33* cpu, uint16_t mode, uint16_t baud, uint16_t value) {
     uint8_t bits = mode_data_bits(mode);
     Dspic33UartParity parity = mode_parity(mode);
     uint64_t cycles = ((uint64_t)baud + 1u) * ((mode & 8u) != 0u ? 4u : 16u);
@@ -119,8 +111,7 @@ static bool drive_uart_frame(Dspic33* cpu, uint16_t mode, uint16_t baud,
         return false;
     }
     for (bit = 0u; bit < bits; bit++) {
-        if (!drive_uart_level(cpu, (value & (uint16_t)(1u << bit)) != 0u, inverted,
-                              cycles)) {
+        if (!drive_uart_level(cpu, (value & (uint16_t)(1u << bit)) != 0u, inverted, cycles)) {
             return false;
         }
     }
@@ -142,13 +133,11 @@ static void register_cases(TestState* state, Dspic33* cpu) {
         uint16_t base = bases[channel];
         dspic33_reset(cpu, 0u);
         expect(state, dspic33_read_word(cpu, base) == 0u, "mode reset");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 2u)) == 0x0110u,
-               "status reset");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 2u)) == 0x0110u, "status reset");
         dspic33_write_word(cpu, (uint16_t)(base + 2u), 0xffffu);
         expect(state, dspic33_read_word(cpu, (uint16_t)(base + 2u)) == 0xe1f0u,
                "disabled transmitter controls");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0u,
-               "baud reset");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0u, "baud reset");
         dspic33_write_word(cpu, base, 0xffffu);
         expect(state, dspic33_read_word(cpu, base) == 0xbbffu, "mode write mask");
         dspic33_write_word(cpu, (uint16_t)(base + 2u), 0xffffu);
@@ -158,8 +147,7 @@ static void register_cases(TestState* state, Dspic33* cpu) {
         expect(state, dspic33_read_word(cpu, (uint16_t)(base + 6u)) == 0u,
                "receive register read only");
         dspic33_write_word(cpu, (uint16_t)(base + 8u), 0xa55au);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0xa55au,
-               "baud full width");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0xa55au, "baud full width");
         dspic33_write_word(cpu, pmd_addresses[channel], pmd_masks[channel]);
         dspic33_write_word(cpu, base, 0x8000u);
         dspic33_write_word(cpu, (uint16_t)(base + 8u), 0x1234u);
@@ -185,19 +173,15 @@ static void receive_value_domain(TestState* state, Dspic33* cpu) {
             configure(cpu, channel, mode, 0u, 0u);
             for (value = 0u; value <= 0x01ffu; value++) {
                 Dspic33UartFrame frame;
-                uint16_t expected =
-                    mode_data_bits(mode) == 9u ? value : value & 0x00ffu;
+                uint16_t expected = mode_data_bits(mode) == 9u ? value : value & 0x00ffu;
                 memset(&frame, 0, sizeof(frame));
                 frame.value = value;
-                expect(state, receive_frame(cpu, channel, &frame, 0u),
-                       "receive value schedule");
+                expect(state, receive_frame(cpu, channel, &frame, 0u), "receive value schedule");
                 expect(state,
-                       (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) &
-                        0x001du) == 0x0011u,
+                       (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) & 0x001du) ==
+                           0x0011u,
                        "receive value status");
-                expect(state,
-                       dspic33_read_word(cpu, (uint16_t)(bases[channel] + 6u)) ==
-                           expected,
+                expect(state, dspic33_read_word(cpu, (uint16_t)(bases[channel] + 6u)) == expected,
                        "receive value domain");
             }
         }
@@ -224,17 +208,14 @@ static void transmit_value_domain(TestState* state, Dspic33* cpu) {
             for (value = 0u; value <= 0x01ffu; value++) {
                 Dspic33UartFrame output;
                 dspic33_write_word(cpu, (uint16_t)(bases[channel] + 4u), value);
-                expect(state, dspic33_device_advance(cpu, cycles),
-                       "transmit value advance");
+                expect(state, dspic33_device_advance(cpu, cycles), "transmit value advance");
                 expect(state, dspic33_uart_transmit(cpu, channel, &output),
                        "transmit value available");
                 expect(state,
-                       output.value ==
-                               (mode_data_bits(mode) == 9u ? value : value & 0x00ffu) &&
-                           output.data_bits == mode_data_bits(mode) &&
-                           output.stop_bits == 1u &&
-                           output.parity == mode_parity(mode) && !output.inverted &&
-                           !output.irda && !output.break_signal,
+                       output.value == (mode_data_bits(mode) == 9u ? value : value & 0x00ffu) &&
+                           output.data_bits == mode_data_bits(mode) && output.stop_bits == 1u &&
+                           output.parity == mode_parity(mode) && !output.inverted && !output.irda &&
+                           !output.break_signal,
                        "transmit value domain");
             }
         }
@@ -253,10 +234,8 @@ static void receive_fifo_cases(TestState* state, Dspic33* cpu) {
             Dspic33UartFrame frame;
             memset(&frame, 0, sizeof(frame));
             frame.value = (uint16_t)(0x40u + index);
-            expect(state, receive_frame(cpu, 0u, &frame, 0u),
-                   "receive threshold schedule");
-            expect(state,
-                   interrupt_flag(cpu, receive_irqs[0]) == (index + 1u >= threshold),
+            expect(state, receive_frame(cpu, 0u, &frame, 0u), "receive threshold schedule");
+            expect(state, interrupt_flag(cpu, receive_irqs[0]) == (index + 1u >= threshold),
                    "receive interrupt threshold");
         }
     }
@@ -271,15 +250,11 @@ static void receive_fifo_cases(TestState* state, Dspic33* cpu) {
                 Dspic33UartFrame frame;
                 memset(&frame, 0, sizeof(frame));
                 frame.value = (uint16_t)(0x70u + index);
-                expect(state, receive_frame(cpu, channel, &frame, 0u),
-                       "receive overrun schedule");
+                expect(state, receive_frame(cpu, channel, &frame, 0u), "receive overrun schedule");
             }
-            expect(state,
-                   (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) &
-                    0x0002u) != 0u,
+            expect(state, (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) & 0x0002u) != 0u,
                    "receive overrun status");
-            expect(state, interrupt_flag(cpu, error_irqs[channel]),
-                   "receive overrun interrupt");
+            expect(state, interrupt_flag(cpu, error_irqs[channel]), "receive overrun interrupt");
             for (index = 0u; index < 5u; index++) {
                 expect(state,
                        dspic33_read_word(cpu, (uint16_t)(bases[channel] + 6u)) ==
@@ -287,13 +262,10 @@ static void receive_fifo_cases(TestState* state, Dspic33* cpu) {
                        "receive overrun held ordering");
             }
             expect(state,
-                   (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) &
-                    0x0003u) == 0x0002u,
+                   (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) & 0x0003u) == 0x0002u,
                    "receive overrun persists after reads");
             dspic33_write_word(cpu, (uint16_t)(bases[channel] + 2u), 0u);
-            expect(state,
-                   (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) &
-                    0x0003u) == 0u,
+            expect(state, (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) & 0x0003u) == 0u,
                    "receive overrun clear resets FIFO");
             {
                 Dspic33UartFrame frame;
@@ -302,8 +274,7 @@ static void receive_fifo_cases(TestState* state, Dspic33* cpu) {
                 expect(state, receive_frame(cpu, channel, &frame, 0u),
                        "receive overrun recovery schedule");
                 expect(state,
-                       dspic33_read_word(cpu, (uint16_t)(bases[channel] + 6u)) ==
-                           frame.value,
+                       dspic33_read_word(cpu, (uint16_t)(bases[channel] + 6u)) == frame.value,
                        "receive overrun recovery value");
             }
 
@@ -317,17 +288,14 @@ static void receive_fifo_cases(TestState* state, Dspic33* cpu) {
                        "receive populated overrun schedule");
             }
             expect(state,
-                   (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) &
-                    0x0003u) == 0x0003u,
+                   (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) & 0x0003u) == 0x0003u,
                    "receive populated overrun status");
             expect(state, cpu->io.uart_rx_fifo[channel].count == 4u,
                    "receive populated overrun FIFO depth");
             expect(state, (cpu->io.uart_rx_hold_valid & (uint8_t)(1u << channel)) != 0u,
                    "receive populated overrun held value");
             dspic33_write_word(cpu, (uint16_t)(bases[channel] + 2u), 0u);
-            expect(state,
-                   (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) &
-                    0x0003u) == 0u,
+            expect(state, (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) & 0x0003u) == 0u,
                    "receive populated overrun clear status");
             expect(state, cpu->io.uart_rx_fifo[channel].count == 0u,
                    "receive populated overrun clear FIFO");
@@ -340,12 +308,10 @@ static void receive_fifo_cases(TestState* state, Dspic33* cpu) {
                 expect(state, receive_frame(cpu, channel, &frame, 0u),
                        "receive populated overrun recovery schedule");
                 expect(state,
-                       dspic33_read_word(cpu, (uint16_t)(bases[channel] + 6u)) ==
-                           frame.value,
+                       dspic33_read_word(cpu, (uint16_t)(bases[channel] + 6u)) == frame.value,
                        "receive populated overrun recovery value");
                 expect(state,
-                       (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) &
-                        0x0001u) == 0u,
+                       (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) & 0x0001u) == 0u,
                        "receive populated overrun recovery empty");
             }
         }
@@ -368,42 +334,29 @@ static void receive_access_width_cases(TestState* state, Dspic33* cpu) {
                "eight bit byte read second schedule");
         expect(state, cpu->io.uart_rx_fifo[channel].count == 2u,
                "eight bit byte read initial depth");
-        expect(state, dspic33_read_byte(cpu, address) == 0x51u,
-               "eight bit low byte first value");
-        expect(state, cpu->io.uart_rx_fifo[channel].count == 1u,
-               "eight bit low byte first pop");
-        expect(state,
-               (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) & 0x0001u) !=
-                   0u,
+        expect(state, dspic33_read_byte(cpu, address) == 0x51u, "eight bit low byte first value");
+        expect(state, cpu->io.uart_rx_fifo[channel].count == 1u, "eight bit low byte first pop");
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) & 0x0001u) != 0u,
                "eight bit low byte remaining status");
-        expect(state, dspic33_read_byte(cpu, address) == 0x52u,
-               "eight bit low byte second value");
-        expect(state, cpu->io.uart_rx_fifo[channel].count == 0u,
-               "eight bit low byte second pop");
-        expect(state,
-               (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) & 0x0001u) ==
-                   0u,
+        expect(state, dspic33_read_byte(cpu, address) == 0x52u, "eight bit low byte second value");
+        expect(state, cpu->io.uart_rx_fifo[channel].count == 0u, "eight bit low byte second pop");
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) & 0x0001u) == 0u,
                "eight bit low byte empty status");
 
         dspic33_reset(cpu, 0u);
         configure(cpu, channel, 0x8006u, 0u, 0u);
         memset(&frame, 0, sizeof(frame));
         frame.value = 0x1a5u;
-        expect(state, receive_frame(cpu, channel, &frame, 0u),
-               "nine bit word read first schedule");
+        expect(state, receive_frame(cpu, channel, &frame, 0u), "nine bit word read first schedule");
         frame.value = 0x155u;
         expect(state, receive_frame(cpu, channel, &frame, 0u),
                "nine bit word read second schedule");
         expect(state, cpu->io.uart_rx_fifo[channel].count == 2u,
                "nine bit word read initial depth");
-        expect(state, dspic33_read_word(cpu, address) == 0x1a5u,
-               "nine bit word read first value");
-        expect(state, cpu->io.uart_rx_fifo[channel].count == 1u,
-               "nine bit word read first pop");
-        expect(state, dspic33_read_word(cpu, address) == 0x155u,
-               "nine bit word read second value");
-        expect(state, cpu->io.uart_rx_fifo[channel].count == 0u,
-               "nine bit word read second pop");
+        expect(state, dspic33_read_word(cpu, address) == 0x1a5u, "nine bit word read first value");
+        expect(state, cpu->io.uart_rx_fifo[channel].count == 1u, "nine bit word read first pop");
+        expect(state, dspic33_read_word(cpu, address) == 0x155u, "nine bit word read second value");
+        expect(state, cpu->io.uart_rx_fifo[channel].count == 0u, "nine bit word read second pop");
     }
 }
 
@@ -422,16 +375,13 @@ static void receive_error_cases(TestState* state, Dspic33* cpu) {
             frame.value = 0x5au;
             frame.parity_error = (combination & 1u) != 0u;
             frame.framing_error = (combination & 2u) != 0u;
-            expect(state, receive_frame(cpu, channel, &frame, 0u),
-                   "receive error schedule");
+            expect(state, receive_frame(cpu, channel, &frame, 0u), "receive error schedule");
             expect(state,
-                   (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) &
-                    0x000cu) == expected,
+                   (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) & 0x000cu) == expected,
                    "receive buffered error status");
             expect(state, interrupt_flag(cpu, error_irqs[channel]) == (expected != 0u),
                    "receive error interrupt");
-            expect(state,
-                   dspic33_read_word(cpu, (uint16_t)(bases[channel] + 6u)) == 0x5au,
+            expect(state, dspic33_read_word(cpu, (uint16_t)(bases[channel] + 6u)) == 0x5au,
                    "receive error data");
         }
     }
@@ -443,8 +393,7 @@ static void receive_error_cases(TestState* state, Dspic33* cpu) {
         frame.value = 0x1a5u;
         frame.parity_error = true;
         expect(state, receive_frame(cpu, 0u, &frame, 0u), "nine bit parity schedule");
-        expect(state,
-               (dspic33_read_word(cpu, (uint16_t)(bases[0] + 2u)) & 0x0008u) == 0u,
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(bases[0] + 2u)) & 0x0008u) == 0u,
                "nine bit ignores parity error");
     }
 }
@@ -510,26 +459,21 @@ static void transmit_fifo_cases(TestState* state, Dspic33* cpu) {
     for (index = 0u; index < 5u; index++) {
         expect(state, dspic33_device_advance(cpu, cycles), "transmit FIFO advance");
         expect(state,
-               dspic33_uart_transmit(cpu, 0u, &output) &&
-                   output.value == (uint16_t)(0x20u + index),
+               dspic33_uart_transmit(cpu, 0u, &output) && output.value == (uint16_t)(0x20u + index),
                "transmit FIFO ordering");
     }
-    expect(state, !dspic33_uart_transmit(cpu, 0u, &output),
-           "transmit FIFO ignores overflow write");
-    expect(state,
-           (dspic33_read_word(cpu, (uint16_t)(bases[0] + 2u)) & 0x0300u) == 0x0100u,
+    expect(state, !dspic33_uart_transmit(cpu, 0u, &output), "transmit FIFO ignores overflow write");
+    expect(state, (dspic33_read_word(cpu, (uint16_t)(bases[0] + 2u)) & 0x0300u) == 0x0100u,
            "transmit FIFO empty status");
 }
 
 static void transmit_timing_cases(TestState* state, Dspic33* cpu) {
-    static const uint16_t modes[] = {0x8000u, 0x8001u, 0x8002u, 0x8004u,
-                                     0x8006u, 0x8008u, 0x9008u};
+    static const uint16_t modes[] = {0x8000u, 0x8001u, 0x8002u, 0x8004u, 0x8006u, 0x8008u, 0x9008u};
     static const uint16_t bauds[] = {0u, 1u, 0x00ffu, 0xffffu};
     uint8_t mode_index;
     uint8_t baud_index;
     for (mode_index = 0u; mode_index < sizeof(modes) / sizeof(modes[0]); mode_index++) {
-        for (baud_index = 0u; baud_index < sizeof(bauds) / sizeof(bauds[0]);
-             baud_index++) {
+        for (baud_index = 0u; baud_index < sizeof(bauds) / sizeof(bauds[0]); baud_index++) {
             Dspic33UartFrame expected;
             Dspic33UartFrame output;
             uint64_t cycles;
@@ -548,14 +492,11 @@ static void transmit_timing_cases(TestState* state, Dspic33* cpu) {
                        !dspic33_uart_transmit(cpu, 0u, &output),
                    "transmit timing lower boundary");
             expect(state,
-                   dspic33_device_advance(cpu, 1u) &&
-                       dspic33_uart_transmit(cpu, 0u, &output),
+                   dspic33_device_advance(cpu, 1u) && dspic33_uart_transmit(cpu, 0u, &output),
                    "transmit timing completion boundary");
             expect(state,
-                   output.baud_period == baud &&
-                       output.data_bits == expected.data_bits &&
-                       output.stop_bits == expected.stop_bits &&
-                       output.parity == expected.parity &&
+                   output.baud_period == baud && output.data_bits == expected.data_bits &&
+                       output.stop_bits == expected.stop_bits && output.parity == expected.parity &&
                        output.irda == ((mode & 0x1000u) != 0u),
                    "transmit timing frame metadata");
         }
@@ -567,22 +508,19 @@ static void transmit_mode_cases(TestState* state, Dspic33* cpu) {
     uint8_t interrupt_mode;
     Dspic33UartFrame output;
     for (interrupt_mode = 0u; interrupt_mode < 3u; interrupt_mode++) {
-        uint16_t status =
-            (uint16_t)(0x0400u | ((interrupt_mode & 1u) != 0u ? 0x2000u : 0u) |
-                       ((interrupt_mode & 2u) != 0u ? 0x8000u : 0u));
+        uint16_t status = (uint16_t)(0x0400u | ((interrupt_mode & 1u) != 0u ? 0x2000u : 0u) |
+                                     ((interrupt_mode & 2u) != 0u ? 0x8000u : 0u));
         dspic33_reset(cpu, 0u);
         dspic33_write_word(cpu, bases[0], 0x8000u);
         clear_interrupt(cpu, transmit_irqs[0]);
         dspic33_write_word(cpu, (uint16_t)(bases[0] + 2u), status);
-        expect(state, interrupt_flag(cpu, transmit_irqs[0]),
-               "transmit enable interrupt mode");
+        expect(state, interrupt_flag(cpu, transmit_irqs[0]), "transmit enable interrupt mode");
         clear_interrupt(cpu, transmit_irqs[0]);
         dspic33_write_word(cpu, (uint16_t)(bases[0] + 4u), 0x3cu);
         expect(state,
-               interrupt_mode == 1u
-                   ? cpu->stop_reason == DSPIC33_SILICON_RESULT_UNDEFINED
-                   : interrupt_flag(cpu, transmit_irqs[0]) ==
-                         (interrupt_mode == 0u || interrupt_mode == 2u),
+               interrupt_mode == 1u ? cpu->stop_reason == DSPIC33_SILICON_RESULT_UNDEFINED
+                                    : interrupt_flag(cpu, transmit_irqs[0]) ==
+                                          (interrupt_mode == 0u || interrupt_mode == 2u),
                "transmit start interrupt mode");
         clear_interrupt(cpu, transmit_irqs[0]);
         if (interrupt_mode == 1u) {
@@ -592,12 +530,9 @@ static void transmit_mode_cases(TestState* state, Dspic33* cpu) {
                    "B1 unspecified transmit does not report an ideal frame");
             continue;
         }
-        expect(state, dspic33_device_advance(cpu, 160u),
-               "transmit interrupt completion advance");
-        expect(state, !interrupt_flag(cpu, transmit_irqs[0]),
-               "transmit completion interrupt mode");
-        expect(state, dspic33_uart_transmit(cpu, 0u, &output),
-               "transmit interrupt output");
+        expect(state, dspic33_device_advance(cpu, 160u), "transmit interrupt completion advance");
+        expect(state, !interrupt_flag(cpu, transmit_irqs[0]), "transmit completion interrupt mode");
+        expect(state, dspic33_uart_transmit(cpu, 0u, &output), "transmit interrupt output");
     }
 
     dspic33_reset(cpu, 0u);
@@ -638,8 +573,7 @@ static void transmit_mode_cases(TestState* state, Dspic33* cpu) {
         expect(state,
                dspic33_device_advance(cpu, 1000u) &&
                    !dspic33_uart_transmit(cpu, channel, &output) &&
-                   (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) &
-                    0x0511u) == 0x0110u,
+                   (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) & 0x0511u) == 0x0110u,
                "transmit disable aborts and resets transmitter");
 
         dspic33_reset(cpu, 0u);
@@ -652,8 +586,7 @@ static void transmit_mode_cases(TestState* state, Dspic33* cpu) {
         expect(state,
                dspic33_uart_transmit(cpu, channel, &output) && output.break_signal &&
                    output.value == 0u && output.data_bits == 12u &&
-                   (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) &
-                    0x0800u) == 0u,
+                   (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) & 0x0800u) == 0u,
                "break frame and automatic clear");
     }
 }
@@ -667,8 +600,7 @@ static void b1_transmit_pointer_cases(TestState* state, Dspic33* cpu) {
         dspic33_write_word(cpu, bases[channel], 0x8000u);
         dspic33_write_word(cpu, (uint16_t)(bases[channel] + 4u), value);
         expect(state,
-               cpu->io.uart_tx_fifo[channel].count == 1u &&
-                   dspic33_device_advance(cpu, 1000u) &&
+               cpu->io.uart_tx_fifo[channel].count == 1u && dspic33_device_advance(cpu, 1000u) &&
                    !dspic33_uart_transmit(cpu, channel, &output),
                "B1 UART accepts TXREG before TXEN without transmitting");
         dspic33_write_word(cpu, bases[channel], 0u);
@@ -677,16 +609,14 @@ static void b1_transmit_pointer_cases(TestState* state, Dspic33* cpu) {
         dspic33_write_word(cpu, bases[channel], 0x8000u);
         dspic33_write_word(cpu, (uint16_t)(bases[channel] + 2u), 0x0400u);
         expect(state,
-               dspic33_device_advance(cpu, 160u) &&
-                   dspic33_uart_transmit(cpu, channel, &output) &&
+               dspic33_device_advance(cpu, 160u) && dspic33_uart_transmit(cpu, channel, &output) &&
                    output.value == value,
                "B1 UART transmits preserved data after TXEN is set");
 
         dspic33_reset(cpu, 0u);
         configure(cpu, channel, 0x8000u, 0x0400u, 0u);
         dspic33_write_word(cpu, (uint16_t)(bases[channel] + 4u), value);
-        dspic33_write_word(cpu, (uint16_t)(bases[channel] + 4u),
-                           (uint16_t)(value + 0x10u));
+        dspic33_write_word(cpu, (uint16_t)(bases[channel] + 4u), (uint16_t)(value + 0x10u));
         dspic33_write_word(cpu, bases[channel], 0u);
         expect(state,
                cpu->io.uart_tx_fifo[channel].count == 0u &&
@@ -695,8 +625,7 @@ static void b1_transmit_pointer_cases(TestState* state, Dspic33* cpu) {
         dspic33_write_word(cpu, bases[channel], 0x8000u);
         dspic33_write_word(cpu, (uint16_t)(bases[channel] + 2u), 0x0400u);
         expect(state,
-               dspic33_device_advance(cpu, 1000u) &&
-                   !dspic33_uart_transmit(cpu, channel, &output),
+               dspic33_device_advance(cpu, 1000u) && !dspic33_uart_transmit(cpu, channel, &output),
                "B1 UART cleared write pointer does not transmit stale data");
     }
 }
@@ -705,22 +634,17 @@ static void cts_cases(TestState* state, Dspic33* cpu) {
     Dspic33UartFrame output;
     dspic33_reset(cpu, 0u);
     configure(cpu, 0u, 0x8200u, 0x0400u, 0u);
-    expect(state,
-           dspic33_uart_set_cts(cpu, 0u, false, 0u) && dspic33_device_advance(cpu, 0u),
+    expect(state, dspic33_uart_set_cts(cpu, 0u, false, 0u) && dspic33_device_advance(cpu, 0u),
            "CTS block schedule");
     dspic33_write_word(cpu, (uint16_t)(bases[0] + 4u), 0x99u);
-    expect(state,
-           dspic33_device_advance(cpu, 1000u) &&
-               !dspic33_uart_transmit(cpu, 0u, &output),
+    expect(state, dspic33_device_advance(cpu, 1000u) && !dspic33_uart_transmit(cpu, 0u, &output),
            "CTS blocks completion");
     expect(state,
            dspic33_uart_set_cts(cpu, 0u, true, 3u) && dspic33_device_advance(cpu, 2u) &&
                !dspic33_uart_transmit(cpu, 0u, &output),
            "CTS delayed release boundary");
     expect(state, dspic33_device_advance(cpu, 1u), "CTS release event");
-    expect(state,
-           dspic33_device_advance(cpu, 159u) &&
-               !dspic33_uart_transmit(cpu, 0u, &output),
+    expect(state, dspic33_device_advance(cpu, 159u) && !dspic33_uart_transmit(cpu, 0u, &output),
            "CTS transmit timing boundary");
     expect(state,
            dspic33_device_advance(cpu, 1u) && dspic33_uart_transmit(cpu, 0u, &output) &&
@@ -742,8 +666,7 @@ static void dma_cases(TestState* state, Dspic33* cpu) {
         memset(&frame, 0, sizeof(frame));
         frame.value = (uint16_t)(0x80u + channel);
         frame.parity_error = true;
-        expect(state, receive_frame(cpu, channel, &frame, 0u),
-               "UART receive DMA schedule");
+        expect(state, receive_frame(cpu, channel, &frame, 0u), "UART receive DMA schedule");
         expect(state, dspic33_device_advance(cpu, 0u), "UART receive DMA advance");
         expect(state, memory_word(cpu, receive_memory) == (uint16_t)(0x0880u + channel),
                "UART receive DMA data and error bits");
@@ -773,8 +696,7 @@ static void physical_pps_cases(TestState* state, Dspic33* cpu) {
         uint16_t value = receive_values[channel];
         dspic33_reset(cpu, 0u);
         dspic33_write_word(cpu, 0x0e3eu, 0u);
-        expect(state, dspic33_gpio_drive(cpu, 3u, 1u, 1u),
-               "UART PPS drive receive idle");
+        expect(state, dspic33_gpio_drive(cpu, 3u, 1u, 1u), "UART PPS drive receive idle");
         dspic33_write_word(cpu, pps_registers[channel], 64u);
         configure(cpu, channel, mode, 0u, (uint16_t)channel);
         expect(state, drive_uart_level(cpu, true, (mode & 0x0010u) != 0u, 0u),
@@ -783,28 +705,22 @@ static void physical_pps_cases(TestState* state, Dspic33* cpu) {
                "UART PPS receive frame timing");
         expect(state, dspic33_read_word(cpu, (uint16_t)(bases[channel] + 6u)) == value,
                "UART PPS receive frame value");
-        expect(state, interrupt_flag(cpu, receive_irqs[channel]),
-               "UART PPS receive interrupt");
+        expect(state, interrupt_flag(cpu, receive_irqs[channel]), "UART PPS receive interrupt");
 
         dspic33_reset(cpu, 0u);
         dspic33_write_word(cpu, 0x0680u, tx_functions[channel]);
         configure(cpu, channel, 0x8000u, 0x0400u, 0u);
-        expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && high,
-               "UART PPS transmit idle high");
+        expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && high, "UART PPS transmit idle high");
         dspic33_write_word(cpu, (uint16_t)(bases[channel] + 4u), 0x00a5u);
-        expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && !high,
-               "UART PPS transmit start bit");
+        expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && !high, "UART PPS transmit start bit");
         expect(state,
-               dspic33_device_advance(cpu, 16u) &&
-                   dspic33_gpio_pin(cpu, 3u, 0u, &high) && high,
+               dspic33_device_advance(cpu, 16u) && dspic33_gpio_pin(cpu, 3u, 0u, &high) && high,
                "UART PPS transmit first data bit");
         expect(state,
-               dspic33_device_advance(cpu, 16u) &&
-                   dspic33_gpio_pin(cpu, 3u, 0u, &high) && !high,
+               dspic33_device_advance(cpu, 16u) && dspic33_gpio_pin(cpu, 3u, 0u, &high) && !high,
                "UART PPS transmit second data bit");
         expect(state,
-               dspic33_device_advance(cpu, 128u) &&
-                   dspic33_gpio_pin(cpu, 3u, 0u, &high) && high,
+               dspic33_device_advance(cpu, 128u) && dspic33_gpio_pin(cpu, 3u, 0u, &high) && high,
                "UART PPS transmit stop and idle");
     }
 
@@ -819,8 +735,7 @@ static void physical_pps_cases(TestState* state, Dspic33* cpu) {
            dspic33_device_advance(cpu, 160u) &&
                !dspic33_uart_transmit(cpu, 0u, &(Dspic33UartFrame){0}),
            "UART PPS high CTS blocks transmit");
-    expect(state,
-           dspic33_gpio_drive(cpu, 3u, 0u, 2u) && dspic33_device_advance(cpu, 160u),
+    expect(state, dspic33_gpio_drive(cpu, 3u, 0u, 2u) && dspic33_device_advance(cpu, 160u),
            "UART PPS low CTS starts transmit");
     {
         Dspic33UartFrame output;
@@ -831,15 +746,12 @@ static void physical_pps_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, 0x0680u, rts_functions[0]);
     configure(cpu, 0u, 0x8100u, 0u, 0u);
-    expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && !high,
-           "UART PPS flow RTS ready low");
+    expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && !high, "UART PPS flow RTS ready low");
     dspic33_write_word(cpu, bases[0], 0x8900u);
-    expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && high,
-           "UART PPS simplex RTS empty high");
+    expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && high, "UART PPS simplex RTS empty high");
     dspic33_write_word(cpu, (uint16_t)(bases[0] + 2u), 0x0400u);
     dspic33_write_word(cpu, (uint16_t)(bases[0] + 4u), 0x33u);
-    expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && !high,
-           "UART PPS simplex RTS active low");
+    expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && !high, "UART PPS simplex RTS active low");
 }
 
 static void physical_lifecycle_cases(TestState* state, Dspic33* cpu) {
@@ -854,8 +766,7 @@ static void physical_lifecycle_cases(TestState* state, Dspic33* cpu) {
     configure(cpu, 0u, 0x8080u, 0u, 0u);
     clear_interrupt(cpu, receive_irqs[0]);
     expect(state,
-           dspic33_gpio_drive(cpu, 3u, 0u, 1u) &&
-               interrupt_flag(cpu, receive_irqs[0]) &&
+           dspic33_gpio_drive(cpu, 3u, 0u, 1u) && interrupt_flag(cpu, receive_irqs[0]) &&
                (dspic33_read_word(cpu, bases[0]) & 0x0080u) != 0u,
            "UART PPS wake falling edge interrupts without clearing WAKE");
     expect(state,
@@ -869,8 +780,7 @@ static void physical_lifecycle_cases(TestState* state, Dspic33* cpu) {
     dspic33_gpio_drive(cpu, 3u, 1u, 1u);
     dspic33_write_word(cpu, pps_registers[0], 64u);
     configure(cpu, 0u, mode, 0u, 0u);
-    expect(state,
-           dspic33_gpio_drive(cpu, 3u, 0u, 1u) && (cpu->io.uart_rx_active & 1u) != 0u,
+    expect(state, dspic33_gpio_drive(cpu, 3u, 0u, 1u) && (cpu->io.uart_rx_active & 1u) != 0u,
            "UART PPS falling edge starts physical receive");
     dspic33_write_word(cpu, bases[0], 0x8008u);
     expect(state,
@@ -886,8 +796,7 @@ static void physical_lifecycle_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && !high,
            "UART PPS open-drain idle releases to external low");
     expect(state,
-           dspic33_gpio_drive(cpu, 3u, 1u, 1u) &&
-               dspic33_gpio_pin(cpu, 3u, 0u, &high) && high,
+           dspic33_gpio_drive(cpu, 3u, 1u, 1u) && dspic33_gpio_pin(cpu, 3u, 0u, &high) && high,
            "UART PPS open-drain idle follows external high");
     dspic33_write_word(cpu, 0x0680u, 0u);
     dspic33_write_word(cpu, 0x0e36u, 0u);
@@ -904,8 +813,7 @@ static void physical_lifecycle_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && !high,
            "UART PPS active transmit before PMD");
     dspic33_write_word(cpu, pmd_addresses[0], pmd_masks[0]);
-    expect(state,
-           dspic33_gpio_pin(cpu, 3u, 0u, &high) && high && cpu->io.uart_tx_active == 0u,
+    expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && high && cpu->io.uart_tx_active == 0u,
            "UART PPS PMD aborts transmit and releases idle");
 
     dspic33_reset(cpu, 0u);
@@ -913,16 +821,14 @@ static void physical_lifecycle_cases(TestState* state, Dspic33* cpu) {
     configure(cpu, 0u, mode, 0x0400u, 0u);
     dspic33_write_word(cpu, (uint16_t)(bases[0] + 4u), 0x01u);
     initialized = dspic33_initialize(&copy);
-    expect(state, initialized && dspic33_copy(&copy, cpu),
-           "UART PPS copy active transmit");
+    expect(state, initialized && dspic33_copy(&copy, cpu), "UART PPS copy active transmit");
     if (initialized) {
         bool source_high = false;
         bool copy_high = false;
         expect(state,
                dspic33_device_advance(cpu, 16u) && dspic33_device_advance(&copy, 16u) &&
                    dspic33_gpio_pin(cpu, 3u, 0u, &source_high) &&
-                   dspic33_gpio_pin(&copy, 3u, 0u, &copy_high) &&
-                   source_high == copy_high,
+                   dspic33_gpio_pin(&copy, 3u, 0u, &copy_high) && source_high == copy_high,
                "UART PPS copied transmit phase matches");
         dspic33_release(&copy);
     }
@@ -931,17 +837,11 @@ static void physical_lifecycle_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0680u, tx_functions[0]);
     configure(cpu, 0u, 0x9000u, 0x0400u, 0u);
     dspic33_write_word(cpu, (uint16_t)(bases[0] + 4u), 0u);
-    expect(state,
-           dspic33_device_advance(cpu, 6u) && dspic33_gpio_pin(cpu, 3u, 0u, &high) &&
-               !high,
+    expect(state, dspic33_device_advance(cpu, 6u) && dspic33_gpio_pin(cpu, 3u, 0u, &high) && !high,
            "UART PPS IrDA zero before pulse");
-    expect(state,
-           dspic33_device_advance(cpu, 1u) && dspic33_gpio_pin(cpu, 3u, 0u, &high) &&
-               high,
+    expect(state, dspic33_device_advance(cpu, 1u) && dspic33_gpio_pin(cpu, 3u, 0u, &high) && high,
            "UART PPS IrDA zero pulse begins");
-    expect(state,
-           dspic33_device_advance(cpu, 3u) && dspic33_gpio_pin(cpu, 3u, 0u, &high) &&
-               !high,
+    expect(state, dspic33_device_advance(cpu, 3u) && dspic33_gpio_pin(cpu, 3u, 0u, &high) && !high,
            "UART PPS IrDA zero pulse ends");
 }
 
@@ -963,20 +863,17 @@ static void physical_auto_baud_cases(TestState* state, Dspic33* cpu) {
                "UART PPS auto-baud start edge");
         for (bit = 0u; bit < 8u; bit++) {
             expect(state,
-                   drive_uart_level(cpu, (0x55u & (uint8_t)(1u << bit)) != 0u, false,
-                                    bit_cycles),
+                   drive_uart_level(cpu, (0x55u & (uint8_t)(1u << bit)) != 0u, false, bit_cycles),
                    "UART PPS auto-baud data edge");
         }
         expect(state, drive_uart_level(cpu, true, false, bit_cycles),
                "UART PPS auto-baud stop edge");
         expect(state,
-               dspic33_read_word(cpu, (uint16_t)(bases[channel] + 8u)) ==
-                       expected_baud &&
+               dspic33_read_word(cpu, (uint16_t)(bases[channel] + 8u)) == expected_baud &&
                    (dspic33_read_word(cpu, bases[channel]) & 0x0020u) == 0u &&
                    interrupt_flag(cpu, receive_irqs[channel]),
                "UART PPS auto-baud fifth rising edge result");
-        expect(state,
-               (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) & 1u) == 0u,
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 2u)) & 1u) == 0u,
                "UART PPS auto-baud does not populate receive FIFO");
     }
 }
@@ -995,12 +892,10 @@ static void disable_copy_and_api_cases(TestState* state, Dspic33* cpu) {
     configure(cpu, 0u, 0x8000u, 0x0400u, 0u);
     dspic33_write_word(cpu, (uint16_t)(bases[0] + 4u), 0x66u);
     expect(state, dspic33_copy(&copy, cpu), "copy pending UART state");
-    expect(state,
-           dspic33_device_advance(cpu, 160u) && dspic33_device_advance(&copy, 160u),
+    expect(state, dspic33_device_advance(cpu, 160u) && dspic33_device_advance(&copy, 160u),
            "advance copied UART state");
     expect(state,
-           dspic33_uart_transmit(cpu, 0u, &first) &&
-               dspic33_uart_transmit(&copy, 0u, &second) &&
+           dspic33_uart_transmit(cpu, 0u, &first) && dspic33_uart_transmit(&copy, 0u, &second) &&
                first.value == second.value && first.data_bits == second.data_bits,
            "copied UART output matches");
     dspic33_release(&copy);
@@ -1009,12 +904,9 @@ static void disable_copy_and_api_cases(TestState* state, Dspic33* cpu) {
     configure(cpu, 0u, 0x8000u, 0x0400u, 0u);
     dspic33_write_word(cpu, (uint16_t)(bases[0] + 4u), 0x44u);
     dspic33_write_word(cpu, bases[0], 0u);
-    expect(state,
-           dspic33_device_advance(cpu, 1000u) &&
-               !dspic33_uart_transmit(cpu, 0u, &first),
+    expect(state, dspic33_device_advance(cpu, 1000u) && !dspic33_uart_transmit(cpu, 0u, &first),
            "module disable cancels transmit");
-    expect(state,
-           (dspic33_read_word(cpu, (uint16_t)(bases[0] + 2u)) & 0x0511u) == 0x0110u,
+    expect(state, (dspic33_read_word(cpu, (uint16_t)(bases[0] + 2u)) & 0x0511u) == 0x0110u,
            "module disable resets runtime status");
 
     memset(&frame, 0, sizeof(frame));
@@ -1024,8 +916,7 @@ static void disable_copy_and_api_cases(TestState* state, Dspic33* cpu) {
     frame.value = 0u;
     expect(state, !dspic33_uart_receive_frame(cpu, DSPIC33_UART_COUNT, &frame, 0u),
            "reject receive channel outside range");
-    expect(state, !dspic33_uart_receive_frame(cpu, 0u, NULL, 0u),
-           "reject null receive frame");
+    expect(state, !dspic33_uart_receive_frame(cpu, 0u, NULL, 0u), "reject null receive frame");
     expect(state, !dspic33_uart_set_cts(cpu, DSPIC33_UART_COUNT, true, 0u),
            "reject CTS channel outside range");
     expect(state, !dspic33_uart_transmit(cpu, DSPIC33_UART_COUNT, &frame),

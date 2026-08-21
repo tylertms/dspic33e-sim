@@ -9,9 +9,8 @@ static bool is_elf(const char* path) {
     FILE* file = fopen(path, "rb");
     bool result = false;
     if (file != NULL) {
-        result = fread(magic, 1u, sizeof(magic), file) == sizeof(magic) &&
-                 magic[0] == 0x7fu && magic[1] == 'E' && magic[2] == 'L' &&
-                 magic[3] == 'F';
+        result = fread(magic, 1u, sizeof(magic), file) == sizeof(magic) && magic[0] == 0x7fu &&
+                 magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F';
         fclose(file);
     }
     return result;
@@ -39,8 +38,7 @@ static bool read_file(const char* path, uint8_t** bytes, size_t* size) {
     return true;
 }
 
-bool firmware_image_open(FirmwareImage* image, const char* path, char* error,
-                         size_t error_size) {
+bool firmware_image_open(FirmwareImage* image, const char* path, char* error, size_t error_size) {
     memset(image, 0, sizeof(*image));
     if (is_elf(path)) {
         image->type = FIRMWARE_IMAGE_ELF;
@@ -81,8 +79,8 @@ bool firmware_image_load_program(const FirmwareImage* image, Dspic33* cpu, char*
     return true;
 }
 
-bool firmware_image_symbol(const FirmwareImage* image, const char* name,
-                           uint32_t* address, char* error, size_t error_size) {
+bool firmware_image_symbol(const FirmwareImage* image, const char* name, uint32_t* address,
+                           char* error, size_t error_size) {
     if (image->type == FIRMWARE_IMAGE_ELF) {
         return elf_image_symbol(&image->elf, name, address, error, error_size);
     }
@@ -92,8 +90,7 @@ bool firmware_image_symbol(const FirmwareImage* image, const char* name,
     return false;
 }
 
-bool dspic33_load_elf_data(Dspic33* cpu, const void* data, size_t size,
-                           uint32_t* entry_address) {
+bool dspic33_load_elf_data(Dspic33* cpu, const void* data, size_t size, uint32_t* entry_address) {
     ElfImage image;
     char error[160];
     if (cpu == NULL || !elf_image_open_data(&image, data, size, error, sizeof(error))) {
@@ -109,8 +106,8 @@ bool dspic33_load_elf_data(Dspic33* cpu, const void* data, size_t size,
     return loaded;
 }
 
-bool dspic33_load_binary_data(Dspic33* cpu, const void* data, size_t size,
-                              uint32_t load_address, uint32_t* entry_address) {
+bool dspic33_load_binary_data(Dspic33* cpu, const void* data, size_t size, uint32_t load_address,
+                              uint32_t* entry_address) {
     const uint8_t* bytes = data;
     size_t offset;
     if (cpu == NULL || bytes == NULL || size == 0u || (size & 3u) != 0u ||
@@ -141,8 +138,7 @@ bool dspic33_load_binary_data(Dspic33* cpu, const void* data, size_t size,
     return true;
 }
 
-bool dspic33_elf_symbol_data(const void* data, size_t size, const char* name,
-                             uint32_t* address) {
+bool dspic33_elf_symbol_data(const void* data, size_t size, const char* name, uint32_t* address) {
     ElfImage image;
     char error[160];
     if (name == NULL || address == NULL ||

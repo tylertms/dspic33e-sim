@@ -64,12 +64,11 @@ static const PpsOutput outputs[] = {
     {0x069eu, 126u, 0u}, {0x069eu, 127u, 8u}};
 
 static const uint8_t physical_sources[] = {
-    16u,  17u,  18u,  19u,  20u,  21u,  22u,  23u,  30u,  31u,  32u,  33u,  34u,
-    35u,  36u,  37u,  38u,  39u,  40u,  41u,  42u,  43u,  44u,  45u,  46u,  47u,
-    49u,  50u,  51u,  52u,  60u,  61u,  62u,  64u,  65u,  66u,  67u,  68u,  69u,
-    70u,  71u,  72u,  73u,  74u,  75u,  76u,  77u,  78u,  79u,  80u,  81u,  82u,
-    83u,  84u,  85u,  86u,  87u,  88u,  89u,  96u,  97u,  98u,  99u,  100u, 101u,
-    104u, 108u, 109u, 112u, 113u, 118u, 119u, 120u, 121u, 124u, 125u, 126u, 127u};
+    16u,  17u,  18u,  19u,  20u,  21u,  22u,  23u,  30u,  31u,  32u,  33u,  34u,  35u, 36u, 37u,
+    38u,  39u,  40u,  41u,  42u,  43u,  44u,  45u,  46u,  47u,  49u,  50u,  51u,  52u, 60u, 61u,
+    62u,  64u,  65u,  66u,  67u,  68u,  69u,  70u,  71u,  72u,  73u,  74u,  75u,  76u, 77u, 78u,
+    79u,  80u,  81u,  82u,  83u,  84u,  85u,  86u,  87u,  88u,  89u,  96u,  97u,  98u, 99u, 100u,
+    101u, 104u, 108u, 109u, 112u, 113u, 118u, 119u, 120u, 121u, 124u, 125u, 126u, 127u};
 
 static bool physical_source(uint8_t source) {
     size_t index;
@@ -81,23 +80,21 @@ static bool physical_source(uint8_t source) {
     return false;
 }
 
-static bool load_sequence(Dspic33* cpu, uint32_t first, uint32_t second,
-                          uint32_t third) {
+static bool load_sequence(Dspic33* cpu, uint32_t first, uint32_t second, uint32_t third) {
     return dspic33_load_program_word(cpu, 0x0200u, first) &&
            dspic33_load_program_word(cpu, 0x0202u, second) &&
            dspic33_load_program_word(cpu, 0x0204u, third);
 }
 
 static bool write_oscillator_low(Dspic33* cpu, uint8_t value) {
-    load_sequence(cpu, OPCODE_MOV_BYTE_W2_W1, OPCODE_MOV_BYTE_W3_W1,
-                  OPCODE_MOV_BYTE_W0_W1);
+    load_sequence(cpu, OPCODE_MOV_BYTE_W2_W1, OPCODE_MOV_BYTE_W3_W1, OPCODE_MOV_BYTE_W0_W1);
     cpu->pc = 0x0200u;
     dspic33_set_working_register(cpu, 0u, value);
     dspic33_set_working_register(cpu, 1u, OSCILLATOR_CONTROL);
     dspic33_set_working_register(cpu, 2u, 0x46u);
     dspic33_set_working_register(cpu, 3u, 0x57u);
-    return dspic33_step(cpu) == DSPIC33_RUNNING &&
-           dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING;
+    return dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING &&
+           dspic33_step(cpu) == DSPIC33_RUNNING;
 }
 
 static void configure_capture(Dspic33* cpu) {
@@ -107,10 +104,8 @@ static void configure_capture(Dspic33* cpu) {
 }
 
 static bool physical_edge(Dspic33* cpu, uint8_t pin) {
-    return dspic33_input_capture_pin(cpu, pin, false, 0u) &&
-           dspic33_device_advance(cpu, 0u) &&
-           dspic33_input_capture_pin(cpu, pin, true, 0u) &&
-           dspic33_device_advance(cpu, 1u);
+    return dspic33_input_capture_pin(cpu, pin, false, 0u) && dspic33_device_advance(cpu, 0u) &&
+           dspic33_input_capture_pin(cpu, pin, true, 0u) && dspic33_device_advance(cpu, 1u);
 }
 
 static void configure_compare(Dspic33* cpu) {
@@ -125,8 +120,7 @@ static void configure_compare(Dspic33* cpu) {
 static void register_cases(TestState* state, Dspic33* cpu) {
     size_t index;
     dspic33_reset(cpu, 0u);
-    for (index = 0u; index < sizeof(output_registers) / sizeof(output_registers[0]);
-         index++) {
+    for (index = 0u; index < sizeof(output_registers) / sizeof(output_registers[0]); index++) {
         expect(state, dspic33_read_word(cpu, output_registers[index].address) == 0u,
                "RPOR resets clear");
         dspic33_write_word(cpu, output_registers[index].address, 0xffffu);
@@ -135,8 +129,7 @@ static void register_cases(TestState* state, Dspic33* cpu) {
                    output_registers[index].mask,
                "RPOR applies device mask");
     }
-    for (index = 0u; index < sizeof(input_registers) / sizeof(input_registers[0]);
-         index++) {
+    for (index = 0u; index < sizeof(input_registers) / sizeof(input_registers[0]); index++) {
         expect(state, dspic33_read_word(cpu, input_registers[index].address) == 0u,
                "RPINR resets clear");
         dspic33_write_word(cpu, input_registers[index].address, 0xffffu);
@@ -175,16 +168,14 @@ static void source_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0e1eu, 0u);
     configure_capture(cpu);
     expect(state, physical_edge(cpu, 32u), "RPI digital stimulus advances");
-    expect(state, cpu->io.input_capture.fifo[0].count == 0u,
-           "RPI input ignores a cleared ANS bit");
+    expect(state, cpu->io.input_capture.fifo[0].count == 0u, "RPI input ignores a cleared ANS bit");
 
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, 0x06aeu, 32u);
     dspic33_write_word(cpu, 0x0e1eu, 1u);
     configure_capture(cpu);
     expect(state, physical_edge(cpu, 32u), "RPI analog-qualified stimulus advances");
-    expect(state, cpu->io.input_capture.fifo[0].count == 1u,
-           "RPI input recognizes a set ANS bit");
+    expect(state, cpu->io.input_capture.fifo[0].count == 1u, "RPI input recognizes a set ANS bit");
 
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, 0x06aeu, 32u);
@@ -197,18 +188,16 @@ static void source_cases(TestState* state, Dspic33* cpu) {
 
     for (channel = 0u; channel < DSPIC33_QEI_COUNT; channel++) {
         for (input = DSPIC33_QEI_INDEX; input <= DSPIC33_QEI_HOME; input++) {
-            uint8_t virtual_source =
-                (uint8_t)(8u + channel * 2u + input - DSPIC33_QEI_INDEX);
+            uint8_t virtual_source = (uint8_t)(8u + channel * 2u + input - DSPIC33_QEI_INDEX);
             dspic33_reset(cpu, 0u);
             dspic33_write_word(cpu, 0x06aeu, virtual_source);
             configure_capture(cpu);
-            expect(
-                state,
-                dspic33_qei_input(cpu, channel, (Dspic33QeiInput)input, false, 0u) &&
-                    dspic33_device_advance(cpu, 0u) &&
-                    dspic33_qei_input(cpu, channel, (Dspic33QeiInput)input, true, 0u) &&
-                    dspic33_device_advance(cpu, 1u),
-                "B1 filtered QEI virtual source stimulus advances");
+            expect(state,
+                   dspic33_qei_input(cpu, channel, (Dspic33QeiInput)input, false, 0u) &&
+                       dspic33_device_advance(cpu, 0u) &&
+                       dspic33_qei_input(cpu, channel, (Dspic33QeiInput)input, true, 0u) &&
+                       dspic33_device_advance(cpu, 1u),
+                   "B1 filtered QEI virtual source stimulus advances");
             expect(state, cpu->io.input_capture.fifo[0].count == 0u,
                    "B1 filtered QEI virtual source remains inaccessible");
         }
@@ -231,19 +220,15 @@ static void source_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, 0x06aeu, 1u);
     configure_capture(cpu);
-    expect(
-        state,
-        dspic33_comparator_input(cpu, 0u, DSPIC33_COMPARATOR_INPUT_POSITIVE, 0u, 0u) &&
-            dspic33_comparator_input(cpu, 0u, DSPIC33_COMPARATOR_INPUT_NEGATIVE_2, 100u,
-                                     0u) &&
-            dspic33_device_advance(cpu, 0u),
-        "comparator virtual PPS baseline advances");
-    dspic33_write_word(cpu, COMPARATOR_BASE, COMPARATOR_ENABLE);
-    expect(state, dspic33_device_advance(cpu, 1u),
-           "comparator virtual PPS baseline settles");
     expect(state,
-           dspic33_comparator_input(cpu, 0u, DSPIC33_COMPARATOR_INPUT_POSITIVE, 200u,
-                                    0u) &&
+           dspic33_comparator_input(cpu, 0u, DSPIC33_COMPARATOR_INPUT_POSITIVE, 0u, 0u) &&
+               dspic33_comparator_input(cpu, 0u, DSPIC33_COMPARATOR_INPUT_NEGATIVE_2, 100u, 0u) &&
+               dspic33_device_advance(cpu, 0u),
+           "comparator virtual PPS baseline advances");
+    dspic33_write_word(cpu, COMPARATOR_BASE, COMPARATOR_ENABLE);
+    expect(state, dspic33_device_advance(cpu, 1u), "comparator virtual PPS baseline settles");
+    expect(state,
+           dspic33_comparator_input(cpu, 0u, DSPIC33_COMPARATOR_INPUT_POSITIVE, 200u, 0u) &&
                dspic33_device_advance(cpu, 2u),
            "B1 comparator virtual PPS transition advances");
     expect(state, cpu->io.input_capture.fifo[0].count == 0u,
@@ -257,8 +242,7 @@ static void physical_fanout_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0e3eu, 0u);
     dspic33_write_word(cpu, 0x06aeu, 64u);
     configure_capture(cpu);
-    expect(state,
-           dspic33_gpio_drive(cpu, 3u, 1u, 1u) && dspic33_device_advance(cpu, 1u),
+    expect(state, dspic33_gpio_drive(cpu, 3u, 1u, 1u) && dspic33_device_advance(cpu, 1u),
            "GPIO transition fans out to a mapped capture input");
     expect(state, cpu->io.input_capture.fifo[0].count == 1u,
            "GPIO fanout captures the shared physical edge");
@@ -269,8 +253,7 @@ static void physical_fanout_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0e3eu, 0u);
     dspic33_write_word(cpu, 0x06aeu, 64u);
     configure_capture(cpu);
-    expect(state,
-           dspic33_can_input_pin(cpu, 64u, true, 0u) && dspic33_device_advance(cpu, 1u),
+    expect(state, dspic33_can_input_pin(cpu, 64u, true, 0u) && dspic33_device_advance(cpu, 1u),
            "CAN pin stimulus fans out to a mapped capture input");
     expect(state, cpu->io.input_capture.fifo[0].count == 1u,
            "CAN pin fanout captures the shared physical edge");
@@ -282,8 +265,7 @@ static void physical_fanout_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x06aeu, 64u);
     configure_capture(cpu);
     expect(state,
-           dspic33_output_compare_fault_pin(cpu, 64u, true, 0u) &&
-               dspic33_device_advance(cpu, 1u),
+           dspic33_output_compare_fault_pin(cpu, 64u, true, 0u) && dspic33_device_advance(cpu, 1u),
            "fault pin stimulus fans out to a mapped capture input");
     expect(state, cpu->io.input_capture.fifo[0].count == 1u,
            "fault pin fanout captures the shared physical edge");
@@ -294,13 +276,11 @@ static void output_cases(TestState* state, Dspic33* cpu) {
     bool high;
     dspic33_reset(cpu, 0u);
     configure_compare(cpu);
-    for (index = 0u; index < sizeof(output_registers) / sizeof(output_registers[0]);
-         index++) {
+    for (index = 0u; index < sizeof(output_registers) / sizeof(output_registers[0]); index++) {
         dspic33_write_word(cpu, output_registers[index].address, 0x1010u);
     }
     for (index = 0u; index < sizeof(outputs) / sizeof(outputs[0]); index++) {
-        expect(state,
-               dspic33_output_compare_pin(cpu, outputs[index].pin, &high) && high,
+        expect(state, dspic33_output_compare_pin(cpu, outputs[index].pin, &high) && high,
                "all remappable output pins can share one peripheral output");
     }
     dspic33_write_word(cpu, 0x0e40u, 0xffffu);
@@ -321,25 +301,18 @@ static void protection_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0680u, 0x0010u);
     expect(state, write_oscillator_low(cpu, OSCILLATOR_IO_LOCK),
            "IOLOCK protected set sequence executes");
-    expect(state,
-           (dspic33_read_word(cpu, OSCILLATOR_CONTROL) & OSCILLATOR_IO_LOCK) != 0u,
+    expect(state, (dspic33_read_word(cpu, OSCILLATOR_CONTROL) & OSCILLATOR_IO_LOCK) != 0u,
            "IOLOCK set locks PPS registers");
     dspic33_write_word(cpu, 0x0680u, 0x0020u);
-    expect(state, dspic33_read_word(cpu, 0x0680u) == 0x0010u,
-           "locked PPS write is rejected");
+    expect(state, dspic33_read_word(cpu, 0x0680u) == 0x0010u, "locked PPS write is rejected");
     expect(state, write_oscillator_low(cpu, 0u), "repeatable unlock sequence executes");
-    expect(state,
-           (dspic33_read_word(cpu, OSCILLATOR_CONTROL) & OSCILLATOR_IO_LOCK) == 0u,
+    expect(state, (dspic33_read_word(cpu, OSCILLATOR_CONTROL) & OSCILLATOR_IO_LOCK) == 0u,
            "IOL1WAY disabled permits unlock");
     dspic33_write_word(cpu, 0x0680u, 0x0020u);
-    expect(state, dspic33_read_word(cpu, 0x0680u) == 0x0020u,
-           "unlocked PPS write is accepted");
-    expect(state,
-           write_oscillator_low(cpu, OSCILLATOR_IO_LOCK) &&
-               write_oscillator_low(cpu, 0u),
+    expect(state, dspic33_read_word(cpu, 0x0680u) == 0x0020u, "unlocked PPS write is accepted");
+    expect(state, write_oscillator_low(cpu, OSCILLATOR_IO_LOCK) && write_oscillator_low(cpu, 0u),
            "IOL1WAY disabled permits a second configuration session");
-    expect(state,
-           (dspic33_read_word(cpu, OSCILLATOR_CONTROL) & OSCILLATOR_IO_LOCK) == 0u,
+    expect(state, (dspic33_read_word(cpu, OSCILLATOR_CONTROL) & OSCILLATOR_IO_LOCK) == 0u,
            "second repeatable unlock succeeds");
 
     dspic33_load_configuration_word(cpu, 0xf80008u, 0x007eu);
@@ -348,8 +321,7 @@ static void protection_cases(TestState* state, Dspic33* cpu) {
            "one-way IOLOCK set sequence executes");
     expect(state, cpu->io.pps.one_way_committed, "one-way lock session is recorded");
     expect(state, write_oscillator_low(cpu, 0u), "one-way unlock attempt executes");
-    expect(state,
-           (dspic33_read_word(cpu, OSCILLATOR_CONTROL) & OSCILLATOR_IO_LOCK) != 0u,
+    expect(state, (dspic33_read_word(cpu, OSCILLATOR_CONTROL) & OSCILLATOR_IO_LOCK) != 0u,
            "IOL1WAY blocks a second PPS configuration session");
 }
 
@@ -373,8 +345,7 @@ static void lifecycle_cases(TestState* state, Dspic33* source, Dspic33* copy) {
     software_resets = source->software_reset_count;
     illegal_resets = source->illegal_reset_count;
     source->data[0x0680u] = 0x21u;
-    expect(state, dspic33_device_advance(source, 0u),
-           "PPS shadow mismatch reset advances");
+    expect(state, dspic33_device_advance(source, 0u), "PPS shadow mismatch reset advances");
     expect(state, (dspic33_read_word(source, 0x0740u) & 0x0200u) != 0u,
            "PPS shadow mismatch sets RCON configuration-mismatch cause");
     expect(state, source->pc == 0u && dspic33_read_word(source, 0x0680u) == 0u,

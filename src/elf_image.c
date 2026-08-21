@@ -32,8 +32,8 @@ static uint16_t read_u16(const uint8_t* bytes) {
 }
 
 static uint32_t read_u32(const uint8_t* bytes) {
-    return (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8u) |
-           ((uint32_t)bytes[2] << 16u) | ((uint32_t)bytes[3] << 24u);
+    return (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8u) | ((uint32_t)bytes[2] << 16u) |
+           ((uint32_t)bytes[3] << 24u);
 }
 
 static bool range_valid(size_t size, uint32_t offset, uint32_t length) {
@@ -48,8 +48,8 @@ static void set_error(char* error, size_t error_size, const char* message) {
 
 static bool header_valid(const ElfImage* image, char* error, size_t error_size) {
     const uint8_t* bytes = image->bytes;
-    if (image->size < ELF_HEADER_SIZE || bytes[0] != 0x7fu || bytes[1] != 'E' ||
-        bytes[2] != 'L' || bytes[3] != 'F') {
+    if (image->size < ELF_HEADER_SIZE || bytes[0] != 0x7fu || bytes[1] != 'E' || bytes[2] != 'L' ||
+        bytes[3] != 'F') {
         set_error(error, error_size, "image is not ELF");
         return false;
     }
@@ -57,16 +57,15 @@ static bool header_valid(const ElfImage* image, char* error, size_t error_size) 
         set_error(error, error_size, "image is not little-endian ELF32");
         return false;
     }
-    if (read_u16(bytes + 16u) != ELF_EXECUTABLE ||
-        read_u16(bytes + 18u) != ELF_MACHINE_DSPIC) {
+    if (read_u16(bytes + 16u) != ELF_EXECUTABLE || read_u16(bytes + 18u) != ELF_MACHINE_DSPIC) {
         set_error(error, error_size, "image is not a dsPIC executable");
         return false;
     }
     return true;
 }
 
-static bool section_table(const ElfImage* image, uint32_t* offset, uint16_t* count,
-                          char* error, size_t error_size) {
+static bool section_table(const ElfImage* image, uint32_t* offset, uint16_t* count, char* error,
+                          size_t error_size) {
     uint16_t entry_size;
     if (!header_valid(image, error, error_size)) {
         return false;
@@ -112,8 +111,7 @@ bool elf_image_open(ElfImage* image, const char* path, char* error, size_t error
     }
     image->size = (size_t)length;
     image->bytes = malloc(image->size);
-    if (image->bytes == NULL ||
-        fread(image->bytes, 1u, image->size, file) != image->size) {
+    if (image->bytes == NULL || fread(image->bytes, 1u, image->size, file) != image->size) {
         fclose(file);
         elf_image_close(image);
         set_error(error, error_size, "cannot read ELF image");
@@ -154,8 +152,7 @@ void elf_image_close(ElfImage* image) {
     image->size = 0u;
 }
 
-bool elf_image_load_program(const ElfImage* image, Dspic33* cpu, char* error,
-                            size_t error_size) {
+bool elf_image_load_program(const ElfImage* image, Dspic33* cpu, char* error, size_t error_size) {
     uint32_t table;
     uint16_t count;
     uint16_t index;
@@ -169,8 +166,7 @@ bool elf_image_load_program(const ElfImage* image, Dspic33* cpu, char* error,
             (section.flags & (ELF_FLAG_PROGRAM | ELF_FLAG_PSV)) == 0u) {
             continue;
         }
-        if ((section.size & 3u) != 0u ||
-            !range_valid(image->size, section.offset, section.size)) {
+        if ((section.size & 3u) != 0u || !range_valid(image->size, section.offset, section.size)) {
             set_error(error, error_size, "ELF program section is invalid");
             return false;
         }
@@ -180,8 +176,7 @@ bool elf_image_load_program(const ElfImage* image, Dspic33* cpu, char* error,
             if (address >= DSPIC33_CONFIGURATION_BASE &&
                 address < DSPIC33_CONFIGURATION_BASE + DSPIC33_CONFIGURATION_SIZE) {
                 if (!dspic33_load_configuration_word(cpu, address, word)) {
-                    set_error(error, error_size,
-                              "ELF configuration exceeds device memory");
+                    set_error(error, error_size, "ELF configuration exceeds device memory");
                     return false;
                 }
             } else if (dspic33_program_range_implemented(address, 2u) &&
@@ -199,8 +194,8 @@ static bool symbol_name_matches(const char* actual, const char* requested) {
            (actual[0] == '_' && strcmp(actual + 1, requested) == 0);
 }
 
-bool elf_image_symbol(const ElfImage* image, const char* name, uint32_t* address,
-                      char* error, size_t error_size) {
+bool elf_image_symbol(const ElfImage* image, const char* name, uint32_t* address, char* error,
+                      size_t error_size) {
     uint32_t table;
     uint16_t count;
     uint16_t index;
@@ -211,9 +206,8 @@ bool elf_image_symbol(const ElfImage* image, const char* name, uint32_t* address
         Section symbols = read_section(image, table, index);
         Section strings;
         uint32_t position;
-        if (symbols.type != ELF_SECTION_SYMTAB ||
-            symbols.entry_size != ELF_SYMBOL_SIZE || symbols.link >= count ||
-            !range_valid(image->size, symbols.offset, symbols.size)) {
+        if (symbols.type != ELF_SECTION_SYMTAB || symbols.entry_size != ELF_SYMBOL_SIZE ||
+            symbols.link >= count || !range_valid(image->size, symbols.offset, symbols.size)) {
             continue;
         }
         strings = read_section(image, table, (uint16_t)symbols.link);

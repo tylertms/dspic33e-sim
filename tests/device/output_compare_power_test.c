@@ -1,12 +1,10 @@
 #include "output_compare_test_support.h"
 
 static void unsupported_cases(TestState* state, Dspic33* cpu) {
-    unsupported_case(state, cpu, 0x1806u, COMPARE_SELF_SYNC,
-                     "non-FP clock is excluded");
+    unsupported_case(state, cpu, 0x1806u, COMPARE_SELF_SYNC, "non-FP clock is excluded");
     unsupported_case(state, cpu, COMPARE_FP_EDGE_PWM, 0x001cu,
                      "reserved synchronization source is excluded");
-    unsupported_case(state, cpu, COMPARE_FP_EDGE_PWM, 0x009fu,
-                     "trigger mode is excluded");
+    unsupported_case(state, cpu, COMPARE_FP_EDGE_PWM, 0x009fu, "trigger mode is excluded");
     unsupported_case(state, cpu, 0x1c0eu, (uint16_t)(COMPARE_TRIGGER | 1u),
                      "one-shot self trigger is excluded");
 }
@@ -18,12 +16,10 @@ static void power_state_cases(TestState* state, Dspic33* cpu) {
         dspic33_reset(cpu, 0u);
         configure_compare_mode(cpu, channel, 6u, 4u, 2u, COMPARE_SELF_SYNC);
         dspic33_write_word(cpu, base, 0x3c06u);
-        expect(state, dspic33_device_advance(cpu, 1u),
-               "advance stop-in-idle OC before Idle");
+        expect(state, dspic33_device_advance(cpu, 1u), "advance stop-in-idle OC before Idle");
         cpu->power_state = DSPIC33_POWER_IDLE;
         dspic33_device_power_state_changed(cpu);
-        expect(state, dspic33_device_advance(cpu, 5u),
-               "advance stopped OC through Idle");
+        expect(state, dspic33_device_advance(cpu, 5u), "advance stopped OC through Idle");
         expect(state,
                dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 1u &&
                    output_is(cpu, channel, true) && !interrupt_flag(cpu, channel),
@@ -51,8 +47,7 @@ static void power_state_cases(TestState* state, Dspic33* cpu) {
         expect(state, dspic33_device_advance(cpu, 1u), "advance OC before Sleep");
         cpu->power_state = DSPIC33_POWER_SLEEP;
         dspic33_device_power_state_changed(cpu);
-        expect(state, dspic33_device_advance(cpu, 5u),
-               "advance halted OC through Sleep");
+        expect(state, dspic33_device_advance(cpu, 5u), "advance halted OC through Sleep");
         expect(state,
                dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 1u &&
                    output_is(cpu, channel, true) && !interrupt_flag(cpu, channel),
@@ -73,12 +68,10 @@ static void power_state_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_device_advance(cpu, 1u),
            "advance running OC in Idle before OCSIDL write");
     dspic33_write_byte(cpu, 0x0901u, 0x3cu);
-    expect(state,
-           dspic33_device_advance(cpu, 4u) && dspic33_read_word(cpu, 0x0908u) == 1u,
+    expect(state, dspic33_device_advance(cpu, 4u) && dspic33_read_word(cpu, 0x0908u) == 1u,
            "live OCSIDL set halts an active Idle channel");
     dspic33_write_byte(cpu, 0x0901u, 0x1cu);
-    expect(state,
-           dspic33_device_advance(cpu, 1u) && dspic33_read_word(cpu, 0x0908u) == 2u,
+    expect(state, dspic33_device_advance(cpu, 1u) && dspic33_read_word(cpu, 0x0908u) == 2u,
            "live OCSIDL clear resumes an active Idle channel");
 
     dspic33_reset(cpu, 0u);
@@ -109,10 +102,8 @@ static void pmd_channel_cases(TestState* state, Dspic33* cpu) {
                dspic33_read_word(cpu, (uint16_t)(base + 4u)) == 6u &&
                    dspic33_output_compare_output(cpu, channel, &high),
                "OC PMD write remains accessible for one cycle");
-        expect(state, dspic33_device_advance(cpu, 1u),
-               "OC PMD disable transition advances");
-        expect(state,
-               (cpu->io.output_compare.pmd_disabled & (uint16_t)(1u << channel)) != 0u,
+        expect(state, dspic33_device_advance(cpu, 1u), "OC PMD disable transition advances");
+        expect(state, (cpu->io.output_compare.pmd_disabled & (uint16_t)(1u << channel)) != 0u,
                "OC PMD disable becomes effective after one cycle");
         expect(state,
                dspic33_read_word(cpu, base) == 0u &&
@@ -127,16 +118,13 @@ static void pmd_channel_cases(TestState* state, Dspic33* cpu) {
         dspic33_write_word(cpu, (uint16_t)(base + 4u), 0u);
         dspic33_write_word(cpu, (uint16_t)(base + 6u), 0u);
         dspic33_write_word(cpu, (uint16_t)(base + 8u), 0u);
-        expect(state, dspic33_device_advance(cpu, 5u),
-               "advance disabled OC after ignored writes");
+        expect(state, dspic33_device_advance(cpu, 5u), "advance disabled OC after ignored writes");
         dspic33_write_word(cpu, pmd_address, 0u);
         expect(state, dspic33_read_word(cpu, base) == 0u,
                "OC PMD enable remains inaccessible for one cycle");
-        expect(state, dspic33_device_advance(cpu, 1u),
-               "OC PMD enable transition advances");
+        expect(state, dspic33_device_advance(cpu, 1u), "OC PMD enable transition advances");
         expect(state,
-               (cpu->io.output_compare.pmd_disabled & (uint16_t)(1u << channel)) ==
-                       0u &&
+               (cpu->io.output_compare.pmd_disabled & (uint16_t)(1u << channel)) == 0u &&
                    dspic33_read_word(cpu, base) == COMPARE_FP_EDGE_PWM &&
                    dspic33_read_word(cpu, (uint16_t)(base + 2u)) == COMPARE_SELF_SYNC &&
                    dspic33_read_word(cpu, (uint16_t)(base + 4u)) == 6u &&
@@ -159,35 +147,26 @@ static void pmd_lifecycle_cases(TestState* state, Dspic33* cpu) {
 
     dspic33_reset(cpu, 0u);
     configure_compare_mode(cpu, 0u, 1u, 8u, 2u, COMPARE_SELF_SYNC);
-    expect(state, dspic33_device_advance(cpu, 1u),
-           "advance OC pipeline before PMD disable");
+    expect(state, dspic33_device_advance(cpu, 1u), "advance OC pipeline before PMD disable");
     dspic33_write_word(cpu, compare_pmd_address(0u), pmd_mask);
-    expect(state, dspic33_device_advance(cpu, 1u),
-           "OC PMD disable pauses delayed output pipeline");
+    expect(state, dspic33_device_advance(cpu, 1u), "OC PMD disable pauses delayed output pipeline");
     expect(state,
-           !output_is(cpu, 0u, true) && !interrupt_flag(cpu, 0u) &&
-               cpu->events.count == 3u && cpu->events.items[0].paused &&
-               cpu->events.items[0].paused_remaining == 1u &&
-               cpu->events.items[1].paused &&
-               cpu->events.items[1].paused_remaining == 3u &&
-               cpu->events.items[2].paused &&
-               cpu->events.items[2].paused_remaining == 7u,
+           !output_is(cpu, 0u, true) && !interrupt_flag(cpu, 0u) && cpu->events.count == 3u &&
+               cpu->events.items[0].paused && cpu->events.items[0].paused_remaining == 1u &&
+               cpu->events.items[1].paused && cpu->events.items[1].paused_remaining == 3u &&
+               cpu->events.items[2].paused && cpu->events.items[2].paused_remaining == 7u,
            "OC PMD preserves delayed output and interrupt events");
     expect(state, dspic33_device_advance(cpu, 10u),
            "advance paused OC pipeline while PMD disabled");
-    expect(state,
-           !dspic33_output_compare_output(cpu, 0u, &high) && !interrupt_flag(cpu, 0u),
+    expect(state, !dspic33_output_compare_output(cpu, 0u, &high) && !interrupt_flag(cpu, 0u),
            "OC PMD prevents paused pipeline completion");
     dspic33_write_word(cpu, compare_pmd_address(0u), 0u);
-    expect(state, dspic33_device_advance(cpu, 1u),
-           "OC PMD enable resumes delayed output pipeline");
+    expect(state, dspic33_device_advance(cpu, 1u), "OC PMD enable resumes delayed output pipeline");
     expect(state,
-           dspic33_output_compare_output(cpu, 0u, &high) && !high &&
-               !interrupt_flag(cpu, 0u),
+           dspic33_output_compare_output(cpu, 0u, &high) && !high && !interrupt_flag(cpu, 0u),
            "resumed OC pipeline retains its remaining output delay");
     expect(state,
-           dspic33_device_advance(cpu, 1u) && output_is(cpu, 0u, true) &&
-               !interrupt_flag(cpu, 0u),
+           dspic33_device_advance(cpu, 1u) && output_is(cpu, 0u, true) && !interrupt_flag(cpu, 0u),
            "resumed OC output applies after retained delay");
     expect(state, dspic33_device_advance(cpu, 2u) && interrupt_flag(cpu, 0u),
            "resumed OC interrupt applies after retained delay");
@@ -204,8 +183,7 @@ static void pmd_lifecycle_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_device_advance(cpu, 1u) && dspic33_device_advance(&copy, 1u),
            "advance original and copied OC PMD transition");
     expect(state,
-           cpu->io.output_compare.pmd_disabled == 1u &&
-               copy.io.output_compare.pmd_disabled == 1u,
+           cpu->io.output_compare.pmd_disabled == 1u && copy.io.output_compare.pmd_disabled == 1u,
            "copy retains pending OC PMD state");
     dspic33_release(&copy);
 
@@ -217,16 +195,14 @@ static void pmd_lifecycle_cases(TestState* state, Dspic33* cpu) {
     expect(state,
            cpu->io.output_compare.pmd_disabled == 0u &&
                cpu->io.output_compare.pmd_generation[0] == 0u &&
-               dspic33_read_word(cpu, compare_pmd_address(0u)) == 0u &&
-               cpu->events.count == 0u,
+               dspic33_read_word(cpu, compare_pmd_address(0u)) == 0u && cpu->events.count == 0u,
            "reset cancels OC PMD transition");
 
     dspic33_reset(cpu, 0u);
     configure_compare_mode(cpu, 0u, 6u, 4u, 2u, COMPARE_SELF_SYNC);
     dspic33_write_word(cpu, compare_pmd_address(0u), pmd_mask);
     dspic33_write_word(cpu, compare_pmd_address(0u), 0u);
-    expect(state, dspic33_device_advance(cpu, 1u),
-           "advance replaced OC PMD transition");
+    expect(state, dspic33_device_advance(cpu, 1u), "advance replaced OC PMD transition");
     expect(state,
            cpu->io.output_compare.pmd_disabled == 0u &&
                dspic33_read_word(cpu, compare_pmd_address(0u)) == 0u,
@@ -236,15 +212,13 @@ static void pmd_lifecycle_cases(TestState* state, Dspic33* cpu) {
     cpu->io.output_compare.pmd_generation[0] = 0x7fffu;
     dspic33_write_word(cpu, compare_pmd_address(0u), pmd_mask);
     expect(state,
-           dspic33_device_advance(cpu, 1u) &&
-               cpu->io.output_compare.pmd_generation[0] == 0x8000u &&
+           dspic33_device_advance(cpu, 1u) && cpu->io.output_compare.pmd_generation[0] == 0x8000u &&
                cpu->io.output_compare.pmd_disabled == 1u && cpu->events.count == 0u,
            "OC PMD disable applies across the high generation bit");
     cpu->io.output_compare.pmd_generation[0] = 0x7fffu;
     dspic33_write_word(cpu, compare_pmd_address(0u), 0u);
     expect(state,
-           dspic33_device_advance(cpu, 1u) &&
-               cpu->io.output_compare.pmd_generation[0] == 0x8000u &&
+           dspic33_device_advance(cpu, 1u) && cpu->io.output_compare.pmd_generation[0] == 0x8000u &&
                cpu->io.output_compare.pmd_disabled == 0u && cpu->events.count == 0u,
            "OC PMD enable applies across the high generation bit");
 
@@ -260,8 +234,7 @@ static void pmd_lifecycle_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     configure_compare_mode(cpu, 0u, 6u, 4u, 2u, (uint16_t)(COMPARE_TRIGGER | 29u));
     dspic33_write_word(cpu, compare_pmd_address(0u), pmd_mask);
-    expect(state, dspic33_device_advance(cpu, 1u),
-           "disable triggered OC before external source");
+    expect(state, dspic33_device_advance(cpu, 1u), "disable triggered OC before external source");
     expect(state,
            dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 20u, 0u, 1u) &&
                dspic33_device_advance(cpu, 1u) &&
@@ -287,8 +260,7 @@ static void pmd_lifecycle_cases(TestState* state, Dspic33* cpu) {
     cpu->pc = 0u;
     device_cycles = cpu->device_cycles;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING &&
-               cpu->device_cycles - device_cycles == 8u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->device_cycles - device_cycles == 8u &&
                cpu->io.output_compare.pmd_disabled == 1u && cpu->events.count == 0u,
            "stepped OC PMD write completes after one divided instruction");
 
@@ -301,33 +273,28 @@ static void pmd_lifecycle_cases(TestState* state, Dspic33* cpu) {
            dspic33_load_program_word(cpu, 0u, COMPARE_OPCODE_RESET) &&
                dspic33_step(cpu) == DSPIC33_RUNNING &&
                dspic33_read_word(cpu, compare_pmd_address(0u)) == 0u &&
-               cpu->io.output_compare.pmd_disabled == 0u &&
-               dspic33_read_word(cpu, 0x0900u) == 0u && cpu->events.count == 0u,
+               cpu->io.output_compare.pmd_disabled == 0u && dspic33_read_word(cpu, 0x0900u) == 0u &&
+               cpu->events.count == 0u,
            "warm reset clears OC PMD and channel runtime state");
 
     dspic33_reset(cpu, 0u);
     cpu->configuration[10u] = 0x80u;
     configure_compare_mode(cpu, 0u, 1u, 8u, 2u, COMPARE_SELF_SYNC);
-    expect(state, dspic33_device_advance(cpu, 1u),
-           "advance OC pipeline before stepped Sleep");
+    expect(state, dspic33_device_advance(cpu, 1u), "advance OC pipeline before stepped Sleep");
     expect(state, dspic33_load_program_word(cpu, 0u, COMPARE_OPCODE_SLEEP),
            "load stepped OC Sleep instruction");
     cpu->pc = 0u;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_SLEEPING &&
-               cpu->power_state == DSPIC33_POWER_SLEEP && cpu->events.count == 2u &&
-               cpu->events.items[0].paused &&
-               cpu->events.items[0].paused_remaining == 1u &&
-               cpu->events.items[1].paused &&
+           dspic33_step(cpu) == DSPIC33_SLEEPING && cpu->power_state == DSPIC33_POWER_SLEEP &&
+               cpu->events.count == 2u && cpu->events.items[0].paused &&
+               cpu->events.items[0].paused_remaining == 1u && cpu->events.items[1].paused &&
                cpu->events.items[1].paused_remaining == 1u,
            "PWRSAV pauses the OC pipeline before its next clock");
     dspic33_watchdog_advance_lprc(cpu, 32u);
-    expect(state,
-           cpu->power_state == DSPIC33_POWER_ACTIVE && !cpu->events.items[0].paused,
+    expect(state, cpu->power_state == DSPIC33_POWER_ACTIVE && !cpu->events.items[0].paused,
            "watchdog wake resumes the retained OC pipeline");
     expect(state,
-           dspic33_device_advance(cpu, 2u) && output_is(cpu, 0u, true) &&
-               !interrupt_flag(cpu, 0u),
+           dspic33_device_advance(cpu, 2u) && output_is(cpu, 0u, true) && !interrupt_flag(cpu, 0u),
            "watchdog-resumed OC completes its retained output delay");
 
     dspic33_reset(cpu, 0u);
@@ -340,10 +307,8 @@ static void pmd_lifecycle_cases(TestState* state, Dspic33* cpu) {
     dspic33_device_power_state_changed(cpu);
     expect(state,
            cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR && cpu->events.count == 2u &&
-               cpu->events.items[0].paused &&
-               cpu->events.items[0].paused_remaining == 1u &&
-               cpu->events.items[1].paused &&
-               cpu->events.items[1].paused_remaining == 1u,
+               cpu->events.items[0].paused && cpu->events.items[0].paused_remaining == 1u &&
+               cpu->events.items[1].paused && cpu->events.items[1].paused_remaining == 1u,
            "OC resume overflow preserves the paused pipeline and reports failure");
 
     dspic33_reset(cpu, 0u);

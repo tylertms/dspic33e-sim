@@ -29,9 +29,8 @@ static uint16_t dsp_matrix_prefetch_value(bool y_space, uint8_t operation) {
     return (uint16_t)((y_space ? 0x2200u : 0x1100u) | operation);
 }
 
-static void prepare_dsp_matrix_case(Dspic33* cpu, uint8_t target_accumulator,
-                                    uint8_t x_operation, uint8_t y_operation,
-                                    uint16_t expected_w[14]) {
+static void prepare_dsp_matrix_case(Dspic33* cpu, uint8_t target_accumulator, uint8_t x_operation,
+                                    uint8_t y_operation, uint16_t expected_w[14]) {
     static const uint16_t values[10] = {
         2u, 3u, 5u, 7u, 0x5008u, 0x5108u, 0x9008u, 0x9108u, 2u, 0x5200u,
     };
@@ -61,21 +60,18 @@ static void prepare_dsp_matrix_case(Dspic33* cpu, uint8_t target_accumulator,
     dspic33_write_word(cpu, 0x5200u, 0xa5a5u);
     if (x->present) {
         uint8_t base = (uint8_t)(8u + x->register_offset);
-        dspic33_write_word(cpu,
-                           (uint16_t)(dsp_matrix_base_value(base) + x->access_offset),
+        dspic33_write_word(cpu, (uint16_t)(dsp_matrix_base_value(base) + x->access_offset),
                            dsp_matrix_prefetch_value(false, x_operation));
     }
     if (y->present) {
         uint8_t base = (uint8_t)(10u + y->register_offset);
-        dspic33_write_word(cpu,
-                           (uint16_t)(dsp_matrix_base_value(base) + y->access_offset),
+        dspic33_write_word(cpu, (uint16_t)(dsp_matrix_base_value(base) + y->access_offset),
                            dsp_matrix_prefetch_value(true, y_operation));
     }
 }
 
 static void apply_dsp_matrix_prefetch(uint16_t expected_w[14], uint8_t operation,
-                                      uint8_t destination, bool y_space,
-                                      bool write_destination) {
+                                      uint8_t destination, bool y_space, bool write_destination) {
     const DspMatrixPrefetch* prefetch = &dsp_matrix_prefetches[operation];
     uint8_t base;
     if (!prefetch->present) {
@@ -128,10 +124,9 @@ static bool status_branch_reference_taken(uint8_t condition, uint16_t status) {
 }
 
 static uint16_t accumulator_branch_status(uint8_t flags) {
-    uint16_t status = (uint16_t)(((uint16_t)(flags & 0x01u) << 15u) |
-                                 ((uint16_t)(flags & 0x02u) << 13u) |
-                                 ((uint16_t)(flags & 0x04u) << 11u) |
-                                 ((uint16_t)(flags & 0x08u) << 9u));
+    uint16_t status =
+        (uint16_t)(((uint16_t)(flags & 0x01u) << 15u) | ((uint16_t)(flags & 0x02u) << 13u) |
+                   ((uint16_t)(flags & 0x04u) << 11u) | ((uint16_t)(flags & 0x08u) << 9u));
     if ((status & 0xc000u) != 0u) {
         status |= 0x0800u;
     }
@@ -162,13 +157,11 @@ static void prepare_relative_branch_case(Dspic33* cpu, uint16_t status) {
     cpu->splim_enabled = false;
 }
 
-static void run_relative_branch_encoding_case(TestState* state, Dspic33* cpu,
-                                              uint32_t opcode, uint16_t status,
-                                              bool taken) {
+static void run_relative_branch_encoding_case(TestState* state, Dspic33* cpu, uint32_t opcode,
+                                              uint16_t status, bool taken) {
     int16_t displacement = (int16_t)opcode;
     uint32_t expected_pc =
-        taken ? (uint32_t)((0x020002 + (int32_t)displacement * 2) & 0x007ffffe)
-              : 0x020002u;
+        taken ? (uint32_t)((0x020002 + (int32_t)displacement * 2) & 0x007ffffe) : 0x020002u;
     uint64_t cycles;
     uint64_t instructions;
     bool matches;
@@ -178,12 +171,11 @@ static void run_relative_branch_encoding_case(TestState* state, Dspic33* cpu,
     instructions = cpu->instructions;
     matches = dspic33_load_program_word(cpu, 0x020000u, opcode) &&
               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == expected_pc &&
-              cpu->cycles - cycles == (taken ? 4u : 1u) &&
-              cpu->instructions - instructions == 1u && cpu->sr == status &&
-              cpu->corcon == 0x0020u && cpu->w[0] == 0x1357u && cpu->w[15] == 0x5000u &&
-              cpu->initialized_working_registers == 0x8001u &&
-              cpu->unsupported_opcode == 0u && !cpu->address_error &&
-              !cpu->illegal_reset && cpu->last_trap == UINT16_MAX;
+              cpu->cycles - cycles == (taken ? 4u : 1u) && cpu->instructions - instructions == 1u &&
+              cpu->sr == status && cpu->corcon == 0x0020u && cpu->w[0] == 0x1357u &&
+              cpu->w[15] == 0x5000u && cpu->initialized_working_registers == 0x8001u &&
+              cpu->unsupported_opcode == 0u && !cpu->address_error && !cpu->illegal_reset &&
+              cpu->last_trap == UINT16_MAX;
     expect_dsp_matrix_case(state, matches, opcode, "conditional branch encoding");
 }
 
@@ -232,8 +224,7 @@ typedef enum {
     COMPUTED_CONTROL_GOTO_LONG,
 } ComputedControlKind;
 
-static ComputedControlKind computed_control_reference_kind(uint32_t opcode,
-                                                           uint8_t* source) {
+static ComputedControlKind computed_control_reference_kind(uint32_t opcode, uint8_t* source) {
     if ((opcode & 0xfffff0u) == 0x010000u) {
         *source = (uint8_t)opcode & 0x0fu;
         return COMPUTED_CONTROL_CALL;
@@ -263,10 +254,8 @@ static ComputedControlKind computed_control_reference_kind(uint32_t opcode,
     return COMPUTED_CONTROL_INVALID;
 }
 
-static void run_computed_control_encoding_case(TestState* state, Dspic33* cpu,
-                                               uint32_t opcode,
-                                               ComputedControlKind kind,
-                                               uint8_t source) {
+static void run_computed_control_encoding_case(TestState* state, Dspic33* cpu, uint32_t opcode,
+                                               ComputedControlKind kind, uint8_t source) {
     bool call = kind == COMPUTED_CONTROL_CALL || kind == COMPUTED_CONTROL_RCALL ||
                 kind == COMPUTED_CONTROL_CALL_LONG;
     uint16_t initial_registers[16];
@@ -291,10 +280,9 @@ static void run_computed_control_encoding_case(TestState* state, Dspic33* cpu,
     cpu->events.count = 0u;
     cpu->splim_enabled = false;
     for (uint8_t reg = 0u; reg < 15u; reg++) {
-        uint16_t value =
-            (kind == COMPUTED_CONTROL_RCALL || kind == COMPUTED_CONTROL_BRA)
-                ? (reg < 8u ? (uint16_t)(0x0010u + reg) : (uint16_t)(0xffe0u + reg))
-                : (uint16_t)(0x3001u + (uint16_t)reg * 2u);
+        uint16_t value = (kind == COMPUTED_CONTROL_RCALL || kind == COMPUTED_CONTROL_BRA)
+                             ? (reg < 8u ? (uint16_t)(0x0010u + reg) : (uint16_t)(0xffe0u + reg))
+                             : (uint16_t)(0x3001u + (uint16_t)reg * 2u);
         dspic33_set_working_register(cpu, reg, value);
         initial_registers[reg] = value;
     }
@@ -309,17 +297,13 @@ static void run_computed_control_encoding_case(TestState* state, Dspic33* cpu,
     dspic33_write_word(cpu, 0x5000u, 0xa5a5u);
     dspic33_write_word(cpu, 0x5002u, 0x5a5au);
     if (kind == COMPUTED_CONTROL_RCALL || kind == COMPUTED_CONTROL_BRA) {
-        uint16_t displacement = source == 15u && kind == COMPUTED_CONTROL_RCALL
-                                    ? 0x5004u
-                                    : initial_registers[source];
-        target =
-            (uint32_t)((0x002002 + (int32_t)(int16_t)displacement * 2) & 0x007ffffe);
-    } else if (kind == COMPUTED_CONTROL_CALL_LONG ||
-               kind == COMPUTED_CONTROL_GOTO_LONG) {
+        uint16_t displacement =
+            source == 15u && kind == COMPUTED_CONTROL_RCALL ? 0x5004u : initial_registers[source];
+        target = (uint32_t)((0x002002 + (int32_t)(int16_t)displacement * 2) & 0x007ffffe);
+    } else if (kind == COMPUTED_CONTROL_CALL_LONG || kind == COMPUTED_CONTROL_GOTO_LONG) {
         target = initial_registers[source] & 0xfffeu;
     } else {
-        target =
-            (source == 15u && call ? 0x5004u : initial_registers[source]) & 0xfffeu;
+        target = (source == 15u && call ? 0x5004u : initial_registers[source]) & 0xfffeu;
     }
     cycles = cpu->cycles;
     instructions = cpu->instructions;
@@ -327,9 +311,8 @@ static void run_computed_control_encoding_case(TestState* state, Dspic33* cpu,
               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == target &&
               cpu->cycles - cycles == 4u && cpu->instructions - instructions == 1u &&
               cpu->sr == 0xf10fu && cpu->corcon == (call ? 0x0020u : 0x0024u) &&
-              cpu->w[15] == (call ? 0x5004u : 0x5000u) &&
-              cpu->call_depth == (call ? 1u : 0u) && cpu->unsupported_opcode == 0u &&
-              !cpu->address_error && !cpu->illegal_reset &&
+              cpu->w[15] == (call ? 0x5004u : 0x5000u) && cpu->call_depth == (call ? 1u : 0u) &&
+              cpu->unsupported_opcode == 0u && !cpu->address_error && !cpu->illegal_reset &&
               cpu->last_trap == UINT16_MAX;
     if (call) {
         matches = matches && dspic33_read_word(cpu, 0x5000u) == 0x2003u &&
@@ -400,9 +383,8 @@ static void run_literal_control_encoding_case(TestState* state, Dspic33* cpu, bo
               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == target &&
               cpu->cycles - cycles == 4u && cpu->instructions - instructions == 1u &&
               cpu->sr == 0x010fu && cpu->corcon == (call ? 0x0020u : 0x0024u) &&
-              cpu->w[15] == (call ? 0x5004u : 0x5000u) &&
-              cpu->call_depth == (call ? 1u : 0u) && cpu->unsupported_opcode == 0u &&
-              !cpu->address_error && !cpu->illegal_reset &&
+              cpu->w[15] == (call ? 0x5004u : 0x5000u) && cpu->call_depth == (call ? 1u : 0u) &&
+              cpu->unsupported_opcode == 0u && !cpu->address_error && !cpu->illegal_reset &&
               cpu->last_trap == UINT16_MAX;
     if (call) {
         matches = matches && dspic33_read_word(cpu, 0x5000u) == 0x0005u &&
@@ -414,9 +396,8 @@ static void run_literal_control_encoding_case(TestState* state, Dspic33* cpu, bo
     expect_dsp_matrix_case(state, matches, opcode, "literal control encoding");
 }
 
-static void run_literal_control_target_fault_case(TestState* state, Dspic33* cpu,
-                                                  bool call, uint16_t low,
-                                                  uint8_t high) {
+static void run_literal_control_target_fault_case(TestState* state, Dspic33* cpu, bool call,
+                                                  uint16_t low, uint8_t high) {
     uint32_t opcode = (call ? 0x020000u : 0x040000u) | low;
     uint64_t cycles;
     bool matches;
@@ -426,23 +407,21 @@ static void run_literal_control_target_fault_case(TestState* state, Dspic33* cpu
     cpu->corcon |= 0x0004u;
     cycles = cpu->cycles;
     matches = dspic33_load_program_word(cpu, 0u, opcode) &&
-              dspic33_load_program_word(cpu, 2u, high) &&
-              dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->cycles - cycles == 4u &&
-              cpu->last_trap == 1u && cpu->last_trap_return == 2u &&
+              dspic33_load_program_word(cpu, 2u, high) && dspic33_step(cpu) == DSPIC33_TRAPPED &&
+              cpu->cycles - cycles == 4u && cpu->last_trap == 1u && cpu->last_trap_return == 2u &&
               cpu->pc == 0x000340u && cpu->w[15] == (call ? 0x5008u : 0x5004u) &&
               (cpu->corcon & 0x0004u) == (call ? 0u : 0x0004u);
     if (call) {
         matches = matches && dspic33_read_word(cpu, 0x5000u) == 0x0005u &&
-                  dspic33_read_word(cpu, 0x5002u) == 0u &&
-                  dspic33_read_word(cpu, 0x5004u) == 2u;
+                  dspic33_read_word(cpu, 0x5002u) == 0u && dspic33_read_word(cpu, 0x5004u) == 2u;
     } else {
         matches = matches && dspic33_read_word(cpu, 0x5000u) == 2u;
     }
     expect_dsp_matrix_case(state, matches, opcode, "literal control target fault");
 }
 
-static void run_reserved_literal_extension_case(TestState* state, Dspic33* cpu,
-                                                bool call, uint32_t extension) {
+static void run_reserved_literal_extension_case(TestState* state, Dspic33* cpu, bool call,
+                                                uint32_t extension) {
     uint32_t opcode = call ? 0x020246u : 0x040246u;
     uint64_t illegal_resets;
     bool matches;
@@ -460,12 +439,10 @@ static void run_reserved_literal_extension_case(TestState* state, Dspic33* cpu,
               cpu->last_trap == UINT16_MAX && cpu->call_depth == 0u &&
               (dspic33_read_word(cpu, 0x0740u) & 0x4000u) != 0u &&
               dspic33_read_word(cpu, 0x5000u) == 0xa5a5u;
-    expect_dsp_matrix_case(state, matches, extension,
-                           "literal control reserved extension");
+    expect_dsp_matrix_case(state, matches, extension, "literal control reserved extension");
 }
 
-static void run_reserved_literal_first_word_case(TestState* state, Dspic33* cpu,
-                                                 uint32_t opcode) {
+static void run_reserved_literal_first_word_case(TestState* state, Dspic33* cpu, uint32_t opcode) {
     uint64_t illegal_resets;
     bool matches;
 
@@ -475,24 +452,19 @@ static void run_reserved_literal_first_word_case(TestState* state, Dspic33* cpu,
     dspic33_write_word(cpu, 0x5000u, 0xa5a5u);
     dspic33_write_word(cpu, 0x5002u, 0x5a5au);
     illegal_resets = cpu->illegal_reset_count;
-    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
-              dspic33_load_program_word(cpu, 2u, 0u) &&
-              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset &&
-              cpu->illegal_reset_count == illegal_resets + 1u && cpu->pc == 0u &&
-              cpu->w[15] == 0x1000u && cpu->initialized_working_registers == 0x8000u &&
-              cpu->last_trap == UINT16_MAX && cpu->call_depth == 0u &&
-              (dspic33_read_word(cpu, 0x0740u) & 0x4000u) != 0u &&
-              dspic33_read_word(cpu, 0x5000u) == 0xa5a5u &&
-              dspic33_read_word(cpu, 0x5002u) == 0x5a5au;
-    expect_dsp_matrix_case(state, matches, opcode,
-                           "literal control reserved first word");
+    matches =
+        dspic33_load_program_word(cpu, 0u, opcode) && dspic33_load_program_word(cpu, 2u, 0u) &&
+        dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset &&
+        cpu->illegal_reset_count == illegal_resets + 1u && cpu->pc == 0u && cpu->w[15] == 0x1000u &&
+        cpu->initialized_working_registers == 0x8000u && cpu->last_trap == UINT16_MAX &&
+        cpu->call_depth == 0u && (dspic33_read_word(cpu, 0x0740u) & 0x4000u) != 0u &&
+        dspic33_read_word(cpu, 0x5000u) == 0xa5a5u && dspic33_read_word(cpu, 0x5002u) == 0x5a5au;
+    expect_dsp_matrix_case(state, matches, opcode, "literal control reserved first word");
 }
 
-static void run_literal_rcall_encoding_case(TestState* state, Dspic33* cpu,
-                                            uint16_t displacement) {
+static void run_literal_rcall_encoding_case(TestState* state, Dspic33* cpu, uint16_t displacement) {
     uint32_t opcode = 0x070000u | displacement;
-    uint32_t target =
-        (uint32_t)((0x020002 + (int32_t)(int16_t)displacement * 2) & 0x007ffffe);
+    uint32_t target = (uint32_t)((0x020002 + (int32_t)(int16_t)displacement * 2) & 0x007ffffe);
     uint64_t cycles;
     uint64_t instructions;
     bool matches;
@@ -505,9 +477,8 @@ static void run_literal_rcall_encoding_case(TestState* state, Dspic33* cpu,
               cpu->cycles - cycles == 4u && cpu->instructions - instructions == 1u &&
               cpu->sr == 0x010fu && cpu->corcon == 0x0020u && cpu->w[15] == 0x5004u &&
               cpu->call_depth == 1u && dspic33_read_word(cpu, 0x5000u) == 0x0003u &&
-              dspic33_read_word(cpu, 0x5002u) == 0x0002u &&
-              cpu->unsupported_opcode == 0u && !cpu->address_error &&
-              !cpu->illegal_reset && cpu->last_trap == UINT16_MAX;
+              dspic33_read_word(cpu, 0x5002u) == 0x0002u && cpu->unsupported_opcode == 0u &&
+              !cpu->address_error && !cpu->illegal_reset && cpu->last_trap == UINT16_MAX;
     expect_dsp_matrix_case(state, matches, opcode, "literal RCALL encoding");
 }
 
@@ -519,8 +490,7 @@ static void literal_control_encoding_matrix_cases(TestState* state, Dspic33* cpu
         for (uint32_t low = 0u; low <= UINT16_MAX; low += 257u) {
             uint32_t opcode = (call != 0u ? 0x020000u : 0x040000u) | low;
             if ((low & 1u) == 0u) {
-                run_literal_control_encoding_case(state, cpu, call != 0u, (uint16_t)low,
-                                                  0u);
+                run_literal_control_encoding_case(state, cpu, call != 0u, (uint16_t)low, 0u);
             } else {
                 run_reserved_literal_first_word_case(state, cpu, opcode);
             }
@@ -529,11 +499,9 @@ static void literal_control_encoding_matrix_cases(TestState* state, Dspic33* cpu
             uint16_t low = high == 127u ? 0xc000u : 0x1234u;
             uint32_t target = ((uint32_t)high << 16u) | low;
             if (dspic33_program_range_implemented(target, 2u)) {
-                run_literal_control_encoding_case(state, cpu, call != 0u, low,
-                                                  (uint8_t)high);
+                run_literal_control_encoding_case(state, cpu, call != 0u, low, (uint8_t)high);
             } else {
-                run_literal_control_target_fault_case(state, cpu, call != 0u, low,
-                                                      (uint8_t)high);
+                run_literal_control_target_fault_case(state, cpu, call != 0u, low, (uint8_t)high);
             }
         }
         for (uint32_t upper = 1u; upper < 0x20000u; upper += 257u) {
@@ -575,10 +543,9 @@ static void run_retlw_encoding_case(TestState* state, Dspic33* cpu, uint32_t opc
     uint8_t destination = (uint8_t)(opcode & 0x0fu);
     bool byte_mode = (opcode & 0x004000u) != 0u;
     uint16_t expected = byte_mode ? (uint16_t)(literal & 0x00ffu) : literal;
-    uint16_t expected_stack =
-        destination == 15u
-            ? (uint16_t)(((byte_mode ? 0x5000u : 0u) | expected) & 0xfffeu)
-            : 0x5000u;
+    uint16_t expected_stack = destination == 15u
+                                  ? (uint16_t)(((byte_mode ? 0x5000u : 0u) | expected) & 0xfffeu)
+                                  : 0x5000u;
     uint64_t cycles;
     uint64_t instructions;
     bool matches;
@@ -595,9 +562,8 @@ static void run_retlw_encoding_case(TestState* state, Dspic33* cpu, uint32_t opc
     matches = dspic33_load_program_word(cpu, 0x020000u, opcode) &&
               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000300u &&
               cpu->cycles - cycles == 6u && cpu->instructions - instructions == 1u &&
-              cpu->sr == 0x010fu && cpu->corcon == 0x0024u &&
-              cpu->w[15] == expected_stack && cpu->call_depth == 0u &&
-              cpu->unsupported_opcode == 0u && !cpu->address_error &&
+              cpu->sr == 0x010fu && cpu->corcon == 0x0024u && cpu->w[15] == expected_stack &&
+              cpu->call_depth == 0u && cpu->unsupported_opcode == 0u && !cpu->address_error &&
               !cpu->illegal_reset && cpu->last_trap == UINT16_MAX;
     if (destination != 15u) {
         matches = matches && cpu->w[destination] == expected;
@@ -618,8 +584,8 @@ static void exact_return_encoding_cases(TestState* state, Dspic33* cpu) {
     cycles = cpu->cycles;
     matches = dspic33_load_program_word(cpu, 0x020000u, OPCODE_RETURN) &&
               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000300u &&
-              cpu->cycles - cycles == 6u && cpu->w[15] == 0x5000u &&
-              cpu->call_depth == 0u && cpu->sr == 0x010fu && cpu->corcon == 0x0024u;
+              cpu->cycles - cycles == 6u && cpu->w[15] == 0x5000u && cpu->call_depth == 0u &&
+              cpu->sr == 0x010fu && cpu->corcon == 0x0024u;
     expect_dsp_matrix_case(state, matches, OPCODE_RETURN, "RETURN encoding");
 
     prepare_return_encoding_case(cpu);
@@ -630,9 +596,8 @@ static void exact_return_encoding_cases(TestState* state, Dspic33* cpu) {
     cycles = cpu->cycles;
     matches = dspic33_load_program_word(cpu, 0x020000u, OPCODE_RETFIE) &&
               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000300u &&
-              cpu->cycles - cycles == 6u && cpu->w[15] == 0x5000u &&
-              cpu->interrupt_depth == 0u && cpu->sr == 0x010fu &&
-              cpu->corcon == 0x002cu;
+              cpu->cycles - cycles == 6u && cpu->w[15] == 0x5000u && cpu->interrupt_depth == 0u &&
+              cpu->sr == 0x010fu && cpu->corcon == 0x002cu;
     expect_dsp_matrix_case(state, matches, OPCODE_RETFIE, "RETFIE encoding");
 }
 
@@ -659,16 +624,14 @@ static void run_legal_dsp_matrix_case(TestState* state, Dspic33* cpu, uint32_t o
                                       uint8_t target_accumulator, int64_t target_result,
                                       uint8_t x_operation, uint8_t y_operation,
                                       uint8_t x_destination, uint8_t y_destination,
-                                      uint8_t write_back,
-                                      int8_t difference_destination) {
+                                      uint8_t write_back, int8_t difference_destination) {
     uint16_t expected_w[14] = {0u};
     uint16_t expected_memory = 0xa5a5u;
     uint64_t cycles;
     bool matches;
     uint8_t reg;
 
-    prepare_dsp_matrix_case(cpu, target_accumulator, x_operation, y_operation,
-                            expected_w);
+    prepare_dsp_matrix_case(cpu, target_accumulator, x_operation, y_operation, expected_w);
     apply_dsp_matrix_prefetch(expected_w, x_operation, x_destination, false,
                               difference_destination < 0);
     apply_dsp_matrix_prefetch(expected_w, y_operation, y_destination, true,
@@ -685,15 +648,13 @@ static void run_legal_dsp_matrix_case(TestState* state, Dspic33* cpu, uint32_t o
         expected_memory = 0x1235u;
     }
     cycles = cpu->cycles;
-    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
-              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
-              cpu->cycles - cycles == 1u &&
+    matches = dspic33_load_program_word(cpu, 0u, opcode) && dspic33_step(cpu) == DSPIC33_RUNNING &&
+              cpu->pc == 2u && cpu->cycles - cycles == 1u &&
               cpu->accumulator[target_accumulator] == target_result &&
-              cpu->accumulator[target_accumulator ^ 1u] == 0x12348001 &&
-              cpu->sr == 0x000fu && cpu->corcon == 0x0001u &&
-              dspic33_read_word(cpu, 0x5200u) == expected_memory &&
-              !cpu->address_error && !cpu->illegal_reset &&
-              cpu->unsupported_opcode == 0u && cpu->last_trap == UINT16_MAX;
+              cpu->accumulator[target_accumulator ^ 1u] == 0x12348001 && cpu->sr == 0x000fu &&
+              cpu->corcon == 0x0001u && dspic33_read_word(cpu, 0x5200u) == expected_memory &&
+              !cpu->address_error && !cpu->illegal_reset && cpu->unsupported_opcode == 0u &&
+              cpu->last_trap == UINT16_MAX;
     for (reg = 4u; reg <= 13u; reg++) {
         matches = matches && cpu->w[reg] == expected_w[reg];
     }
@@ -737,25 +698,20 @@ static void general_dsp_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
                     result += 100;
                 }
                 for (x_operation = 0u; x_operation < 16u; x_operation++) {
-                    for (y_operation = x_operation; y_operation <= x_operation;
-                         y_operation++) {
+                    for (y_operation = x_operation; y_operation <= x_operation; y_operation++) {
                         for (x_destination = 0u; x_destination < 4u; x_destination++) {
-                            for (y_destination = 0u; y_destination < 4u;
-                                 y_destination++) {
-                                uint32_t opcode =
-                                    0xc00000u |
-                                    ((uint32_t)pair_encodings[pair] << 16u) |
-                                    ((uint32_t)accumulator << 15u) |
-                                    ((uint32_t)x_destination << 12u) |
-                                    ((uint32_t)y_destination << 10u) |
-                                    ((uint32_t)x_operation << 6u) |
-                                    ((uint32_t)y_operation << 2u) | forms[form].bits;
-                                run_legal_dsp_matrix_case(state, cpu, opcode,
-                                                          accumulator, result,
-                                                          x_operation, y_operation,
-                                                          (uint8_t)(4u + x_destination),
-                                                          (uint8_t)(4u + y_destination),
-                                                          forms[form].write_back, -1);
+                            for (y_destination = 0u; y_destination < 4u; y_destination++) {
+                                uint32_t opcode = 0xc00000u |
+                                                  ((uint32_t)pair_encodings[pair] << 16u) |
+                                                  ((uint32_t)accumulator << 15u) |
+                                                  ((uint32_t)x_destination << 12u) |
+                                                  ((uint32_t)y_destination << 10u) |
+                                                  ((uint32_t)x_operation << 6u) |
+                                                  ((uint32_t)y_operation << 2u) | forms[form].bits;
+                                run_legal_dsp_matrix_case(
+                                    state, cpu, opcode, accumulator, result, x_operation,
+                                    y_operation, (uint8_t)(4u + x_destination),
+                                    (uint8_t)(4u + y_destination), forms[form].write_back, -1);
                             }
                         }
                     }
@@ -781,18 +737,16 @@ static void special_dsp_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
                 for (x_operation = 0u; x_operation < 16u; x_operation++) {
                     for (y_operation = 0u; y_operation < 16u; y_operation++) {
                         for (x_destination = 0u; x_destination < 4u; x_destination++) {
-                            for (y_destination = 0u; y_destination < 4u;
-                                 y_destination++) {
-                                uint32_t opcode =
-                                    families[family] | ((uint32_t)accumulator << 15u) |
-                                    ((uint32_t)x_destination << 12u) |
-                                    ((uint32_t)y_destination << 10u) |
-                                    ((uint32_t)x_operation << 6u) |
-                                    ((uint32_t)y_operation << 2u) | write_back;
+                            for (y_destination = 0u; y_destination < 4u; y_destination++) {
+                                uint32_t opcode = families[family] |
+                                                  ((uint32_t)accumulator << 15u) |
+                                                  ((uint32_t)x_destination << 12u) |
+                                                  ((uint32_t)y_destination << 10u) |
+                                                  ((uint32_t)x_operation << 6u) |
+                                                  ((uint32_t)y_operation << 2u) | write_back;
                                 run_legal_dsp_matrix_case(
-                                    state, cpu, opcode, accumulator,
-                                    family == 0u ? 0 : 100, x_operation, y_operation,
-                                    (uint8_t)(4u + x_destination),
+                                    state, cpu, opcode, accumulator, family == 0u ? 0 : 100,
+                                    x_operation, y_operation, (uint8_t)(4u + x_destination),
                                     (uint8_t)(4u + y_destination), write_back, -1);
                             }
                         }
@@ -821,21 +775,17 @@ static void square_dsp_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
                 for (x_operation = 0u; x_operation < 16u; x_operation++) {
                     for (y_operation = 0u; y_operation < 16u; y_operation++) {
                         for (x_destination = 0u; x_destination < 4u; x_destination++) {
-                            for (y_destination = 0u; y_destination < 4u;
-                                 y_destination++) {
-                                uint32_t opcode =
-                                    0xf00000u | ((uint32_t)source << 16u) |
-                                    ((uint32_t)accumulator << 15u) |
-                                    ((uint32_t)x_destination << 12u) |
-                                    ((uint32_t)y_destination << 10u) |
-                                    ((uint32_t)x_operation << 6u) |
-                                    ((uint32_t)y_operation << 2u) | replace;
+                            for (y_destination = 0u; y_destination < 4u; y_destination++) {
+                                uint32_t opcode = 0xf00000u | ((uint32_t)source << 16u) |
+                                                  ((uint32_t)accumulator << 15u) |
+                                                  ((uint32_t)x_destination << 12u) |
+                                                  ((uint32_t)y_destination << 10u) |
+                                                  ((uint32_t)x_operation << 6u) |
+                                                  ((uint32_t)y_operation << 2u) | replace;
                                 run_legal_dsp_matrix_case(
-                                    state, cpu, opcode, accumulator, result,
-                                    x_operation, y_operation,
-                                    (uint8_t)(4u + x_destination),
-                                    (uint8_t)(4u + y_destination),
-                                    DSP_MATRIX_WRITE_BACK_NONE, -1);
+                                    state, cpu, opcode, accumulator, result, x_operation,
+                                    y_operation, (uint8_t)(4u + x_destination),
+                                    (uint8_t)(4u + y_destination), DSP_MATRIX_WRITE_BACK_NONE, -1);
                             }
                         }
                     }
@@ -864,8 +814,7 @@ static void euclidean_dsp_encoding_matrix_cases(TestState* state, Dspic33* cpu) 
                         if (x_operation == 4u) {
                             continue;
                         }
-                        for (y_operation = x_operation; y_operation <= x_operation;
-                             y_operation++) {
+                        for (y_operation = x_operation; y_operation <= x_operation; y_operation++) {
                             uint32_t opcode;
                             if (y_operation == 4u) {
                                 continue;
@@ -873,12 +822,11 @@ static void euclidean_dsp_encoding_matrix_cases(TestState* state, Dspic33* cpu) 
                             opcode = 0xf04000u | ((uint32_t)source << 16u) |
                                      ((uint32_t)accumulator << 15u) |
                                      ((uint32_t)destination << 12u) |
-                                     ((uint32_t)x_operation << 6u) |
-                                     ((uint32_t)y_operation << 2u) | operation;
+                                     ((uint32_t)x_operation << 6u) | ((uint32_t)y_operation << 2u) |
+                                     operation;
                             run_legal_dsp_matrix_case(
-                                state, cpu, opcode, accumulator, result, x_operation,
-                                y_operation, 4u, 4u, DSP_MATRIX_WRITE_BACK_NONE,
-                                (int8_t)(4u + destination));
+                                state, cpu, opcode, accumulator, result, x_operation, y_operation,
+                                4u, 4u, DSP_MATRIX_WRITE_BACK_NONE, (int8_t)(4u + destination));
                         }
                     }
                 }
@@ -898,23 +846,20 @@ static void prepare_invalid_dsp_matrix_case(Dspic33* cpu) {
     cpu->last_trap = UINT16_MAX;
     cpu->stop_reason = DSPIC33_RUNNING;
     for (reg = 0u; reg < 15u; reg++) {
-        dspic33_set_working_register(cpu, reg,
-                                     (uint16_t)(0x5000u + (uint16_t)reg * 2u));
+        dspic33_set_working_register(cpu, reg, (uint16_t)(0x5000u + (uint16_t)reg * 2u));
     }
     dspic33_write_word(cpu, 0x5000u, 0xa5a5u);
 }
 
-static void run_invalid_dsp_matrix_case(TestState* state, Dspic33* cpu,
-                                        uint32_t opcode) {
+static void run_invalid_dsp_matrix_case(TestState* state, Dspic33* cpu, uint32_t opcode) {
     uint64_t illegal_resets;
     bool matches;
     uint8_t reg;
 
     prepare_invalid_dsp_matrix_case(cpu);
     illegal_resets = cpu->illegal_reset_count;
-    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
-              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset &&
-              cpu->illegal_reset_count == illegal_resets + 1u &&
+    matches = dspic33_load_program_word(cpu, 0u, opcode) && dspic33_step(cpu) == DSPIC33_RUNNING &&
+              cpu->illegal_reset && cpu->illegal_reset_count == illegal_resets + 1u &&
               cpu->software_reset_count == 0u && cpu->trap_count == 0u &&
               cpu->last_trap == UINT16_MAX && cpu->pc == 0u && cpu->w[15] == 0x1000u &&
               cpu->initialized_working_registers == 0x8000u &&
@@ -979,10 +924,8 @@ static void invalid_dsp_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
                                 for (low = 0u; low < 4u; low++) {
                                     bool valid = alternate == 0u
                                                      ? low < 2u
-                                                     : low >= 2u &&
-                                                           y_destination == 0u &&
-                                                           x_operation != 4u &&
-                                                           y_operation != 4u;
+                                                     : low >= 2u && y_destination == 0u &&
+                                                           x_operation != 4u && y_operation != 4u;
                                     uint32_t opcode;
                                     if (valid) {
                                         continue;
@@ -1017,8 +960,7 @@ static uint16_t generic_multiply_source_value(uint8_t mode) {
 }
 
 static void prepare_generic_multiply_case(Dspic33* cpu, uint8_t source_mode,
-                                          uint8_t source_register,
-                                          uint16_t expected_w[16]) {
+                                          uint8_t source_register, uint16_t expected_w[16]) {
     uint8_t reg;
     cpu->pc = 0u;
     cpu->sr = 0x010fu;
@@ -1050,11 +992,10 @@ static void prepare_generic_multiply_case(Dspic33* cpu, uint8_t source_mode,
     }
 }
 
-static void run_legal_generic_multiply_case(TestState* state, Dspic33* cpu,
-                                            uint32_t opcode, bool base_signed,
-                                            bool source_signed, uint8_t base_register,
-                                            uint8_t destination, uint8_t source_mode,
-                                            uint8_t source_register) {
+static void run_legal_generic_multiply_case(TestState* state, Dspic33* cpu, uint32_t opcode,
+                                            bool base_signed, bool source_signed,
+                                            uint8_t base_register, uint8_t destination,
+                                            uint8_t source_mode, uint8_t source_register) {
     uint16_t expected_w[16] = {0u};
     int64_t expected_accumulator[2] = {0x1111222233, -0x1111222233};
     uint16_t source;
@@ -1084,9 +1025,8 @@ static void run_legal_generic_multiply_case(TestState* state, Dspic33* cpu,
         }
     }
     cycles = cpu->cycles;
-    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
-              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
-              cpu->cycles - cycles == 1u &&
+    matches = dspic33_load_program_word(cpu, 0u, opcode) && dspic33_step(cpu) == DSPIC33_RUNNING &&
+              cpu->pc == 2u && cpu->cycles - cycles == 1u &&
               cpu->accumulator[0] == expected_accumulator[0] &&
               cpu->accumulator[1] == expected_accumulator[1] && cpu->sr == 0x010fu &&
               cpu->corcon == 0x0005u && !cpu->address_error && !cpu->illegal_reset &&
@@ -1112,21 +1052,18 @@ static void generic_multiply_encoding_matrix_cases(TestState* state, Dspic33* cp
             for (base_register = 0u; base_register < 16u; base_register += 5u) {
                 for (destination = 0u; destination < 16u; destination += 5u) {
                     for (source_mode = 0u; source_mode < 8u; source_mode++) {
-                        for (source_register = 0u; source_register < 16u;
-                             source_register += 5u) {
-                            uint32_t opcode =
-                                0xb80000u | ((uint32_t)base_signed << 16u) |
-                                ((uint32_t)source_signed << 15u) |
-                                ((uint32_t)base_register << 11u) |
-                                ((uint32_t)destination << 7u) |
-                                ((uint32_t)source_mode << 4u) | source_register;
+                        for (source_register = 0u; source_register < 16u; source_register += 5u) {
+                            uint32_t opcode = 0xb80000u | ((uint32_t)base_signed << 16u) |
+                                              ((uint32_t)source_signed << 15u) |
+                                              ((uint32_t)base_register << 11u) |
+                                              ((uint32_t)destination << 7u) |
+                                              ((uint32_t)source_mode << 4u) | source_register;
                             if (source_signed != 0u && source_mode >= 6u) {
                                 run_invalid_dsp_matrix_case(state, cpu, opcode);
                             } else {
                                 run_legal_generic_multiply_case(
-                                    state, cpu, opcode, base_signed != 0u,
-                                    source_signed != 0u, base_register, destination,
-                                    source_mode, source_register);
+                                    state, cpu, opcode, base_signed != 0u, source_signed != 0u,
+                                    base_register, destination, source_mode, source_register);
                             }
                         }
                     }
@@ -1155,14 +1092,12 @@ static void file_multiply_encoding_matrix_cases(TestState* state, Dspic33* cpu) 
             cpu->sr = 0x010fu;
             matches = dspic33_load_program_word(cpu, 0u, opcode);
             if (byte_mode == 0u && (address & 1u) != 0u) {
-                matches = matches && dspic33_step(cpu) == DSPIC33_TRAPPED &&
-                          cpu->last_trap == 1u && cpu->last_trap_return == 2u &&
-                          cpu->pc == 0x000340u &&
+                matches = matches && dspic33_step(cpu) == DSPIC33_TRAPPED && cpu->last_trap == 1u &&
+                          cpu->last_trap_return == 2u && cpu->pc == 0x000340u &&
                           (dspic33_read_word(cpu, 0x08c0u) & 0x0008u) != 0u;
             } else {
-                matches = matches && dspic33_step(cpu) == DSPIC33_RUNNING &&
-                          cpu->pc == 2u && cpu->w[2] == 0u &&
-                          cpu->w[3] == (byte_mode != 0u ? 0x5a5au : 0u) &&
+                matches = matches && dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
+                          cpu->w[2] == 0u && cpu->w[3] == (byte_mode != 0u ? 0x5a5au : 0u) &&
                           cpu->sr == 0x010fu && cpu->last_trap == UINT16_MAX &&
                           cpu->unsupported_opcode == 0u;
             }
@@ -1188,8 +1123,7 @@ static void prepare_move_matrix_case(Dspic33* cpu) {
     cpu->events.count = 0u;
 }
 
-static void run_invalid_move_matrix_case(TestState* state, Dspic33* cpu,
-                                         uint32_t opcode) {
+static void run_invalid_move_matrix_case(TestState* state, Dspic33* cpu, uint32_t opcode) {
     uint64_t illegal_resets;
     bool matches;
     uint8_t reg;
@@ -1197,9 +1131,8 @@ static void run_invalid_move_matrix_case(TestState* state, Dspic33* cpu,
     prepare_invalid_dsp_matrix_case(cpu);
     dspic33_set_working_register(cpu, 15u, 0x5000u);
     illegal_resets = cpu->illegal_reset_count;
-    matches = dspic33_load_program_word(cpu, 0u, opcode) &&
-              dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset &&
-              cpu->illegal_reset_count == illegal_resets + 1u &&
+    matches = dspic33_load_program_word(cpu, 0u, opcode) && dspic33_step(cpu) == DSPIC33_RUNNING &&
+              cpu->illegal_reset && cpu->illegal_reset_count == illegal_resets + 1u &&
               cpu->software_reset_count == 0u && cpu->trap_count == 0u &&
               cpu->last_trap == UINT16_MAX && cpu->pc == 0u && cpu->w[15] == 0x1000u &&
               cpu->initialized_working_registers == 0x8000u &&
@@ -1231,8 +1164,8 @@ static void move_literal_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
             matches = dspic33_load_program_word(cpu, 0u, opcode) &&
                       dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
                       cpu->cycles - cycles == 1u && cpu->w[destination] == expected &&
-                      cpu->sr == 0x010fu && cpu->unsupported_opcode == 0u &&
-                      !cpu->illegal_reset && cpu->last_trap == UINT16_MAX;
+                      cpu->sr == 0x010fu && cpu->unsupported_opcode == 0u && !cpu->illegal_reset &&
+                      cpu->last_trap == UINT16_MAX;
             expect_dsp_matrix_case(state, matches, opcode, "MOV literal encoding");
         }
     }
@@ -1252,8 +1185,8 @@ static void move_literal_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
             matches = dspic33_load_program_word(cpu, 0u, opcode) &&
                       dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
                       cpu->cycles - cycles == 1u && cpu->w[destination] == expected &&
-                      cpu->sr == 0x010fu && cpu->unsupported_opcode == 0u &&
-                      !cpu->illegal_reset && cpu->last_trap == UINT16_MAX;
+                      cpu->sr == 0x010fu && cpu->unsupported_opcode == 0u && !cpu->illegal_reset &&
+                      cpu->last_trap == UINT16_MAX;
             expect_dsp_matrix_case(state, matches, opcode, "MOV byte literal encoding");
         }
     }
@@ -1296,9 +1229,8 @@ static void move_register_encoding_matrix_cases(TestState* state, Dspic33* cpu) 
             matches = dspic33_load_program_word(cpu, 0u, opcode) &&
                       dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
                       cpu->cycles - cycles == 1u && cpu->w[source] == expected_source &&
-                      cpu->w[destination] == expected_destination &&
-                      cpu->sr == 0x010fu && cpu->unsupported_opcode == 0u &&
-                      !cpu->illegal_reset;
+                      cpu->w[destination] == expected_destination && cpu->sr == 0x010fu &&
+                      cpu->unsupported_opcode == 0u && !cpu->illegal_reset;
             expect_dsp_matrix_case(state, matches, opcode, "EXCH encoding");
         }
     }
@@ -1321,9 +1253,8 @@ static void move_register_encoding_matrix_cases(TestState* state, Dspic33* cpu) 
             cycles = cpu->cycles;
             matches = dspic33_load_program_word(cpu, 0u, opcode) &&
                       dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
-                      cpu->cycles - cycles == 1u && cpu->w[reg] == expected &&
-                      cpu->sr == 0x010fu && cpu->unsupported_opcode == 0u &&
-                      !cpu->illegal_reset;
+                      cpu->cycles - cycles == 1u && cpu->w[reg] == expected && cpu->sr == 0x010fu &&
+                      cpu->unsupported_opcode == 0u && !cpu->illegal_reset;
             expect_dsp_matrix_case(state, matches, opcode, "SWAP encoding");
         }
     }
@@ -1407,9 +1338,8 @@ typedef struct {
     bool direct;
 } MoveMatrixOperand;
 
-static MoveMatrixOperand resolve_move_matrix_operand(uint16_t registers[16],
-                                                     uint8_t mode, uint8_t reg,
-                                                     uint8_t offset_reg,
+static MoveMatrixOperand resolve_move_matrix_operand(uint16_t registers[16], uint8_t mode,
+                                                     uint8_t reg, uint8_t offset_reg,
                                                      uint8_t width) {
     MoveMatrixOperand operand = {0u, mode == 0u};
     int32_t adjusted;
@@ -1422,14 +1352,12 @@ static MoveMatrixOperand resolve_move_matrix_operand(uint16_t registers[16],
     }
     if (mode == 2u || mode == 3u) {
         operand.address = registers[reg];
-        adjusted =
-            (int32_t)registers[reg] + (mode == 3u ? (int32_t)width : -(int32_t)width);
+        adjusted = (int32_t)registers[reg] + (mode == 3u ? (int32_t)width : -(int32_t)width);
         registers[reg] = reg == 15u ? (uint16_t)adjusted & 0xfffeu : (uint16_t)adjusted;
         return operand;
     }
     if (mode == 4u || mode == 5u) {
-        adjusted =
-            (int32_t)registers[reg] + (mode == 5u ? (int32_t)width : -(int32_t)width);
+        adjusted = (int32_t)registers[reg] + (mode == 5u ? (int32_t)width : -(int32_t)width);
         operand.address = (uint16_t)adjusted;
         registers[reg] = reg == 15u ? (uint16_t)adjusted & 0xfffeu : (uint16_t)adjusted;
         return operand;
@@ -1449,8 +1377,7 @@ static void prepare_move_registers(Dspic33* cpu, uint16_t expected[16], uint16_t
     }
 }
 
-static bool move_matrix_registers_match(const Dspic33* cpu,
-                                        const uint16_t expected[16]) {
+static bool move_matrix_registers_match(const Dspic33* cpu, const uint16_t expected[16]) {
     uint8_t reg;
     for (reg = 0u; reg < 16u; reg++) {
         if (cpu->w[reg] != expected[reg]) {
@@ -1484,8 +1411,7 @@ static void generic_move_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
         source = resolve_move_matrix_operand(expected, source_mode, source_register,
                                              offset_register, width);
         if (source.direct) {
-            value = byte_mode ? (uint8_t)expected[source_register]
-                              : expected[source_register];
+            value = byte_mode ? (uint8_t)expected[source_register] : expected[source_register];
         } else if (byte_mode) {
             dspic33_write_byte(cpu, source.address, 0xa5u);
             value = 0x00a5u;
@@ -1493,8 +1419,8 @@ static void generic_move_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
             dspic33_write_word(cpu, source.address, 0xa55au);
             value = 0xa55au;
         }
-        destination = resolve_move_matrix_operand(
-            expected, destination_mode, destination_register, offset_register, width);
+        destination = resolve_move_matrix_operand(expected, destination_mode, destination_register,
+                                                  offset_register, width);
         if (destination.direct) {
             if (byte_mode) {
                 expected[destination_register] =
@@ -1511,22 +1437,18 @@ static void generic_move_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
                   dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
                   cpu->cycles - cycles == 1u && cpu->sr == 0x010fu &&
                   cpu->unsupported_opcode == 0u && !cpu->illegal_reset &&
-                  cpu->last_trap == UINT16_MAX &&
-                  move_matrix_registers_match(cpu, expected);
+                  cpu->last_trap == UINT16_MAX && move_matrix_registers_match(cpu, expected);
         if (!destination.direct) {
-            matches =
-                matches &&
-                (byte_mode ? dspic33_read_byte(cpu, destination.address) == value
-                           : dspic33_read_word(cpu, destination.address) == value);
+            matches = matches && (byte_mode ? dspic33_read_byte(cpu, destination.address) == value
+                                            : dspic33_read_word(cpu, destination.address) == value);
         }
         expect_dsp_matrix_case(state, matches, opcode, "generic MOV encoding");
     }
 }
 
 static int16_t move_offset_literal(uint32_t opcode, bool byte_mode) {
-    uint16_t encoded =
-        (uint16_t)((((opcode >> 15u) & 0x0fu) << 6u) |
-                   (((opcode >> 11u) & 0x07u) << 3u) | ((opcode >> 4u) & 0x07u));
+    uint16_t encoded = (uint16_t)((((opcode >> 15u) & 0x0fu) << 6u) |
+                                  (((opcode >> 11u) & 0x07u) << 3u) | ((opcode >> 4u) & 0x07u));
     int16_t offset = (int16_t)(encoded | ((encoded & 0x0200u) != 0u ? 0xfc00u : 0u));
     return byte_mode ? offset : (int16_t)(offset * 2);
 }
@@ -1557,8 +1479,7 @@ static void offset_move_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
             value = byte_mode ? 0x00a5u : 0xa55au;
             if (byte_mode) {
                 dspic33_write_byte(cpu, address, (uint8_t)value);
-                expected[destination] =
-                    (uint16_t)((expected[destination] & 0xff00u) | value);
+                expected[destination] = (uint16_t)((expected[destination] & 0xff00u) | value);
             } else {
                 dspic33_write_word(cpu, address, value);
                 expected[destination] = value;
@@ -1572,8 +1493,7 @@ static void offset_move_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
                   dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
                   cpu->cycles - cycles == 1u && cpu->sr == 0x010fu &&
                   cpu->unsupported_opcode == 0u && !cpu->illegal_reset &&
-                  cpu->last_trap == UINT16_MAX &&
-                  move_matrix_registers_match(cpu, expected);
+                  cpu->last_trap == UINT16_MAX && move_matrix_registers_match(cpu, expected);
         if (store) {
             matches = matches && (byte_mode ? dspic33_read_byte(cpu, address) == value
                                             : dspic33_read_word(cpu, address) == value);
@@ -1594,8 +1514,8 @@ static void move_double_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
         uint8_t destination_register = (uint8_t)((opcode >> 7u) & 0x0fu);
         bool load = (opcode & 0xfff880u) == 0xbe0000u && source_mode <= 5u &&
                     (source_mode != 0u || (source_register & 1u) == 0u);
-        bool store = (opcode & 0xffc071u) == 0xbe8000u && destination_mode >= 1u &&
-                     destination_mode <= 5u;
+        bool store =
+            (opcode & 0xffc071u) == 0xbe8000u && destination_mode >= 1u && destination_mode <= 5u;
         if (!load && !store) {
             run_invalid_move_matrix_case(state, cpu, opcode);
             continue;
@@ -1609,8 +1529,7 @@ static void move_double_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
         bool matches;
 
         prepare_move_registers(cpu, expected, 0x3000u, 4u);
-        source =
-            resolve_move_matrix_operand(expected, source_mode, source_register, 0u, 4u);
+        source = resolve_move_matrix_operand(expected, source_mode, source_register, 0u, 4u);
         if (source.direct) {
             source_register &= 0x0eu;
             low = expected[source_register];
@@ -1621,8 +1540,8 @@ static void move_double_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
             low = 0x1111u;
             high = 0x2222u;
         }
-        destination = resolve_move_matrix_operand(expected, destination_mode,
-                                                  destination_register, 0u, 4u);
+        destination =
+            resolve_move_matrix_operand(expected, destination_mode, destination_register, 0u, 4u);
         if (destination.direct) {
             destination_register &= 0x0eu;
             expected[destination_register] = low;
@@ -1636,12 +1555,10 @@ static void move_double_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
                   dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u &&
                   cpu->cycles - cycles == 2u && cpu->sr == 0x010fu &&
                   cpu->unsupported_opcode == 0u && !cpu->illegal_reset &&
-                  cpu->last_trap == UINT16_MAX &&
-                  move_matrix_registers_match(cpu, expected);
+                  cpu->last_trap == UINT16_MAX && move_matrix_registers_match(cpu, expected);
         if (!destination.direct) {
-            matches =
-                matches && dspic33_read_word(cpu, destination.address) == low &&
-                dspic33_read_word(cpu, (uint16_t)(destination.address + 2u)) == high;
+            matches = matches && dspic33_read_word(cpu, destination.address) == low &&
+                      dspic33_read_word(cpu, (uint16_t)(destination.address + 2u)) == high;
         }
         expect_dsp_matrix_case(state, matches, opcode, "MOV.D encoding");
         if (load) {
@@ -1660,8 +1577,7 @@ static void move_data_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     for (opcode = 0x800000u; opcode <= 0x8fffffu; opcode += 257u) {
         bool store = (opcode & 0x080000u) != 0u;
         uint8_t reg = (uint8_t)(opcode & 0x0fu);
-        uint16_t encoded_address =
-            (uint16_t)((((opcode >> 4u) & 0x7fffu) << 1u) & 0xffffu);
+        uint16_t encoded_address = (uint16_t)((((opcode >> 4u) & 0x7fffu) << 1u) & 0xffffu);
         uint32_t address;
         uint16_t transfer_value;
         uint64_t cycles;
@@ -1675,12 +1591,11 @@ static void move_data_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
         cpu->dsrpag = 1u;
         cpu->dswpag = 1u;
         dspic33_set_working_register(cpu, 15u, 0x5000u);
-        address = encoded_address < 0x8000u
-                      ? encoded_address
-                      : (uint32_t)(0x8000u | (encoded_address & 0x7fffu));
+        address = encoded_address < 0x8000u ? encoded_address
+                                            : (uint32_t)(0x8000u | (encoded_address & 0x7fffu));
         if (store) {
-            dspic33_set_working_register(
-                cpu, reg, address >= 0x1000u ? (uint16_t)(0xa500u | reg) : 0u);
+            dspic33_set_working_register(cpu, reg,
+                                         address >= 0x1000u ? (uint16_t)(0xa500u | reg) : 0u);
             transfer_value = cpu->w[reg];
         } else {
             dspic33_set_working_register(cpu, reg, 0x5a5au);
@@ -1699,20 +1614,19 @@ static void move_data_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
             matches = matches && reason == DSPIC33_RUNNING && cpu->pc == 2u &&
                       cpu->last_trap == UINT16_MAX;
         }
-        matches = matches && cpu->cycles > cycles && cpu->unsupported_opcode == 0u &&
-                  !cpu->illegal_reset;
+        matches =
+            matches && cpu->cycles > cycles && cpu->unsupported_opcode == 0u && !cpu->illegal_reset;
         if (address >= 0x1000u && encoded_address < 0xe000u) {
-            matches = matches &&
-                      (store ? dspic33_read_word(cpu, address) == transfer_value
-                             : cpu->w[reg] == (reg == 15u ? (transfer_value & 0xfffeu)
-                                                          : transfer_value));
+            matches =
+                matches &&
+                (store ? dspic33_read_word(cpu, address) == transfer_value
+                       : cpu->w[reg] == (reg == 15u ? (transfer_value & 0xfffeu) : transfer_value));
         }
         expect_dsp_matrix_case(state, matches, opcode, "direct data MOV encoding");
     }
 }
 
-static uint16_t move_matrix_logic_status(uint16_t status, uint16_t value,
-                                         bool byte_mode) {
+static uint16_t move_matrix_logic_status(uint16_t status, uint16_t value, bool byte_mode) {
     uint16_t mask = byte_mode ? 0x00ffu : 0xffffu;
     uint16_t sign = byte_mode ? 0x0080u : 0x8000u;
     value &= mask;
@@ -1762,19 +1676,17 @@ static void file_move_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
             matches = dspic33_load_program_word(cpu, 0u, opcode);
             reason = dspic33_step(cpu);
             if (byte_mode == 0u && (address & 1u) != 0u) {
-                matches = matches && reason == DSPIC33_TRAPPED &&
-                          cpu->pc == 0x000340u && cpu->last_trap == 1u &&
-                          cpu->last_trap_return == 2u;
+                matches = matches && reason == DSPIC33_TRAPPED && cpu->pc == 0x000340u &&
+                          cpu->last_trap == 1u && cpu->last_trap_return == 2u;
             } else {
                 matches = matches && reason == DSPIC33_RUNNING && cpu->pc == 2u &&
                           cpu->last_trap == UINT16_MAX;
             }
-            matches = matches && cpu->cycles > cycles &&
-                      cpu->unsupported_opcode == 0u && !cpu->illegal_reset;
+            matches = matches && cpu->cycles > cycles && cpu->unsupported_opcode == 0u &&
+                      !cpu->illegal_reset;
             if (address >= 0x1000u && (byte_mode != 0u || (address & 1u) == 0u)) {
-                matches = matches && (byte_mode != 0u
-                                          ? dspic33_read_byte(cpu, address) == 0xa5u
-                                          : dspic33_read_word(cpu, address) == 0xa5a5u);
+                matches = matches && (byte_mode != 0u ? dspic33_read_byte(cpu, address) == 0xa5u
+                                                      : dspic33_read_word(cpu, address) == 0xa5a5u);
             }
             expect_dsp_matrix_case(state, matches, opcode, "WREG-to-file MOV encoding");
         }
@@ -1812,30 +1724,25 @@ static void file_move_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
                     value = byte_mode != 0u ? dspic33_read_byte(cpu, address)
                                             : dspic33_read_word(cpu, address);
                 }
-                expected_status =
-                    move_matrix_logic_status(0x010fu, value, byte_mode != 0u);
+                expected_status = move_matrix_logic_status(0x010fu, value, byte_mode != 0u);
                 if (file_destination == 0u) {
-                    expected[0] = byte_mode != 0u
-                                      ? (uint16_t)((expected[0] & 0xff00u) | value)
-                                      : value;
+                    expected[0] =
+                        byte_mode != 0u ? (uint16_t)((expected[0] & 0xff00u) | value) : value;
                 }
                 cycles = cpu->cycles;
                 matches = dspic33_load_program_word(cpu, 0u, opcode);
                 reason = dspic33_step(cpu);
                 if (byte_mode == 0u && (address & 1u) != 0u) {
-                    matches = matches && reason == DSPIC33_TRAPPED &&
-                              cpu->pc == 0x000340u && cpu->last_trap == 1u &&
-                              cpu->last_trap_return == 2u;
+                    matches = matches && reason == DSPIC33_TRAPPED && cpu->pc == 0x000340u &&
+                              cpu->last_trap == 1u && cpu->last_trap_return == 2u;
                 } else {
                     matches = matches && reason == DSPIC33_RUNNING && cpu->pc == 2u &&
-                              cpu->last_trap == UINT16_MAX &&
-                              cpu->sr == expected_status &&
+                              cpu->last_trap == UINT16_MAX && cpu->sr == expected_status &&
                               move_matrix_registers_match(cpu, expected);
                 }
-                matches = matches && cpu->cycles > cycles &&
-                          cpu->unsupported_opcode == 0u && !cpu->illegal_reset;
-                expect_dsp_matrix_case(state, matches, opcode,
-                                       "file-to-destination MOV encoding");
+                matches = matches && cpu->cycles > cycles && cpu->unsupported_opcode == 0u &&
+                          !cpu->illegal_reset;
+                expect_dsp_matrix_case(state, matches, opcode, "file-to-destination MOV encoding");
             }
         }
     }
@@ -1852,8 +1759,7 @@ static void move_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     file_move_encoding_matrix_cases(state, cpu);
 }
 
-static void prepare_flash_read_erratum_case(TestState* state, Dspic33* cpu,
-                                            uint32_t start) {
+static void prepare_flash_read_erratum_case(TestState* state, Dspic33* cpu, uint32_t start) {
     reset_processor_test(cpu, start);
     load_instruction(state, cpu, start, OPCODE_MOV_DOUBLE_W1_POST_INCREMENT_W2);
     expect(state,
@@ -1880,25 +1786,20 @@ static void flash_read_erratum_cases(TestState* state, Dspic33* cpu) {
     load_instruction(state, cpu, 0x206u, OPCODE_TBLRDL_W2_W3);
     load_instruction(state, cpu, 0x208u, OPCODE_TBLRDL_W2_W3);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING &&
                dspic33_step(cpu) == DSPIC33_SILICON_RESULT_UNDEFINED,
            "B1 back-to-back Flash-read sequence reports an undefined silicon result");
 
-    for (index = 0u; index < sizeof(flash_read_pairs) / sizeof(flash_read_pairs[0]);
-         index++) {
+    for (index = 0u; index < sizeof(flash_read_pairs) / sizeof(flash_read_pairs[0]); index++) {
         prepare_flash_read_erratum_case(state, cpu, 0x200u);
         load_instruction(state, cpu, 0x202u, OPCODE_NOP);
         load_instruction(state, cpu, 0x204u, OPCODE_NOP);
         load_instruction(state, cpu, 0x206u, flash_read_pairs[index][0]);
         load_instruction(state, cpu, 0x208u, flash_read_pairs[index][1]);
         expect(state,
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
-                   dspic33_step(cpu) == DSPIC33_RUNNING &&
-                   dspic33_step(cpu) == DSPIC33_RUNNING &&
-                   dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING &&
+                   dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING &&
                    dspic33_step(cpu) == DSPIC33_SILICON_RESULT_UNDEFINED,
                "B1 PSV and mixed back-to-back Flash reads share the erratum boundary");
     }
@@ -1910,12 +1811,9 @@ static void flash_read_erratum_cases(TestState* state, Dspic33* cpu) {
     load_instruction(state, cpu, 0x208u, OPCODE_NOP);
     load_instruction(state, cpu, 0x20au, OPCODE_TBLRDL_W2_W3);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING,
+           dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING,
            "separating Flash reads with a NOP applies the documented workaround");
 
     prepare_flash_read_erratum_case(state, cpu, 0x200u);
@@ -1925,12 +1823,9 @@ static void flash_read_erratum_cases(TestState* state, Dspic33* cpu) {
     load_instruction(state, cpu, 0x208u, OPCODE_TBLRDL_W2_W3);
     load_instruction(state, cpu, 0x20au, OPCODE_TBLRDL_W2_W3);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING,
+           dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING,
            "BRA to the next instruction applies the documented flow workaround");
 
     prepare_flash_read_erratum_case(state, cpu, 0x200u);
@@ -1938,10 +1833,8 @@ static void flash_read_erratum_cases(TestState* state, Dspic33* cpu) {
     load_instruction(state, cpu, 0x204u, 0x090001u);
     load_instruction(state, cpu, 0x206u, OPCODE_TBLRDL_W2_W3);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING &&
                dspic33_step(cpu) == DSPIC33_RUNNING,
            "REPEAT-ended connecting code does not arm the B1 Flash-read erratum");
 
@@ -1957,8 +1850,7 @@ static void flash_read_erratum_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0820u, 0x0001u);
     dspic33_write_word(cpu, 0x0840u, 0x0001u);
     dspic33_write_word(cpu, 0x08c2u, 0x8000u);
-    expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING,
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING,
            "B1 Flash-read connecting code reaches the interrupt boundary");
     dspic33_raise_interrupt(cpu, 0u);
     expect(state,
@@ -1968,8 +1860,7 @@ static void flash_read_erratum_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0800u, 0u);
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x0204u &&
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING &&
                dspic33_step(cpu) == DSPIC33_RUNNING,
            "post-interrupt Flash reads execute outside the cancelled erratum sequence");
 
@@ -1979,10 +1870,8 @@ static void flash_read_erratum_cases(TestState* state, Dspic33* cpu) {
     load_instruction(state, cpu, 0x208u, OPCODE_TBLRDL_W2_W3);
     load_instruction(state, cpu, 0x20au, OPCODE_TBLRDL_W2_W3);
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
-               dspic33_step(cpu) == DSPIC33_RUNNING &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING &&
                dspic33_step(cpu) == DSPIC33_RUNNING,
            "misaligned PSV MOV.D does not arm the B1 Flash-read erratum");
 
@@ -1991,12 +1880,11 @@ static void flash_read_erratum_cases(TestState* state, Dspic33* cpu) {
     load_instruction(state, cpu, 0x204u, OPCODE_NOP);
     load_instruction(state, cpu, 0x206u, OPCODE_TBLRDL_W2_W3);
     load_instruction(state, cpu, 0x208u, OPCODE_TBLRDL_W2_W3);
-    expect(
-        state,
-        dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING &&
-            dspic33_step(cpu) == DSPIC33_RUNNING &&
-            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->flash_read_erratum_candidate,
-        "first qualifying Flash read arms the B1 erratum boundary");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_step(cpu) == DSPIC33_RUNNING &&
+               cpu->flash_read_erratum_candidate,
+           "first qualifying Flash read arms the B1 erratum boundary");
     initialized = dspic33_initialize(&copy);
     expect(state, initialized, "initialize B1 Flash-read erratum copy");
     if (initialized) {
@@ -2011,8 +1899,7 @@ static void flash_read_erratum_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0x200u);
     expect(state,
            !cpu->flash_read_erratum_armed && !cpu->flash_read_erratum_candidate &&
-               cpu->flash_read_connecting_words == 0u &&
-               !cpu->flash_read_connecting_ends_repeat,
+               cpu->flash_read_connecting_words == 0u && !cpu->flash_read_connecting_ends_repeat,
            "reset clears B1 Flash-read sequence state");
 }
 
@@ -2062,8 +1949,7 @@ static void illegal_condition_reset_cases(TestState* state, Dspic33* cpu) {
     static const uint16_t preserved_addresses[] = {
         0x0742u, 0x0744u, 0x0746u, 0x0748u, 0x0758u, 0x075au,
     };
-    uint16_t
-        preserved_values[sizeof(preserved_addresses) / sizeof(preserved_addresses[0])];
+    uint16_t preserved_values[sizeof(preserved_addresses) / sizeof(preserved_addresses[0])];
     Dspic33 copy;
     size_t index;
 
@@ -2087,8 +1973,7 @@ static void illegal_condition_reset_cases(TestState* state, Dspic33* cpu) {
     cpu->do_depth = 1u;
     cpu->data[0x0740u] = 0x83u;
     cpu->data[0x0741u] = 0u;
-    for (index = 0u;
-         index < sizeof(preserved_addresses) / sizeof(preserved_addresses[0]);
+    for (index = 0u; index < sizeof(preserved_addresses) / sizeof(preserved_addresses[0]);
          index++) {
         uint16_t address = preserved_addresses[index];
         preserved_values[index] = (uint16_t)(0xa100u + index);
@@ -2121,43 +2006,36 @@ static void illegal_condition_reset_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x5002u, 0x5555u);
     expect_illegal_reset(state, cpu, "known illegal opcode resets processor");
     expect(state,
-           dspic33_read_word(cpu, 0x0740u) == 0x4083u && cpu->sr == 0u &&
-               cpu->corcon == 0x0020u && cpu->splim == 0u && !cpu->splim_enabled,
+           dspic33_read_word(cpu, 0x0740u) == 0x4083u && cpu->sr == 0u && cpu->corcon == 0x0020u &&
+               cpu->splim == 0u && !cpu->splim_enabled,
            "illegal reset preserves RCON history and resets core state");
     expect(state,
-           cpu->rcount == 0u && cpu->dcount == 0u && cpu->dostart == 0u &&
-               cpu->doend == 0u && cpu->tblpag == 0u && cpu->dsrpag == 1u &&
-               cpu->dswpag == 1u && cpu->repeat_active == 0u && cpu->do_depth == 0u,
+           cpu->rcount == 0u && cpu->dcount == 0u && cpu->dostart == 0u && cpu->doend == 0u &&
+               cpu->tblpag == 0u && cpu->dsrpag == 1u && cpu->dswpag == 1u &&
+               cpu->repeat_active == 0u && cpu->do_depth == 0u,
            "illegal reset restores loop and page state");
     expect(state,
            dspic33_read_word(cpu, 0x5000u) == 0xaaaau &&
-               dspic33_read_word(cpu, 0x5002u) == 0x5555u &&
-               dspic33_read_word(cpu, 0x0100u) == 0u,
+               dspic33_read_word(cpu, 0x5002u) == 0x5555u && dspic33_read_word(cpu, 0x0100u) == 0u,
            "warm reset retains RAM without writing an exception frame");
-    for (index = 0u;
-         index < sizeof(preserved_addresses) / sizeof(preserved_addresses[0]);
+    for (index = 0u; index < sizeof(preserved_addresses) / sizeof(preserved_addresses[0]);
          index++) {
-        expect(state,
-               dspic33_read_word(cpu, preserved_addresses[index]) ==
-                   preserved_values[index],
+        expect(state, dspic33_read_word(cpu, preserved_addresses[index]) == preserved_values[index],
                "warm reset retains oscillator and RTCC register");
     }
     expect(state, dspic33_read_word(cpu, 0x074eu) == 0u,
            "warm reset clears reference oscillator control");
     expect(state,
-           cpu->io.adc[3] == 0x0456u && cpu->io.gpio[2] == 0x789au &&
-               cpu->io.uart_cts == 0x05u && cpu->io.spi_selected == 0x09u &&
-               cpu->io.timer_gate == 0x0105u && cpu->io.pwm_dead_time_inputs == 0x25u &&
-               cpu->io.pwm_sync_inputs == 0x02u &&
+           cpu->io.adc[3] == 0x0456u && cpu->io.gpio[2] == 0x789au && cpu->io.uart_cts == 0x05u &&
+               cpu->io.spi_selected == 0x09u && cpu->io.timer_gate == 0x0105u &&
+               cpu->io.pwm_dead_time_inputs == 0x25u && cpu->io.pwm_sync_inputs == 0x02u &&
                cpu->io.pwm_fault_inputs == 0x81234567u &&
-               cpu->io.pwm_current_limit_inputs == 0x89abcdefu &&
-               cpu->io.usb_host_attached,
+               cpu->io.pwm_current_limit_inputs == 0x89abcdefu && cpu->io.usb_host_attached,
            "warm reset retains external input state");
     expect(state,
            cpu->io.timer_enabled == 0u && cpu->io.uart_rx_fifo[0].count == 0u &&
-               !cpu->io.usb_host_pending && !cpu->io.cpu_write_valid &&
-               cpu->events.count == 1u && cpu->events.items[0].external &&
-               cpu->events.items[0].type == DSPIC33_EVENT_UART &&
+               !cpu->io.usb_host_pending && !cpu->io.cpu_write_valid && cpu->events.count == 1u &&
+               cpu->events.items[0].external && cpu->events.items[0].type == DSPIC33_EVENT_UART &&
                cpu->events.items[0].cycle == 20u,
            "warm reset clears internal peripheral execution state");
     expect(state, dspic33_initialize(&copy), "initialize illegal reset copy");
@@ -2229,15 +2107,13 @@ static void illegal_condition_reset_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_MOV_W1_W2);
     dspic33_set_working_register(cpu, 1u, 0u);
-    expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset_count == 0u,
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset_count == 0u,
            "host word setter initializes same-value pointer");
 
     dspic33_reset(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_MOV_W1_W2);
     dspic33_write_byte(cpu, 2u, 0u);
-    expect_illegal_reset(state, cpu,
-                         "single byte W alias leaves pointer uninitialized");
+    expect_illegal_reset(state, cpu, "single byte W alias leaves pointer uninitialized");
 
     dspic33_reset(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_MOV_W1_W2);
@@ -2278,8 +2154,7 @@ static void illegal_condition_reset_cases(TestState* state, Dspic33* cpu) {
     cpu->w[5] = 0x5000u;
     dspic33_write_word(cpu, 0x1000u, 2u);
     dspic33_write_word(cpu, 0x5000u, 0xaaaau);
-    expect_illegal_reset(state, cpu,
-                         "uninitialized two-operand destination resets processor");
+    expect_illegal_reset(state, cpu, "uninitialized two-operand destination resets processor");
     expect(state, !cpu->address_error, "illegal reset clears address error flag");
     expect(state, !cpu->address_error_access_allowed,
            "illegal reset clears address error access state");
@@ -2289,13 +2164,11 @@ static void illegal_condition_reset_cases(TestState* state, Dspic33* cpu) {
            "illegal reset clears address error accumulator state");
     expect(state, !cpu->address_error_control_state_completed,
            "illegal reset clears address error control state");
-    expect(state, cpu->address_error_return == 0u,
-           "illegal reset clears address error return");
+    expect(state, cpu->address_error_return == 0u, "illegal reset clears address error return");
     expect(state, cpu->sr == 0u && cpu->corcon == 0x0020u,
            "illegal reset discards post-validation flags");
     expect(state,
-           dspic33_read_word(cpu, 0x1000u) == 2u &&
-               dspic33_read_word(cpu, 0x5000u) == 0xaaaau,
+           dspic33_read_word(cpu, 0x1000u) == 2u && dspic33_read_word(cpu, 0x5000u) == 0xaaaau,
            "uninitialized destination preserves source and destination data");
 
     dspic33_reset(cpu, 0u);
@@ -2305,8 +2178,7 @@ static void illegal_condition_reset_cases(TestState* state, Dspic33* cpu) {
     cpu->sr = 0xffffu;
     cpu->corcon = 0xffffu;
     dspic33_write_word(cpu, 0x1000u, 0xabcdu);
-    expect_illegal_reset(state, cpu,
-                         "uninitialized binary source resets before direct result");
+    expect_illegal_reset(state, cpu, "uninitialized binary source resets before direct result");
     expect(state,
            cpu->w[5] == 0u && cpu->sr == 0u && cpu->corcon == 0x0020u &&
                dspic33_read_word(cpu, 0x1000u) == 0xabcdu,
@@ -2317,8 +2189,7 @@ static void illegal_condition_reset_cases(TestState* state, Dspic33* cpu) {
     cpu->w[4] = 0x1000u;
     cpu->sr = 0xffffu;
     cpu->corcon = 0xffffu;
-    expect_illegal_reset(state, cpu,
-                         "uninitialized compare source resets before flags");
+    expect_illegal_reset(state, cpu, "uninitialized compare source resets before flags");
     expect(state, cpu->sr == 0u && cpu->corcon == 0x0020u,
            "compare source reset prevents flag mutation");
 
@@ -2328,8 +2199,7 @@ static void illegal_condition_reset_cases(TestState* state, Dspic33* cpu) {
     cpu->accumulator[0] = 0x12345678;
     cpu->sr = 0xffffu;
     cpu->corcon = 0xffffu;
-    expect_illegal_reset(state, cpu,
-                         "uninitialized accumulator source resets before result");
+    expect_illegal_reset(state, cpu, "uninitialized accumulator source resets before result");
     expect(state, cpu->accumulator[0] == 0 && cpu->sr == 0u && cpu->corcon == 0x0020u,
            "accumulator source reset prevents result and flag mutation");
 
@@ -2341,8 +2211,7 @@ static void illegal_condition_reset_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_TBLRDL_W2_W3);
     dspic33_set_working_register(cpu, 2u, 0x1000u);
-    expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset_count == 0u,
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset_count == 0u,
            "initialized table pointer completes access");
 
     dspic33_reset(cpu, 0u);
@@ -2351,14 +2220,12 @@ static void illegal_condition_reset_cases(TestState* state, Dspic33* cpu) {
     dspic33_set_working_register(cpu, 2u, 0x5800u);
     cpu->w[4] = 0x1000u;
     expect_illegal_reset(
-        state, cpu,
-        "unimplemented table read with uninitialized destination resets processor");
+        state, cpu, "unimplemented table read with uninitialized destination resets processor");
     expect(state,
            !cpu->address_error && !cpu->address_error_access_allowed &&
                !cpu->address_error_working_state_completed &&
                !cpu->address_error_accumulator_state_completed &&
-               !cpu->address_error_control_state_completed &&
-               cpu->address_error_return == 0u,
+               !cpu->address_error_control_state_completed && cpu->address_error_return == 0u,
            "table destination reset clears address error lifecycle state");
 
     dspic33_reset(cpu, 0u);
@@ -2373,8 +2240,7 @@ static void illegal_condition_reset_cases(TestState* state, Dspic33* cpu) {
     dspic33_set_working_register(cpu, 9u, 0x1000u);
     dspic33_set_working_register(cpu, 11u, 0x9000u);
     dspic33_set_working_register(cpu, 12u, 0u);
-    expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset_count == 0u,
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset_count == 0u,
            "initialized DSP bases complete access");
 
     dspic33_reset(cpu, 0u);
@@ -2383,8 +2249,7 @@ static void illegal_condition_reset_cases(TestState* state, Dspic33* cpu) {
     dspic33_set_working_register(cpu, 11u, 0x9000u);
     dspic33_set_working_register(cpu, 12u, 0u);
     cpu->w[13] = 0x5000u;
-    expect_illegal_reset(state, cpu,
-                         "uninitialized DSP write-back pointer resets processor");
+    expect_illegal_reset(state, cpu, "uninitialized DSP write-back pointer resets processor");
 
     dspic33_reset(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_DSP_WRITE_BACK);
@@ -2411,28 +2276,24 @@ static void illegal_condition_reset_cases(TestState* state, Dspic33* cpu) {
 
     dspic33_reset(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_GOTO_W0);
-    expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset_count == 0u,
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset_count == 0u,
            "computed jump register is not an address-pointer tag use");
 
     dspic33_reset(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_REPEAT_W0);
-    expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset_count == 0u,
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset_count == 0u,
            "REPEAT count register is not an address-pointer tag use");
 
     dspic33_reset(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_DO_W0);
     load_instruction(state, cpu, 2u, 0x000002u);
-    expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset_count == 0u,
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset_count == 0u,
            "DO count register is not an address-pointer tag use");
 
     dspic33_reset(cpu, 0x200u);
     load_instruction(state, cpu, 0x200u, OPCODE_PUSH_SHADOW);
     load_instruction(state, cpu, 0x202u, OPCODE_MOV_W0_W2);
-    expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset_count == 0u,
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset_count == 0u,
            "PUSH.S values are not address-pointer tag uses");
     expect_illegal_reset(state, cpu, "PUSH.S does not initialize W0 pointer");
 }

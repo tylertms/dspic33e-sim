@@ -45,8 +45,8 @@ static uint32_t width_mask(uint8_t width) {
 }
 
 static uint32_t reference_crc(const uint32_t* words, uint8_t count, uint8_t data_width,
-                              uint8_t polynomial_width, uint32_t polynomial,
-                              uint32_t seed, bool little_endian) {
+                              uint8_t polynomial_width, uint32_t polynomial, uint32_t seed,
+                              bool little_endian) {
     uint32_t remainder = seed & width_mask(polynomial_width);
     uint32_t taps = (polynomial | 1u) & width_mask(polynomial_width);
     uint8_t word_index;
@@ -71,19 +71,16 @@ static bool interrupt_flag(Dspic33* cpu) {
 }
 
 static void clear_interrupt(Dspic33* cpu) {
-    dspic33_write_word(
-        cpu, 0x0808u,
-        (uint16_t)(dspic33_read_word(cpu, 0x0808u) & ~CRC_INTERRUPT_FLAG));
+    dspic33_write_word(cpu, 0x0808u,
+                       (uint16_t)(dspic33_read_word(cpu, 0x0808u) & ~CRC_INTERRUPT_FLAG));
 }
 
 static void configure(Dspic33* cpu, uint8_t data_width, uint8_t polynomial_width,
-                      uint32_t polynomial, bool little_endian,
-                      bool interrupt_on_empty) {
+                      uint32_t polynomial, bool little_endian, bool interrupt_on_empty) {
     uint16_t control = CRC_ENABLE;
     dspic33_reset(cpu, 0u);
-    dspic33_write_word(
-        cpu, CRC_CONFIG,
-        (uint16_t)(((uint16_t)(data_width - 1u) << 8u) | (polynomial_width - 1u)));
+    dspic33_write_word(cpu, CRC_CONFIG,
+                       (uint16_t)(((uint16_t)(data_width - 1u) << 8u) | (polynomial_width - 1u)));
     dspic33_write_word(cpu, CRC_POLYNOMIAL_LOW, (uint16_t)polynomial);
     dspic33_write_word(cpu, CRC_POLYNOMIAL_HIGH, (uint16_t)(polynomial >> 16u));
     dspic33_write_word(cpu, CRC_SHIFT_LOW, 0u);
@@ -109,8 +106,7 @@ static void enqueue(Dspic33* cpu, uint8_t data_width, uint32_t value) {
 }
 
 static void start(Dspic33* cpu) {
-    dspic33_write_word(cpu, CRC_CONTROL,
-                       (uint16_t)(dspic33_read_word(cpu, CRC_CONTROL) | CRC_GO));
+    dspic33_write_word(cpu, CRC_CONTROL, (uint16_t)(dspic33_read_word(cpu, CRC_CONTROL) | CRC_GO));
 }
 
 static void reset_and_access_cases(TestState* state, Dspic33* cpu) {
@@ -125,19 +121,16 @@ static void reset_and_access_cases(TestState* state, Dspic33* cpu) {
     expect(state, !cpu->io.crc.active && cpu->io.crc.count == 0u, "CRC runtime reset");
 
     dspic33_write_word(cpu, CRC_CONTROL, 0xffffu);
-    expect(state, dspic33_read_word(cpu, CRC_CONTROL) == 0xa078u,
-           "CRCCON1 access mask");
+    expect(state, dspic33_read_word(cpu, CRC_CONTROL) == 0xa078u, "CRCCON1 access mask");
     dspic33_write_word(cpu, CRC_CONTROL, 0u);
-    expect(state, dspic33_read_word(cpu, CRC_CONTROL) == CRC_EMPTY,
-           "CRC disable resets status");
+    expect(state, dspic33_read_word(cpu, CRC_CONTROL) == CRC_EMPTY, "CRC disable resets status");
     dspic33_write_word(cpu, CRC_CONFIG, 0xffffu);
     expect(state, dspic33_read_word(cpu, CRC_CONFIG) == 0x1f1fu, "CRCCON2 access mask");
     dspic33_write_word(cpu, CRC_POLYNOMIAL_LOW, 0xffffu);
     expect(state, dspic33_read_word(cpu, CRC_POLYNOMIAL_LOW) == 0xfffeu,
            "CRCXORL bit zero reserved");
     dspic33_write_word(cpu, CRC_POLYNOMIAL_HIGH, 0xffffu);
-    expect(state, dspic33_read_word(cpu, CRC_POLYNOMIAL_HIGH) == 0xffffu,
-           "CRCXORH writable");
+    expect(state, dspic33_read_word(cpu, CRC_POLYNOMIAL_HIGH) == 0xffffu, "CRCXORH writable");
     dspic33_write_word(cpu, CRC_DATA_LOW, 0xa55au);
     dspic33_write_word(cpu, CRC_DATA_HIGH, 0x5aa5u);
     expect(state,
@@ -159,8 +152,7 @@ static void fifo_cases(TestState* state, Dspic33* cpu) {
             enqueue(cpu, width, index);
         }
         expect(state, valid_words(cpu) == capacity, "width FIFO capacity");
-        expect(state, (dspic33_read_word(cpu, CRC_CONTROL) & CRC_FULL) != 0u,
-               "width FIFO full");
+        expect(state, (dspic33_read_word(cpu, CRC_CONTROL) & CRC_FULL) != 0u, "width FIFO full");
         enqueue(cpu, width, UINT32_MAX);
         expect(state, valid_words(cpu) == capacity, "full FIFO rejects word");
     }
@@ -218,10 +210,9 @@ static void lane_cases(TestState* state, Dspic33* cpu) {
            "32-bit word lane assembly");
 }
 
-static void run_vector(TestState* state, Dspic33* cpu, const uint32_t* words,
-                       uint8_t count, uint8_t data_width, uint8_t polynomial_width,
-                       uint32_t polynomial, uint32_t seed, bool little_endian,
-                       uint32_t expected, const char* name) {
+static void run_vector(TestState* state, Dspic33* cpu, const uint32_t* words, uint8_t count,
+                       uint8_t data_width, uint8_t polynomial_width, uint32_t polynomial,
+                       uint32_t seed, bool little_endian, uint32_t expected, const char* name) {
     uint8_t index;
     configure(cpu, data_width, polynomial_width, polynomial, little_endian, false);
     dspic33_write_word(cpu, CRC_SHIFT_LOW, (uint16_t)seed);
@@ -231,45 +222,37 @@ static void run_vector(TestState* state, Dspic33* cpu, const uint32_t* words,
     }
     start(cpu);
     expect(state,
-           dspic33_device_advance(
-               cpu, ((uint64_t)count * data_width + CRC_BITS_PER_CYCLE - 1u) /
-                        CRC_BITS_PER_CYCLE),
+           dspic33_device_advance(cpu, ((uint64_t)count * data_width + CRC_BITS_PER_CYCLE - 1u) /
+                                           CRC_BITS_PER_CYCLE),
            "vector advances");
     expect(state, shift_value(cpu) == expected, name);
     expect(state,
-           expected == reference_crc(words, count, data_width, polynomial_width,
-                                     polynomial, seed, little_endian),
+           expected == reference_crc(words, count, data_width, polynomial_width, polynomial, seed,
+                                     little_endian),
            "literal vector matches independent reference");
-    expect(state,
-           (dspic33_read_word(cpu, CRC_CONTROL) & CRC_GO) == 0u &&
-               valid_words(cpu) == 0u,
+    expect(state, (dspic33_read_word(cpu, CRC_CONTROL) & CRC_GO) == 0u && valid_words(cpu) == 0u,
            "vector completes and empties");
 }
 
 static void known_vector_cases(TestState* state, Dspic33* cpu) {
     static const uint32_t text[] = {'1', '2', '3', '4', '5', '6', '7', '8', '9'};
-    static const uint32_t text_with_zeros[] = {'1', '2', '3', '4', '5', '6',
-                                               '7', '8', '9', 0u,  0u};
+    static const uint32_t text_with_zeros[] = {'1', '2', '3', '4', '5', '6', '7', '8', '9', 0u, 0u};
     static const uint32_t endian_words[] = {0x96u, 0u, 0u};
     static const uint32_t word16[] = {0x0201u, 0u};
     static const uint32_t word32[] = {0x04030201u, 0u};
     static const uint32_t narrow[] = {0x2au, 0x15u};
     static const uint32_t wide[] = {0x89abcdefu};
     static const uint32_t seeded[] = {0x31u};
-    run_vector(state, cpu, text, 9u, 8u, 16u, 0x1021u, 0u, false, 0x31c3u,
-               "CRC-16 text vector");
+    run_vector(state, cpu, text, 9u, 8u, 16u, 0x1021u, 0u, false, 0x31c3u, "CRC-16 text vector");
     run_vector(state, cpu, text_with_zeros, 11u, 8u, 16u, 0x1021u, 0u, false, 0xdf8bu,
                "CRC-16 text plus zeros vector");
     run_vector(state, cpu, endian_words, 3u, 8u, 16u, 0x1021u, 0u, false, 0xca99u,
                "MSB-first byte vector");
     run_vector(state, cpu, endian_words, 3u, 8u, 16u, 0x1021u, 0u, true, 0x05fau,
                "LSB-first byte vector");
-    run_vector(state, cpu, word16, 2u, 16u, 16u, 0x1021u, 0u, false, 0xda58u,
-               "16-bit data vector");
-    run_vector(state, cpu, word32, 2u, 32u, 16u, 0x1021u, 0u, false, 0xf6feu,
-               "32-bit data vector");
-    run_vector(state, cpu, narrow, 2u, 6u, 5u, 0x04u, 0u, false, 0x03u,
-               "narrow polynomial vector");
+    run_vector(state, cpu, word16, 2u, 16u, 16u, 0x1021u, 0u, false, 0xda58u, "16-bit data vector");
+    run_vector(state, cpu, word32, 2u, 32u, 16u, 0x1021u, 0u, false, 0xf6feu, "32-bit data vector");
+    run_vector(state, cpu, narrow, 2u, 6u, 5u, 0x04u, 0u, false, 0x03u, "narrow polynomial vector");
     run_vector(state, cpu, narrow, 2u, 6u, 5u, 0x04u, 0u, true, 0x12u,
                "narrow little-endian vector");
     run_vector(state, cpu, wide, 1u, 32u, 32u, 0x04c11db6u, 0u, false, 0x7bd7f146u,
@@ -285,21 +268,20 @@ static void width_matrix_cases(TestState* state, Dspic33* cpu) {
     uint8_t data_width;
     for (data_width = 1u; data_width <= 32u; data_width++) {
         uint8_t polynomial_width = (uint8_t)(((data_width * 7u) % 32u) + 1u);
-        uint32_t word = (0xa5a5f00du ^ ((uint32_t)data_width * 0x10204081u)) &
-                        width_mask(data_width);
+        uint32_t word =
+            (0xa5a5f00du ^ ((uint32_t)data_width * 0x10204081u)) & width_mask(data_width);
         uint32_t polynomial = 0x04c11db6u ^ ((uint32_t)data_width * 0x01010101u);
         uint32_t seed = 0x1d0f5aa5u ^ ((uint32_t)data_width * 0x11111111u);
-        uint32_t expected = reference_crc(&word, 1u, data_width, polynomial_width,
-                                          polynomial, seed, (data_width & 1u) != 0u);
-        configure(cpu, data_width, polynomial_width, polynomial,
-                  (data_width & 1u) != 0u, false);
+        uint32_t expected = reference_crc(&word, 1u, data_width, polynomial_width, polynomial, seed,
+                                          (data_width & 1u) != 0u);
+        configure(cpu, data_width, polynomial_width, polynomial, (data_width & 1u) != 0u, false);
         dspic33_write_word(cpu, CRC_SHIFT_LOW, (uint16_t)seed);
         dspic33_write_word(cpu, CRC_SHIFT_HIGH, (uint16_t)(seed >> 16u));
         enqueue(cpu, data_width, word);
         start(cpu);
         expect(state,
-               dspic33_device_advance(cpu, (data_width + CRC_BITS_PER_CYCLE - 1u) /
-                                               CRC_BITS_PER_CYCLE),
+               dspic33_device_advance(cpu,
+                                      (data_width + CRC_BITS_PER_CYCLE - 1u) / CRC_BITS_PER_CYCLE),
                "width matrix advances");
         expect(state,
                shift_value(cpu) == expected && !cpu->io.crc.active &&
@@ -357,8 +339,7 @@ static void interrupt_timing_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_device_advance(cpu, 1u), "refill first pop");
     clear_interrupt(cpu);
     enqueue(cpu, 8u, 0x34u);
-    expect(state,
-           valid_words(cpu) == 1u && cpu->io.crc.active && cpu->events.count == 1u,
+    expect(state, valid_words(cpu) == 1u && cpu->io.crc.active && cpu->events.count == 1u,
            "refill joins active calculation");
     expect(state, dspic33_device_advance(cpu, 4u), "refill word begins");
     expect(state, valid_words(cpu) == 0u && cpu->io.crc.active && interrupt_flag(cpu),
@@ -378,8 +359,7 @@ static void lifecycle_cases(TestState* state, Dspic33* cpu) {
                (dspic33_read_word(cpu, CRC_CONTROL) & CRC_GO) != 0u,
            "GO waits for FIFO data");
     enqueue(cpu, 8u, 0x5au);
-    expect(state, cpu->io.crc.active && cpu->events.count == 1u,
-           "FIFO write starts pending GO");
+    expect(state, cpu->io.crc.active && cpu->events.count == 1u, "FIFO write starts pending GO");
     expect(state, dspic33_device_advance(cpu, 4u), "pending GO completes");
     expect(state, shift_value(cpu) == 0xfbbfu, "pending GO result");
 
@@ -395,9 +375,7 @@ static void lifecycle_cases(TestState* state, Dspic33* cpu) {
                (dspic33_read_word(cpu, CRC_CONTROL) & CRC_GO) == 0u,
            "GO clear aborts current word and retains FIFO");
     expect(state, dspic33_device_advance(cpu, 8u), "aborted event expires");
-    expect(state,
-           shift_value(cpu) == partial && valid_words(cpu) == 1u &&
-               cpu->events.count == 0u,
+    expect(state, shift_value(cpu) == partial && valid_words(cpu) == 1u && cpu->events.count == 0u,
            "stale CRC event cannot resume abort");
     start(cpu);
     expect(state, dspic33_device_advance(cpu, 4u), "retained FIFO restarts");
@@ -423,8 +401,7 @@ static void lifecycle_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, CRC_CONTROL, 0u);
     expect(state,
            dspic33_read_word(cpu, CRC_CONTROL) == CRC_EMPTY && shift_value(cpu) == 0u &&
-               valid_words(cpu) == 0u && !cpu->io.crc.active &&
-               cpu->io.crc.bits_remaining == 0u,
+               valid_words(cpu) == 0u && !cpu->io.crc.active && cpu->io.crc.bits_remaining == 0u,
            "CRCEN clear flushes runtime state");
     expect(state,
            dspic33_read_word(cpu, CRC_CONFIG) == 0x070fu &&
@@ -442,14 +419,12 @@ static void power_cases(TestState* state, Dspic33* cpu) {
     cpu->power_state = DSPIC33_POWER_SLEEP;
     expect(state, dspic33_device_advance(cpu, 8u), "advance sleeping CRC");
     expect(state,
-           cpu->io.crc.active && cpu->io.crc.count == 1u &&
-               cpu->io.crc.bits_remaining == 0u && shift_value(cpu) == 0u &&
-               (dspic33_read_word(cpu, CRC_CONTROL) & CRC_GO) != 0u,
+           cpu->io.crc.active && cpu->io.crc.count == 1u && cpu->io.crc.bits_remaining == 0u &&
+               shift_value(cpu) == 0u && (dspic33_read_word(cpu, CRC_CONTROL) & CRC_GO) != 0u,
            "Sleep suspends CRC state");
     cpu->power_state = DSPIC33_POWER_ACTIVE;
     expect(state, dspic33_device_advance(cpu, 4u), "resume sleeping CRC");
-    expect(state, shift_value(cpu) == 0xfbbfu && !cpu->io.crc.active,
-           "CRC resumes after Sleep");
+    expect(state, shift_value(cpu) == 0xfbbfu && !cpu->io.crc.active, "CRC resumes after Sleep");
 
     configure(cpu, 8u, 16u, 0x1021u, false, false);
     enqueue(cpu, 8u, 0x5au);
@@ -466,8 +441,8 @@ static void power_cases(TestState* state, Dspic33* cpu) {
     cpu->power_state = DSPIC33_POWER_IDLE;
     expect(state, dspic33_device_advance(cpu, 8u), "advance stopped Idle CRC");
     expect(state,
-           cpu->io.crc.active && cpu->io.crc.count == 1u &&
-               cpu->io.crc.bits_remaining == 0u && shift_value(cpu) == 0u,
+           cpu->io.crc.active && cpu->io.crc.count == 1u && cpu->io.crc.bits_remaining == 0u &&
+               shift_value(cpu) == 0u,
            "CSIDL set suspends CRC in Idle");
     cpu->power_state = DSPIC33_POWER_ACTIVE;
     expect(state, dspic33_device_advance(cpu, 4u), "resume stopped Idle CRC");
@@ -482,9 +457,7 @@ static void power_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_device_advance(cpu, 1u), "raise CRC empty interrupt");
     cpu->power_state = DSPIC33_POWER_IDLE;
     expect(state, dspic33_device_advance(cpu, 8u), "hold interrupted CRC in Idle");
-    expect(state,
-           interrupt_flag(cpu) && cpu->io.crc.active &&
-               cpu->io.crc.bits_remaining == 6u,
+    expect(state, interrupt_flag(cpu) && cpu->io.crc.active && cpu->io.crc.bits_remaining == 6u,
            "pending CRC interrupt passes while clocks stop");
     cpu->power_state = DSPIC33_POWER_ACTIVE;
 }
@@ -500,8 +473,7 @@ static void pmd_cases(TestState* state, Dspic33* cpu) {
            "CRC PMD disable applies after one cycle");
     bits_remaining = cpu->io.crc.bits_remaining;
     expect(state,
-           cpu->io.crc.active && bits_remaining == 6u &&
-               dspic33_read_word(cpu, CRC_CONTROL) == 0u,
+           cpu->io.crc.active && bits_remaining == 6u && dspic33_read_word(cpu, CRC_CONTROL) == 0u,
            "CRC PMD hides registers after current cycle");
     dspic33_write_word(cpu, CRC_CONFIG, 0xffffu);
     expect(state, dspic33_device_advance(cpu, 8u), "advance PMD-disabled CRC");
@@ -544,12 +516,12 @@ static void interrupt_service_cases(TestState* state, Dspic33* cpu) {
     uint16_t priority_address = (uint16_t)(0x0840u + (CRC_IRQ / 4u) * 2u);
     uint16_t priority_shift = (uint16_t)((CRC_IRQ % 4u) * 4u);
     configure(cpu, 8u, 16u, 0x1021u, false, false);
+    dspic33_write_word(cpu, 0x0828u,
+                       (uint16_t)(dspic33_read_word(cpu, 0x0828u) | CRC_INTERRUPT_FLAG));
     dspic33_write_word(
-        cpu, 0x0828u, (uint16_t)(dspic33_read_word(cpu, 0x0828u) | CRC_INTERRUPT_FLAG));
-    dspic33_write_word(cpu, priority_address,
-                       (uint16_t)((dspic33_read_word(cpu, priority_address) &
-                                   ~(7u << priority_shift)) |
-                                  (CRC_PRIORITY << priority_shift)));
+        cpu, priority_address,
+        (uint16_t)((dspic33_read_word(cpu, priority_address) & ~(7u << priority_shift)) |
+                   (CRC_PRIORITY << priority_shift)));
     cpu->program[(0x0014u + CRC_IRQ * 2u) / 2u] = CRC_VECTOR;
     cpu->w[15] = 0x1800u;
     enqueue(cpu, 8u, 0x5au);
@@ -561,8 +533,7 @@ static void interrupt_service_cases(TestState* state, Dspic33* cpu) {
                cpu->pc == CRC_VECTOR,
            "CRC interrupt 67 vectors");
     expect(state,
-           dspic33_read_word(cpu, 0x08c8u) ==
-               (uint16_t)((CRC_PRIORITY << 8u) | (CRC_IRQ + 8u)),
+           dspic33_read_word(cpu, 0x08c8u) == (uint16_t)((CRC_PRIORITY << 8u) | (CRC_IRQ + 8u)),
            "CRC interrupt status identifies vector");
 }
 
@@ -602,17 +573,15 @@ static void copy_reset_failure_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_device_advance(cpu, 1u), "copy source begins CRC");
     expect(state, dspic33_copy(&copy, cpu), "copy active CRC");
     expect(state,
-           copy.io.crc.active && copy.io.crc.bits_remaining == 6u &&
-               copy.io.crc.count == 1u && copy.events.count == 1u,
+           copy.io.crc.active && copy.io.crc.bits_remaining == 6u && copy.io.crc.count == 1u &&
+               copy.events.count == 1u,
            "copy retains active CRC state");
-    expect(state, copy.events.items != cpu->events.items,
-           "copy CRC event storage independent");
+    expect(state, copy.events.items != cpu->events.items, "copy CRC event storage independent");
     expect(state, dspic33_device_advance(cpu, 7u) && dspic33_device_advance(&copy, 7u),
            "source and copy complete CRC");
     expect(state,
            shift_value(&copy) == shift_value(cpu) &&
-               dspic33_read_word(&copy, CRC_CONTROL) ==
-                   dspic33_read_word(cpu, CRC_CONTROL),
+               dspic33_read_word(&copy, CRC_CONTROL) == dspic33_read_word(cpu, CRC_CONTROL),
            "copied CRC result matches source");
 
     configure(cpu, 8u, 16u, 0x1021u, false, false);

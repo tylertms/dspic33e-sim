@@ -27,8 +27,7 @@ enum {
 
 static void accumulator_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
-    expect(state,
-           dspic33_read_word(cpu, ACCAU) == 0u && dspic33_read_word(cpu, ACCBU) == 0u,
+    expect(state, dspic33_read_word(cpu, ACCAU) == 0u && dspic33_read_word(cpu, ACCBU) == 0u,
            "accumulator upper registers reset to zero");
     cpu->accumulator[0] = 0x7f12345678ll;
     expect(state, dspic33_read_word(cpu, ACCAU) == 0x007fu,
@@ -52,15 +51,11 @@ static void accumulator_cases(TestState* state, Dspic33* cpu) {
 static void program_counter_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     cpu->pc = 0x123456u;
-    expect(state,
-           dspic33_read_word(cpu, PCL) == 0x3456u &&
-               dspic33_read_word(cpu, PCH) == 0x0012u,
+    expect(state, dspic33_read_word(cpu, PCL) == 0x3456u && dspic33_read_word(cpu, PCH) == 0x0012u,
            "PCL and PCH expose live program counter");
     expect(state,
-           dspic33_read_byte(cpu, PCL) == 0x56u &&
-               dspic33_read_byte(cpu, PCL + 1u) == 0x34u &&
-               dspic33_read_byte(cpu, PCH) == 0x12u &&
-               dspic33_read_byte(cpu, PCH + 1u) == 0u,
+           dspic33_read_byte(cpu, PCL) == 0x56u && dspic33_read_byte(cpu, PCL + 1u) == 0x34u &&
+               dspic33_read_byte(cpu, PCH) == 0x12u && dspic33_read_byte(cpu, PCH + 1u) == 0u,
            "program counter byte views expose implemented lanes");
     dspic33_write_word(cpu, PCL, 0xa55au);
     dspic33_write_word(cpu, PCH, 0xffffu);
@@ -71,14 +66,11 @@ static void program_counter_cases(TestState* state, Dspic33* cpu) {
 
     dspic33_reset(cpu, 0u);
     dspic33_load_program_word(cpu, 0u, OPCODE_MOV_PCL_W0);
-    expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[0] == 2u && cpu->pc == 2u,
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[0] == 2u && cpu->pc == 2u,
            "instruction reads following PC through PCL");
     dspic33_reset(cpu, 0x012340u);
     dspic33_load_program_word(cpu, 0x012340u, OPCODE_MOV_PCH_W0);
-    expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[0] == 1u &&
-               cpu->pc == 0x012342u,
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[0] == 1u && cpu->pc == 0x012342u,
            "instruction reads live high PC through PCH");
     dspic33_reset(cpu, 0u);
     dspic33_load_program_word(cpu, 0u, OPCODE_MOV_W0_PCL);
@@ -90,8 +82,7 @@ static void program_counter_cases(TestState* state, Dspic33* cpu) {
 static void status_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, STATUS, 0xffffu);
-    expect(state, cpu->sr == 0xfdefu,
-           "SR data write sets writable and accumulator status fields");
+    expect(state, cpu->sr == 0xfdefu, "SR data write sets writable and accumulator status fields");
     dspic33_write_word(cpu, STATUS, 0u);
     expect(state, cpu->sr == 0u, "SR data write clears writable status fields");
     dspic33_load_program_word(cpu, 0u, OPCODE_MOV_W0_STATUS);
@@ -101,20 +92,16 @@ static void status_cases(TestState* state, Dspic33* cpu) {
 
     cpu->sr = 0xfc00u;
     dspic33_write_byte(cpu, STATUS + 1u, 0xf4u);
-    expect(state, cpu->sr == 0x3400u,
-           "clearing OAB clears both accumulator overflow flags");
+    expect(state, cpu->sr == 0x3400u, "clearing OAB clears both accumulator overflow flags");
     cpu->sr = 0xfc00u;
     dspic33_write_byte(cpu, STATUS + 1u, 0xf8u);
-    expect(state, cpu->sr == 0xc800u,
-           "clearing SAB clears both accumulator saturation flags");
+    expect(state, cpu->sr == 0xc800u, "clearing SAB clears both accumulator saturation flags");
     cpu->sr = 0u;
     dspic33_write_byte(cpu, STATUS + 1u, 0x24u);
-    expect(state, cpu->sr == 0x2400u,
-           "software sets individual and combined saturation status");
+    expect(state, cpu->sr == 0x2400u, "software sets individual and combined saturation status");
     cpu->sr = 0u;
     dspic33_write_byte(cpu, STATUS + 1u, 0x88u);
-    expect(state, cpu->sr == 0x8800u,
-           "software sets individual and combined overflow status");
+    expect(state, cpu->sr == 0x8800u, "software sets individual and combined overflow status");
 
     cpu->sr = 0x0210u;
     dspic33_write_word(cpu, STATUS, 0u);
@@ -132,8 +119,7 @@ static void core_control_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     cpu->corcon |= 0x0004u;
     dspic33_write_word(cpu, CORE_CONTROL, 0u);
-    expect(state, dspic33_read_word(cpu, CORE_CONTROL) == 0x0004u,
-           "CORCON SFA rejects word clear");
+    expect(state, dspic33_read_word(cpu, CORE_CONTROL) == 0x0004u, "CORCON SFA rejects word clear");
     dspic33_write_byte(cpu, CORE_CONTROL, 0xffu);
     expect(state, dspic33_read_word(cpu, CORE_CONTROL) == 0x00f7u,
            "CORCON low-byte write preserves SFA");
@@ -164,8 +150,7 @@ static void disicnt_cases(TestState* state, Dspic33* cpu) {
            "DISICNT write cannot initiate an interrupt-disable interval");
     dspic33_write_byte(cpu, DISI_COUNT, 0x55u);
     dspic33_write_byte(cpu, DISI_COUNT + 1u, 0x2au);
-    expect(state, cpu->disicnt == 0u,
-           "DISICNT byte writes cannot initiate an interval");
+    expect(state, cpu->disicnt == 0u, "DISICNT byte writes cannot initiate an interval");
 
     dspic33_load_program_word(cpu, 0x200u, OPCODE_MOV_W0_DISICNT);
     dspic33_set_working_register(cpu, 0u, 0x1234u);
@@ -177,24 +162,19 @@ static void disicnt_cases(TestState* state, Dspic33* cpu) {
                (dspic33_read_word(cpu, INTCON2) & 0x4000u) != 0u,
            "DISI instruction starts the disable interval");
     dspic33_write_word(cpu, DISI_COUNT, 0x1234u);
-    expect(state, cpu->disicnt == 0x1234u,
-           "active DISICNT interval accepts word extension");
+    expect(state, cpu->disicnt == 0x1234u, "active DISICNT interval accepts word extension");
     dspic33_write_byte(cpu, DISI_COUNT, 0x78u);
-    expect(state, cpu->disicnt == 0x1278u,
-           "active DISICNT interval accepts low-byte update");
+    expect(state, cpu->disicnt == 0x1278u, "active DISICNT interval accepts low-byte update");
     dspic33_write_byte(cpu, DISI_COUNT + 1u, 0xffu);
-    expect(state, cpu->disicnt == 0x3f78u,
-           "DISICNT high-byte update masks reserved bits");
+    expect(state, cpu->disicnt == 0x3f78u, "DISICNT high-byte update masks reserved bits");
     dspic33_write_word(cpu, DISI_COUNT, 0xffffu);
     expect(state, dspic33_read_word(cpu, DISI_COUNT) == 0x3fffu,
            "DISICNT word update masks reserved bits");
     dspic33_write_word(cpu, DISI_COUNT, 0u);
-    expect(state,
-           cpu->disicnt == 0u && (dspic33_read_word(cpu, INTCON2) & 0x4000u) == 0u,
+    expect(state, cpu->disicnt == 0u && (dspic33_read_word(cpu, INTCON2) & 0x4000u) == 0u,
            "DISICNT clear terminates the disable interval");
     dspic33_write_word(cpu, DISI_COUNT, 1u);
-    expect(state, cpu->disicnt == 0u,
-           "cleared DISICNT interval cannot restart by data write");
+    expect(state, cpu->disicnt == 0u, "cleared DISICNT interval cannot restart by data write");
 }
 
 static void lifecycle_cases(TestState* state, Dspic33* source, Dspic33* copy) {
@@ -207,16 +187,14 @@ static void lifecycle_cases(TestState* state, Dspic33* source, Dspic33* copy) {
     dspic33_step(source);
     expect(state, dspic33_copy(copy, source), "copy preserves core SFR state");
     expect(state,
-           dspic33_read_word(copy, PCL) == 0x2342u &&
-               dspic33_read_word(copy, PCH) == 1u &&
+           dspic33_read_word(copy, PCL) == 0x2342u && dspic33_read_word(copy, PCH) == 1u &&
                dspic33_read_word(copy, ACCAU) == 0xffffu && copy->sr == 0x2405u &&
                copy->corcon == source->corcon && copy->disicnt == source->disicnt,
            "copied core SFR views match source state");
     dspic33_reset(source, 0u);
     expect(state,
-           dspic33_read_word(source, PCL) == 0u &&
-               dspic33_read_word(source, PCH) == 0u && source->sr == 0u &&
-               source->disicnt == 0u,
+           dspic33_read_word(source, PCL) == 0u && dspic33_read_word(source, PCH) == 0u &&
+               source->sr == 0u && source->disicnt == 0u,
            "POR restores core SFR state");
 }
 

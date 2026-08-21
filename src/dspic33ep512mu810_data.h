@@ -20,8 +20,7 @@ typedef struct {
     uint16_t unchanged;
 } Dspic33SfrMasterClearReset;
 
-extern const uint8_t
-    dspic33_sfr_implementation_bitmap[DSPIC33_SFR_IMPLEMENTATION_BITMAP_SIZE];
+extern const uint8_t dspic33_sfr_implementation_bitmap[DSPIC33_SFR_IMPLEMENTATION_BITMAP_SIZE];
 extern const Dspic33SfrMasterClearReset
     dspic33_sfr_master_clear_resets[DSPIC33_SFR_MASTER_CLEAR_RESET_COUNT];
 

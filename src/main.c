@@ -61,8 +61,7 @@ static bool parse_arguments(int argc, char** argv, Arguments* arguments) {
             if (arguments->program_word_count == PROGRAM_WORD_LIMIT) {
                 return false;
             }
-            ProgramWord* word =
-                &arguments->program_words[arguments->program_word_count];
+            ProgramWord* word = &arguments->program_words[arguments->program_word_count];
             if (!parse_u64(argv[++index], UINT32_MAX, &value)) {
                 return false;
             }
@@ -87,8 +86,8 @@ static void print_usage(const char* program) {
             program);
 }
 
-static bool resolve_location(const FirmwareImage* image, const char* text,
-                             uint32_t* address, char* error, size_t error_size) {
+static bool resolve_location(const FirmwareImage* image, const char* text, uint32_t* address,
+                             char* error, size_t error_size) {
     uint64_t numeric;
     if (parse_u64(text, UINT32_MAX, &numeric)) {
         *address = (uint32_t)numeric;
@@ -104,10 +103,9 @@ static Dspic33Result run(Dspic33* cpu, Dspic33RunLimits limits, uint32_t stop_ad
     }
     const uint64_t start_instructions = dspic33_get_instruction_count(cpu);
     const uint64_t start_cycles = dspic33_get_cycle_count(cpu);
-    Dspic33Result result = {
-        DSPIC33_RUNNING, start_instructions, start_cycles,
-        dspic33_get_program_counter(cpu),
-        dspic33_read_program_word(cpu, dspic33_get_program_counter(cpu))};
+    Dspic33Result result = {DSPIC33_RUNNING, start_instructions, start_cycles,
+                            dspic33_get_program_counter(cpu),
+                            dspic33_read_program_word(cpu, dspic33_get_program_counter(cpu))};
     while (result.stop == DSPIC33_RUNNING) {
         if (result.pc == stop_address) {
             result.stop = DSPIC33_STOPPED;
@@ -115,8 +113,7 @@ static Dspic33Result run(Dspic33* cpu, Dspic33RunLimits limits, uint32_t stop_ad
         }
         if ((limits.instruction_limit != 0u &&
              result.instructions - start_instructions >= limits.instruction_limit) ||
-            (limits.cycle_limit != 0u &&
-             result.cycles - start_cycles >= limits.cycle_limit)) {
+            (limits.cycle_limit != 0u && result.cycles - start_cycles >= limits.cycle_limit)) {
             result.stop = DSPIC33_INSTRUCTION_LIMIT;
             return result;
         }
@@ -127,9 +124,8 @@ static Dspic33Result run(Dspic33* cpu, Dspic33RunLimits limits, uint32_t stop_ad
 
 static bool failed(Dspic33StopReason reason) {
     return reason == DSPIC33_HALTED || reason == DSPIC33_TRAPPED ||
-           reason == DSPIC33_UNSUPPORTED_INSTRUCTION ||
-           reason == DSPIC33_PROGRAM_BOUNDS || reason == DSPIC33_EVENT_QUEUE_ERROR ||
-           reason == DSPIC33_SILICON_RESULT_UNDEFINED;
+           reason == DSPIC33_UNSUPPORTED_INSTRUCTION || reason == DSPIC33_PROGRAM_BOUNDS ||
+           reason == DSPIC33_EVENT_QUEUE_ERROR || reason == DSPIC33_SILICON_RESULT_UNDEFINED;
 }
 
 int main(int argc, char** argv) {
@@ -152,8 +148,7 @@ int main(int argc, char** argv) {
     }
     uint32_t entry;
     if (!firmware_image_load_program(&image, cpu, error, sizeof(error)) ||
-        !resolve_location(&image, arguments.reset_location, &entry, error,
-                          sizeof(error))) {
+        !resolve_location(&image, arguments.reset_location, &entry, error, sizeof(error))) {
         fprintf(stderr, "failed to load the firmware image: %s\n", error);
         dspic33_destroy(cpu);
         firmware_image_close(&image);
@@ -162,8 +157,7 @@ int main(int argc, char** argv) {
     for (uint8_t index = 0u; index < arguments.program_word_count; index++) {
         const ProgramWord word = arguments.program_words[index];
         if (!dspic33_load_program_word(cpu, word.address, word.value)) {
-            fprintf(stderr, "invalid program word address: 0x%08" PRIx32 "\n",
-                    word.address);
+            fprintf(stderr, "invalid program word address: 0x%08" PRIx32 "\n", word.address);
             dspic33_destroy(cpu);
             firmware_image_close(&image);
             return EXIT_FAILURE;
@@ -171,8 +165,8 @@ int main(int argc, char** argv) {
     }
     uint32_t stop_address = 0u;
     const bool stop_enabled = arguments.stop_location != NULL;
-    if (stop_enabled && !resolve_location(&image, arguments.stop_location,
-                                          &stop_address, error, sizeof(error))) {
+    if (stop_enabled &&
+        !resolve_location(&image, arguments.stop_location, &stop_address, error, sizeof(error))) {
         fprintf(stderr, "invalid stop address: %s\n", error);
         dspic33_destroy(cpu);
         firmware_image_close(&image);
@@ -182,8 +176,8 @@ int main(int argc, char** argv) {
     const Dspic33Result result = run(cpu, arguments.limits, stop_address, stop_enabled);
     printf("stop=%u pc=0x%08" PRIx32 " opcode=0x%08" PRIx32 " instructions=%" PRIu64
            " cycles=%" PRIu64 " entry=0x%08" PRIx32 " fault=0x%08" PRIx32 "\n",
-           result.stop, result.pc, result.opcode, result.instructions, result.cycles,
-           entry, dspic33_get_fault_address(cpu));
+           result.stop, result.pc, result.opcode, result.instructions, result.cycles, entry,
+           dspic33_get_fault_address(cpu));
     for (uint8_t index = 0u; index < 16u; index++) {
         printf("W%u=0x%04" PRIx32 "%c", index, dspic33_get_register(cpu, index),
                index == 15u ? '\n' : ' ');

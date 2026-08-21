@@ -63,8 +63,7 @@ static uint16_t raw_data_word(const Dspic33* cpu, uint16_t address) {
     return (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[address + 1u] << 8u));
 }
 
-static void configure_pmp_control(Dspic33* cpu, uint16_t control, uint16_t mode,
-                                  uint16_t address) {
+static void configure_pmp_control(Dspic33* cpu, uint16_t control, uint16_t mode, uint16_t address) {
     dspic33_write_word(cpu, PMP_CONTROL, 0u);
     dspic33_write_word(cpu, PMP_MODE, mode);
     dspic33_write_word(cpu, PMP_ADDRESS, address);
@@ -75,8 +74,8 @@ static void configure_pmp(Dspic33* cpu, uint16_t mode, uint16_t address) {
     configure_pmp_control(cpu, 0u, mode, address);
 }
 
-static void configure_dma(Dspic33* cpu, uint8_t channel, uint8_t request,
-                          uint32_t source, uint16_t pad, uint16_t count) {
+static void configure_dma(Dspic33* cpu, uint8_t channel, uint8_t request, uint32_t source,
+                          uint16_t pad, uint16_t count) {
     uint16_t base = (uint16_t)(0x0b00u + channel * 0x10u);
     dspic33_write_word(cpu, base, 0u);
     dspic33_write_word(cpu, (uint16_t)(base + 2u), request);
@@ -89,8 +88,8 @@ static void configure_dma(Dspic33* cpu, uint8_t channel, uint8_t request,
     dspic33_write_word(cpu, base, 0xe001u);
 }
 
-static void configure_dma_read(Dspic33* cpu, uint8_t channel, uint8_t request,
-                               uint32_t destination, uint16_t pad, uint16_t count) {
+static void configure_dma_read(Dspic33* cpu, uint8_t channel, uint8_t request, uint32_t destination,
+                               uint16_t pad, uint16_t count) {
     uint16_t base = (uint16_t)(0x0b00u + channel * 0x10u);
     dspic33_write_word(cpu, base, 0u);
     dspic33_write_word(cpu, (uint16_t)(base + 2u), request);
@@ -107,8 +106,8 @@ static uint16_t pmp_data_latch(const Dspic33* cpu) {
     return (uint16_t)(cpu->data[PMP_DATA] | ((uint16_t)cpu->data[PMP_DATA + 1u] << 8u));
 }
 
-static void configure_pmp_read(Dspic33* cpu, uint16_t control, uint16_t mode,
-                               uint16_t address, uint16_t previous) {
+static void configure_pmp_read(Dspic33* cpu, uint16_t control, uint16_t mode, uint16_t address,
+                               uint16_t previous) {
     dspic33_write_word(cpu, PMP_CONTROL, 0u);
     dspic33_write_word(cpu, PMP_DATA, previous);
     configure_pmp_control(cpu, control, mode, address);
@@ -119,9 +118,9 @@ static void configure_pmp_slave(Dspic33* cpu, uint16_t control, uint16_t mode) {
     dspic33_write_word(cpu, PMP_MODE, mode);
     dspic33_write_word(cpu, PMP_ADDRESS_ENABLE,
                        (uint16_t)(PMP_CHIP_SELECT_ENABLE | PMP_ADDRESS_INPUT_ENABLE));
-    dspic33_write_word(cpu, PMP_CONTROL,
-                       (uint16_t)(control | PMP_ENABLE | PMP_READ_STROBE_ENABLE |
-                                  PMP_WRITE_STROBE_ENABLE));
+    dspic33_write_word(
+        cpu, PMP_CONTROL,
+        (uint16_t)(control | PMP_ENABLE | PMP_READ_STROBE_ENABLE | PMP_WRITE_STROBE_ENABLE));
 }
 
 static void access_cases(TestState* state, Dspic33* cpu) {
@@ -145,13 +144,10 @@ static void timing_cases(TestState* state, Dspic33* cpu) {
     expect(state, cpu->io.pmp.active, "WAITM zero starts transfer");
     expect(state, (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) == 0u,
            "one-cycle transfer has no sampled BUSY interval");
-    expect(state, !dspic33_pmp_transmit(cpu, &transfer),
-           "transfer unavailable before completion");
+    expect(state, !dspic33_pmp_transmit(cpu, &transfer), "transfer unavailable before completion");
     expect(state, dspic33_device_advance(cpu, 1u), "advance one-cycle transfer");
     expect(state, dspic33_pmp_transmit(cpu, &transfer), "one-cycle transfer completes");
-    expect(state,
-           transfer.address == 0x1234u && transfer.value == 0x5au &&
-               transfer.cycle == 1u,
+    expect(state, transfer.address == 0x1234u && transfer.value == 0x5au && transfer.cycle == 1u,
            "one-cycle transfer captures address data and cycle");
 
     dspic33_reset(cpu, 0u);
@@ -162,8 +158,7 @@ static void timing_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_byte(cpu, PMP_DATA, 0x22u);
     dspic33_write_word(cpu, PMP_ADDRESS, 0x7654u);
     dspic33_write_word(cpu, PMP_MODE, PMP_MASTER_MODE_2);
-    expect(state, dspic33_device_advance(cpu, 20u),
-           "advance before firmware completion");
+    expect(state, dspic33_device_advance(cpu, 20u), "advance before firmware completion");
     expect(state,
            (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) == 0u &&
                !dspic33_pmp_transmit(cpu, &transfer),
@@ -192,8 +187,7 @@ static void timing_cases(TestState* state, Dspic33* cpu) {
            dspic33_pmp_transmit(cpu, &transfer) && transfer.address == 0x7654u &&
                transfer.value == 0x33u && transfer.cycle == 41u,
            "back-to-back transfer completes independently");
-    expect(state, !dspic33_pmp_transmit(cpu, &transfer),
-           "busy write does not queue transfer");
+    expect(state, !dspic33_pmp_transmit(cpu, &transfer), "busy write does not queue transfer");
 }
 
 static void access_lane_cases(TestState* state, Dspic33* cpu) {
@@ -229,9 +223,7 @@ static void sixteen_bit_lane_cases(TestState* state, Dspic33* cpu) {
     expect(state, !cpu->io.pmp.active && cpu->events.count == 0u,
            "16-bit high-byte write only loads the data latch");
     dspic33_write_byte(cpu, PMP_DATA, 0x55u);
-    expect(state,
-           cpu->io.pmp.active && cpu->io.pmp.value == 0xaa55u &&
-               cpu->io.pmp.width == 2u,
+    expect(state, cpu->io.pmp.active && cpu->io.pmp.value == 0xaa55u && cpu->io.pmp.width == 2u,
            "16-bit low-byte write starts both byte phases");
     dspic33_write_word(cpu, PMP_DATA, 0x1234u);
     expect(state, dspic33_read_word(cpu, PMP_DATA) == 0xaa55u,
@@ -275,8 +267,8 @@ static void master_write_matrix_cases(TestState* state, Dspic33* cpu) {
         configure_pmp_control(cpu, current->control, current->mode, 0x2468u);
         dspic33_write_word(cpu, PMP_DATA, 0xab5cu);
         expect(state,
-               cpu->io.pmp.active && ((dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) !=
-                                      0u) == (current->cycles > 1u),
+               cpu->io.pmp.active &&
+                   ((dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) != 0u) == (current->cycles > 1u),
                "master write matrix starts with documented BUSY state");
         expect(state, dspic33_device_advance(cpu, current->cycles - 1u),
                "advance master write matrix before completion");
@@ -284,15 +276,12 @@ static void master_write_matrix_cases(TestState* state, Dspic33* cpu) {
                (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) == 0u &&
                    !dspic33_pmp_transmit(cpu, &transfer),
                "master write matrix clears BUSY on its final cycle");
-        expect(state, dspic33_device_advance(cpu, 1u),
-               "advance master write matrix completion");
+        expect(state, dspic33_device_advance(cpu, 1u), "advance master write matrix completion");
         expect(state,
                dspic33_pmp_transmit(cpu, &transfer) && transfer.address == 0x2468u &&
                    transfer.control == (uint16_t)(current->control | PMP_ENABLE) &&
-                   transfer.mode == current->mode &&
-                   transfer.value == current->expected_value &&
-                   transfer.width == current->width &&
-                   transfer.cycle == current->cycles,
+                   transfer.mode == current->mode && transfer.value == current->expected_value &&
+                   transfer.width == current->width && transfer.cycle == current->cycles,
                "master write matrix captures width mode mux and timing");
     }
 }
@@ -304,8 +293,7 @@ static void wait_state_matrix_cases(TestState* state, Dspic33* cpu) {
         {PMP_PARTIAL_MUX, 0x00c7u | PMP_MASTER_MODE_2, 0x005cu, 1u, 13u},
         {PMP_FULL_MUX, 0x00c7u | PMP_MASTER_MODE_2, 0x005cu, 1u, 17u},
         {0u, 0x00c7u | PMP_DATA_16_BIT | PMP_MASTER_MODE_3, 0xab5cu, 2u, 18u},
-        {PMP_PARTIAL_MUX, 0x00c7u | PMP_DATA_16_BIT | PMP_MASTER_MODE_3, 0xab5cu, 2u,
-         22u},
+        {PMP_PARTIAL_MUX, 0x00c7u | PMP_DATA_16_BIT | PMP_MASTER_MODE_3, 0xab5cu, 2u, 22u},
         {PMP_FULL_MUX, 0x00c7u | PMP_DATA_16_BIT | PMP_MASTER_MODE_3, 0xab5cu, 2u, 26u},
     };
     Dspic33PmpTransfer transfer;
@@ -321,13 +309,10 @@ static void wait_state_matrix_cases(TestState* state, Dspic33* cpu) {
                (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) == 0u &&
                    !dspic33_pmp_transmit(cpu, &transfer),
                "wait-state matrix clears BUSY before completion");
-        expect(state, dspic33_device_advance(cpu, 1u),
-               "advance wait-state matrix completion");
+        expect(state, dspic33_device_advance(cpu, 1u), "advance wait-state matrix completion");
         expect(state,
-               dspic33_pmp_transmit(cpu, &transfer) &&
-                   transfer.value == current->expected_value &&
-                   transfer.width == current->width &&
-                   transfer.cycle == current->cycles,
+               dspic33_pmp_transmit(cpu, &transfer) && transfer.value == current->expected_value &&
+                   transfer.width == current->width && transfer.cycle == current->cycles,
                "wait-state matrix completes on the documented phase count");
     }
 }
@@ -351,14 +336,12 @@ static void address_update_cases(TestState* state, Dspic33* cpu) {
     size_t index;
     for (index = 0u; index < sizeof(cases) / sizeof(cases[0]); index++) {
         dspic33_reset(cpu, 0u);
-        configure_pmp_control(
-            cpu, cases[index].control,
-            (uint16_t)(PMP_MASTER_MODE_2 | cases[index].mode | 0x0004u),
-            cases[index].initial);
+        configure_pmp_control(cpu, cases[index].control,
+                              (uint16_t)(PMP_MASTER_MODE_2 | cases[index].mode | 0x0004u),
+                              cases[index].initial);
         dspic33_write_byte(cpu, PMP_DATA, 0x6au);
         expect(state,
-               cpu->io.pmp.active &&
-                   dspic33_read_word(cpu, PMP_ADDRESS) == cases[index].initial,
+               cpu->io.pmp.active && dspic33_read_word(cpu, PMP_ADDRESS) == cases[index].initial,
                "master address remains stable while BUSY");
         expect(state, dspic33_device_advance(cpu, 2u),
                "advance master address to BUSY-clear boundary");
@@ -370,8 +353,8 @@ static void address_update_cases(TestState* state, Dspic33* cpu) {
         expect(state, dspic33_device_advance(cpu, 1u),
                "advance master address operation completion");
         expect(state,
-               dspic33_pmp_transmit(cpu, &transfer) &&
-                   transfer.address == cases[index].initial && transfer.value == 0x6au,
+               dspic33_pmp_transmit(cpu, &transfer) && transfer.address == cases[index].initial &&
+                   transfer.value == 0x6au,
                "master transfer retains pre-update address");
     }
 
@@ -393,20 +376,17 @@ static void master_read_pipeline_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     configure_pmp_read(cpu, 0u, PMP_MASTER_MODE_2, 0x1234u, 0x5aa5u);
     expect(state, dspic33_pmp_respond(cpu, 0x1234u, 0u), "queue 8-bit master response");
-    expect(state,
-           dspic33_read_byte(cpu, (uint16_t)(PMP_DATA + 1u)) == 0x5au &&
-               !cpu->io.pmp.active,
+    expect(state, dspic33_read_byte(cpu, (uint16_t)(PMP_DATA + 1u)) == 0x5au && !cpu->io.pmp.active,
            "high-byte read does not initiate master access");
     expect(state,
-           dspic33_read_byte(cpu, PMP_DATA) == 0xa5u && cpu->io.pmp.active &&
-               cpu->io.pmp.reading && cpu->io.pmp.width == 1u &&
-               !cpu->io.pmp.last_read_valid,
+           dspic33_read_byte(cpu, PMP_DATA) == 0xa5u && cpu->io.pmp.active && cpu->io.pmp.reading &&
+               cpu->io.pmp.width == 1u && !cpu->io.pmp.last_read_valid,
            "first low-byte read returns dummy and starts access");
     generation = cpu->io.pmp.generation;
     events = cpu->events.count;
     expect(state,
-           dspic33_read_byte(cpu, PMP_DATA) == 0xa5u &&
-               cpu->io.pmp.generation == generation && cpu->events.count == events,
+           dspic33_read_byte(cpu, PMP_DATA) == 0xa5u && cpu->io.pmp.generation == generation &&
+               cpu->events.count == events,
            "read while active returns same dummy without new access");
     dspic33_write_word(cpu, PMP_DATA, 0x7788u);
     expect(state, pmp_data_latch(cpu) == 0x5aa5u,
@@ -417,8 +397,7 @@ static void master_read_pipeline_cases(TestState* state, Dspic33* cpu) {
                cpu->io.pmp.last_read.width == 1u && pmp_data_latch(cpu) == 0x5a34u &&
                cpu->io.pmp.input.count == 0u,
            "8-bit read completion replaces only the low byte");
-    expect(state, dspic33_pmp_respond(cpu, 0x5678u, 0u),
-           "queue sequential 8-bit response");
+    expect(state, dspic33_pmp_respond(cpu, 0x5678u, 0u), "queue sequential 8-bit response");
     expect(state, dspic33_read_byte(cpu, PMP_DATA) == 0x34u && cpu->io.pmp.active,
            "sequential read returns previous result and starts next access");
     expect(state,
@@ -427,25 +406,19 @@ static void master_read_pipeline_cases(TestState* state, Dspic33* cpu) {
            "sequential 8-bit response replaces the prior result");
 
     dspic33_reset(cpu, 0u);
-    configure_pmp_read(cpu, 0u, (uint16_t)(PMP_MASTER_MODE_2 | PMP_INCREMENT | 0x0004u),
-                       0x4000u, 0x1357u);
-    expect(state,
-           dspic33_pmp_respond(cpu, 0x1111u, 0u) &&
-               dspic33_pmp_respond(cpu, 0x2222u, 0u),
+    configure_pmp_read(cpu, 0u, (uint16_t)(PMP_MASTER_MODE_2 | PMP_INCREMENT | 0x0004u), 0x4000u,
+                       0x1357u);
+    expect(state, dspic33_pmp_respond(cpu, 0x1111u, 0u) && dspic33_pmp_respond(cpu, 0x2222u, 0u),
            "queue final-cycle back-to-back responses");
-    expect(state,
-           dspic33_read_word(cpu, PMP_DATA) == 0x1357u &&
-               dspic33_device_advance(cpu, 2u),
+    expect(state, dspic33_read_word(cpu, PMP_DATA) == 0x1357u && dspic33_device_advance(cpu, 2u),
            "advance first read through final BUSY cycle");
     expect(state,
-           (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) == 0u &&
-               cpu->io.pmp.completing_active && !cpu->io.pmp.last_read_valid &&
-               dspic33_read_word(cpu, PMP_ADDRESS) == 0x4001u,
+           (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) == 0u && cpu->io.pmp.completing_active &&
+               !cpu->io.pmp.last_read_valid && dspic33_read_word(cpu, PMP_ADDRESS) == 0x4001u,
            "final cycle retains first read before completion");
     expect(state,
            dspic33_read_word(cpu, PMP_DATA) == 0x1357u && cpu->io.pmp.active &&
-               cpu->io.pmp.completing_active &&
-               (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) != 0u,
+               cpu->io.pmp.completing_active && (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) != 0u,
            "final-cycle read returns dummy and starts next access");
     expect(state,
            dspic33_device_advance(cpu, 1u) && cpu->io.pmp.last_read.value == 0x0011u &&
@@ -458,9 +431,7 @@ static void master_read_pipeline_cases(TestState* state, Dspic33* cpu) {
 
     dspic33_reset(cpu, 0u);
     configure_pmp_read(cpu, 0u, PMP_MASTER_MODE_2, 0u, 0xa5a5u);
-    expect(state,
-           dspic33_pmp_respond(cpu, 0x3333u, 5u) &&
-               dspic33_pmp_respond(cpu, 0x1111u, 0u),
+    expect(state, dspic33_pmp_respond(cpu, 0x3333u, 5u) && dspic33_pmp_respond(cpu, 0x1111u, 0u),
            "queue out-of-order timed PMP responses");
     dspic33_read_word(cpu, PMP_DATA);
     expect(state,
@@ -474,17 +445,14 @@ static void master_read_pipeline_cases(TestState* state, Dspic33* cpu) {
            "master read without ready response returns deterministic zero");
     expect(state,
            dspic33_device_advance(cpu, 3u) && dspic33_read_byte(cpu, PMP_DATA) == 0u &&
-               dspic33_device_advance(cpu, 1u) &&
-               cpu->io.pmp.last_read.value == 0x0033u && cpu->io.pmp.input.count == 0u,
+               dspic33_device_advance(cpu, 1u) && cpu->io.pmp.last_read.value == 0x0033u &&
+               cpu->io.pmp.input.count == 0u,
            "later master read consumes delayed response at its deadline");
 
     dspic33_reset(cpu, 0u);
     configure_pmp_read(cpu, 0u, PMP_DATA_16_BIT | PMP_MASTER_MODE_2, 0x2345u, 0xbeefu);
-    expect(state, dspic33_pmp_respond(cpu, 0x1234u, 0u),
-           "queue 16-bit master response");
-    expect(state,
-           dspic33_read_byte(cpu, (uint16_t)(PMP_DATA + 1u)) == 0xbeu &&
-               !cpu->io.pmp.active,
+    expect(state, dspic33_pmp_respond(cpu, 0x1234u, 0u), "queue 16-bit master response");
+    expect(state, dspic33_read_byte(cpu, (uint16_t)(PMP_DATA + 1u)) == 0xbeu && !cpu->io.pmp.active,
            "16-bit high-byte read does not initiate master access");
     expect(state,
            dspic33_read_word(cpu, PMP_DATA) == 0xbeefu && cpu->io.pmp.active &&
@@ -525,28 +493,21 @@ static void master_read_matrix_cases(TestState* state, Dspic33* cpu) {
         uint16_t previous;
         dspic33_reset(cpu, 0u);
         configure_pmp_read(cpu, current->control, current->mode, 0x2468u, 0x5aa5u);
-        expect(state, dspic33_pmp_respond(cpu, 0xab5cu, 0u),
-               "queue master read matrix response");
+        expect(state, dspic33_pmp_respond(cpu, 0xab5cu, 0u), "queue master read matrix response");
         previous = dspic33_read_word(cpu, PMP_DATA);
-        expect(
-            state,
-            previous == 0x5aa5u && cpu->io.pmp.active && cpu->io.pmp.reading &&
-                ((dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) != 0u) ==
-                    (current->cycles > 1u),
-            "master read matrix returns prior value and starts with documented BUSY");
+        expect(state,
+               previous == 0x5aa5u && cpu->io.pmp.active && cpu->io.pmp.reading &&
+                   ((dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) != 0u) == (current->cycles > 1u),
+               "master read matrix returns prior value and starts with documented BUSY");
         expect(state, dspic33_device_advance(cpu, current->cycles - 1u),
                "advance master read matrix before completion");
         expect(state,
-               (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) == 0u &&
-                   !cpu->io.pmp.last_read_valid,
+               (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) == 0u && !cpu->io.pmp.last_read_valid,
                "master read matrix clears BUSY on its final cycle");
-        expect(state, dspic33_device_advance(cpu, 1u),
-               "advance master read matrix completion");
+        expect(state, dspic33_device_advance(cpu, 1u), "advance master read matrix completion");
         expect(state,
-               cpu->io.pmp.last_read_valid &&
-                   cpu->io.pmp.last_read.address == 0x2468u &&
-                   cpu->io.pmp.last_read.control ==
-                       (uint16_t)(current->control | PMP_ENABLE) &&
+               cpu->io.pmp.last_read_valid && cpu->io.pmp.last_read.address == 0x2468u &&
+                   cpu->io.pmp.last_read.control == (uint16_t)(current->control | PMP_ENABLE) &&
                    cpu->io.pmp.last_read.mode == current->mode &&
                    cpu->io.pmp.last_read.value == current->expected_value &&
                    cpu->io.pmp.last_read.width == current->width &&
@@ -563,8 +524,7 @@ static void read_wait_state_matrix_cases(TestState* state, Dspic33* cpu) {
         {PMP_PARTIAL_MUX, 0x00c7u | PMP_MASTER_MODE_2, 0x005cu, 1u, 13u},
         {PMP_FULL_MUX, 0x00c7u | PMP_MASTER_MODE_2, 0x005cu, 1u, 17u},
         {0u, 0x00c7u | PMP_DATA_16_BIT | PMP_MASTER_MODE_3, 0xab5cu, 2u, 18u},
-        {PMP_PARTIAL_MUX, 0x00c7u | PMP_DATA_16_BIT | PMP_MASTER_MODE_3, 0xab5cu, 2u,
-         22u},
+        {PMP_PARTIAL_MUX, 0x00c7u | PMP_DATA_16_BIT | PMP_MASTER_MODE_3, 0xab5cu, 2u, 22u},
         {PMP_FULL_MUX, 0x00c7u | PMP_DATA_16_BIT | PMP_MASTER_MODE_3, 0xab5cu, 2u, 26u},
     };
     size_t index;
@@ -572,14 +532,12 @@ static void read_wait_state_matrix_cases(TestState* state, Dspic33* cpu) {
         const PmpMasterReadCase* current = &cases[index];
         dspic33_reset(cpu, 0u);
         configure_pmp_read(cpu, current->control, current->mode, 0x1357u, 0u);
-        expect(state, dspic33_pmp_respond(cpu, 0xab5cu, 0u),
-               "queue wait-state read response");
+        expect(state, dspic33_pmp_respond(cpu, 0xab5cu, 0u), "queue wait-state read response");
         dspic33_read_word(cpu, PMP_DATA);
         expect(state, dspic33_device_advance(cpu, current->cycles - 1u),
                "advance read wait-state matrix before completion");
         expect(state,
-               (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) == 0u &&
-                   !cpu->io.pmp.last_read_valid,
+               (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) == 0u && !cpu->io.pmp.last_read_valid,
                "read wait-state matrix clears BUSY before completion");
         expect(state,
                dspic33_device_advance(cpu, 1u) &&
@@ -611,12 +569,10 @@ static void read_address_update_cases(TestState* state, Dspic33* cpu) {
         configure_pmp_read(cpu, cases[index].control,
                            (uint16_t)(PMP_MASTER_MODE_2 | cases[index].mode | 0x0004u),
                            cases[index].initial, 0u);
-        expect(state, dspic33_pmp_respond(cpu, 0x006au, 0u),
-               "queue read address response");
+        expect(state, dspic33_pmp_respond(cpu, 0x006au, 0u), "queue read address response");
         dspic33_read_byte(cpu, PMP_DATA);
         expect(state,
-               cpu->io.pmp.active &&
-                   dspic33_read_word(cpu, PMP_ADDRESS) == cases[index].initial,
+               cpu->io.pmp.active && dspic33_read_word(cpu, PMP_ADDRESS) == cases[index].initial,
                "read address remains stable while BUSY");
         expect(state, dspic33_device_advance(cpu, 2u),
                "advance read address to BUSY-clear boundary");
@@ -649,10 +605,8 @@ static void read_address_update_cases(TestState* state, Dspic33* cpu) {
 static void read_interrupt_dma_cases(TestState* state, Dspic33* cpu) {
     uint16_t index;
     dspic33_reset(cpu, 0u);
-    configure_pmp_read(cpu, 0u, (uint16_t)(PMP_INTERRUPT_EACH | PMP_MASTER_MODE_2), 0u,
-                       0u);
-    expect(state, dspic33_pmp_respond(cpu, 0x0044u, 0u),
-           "queue interrupting read response");
+    configure_pmp_read(cpu, 0u, (uint16_t)(PMP_INTERRUPT_EACH | PMP_MASTER_MODE_2), 0u, 0u);
+    expect(state, dspic33_pmp_respond(cpu, 0x0044u, 0u), "queue interrupting read response");
     dspic33_read_byte(cpu, PMP_DATA);
     expect(state, dspic33_device_advance(cpu, 1u), "complete interrupting PMP read");
     expect(state,
@@ -661,19 +615,17 @@ static void read_interrupt_dma_cases(TestState* state, Dspic33* cpu) {
            "master read completion raises PMPIF without transmit output");
 
     dspic33_reset(cpu, 0u);
-    configure_pmp_read(cpu, 0u,
-                       (uint16_t)(PMP_INTERRUPT_EACH | PMP_DATA_16_BIT |
-                                  PMP_MASTER_MODE_2 | PMP_INCREMENT),
-                       0u, 0u);
+    configure_pmp_read(
+        cpu, 0u,
+        (uint16_t)(PMP_INTERRUPT_EACH | PMP_DATA_16_BIT | PMP_MASTER_MODE_2 | PMP_INCREMENT), 0u,
+        0u);
     for (index = 0u; index < 4u; index++) {
         expect(state, dspic33_pmp_respond(cpu, (uint16_t)(0x1100u + index), 0u),
                "queue DMA read response");
     }
     configure_dma_read(cpu, 0u, PMP_DMA_REQUEST, 0x4000u, PMP_DATA, 2u);
-    expect(state, dspic33_read_word(cpu, PMP_DATA) == 0u,
-           "dummy read starts DMA response chain");
-    expect(state, dspic33_device_advance(cpu, 12u),
-           "advance complete PMP read DMA chain");
+    expect(state, dspic33_read_word(cpu, PMP_DATA) == 0u, "dummy read starts DMA response chain");
+    expect(state, dspic33_device_advance(cpu, 12u), "advance complete PMP read DMA chain");
     expect(state,
            dspic33_read_word(cpu, 0x4000u) == 0x1100u &&
                dspic33_read_word(cpu, 0x4002u) == 0x1101u &&
@@ -682,8 +634,7 @@ static void read_interrupt_dma_cases(TestState* state, Dspic33* cpu) {
     expect(state,
            (dspic33_read_word(cpu, 0x0b00u) & 0x8000u) == 0u &&
                (dspic33_read_word(cpu, 0x0800u) & 0x0010u) != 0u &&
-               dspic33_read_word(cpu, PMP_ADDRESS) == 4u &&
-               cpu->io.pmp.input.count == 0u,
+               dspic33_read_word(cpu, PMP_ADDRESS) == 4u && cpu->io.pmp.input.count == 0u,
            "DMA completion leaves one documented pipelined PMP read");
 }
 
@@ -697,8 +648,8 @@ static void read_lifecycle_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     configure_pmp_read(cpu, 0u, (uint16_t)(PMP_MASTER_MODE_2 | 0x0004u), 0x3456u, 0u);
     expect(state,
-           dspic33_pmp_respond(cpu, 0xa55au, 0u) &&
-               dspic33_read_word(cpu, PMP_DATA) == 0u && dspic33_copy(&copy, cpu),
+           dspic33_pmp_respond(cpu, 0xa55au, 0u) && dspic33_read_word(cpu, PMP_DATA) == 0u &&
+               dspic33_copy(&copy, cpu),
            "copy active PMP read and response");
     expect(state,
            copy.io.pmp.active && copy.io.pmp.reading && copy.io.pmp.input.count == 1u &&
@@ -706,14 +657,12 @@ static void read_lifecycle_cases(TestState* state, Dspic33* cpu) {
            "copy retains active PMP read state");
     expect(state,
            dspic33_device_advance(cpu, 3u) && dspic33_device_advance(&copy, 3u) &&
-               cpu->io.pmp.last_read.value == 0x005au &&
-               copy.io.pmp.last_read.value == 0x005au,
+               cpu->io.pmp.last_read.value == 0x005au && copy.io.pmp.last_read.value == 0x005au,
            "copied PMP reads complete independently");
 
     dspic33_reset(cpu, 0u);
     configure_pmp_read(cpu, 0u, (uint16_t)(PMP_MASTER_MODE_2 | 0x0004u), 0u, 0u);
-    expect(state, dspic33_pmp_respond(cpu, 0x7788u, 0u),
-           "queue disabled PMP read response");
+    expect(state, dspic33_pmp_respond(cpu, 0x7788u, 0u), "queue disabled PMP read response");
     dspic33_read_word(cpu, PMP_DATA);
     dspic33_write_word(cpu, PMP_CONTROL, 0u);
     expect(state,
@@ -723,15 +672,12 @@ static void read_lifecycle_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_device_advance(cpu, 3u) && !cpu->io.pmp.last_read_valid,
            "stale PMP read event produces no result");
 
-    expect(state, dspic33_pmp_respond(cpu, 0x1122u, 5u),
-           "queue response before processor reset");
+    expect(state, dspic33_pmp_respond(cpu, 0x1122u, 5u), "queue response before processor reset");
     dspic33_reset(cpu, 0u);
-    expect(state, cpu->io.pmp.input.count == 0u,
-           "processor reset clears queued PMP responses");
+    expect(state, cpu->io.pmp.input.count == 0u, "processor reset clears queued PMP responses");
 
     cpu->io.pmp.input.count = DSPIC33_PMP_QUEUE_SIZE;
-    expect(state, !dspic33_pmp_respond(cpu, 0x3344u, 0u),
-           "full PMP response queue rejects input");
+    expect(state, !dspic33_pmp_respond(cpu, 0x3344u, 0u), "full PMP response queue rejects input");
     cpu->io.pmp.input.count = 0u;
     cpu->device_cycles = UINT64_MAX;
     expect(state, !dspic33_pmp_respond(cpu, 0x5566u, 1u),
@@ -740,8 +686,7 @@ static void read_lifecycle_cases(TestState* state, Dspic33* cpu) {
     configure_pmp_read(cpu, 0u, PMP_MASTER_MODE_2, 0u, 0x99aau);
     expect(state,
            dspic33_read_word(cpu, PMP_DATA) == 0x99aau && !cpu->io.pmp.active &&
-               cpu->events.count == 0u &&
-               (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) == 0u,
+               cpu->events.count == 0u && (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) == 0u,
            "PMP read scheduling overflow rolls back transfer");
     dspic33_release(&copy);
 }
@@ -754,8 +699,7 @@ static void interrupt_cases(TestState* state, Dspic33* cpu) {
     configure_pmp(cpu, PMP_MASTER_MODE_2, 0u);
     dspic33_write_byte(cpu, PMP_DATA, 0x33u);
     expect(state, dspic33_device_advance(cpu, 1u), "noninterrupting PMP completes");
-    expect(state, dspic33_pmp_transmit(cpu, &transfer),
-           "noninterrupting output captured");
+    expect(state, dspic33_pmp_transmit(cpu, &transfer), "noninterrupting output captured");
     expect(state, (dspic33_read_word(cpu, 0x0804u) & PMP_INTERRUPT_FLAG) == 0u,
            "IRQM zero does not raise PMPIF");
 
@@ -769,10 +713,10 @@ static void interrupt_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     configure_pmp(cpu, (uint16_t)(PMP_INTERRUPT_EACH | PMP_MASTER_MODE_2), 0u);
     dspic33_write_word(cpu, 0x0824u, PMP_INTERRUPT_ENABLE);
-    dspic33_write_word(cpu, priority_address,
-                       (uint16_t)((dspic33_read_word(cpu, priority_address) &
-                                   ~(7u << priority_shift)) |
-                                  (PMP_PRIORITY << priority_shift)));
+    dspic33_write_word(
+        cpu, priority_address,
+        (uint16_t)((dspic33_read_word(cpu, priority_address) & ~(7u << priority_shift)) |
+                   (PMP_PRIORITY << priority_shift)));
     cpu->program[(0x0014u + PMP_IRQ * 2u) / 2u] = PMP_VECTOR;
     cpu->w[15] = 0x1800u;
     dspic33_write_byte(cpu, PMP_DATA, 0x45u);
@@ -794,8 +738,7 @@ static void dma_chain_cases(TestState* state, Dspic33* cpu) {
     configure_pmp(cpu, PMP_FIRMWARE_MODE, 0u);
     configure_dma(cpu, PMP_DMA_CHANNEL, PMP_DMA_REQUEST, PMP_DMA_SOURCE, PMP_DATA,
                   PMP_TRANSFER_COUNT - 1u);
-    dspic33_write_word(cpu, (uint16_t)(PMP_DMA_BASE + 2u),
-                       (uint16_t)(0x8000u | PMP_DMA_REQUEST));
+    dspic33_write_word(cpu, (uint16_t)(PMP_DMA_BASE + 2u), (uint16_t)(0x8000u | PMP_DMA_REQUEST));
     expect(state, dspic33_device_advance(cpu, PMP_TRANSFER_COUNT * 23u),
            "advance complete display DMA chain");
     expect(state, cpu->io.pmp.output.count == PMP_TRANSFER_COUNT,
@@ -828,8 +771,7 @@ static void dma_negative_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0b02u, (uint16_t)(0x8000u | PMP_DMA_REQUEST));
     expect(state, dspic33_device_advance(cpu, 100u), "advance alternate DMA channel");
     for (value = 0u; value < 4u; value++) {
-        if (!dspic33_pmp_transmit(cpu, &transfer) ||
-            transfer.value != (uint8_t)(0xa0u + value)) {
+        if (!dspic33_pmp_transmit(cpu, &transfer) || transfer.value != (uint8_t)(0xa0u + value)) {
             break;
         }
     }
@@ -853,8 +795,7 @@ static void dma_negative_cases(TestState* state, Dspic33* cpu) {
     configure_dma(cpu, 0u, PMP_DMA_REQUEST, 0x4000u, (uint16_t)(PMP_DATA + 2u), 0u);
     dspic33_write_word(cpu, 0x0b02u, (uint16_t)(0x8000u | PMP_DMA_REQUEST));
     expect(state, dspic33_device_advance(cpu, 30u), "advance wrong PAD transfer");
-    expect(state, !dspic33_pmp_transmit(cpu, &transfer),
-           "wrong PAD does not start PMP");
+    expect(state, !dspic33_pmp_transmit(cpu, &transfer), "wrong PAD does not start PMP");
 
     dspic33_reset(cpu, 0u);
     dspic33_write_byte(cpu, 0x4000u, 0x71u);
@@ -883,11 +824,9 @@ static void lifecycle_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_byte(cpu, PMP_DATA, 0x81u);
     expect(state, dspic33_device_advance(cpu, 1u), "begin copied PMP transfer");
     expect(state, dspic33_copy(&copy, cpu), "copy active PMP");
-    expect(state,
-           copy.io.pmp.active && copy.io.pmp.value == 0x81u && copy.events.count == 2u,
+    expect(state, copy.io.pmp.active && copy.io.pmp.value == 0x81u && copy.events.count == 2u,
            "copy retains PMP event state");
-    expect(state,
-           dspic33_device_advance(cpu, 20u) && dspic33_device_advance(&copy, 20u),
+    expect(state, dspic33_device_advance(cpu, 20u) && dspic33_device_advance(&copy, 20u),
            "complete source and copied PMP");
     expect(state,
            dspic33_pmp_transmit(cpu, &original_transfer) &&
@@ -900,8 +839,7 @@ static void lifecycle_cases(TestState* state, Dspic33* cpu) {
     configure_pmp(cpu, PMP_FIRMWARE_MODE, 0u);
     dspic33_write_byte(cpu, PMP_DATA, 0x91u);
     dspic33_write_word(cpu, PMP_CONTROL, 0u);
-    expect(state,
-           !cpu->io.pmp.active && (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) == 0u,
+    expect(state, !cpu->io.pmp.active && (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) == 0u,
            "PMP disable aborts active transfer");
     expect(state, dspic33_device_advance(cpu, 21u), "advance stale PMP event");
     expect(state, !dspic33_pmp_transmit(cpu, &original_transfer),
@@ -930,12 +868,9 @@ static void legacy_slave_cases(TestState* state, Dspic33* cpu) {
     Dspic33PmpTransfer transfer;
     dspic33_reset(cpu, 0u);
     configure_pmp_slave(cpu, 0u, 0u);
-    expect(state, dspic33_read_word(cpu, PMP_STATUS) == 0x008fu,
-           "legacy slave begins empty");
-    expect(state, dspic33_pmp_slave_write(cpu, 3u, 0x5au, 2u),
-           "schedule legacy slave write");
-    expect(state,
-           dspic33_device_advance(cpu, 1u) && dspic33_read_byte(cpu, PMP_DATA) == 0u,
+    expect(state, dspic33_read_word(cpu, PMP_STATUS) == 0x008fu, "legacy slave begins empty");
+    expect(state, dspic33_pmp_slave_write(cpu, 3u, 0x5au, 2u), "schedule legacy slave write");
+    expect(state, dspic33_device_advance(cpu, 1u) && dspic33_read_byte(cpu, PMP_DATA) == 0u,
            "legacy slave write waits for external deadline");
     expect(state,
            dspic33_device_advance(cpu, 1u) && cpu->data[PMP_DATA] == 0x5au &&
@@ -943,11 +878,9 @@ static void legacy_slave_cases(TestState* state, Dspic33* cpu) {
                (dspic33_read_word(cpu, 0x0804u) & PMP_INTERRUPT_FLAG) != 0u,
            "legacy slave write captures low byte and interrupts");
     dspic33_write_word(cpu, 0x0804u, 0u);
-    expect(state, dspic33_pmp_slave_write(cpu, 0u, 0x61u, 0u),
-           "schedule unread legacy overflow");
+    expect(state, dspic33_pmp_slave_write(cpu, 0u, 0x61u, 0u), "schedule unread legacy overflow");
     expect(state,
-           dspic33_device_advance(cpu, 0u) &&
-               dspic33_read_word(cpu, PMP_STATUS) == 0xc08fu &&
+           dspic33_device_advance(cpu, 0u) && dspic33_read_word(cpu, PMP_STATUS) == 0xc08fu &&
                cpu->data[PMP_DATA] == 0x5au,
            "legacy slave rejects unread overwrite");
     dspic33_write_word(cpu, PMP_STATUS, 0u);
@@ -964,8 +897,8 @@ static void legacy_slave_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_pmp_slave_read(cpu, 2u, 1u), "schedule legacy slave read");
     expect(state,
            dspic33_device_advance(cpu, 1u) && dspic33_pmp_transmit(cpu, &transfer) &&
-               transfer.address == 0u && transfer.value == 0xa5u &&
-               transfer.width == 1u && dspic33_read_word(cpu, PMP_STATUS) == 0x008fu,
+               transfer.address == 0u && transfer.value == 0xa5u && transfer.width == 1u &&
+               dspic33_read_word(cpu, PMP_STATUS) == 0x008fu,
            "legacy slave read transmits low output and marks empty");
     expect(state,
            dspic33_pmp_slave_read(cpu, 0u, 0u) && dspic33_device_advance(cpu, 0u) &&
@@ -983,19 +916,16 @@ static void legacy_slave_cases(TestState* state, Dspic33* cpu) {
     configure_pmp_slave(cpu, 0u, 0u);
     dspic33_write_word(cpu, PMP_ADDRESS_ENABLE, PMP_ADDRESS_INPUT_ENABLE);
     expect(state,
-           dspic33_pmp_slave_write(cpu, 0u, 0x11u, 0u) &&
-               dspic33_device_advance(cpu, 0u) && cpu->data[PMP_DATA] == 0u,
+           dspic33_pmp_slave_write(cpu, 0u, 0x11u, 0u) && dspic33_device_advance(cpu, 0u) &&
+               cpu->data[PMP_DATA] == 0u,
            "disabled slave chip select rejects write");
     dspic33_write_word(cpu, PMP_ADDRESS_ENABLE, PMP_CHIP_SELECT_ENABLE);
-    dspic33_write_word(cpu, PMP_CONTROL,
-                       (uint16_t)(PMP_ENABLE | PMP_READ_STROBE_ENABLE));
+    dspic33_write_word(cpu, PMP_CONTROL, (uint16_t)(PMP_ENABLE | PMP_READ_STROBE_ENABLE));
     expect(state,
-           dspic33_pmp_slave_write(cpu, 0u, 0x22u, 0u) &&
-               dspic33_device_advance(cpu, 0u) && cpu->data[PMP_DATA] == 0u,
+           dspic33_pmp_slave_write(cpu, 0u, 0x22u, 0u) && dspic33_device_advance(cpu, 0u) &&
+               cpu->data[PMP_DATA] == 0u,
            "disabled slave write strobe rejects write");
-    expect(state,
-           !dspic33_pmp_slave_read(cpu, 4u, 0u) &&
-               !dspic33_pmp_slave_write(cpu, 4u, 0u, 0u),
+    expect(state, !dspic33_pmp_slave_read(cpu, 4u, 0u) && !dspic33_pmp_slave_write(cpu, 4u, 0u, 0u),
            "slave API rejects unavailable address lines");
 }
 
@@ -1021,8 +951,7 @@ static void buffered_slave_cases(TestState* state, Dspic33* cpu) {
                        (uint16_t)((1u << (index + 1u)) - 1u),
                "buffered slave read advances output pointer and empty flags");
         expect(state,
-               ((dspic33_read_word(cpu, 0x0804u) & PMP_INTERRUPT_FLAG) != 0u) ==
-                   (index == 3u),
+               ((dspic33_read_word(cpu, 0x0804u) & PMP_INTERRUPT_FLAG) != 0u) == (index == 3u),
                "buffered last-slot interrupt mode selects buffer three");
     }
     expect(state, dspic33_read_word(cpu, PMP_STATUS) == 0x008fu,
@@ -1035,8 +964,8 @@ static void buffered_slave_cases(TestState* state, Dspic33* cpu) {
            "buffered read pointer wraps and reports underflow");
     dspic33_write_byte(cpu, PMP_ADDRESS, 0xa1u);
     expect(state,
-           (dspic33_read_word(cpu, PMP_STATUS) &
-            (PMP_OUTPUT_EMPTY | PMP_OUTPUT_BUFFER_MASK)) == 0x000eu,
+           (dspic33_read_word(cpu, PMP_STATUS) & (PMP_OUTPUT_EMPTY | PMP_OUTPUT_BUFFER_MASK)) ==
+               0x000eu,
            "buffered byte refill clears one empty flag and aggregate");
 
     dspic33_write_word(cpu, 0x0804u, 0u);
@@ -1052,20 +981,20 @@ static void buffered_slave_cases(TestState* state, Dspic33* cpu) {
                "buffered slave write advances input pointer and full flags");
     }
     expect(state,
-           (dspic33_read_word(cpu, PMP_STATUS) &
-            (PMP_INPUT_FULL | PMP_INTERRUPT_FLAG)) == PMP_INPUT_FULL &&
+           (dspic33_read_word(cpu, PMP_STATUS) & (PMP_INPUT_FULL | PMP_INTERRUPT_FLAG)) ==
+                   PMP_INPUT_FULL &&
                (dspic33_read_word(cpu, 0x0804u) & PMP_INTERRUPT_FLAG) != 0u,
            "buffered fourth write raises aggregate full and interrupt");
     expect(state,
-           dspic33_pmp_slave_write(cpu, 0u, 0x99u, 0u) &&
-               dspic33_device_advance(cpu, 0u) && cpu->data[PMP_DATA] == 0x51u &&
+           dspic33_pmp_slave_write(cpu, 0u, 0x99u, 0u) && dspic33_device_advance(cpu, 0u) &&
+               cpu->data[PMP_DATA] == 0x51u &&
                (dspic33_read_word(cpu, PMP_STATUS) & PMP_INPUT_OVERFLOW) != 0u,
            "buffered full write wraps discards data and raises overflow");
     expect(state,
            dspic33_read_word(cpu, PMP_DATA) == 0x5251u &&
                dspic33_read_word(cpu, PMP_INPUT_2) == 0x5453u &&
-               (dspic33_read_word(cpu, PMP_STATUS) &
-                (PMP_INPUT_FULL | PMP_INPUT_BUFFER_MASK)) == 0u,
+               (dspic33_read_word(cpu, PMP_STATUS) & (PMP_INPUT_FULL | PMP_INPUT_BUFFER_MASK)) ==
+                   0u,
            "buffered word reads drain all input status bits");
 }
 
@@ -1075,18 +1004,16 @@ static void addressable_slave_cases(TestState* state, Dspic33* cpu) {
     Dspic33PmpTransfer transfer;
     uint8_t index;
     dspic33_reset(cpu, 0u);
-    configure_pmp_slave(cpu, 0u,
-                        (uint16_t)(PMP_SLAVE_ADDRESSABLE | PMP_INTERRUPT_EACH));
+    configure_pmp_slave(cpu, 0u, (uint16_t)(PMP_SLAVE_ADDRESSABLE | PMP_INTERRUPT_EACH));
     dspic33_write_word(cpu, PMP_ADDRESS, 0x2110u);
     dspic33_write_word(cpu, PMP_OUTPUT_2, 0x4332u);
     for (index = 0u; index < 4u; index++) {
         uint8_t address = order[index];
         dspic33_write_word(cpu, 0x0804u, 0u);
         expect(state,
-               dspic33_pmp_slave_read(cpu, address, 0u) &&
-                   dspic33_device_advance(cpu, 0u) &&
-                   dspic33_pmp_transmit(cpu, &transfer) &&
-                   transfer.address == address && transfer.value == outputs[address],
+               dspic33_pmp_slave_read(cpu, address, 0u) && dspic33_device_advance(cpu, 0u) &&
+                   dspic33_pmp_transmit(cpu, &transfer) && transfer.address == address &&
+                   transfer.value == outputs[address],
                "addressable slave read selects requested output byte");
         expect(state,
                (dspic33_read_word(cpu, PMP_STATUS) & (uint16_t)(1u << address)) != 0u &&
@@ -1094,8 +1021,7 @@ static void addressable_slave_cases(TestState* state, Dspic33* cpu) {
                "addressable read sets selected empty bit and each interrupt");
     }
     expect(state,
-           (dspic33_read_word(cpu, PMP_STATUS) &
-            (PMP_OUTPUT_EMPTY | PMP_OUTPUT_BUFFER_MASK)) ==
+           (dspic33_read_word(cpu, PMP_STATUS) & (PMP_OUTPUT_EMPTY | PMP_OUTPUT_BUFFER_MASK)) ==
                (PMP_OUTPUT_EMPTY | PMP_OUTPUT_BUFFER_MASK),
            "addressable reads derive aggregate empty");
     for (index = 0u; index < 4u; index++) {
@@ -1104,32 +1030,30 @@ static void addressable_slave_cases(TestState* state, Dspic33* cpu) {
                dspic33_pmp_slave_write(cpu, address, (uint8_t)(0x80u + address), 0u) &&
                    dspic33_device_advance(cpu, 0u) &&
                    cpu->data[PMP_DATA + address] == (uint8_t)(0x80u + address) &&
-                   (dspic33_read_word(cpu, PMP_STATUS) &
-                    (uint16_t)(1u << (8u + address))) != 0u,
+                   (dspic33_read_word(cpu, PMP_STATUS) & (uint16_t)(1u << (8u + address))) != 0u,
                "addressable slave write selects requested input byte");
     }
     expect(state,
-           (dspic33_read_word(cpu, PMP_STATUS) &
-            (PMP_INPUT_FULL | PMP_INPUT_BUFFER_MASK)) ==
+           (dspic33_read_word(cpu, PMP_STATUS) & (PMP_INPUT_FULL | PMP_INPUT_BUFFER_MASK)) ==
                (PMP_INPUT_FULL | PMP_INPUT_BUFFER_MASK),
            "addressable writes derive aggregate full");
     expect(state,
-           dspic33_pmp_slave_write(cpu, 2u, 0xeeu, 0u) &&
-               dspic33_device_advance(cpu, 0u) && cpu->data[PMP_DATA + 2u] == 0x82u &&
+           dspic33_pmp_slave_write(cpu, 2u, 0xeeu, 0u) && dspic33_device_advance(cpu, 0u) &&
+               cpu->data[PMP_DATA + 2u] == 0x82u &&
                (dspic33_read_word(cpu, PMP_STATUS) & PMP_INPUT_OVERFLOW) != 0u,
            "addressable full slot rejects overwrite");
     expect(state,
            dspic33_read_byte(cpu, PMP_DATA + 2u) == 0x82u &&
-               (dspic33_read_word(cpu, PMP_STATUS) &
-                (PMP_INPUT_FULL | (uint16_t)(1u << 10u))) == 0u,
+               (dspic33_read_word(cpu, PMP_STATUS) & (PMP_INPUT_FULL | (uint16_t)(1u << 10u))) ==
+                   0u,
            "addressable input byte read clears selected and aggregate full");
 
     dspic33_reset(cpu, 0u);
     configure_pmp_slave(cpu, 0u, PMP_SLAVE_ADDRESSABLE);
     dspic33_write_word(cpu, PMP_ADDRESS_ENABLE, PMP_CHIP_SELECT_ENABLE);
     expect(state,
-           dspic33_pmp_slave_write(cpu, 3u, 0x77u, 0u) &&
-               dspic33_device_advance(cpu, 0u) && cpu->data[PMP_DATA + 3u] == 0u,
+           dspic33_pmp_slave_write(cpu, 3u, 0x77u, 0u) && dspic33_device_advance(cpu, 0u) &&
+               cpu->data[PMP_DATA + 3u] == 0u,
            "addressable slave requires both address input enables");
 }
 
@@ -1142,8 +1066,7 @@ static void power_management_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_device_advance(cpu, 5u), "advance master before Sleep");
     cpu->power_state = DSPIC33_POWER_SLEEP;
     dspic33_device_power_state_changed(cpu);
-    expect(state,
-           cpu->io.pmp.active && (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) != 0u,
+    expect(state, cpu->io.pmp.active && (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) != 0u,
            "Sleep preserves active master state");
     expect(state,
            dspic33_device_advance(cpu, 100u) && !dspic33_pmp_transmit(cpu, &transfer) &&
@@ -1162,8 +1085,7 @@ static void power_management_cases(TestState* state, Dspic33* cpu) {
            "wake completes master after retained remaining delay");
 
     dspic33_reset(cpu, 0u);
-    configure_pmp_control(cpu, PMP_STOP_IDLE, (uint16_t)(PMP_MASTER_MODE_2 | 0x0004u),
-                          0u);
+    configure_pmp_control(cpu, PMP_STOP_IDLE, (uint16_t)(PMP_MASTER_MODE_2 | 0x0004u), 0u);
     dspic33_write_byte(cpu, PMP_DATA, 0x62u);
     cpu->power_state = DSPIC33_POWER_IDLE;
     dspic33_device_power_state_changed(cpu);
@@ -1194,8 +1116,7 @@ static void power_management_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_device_advance(cpu, 4u), "advance master before PMD");
     address = dspic33_read_word(cpu, PMP_ADDRESS);
     dspic33_write_word(cpu, PMP_PMD, PMP_MODULE_DISABLE);
-    expect(state,
-           !cpu->io.pmp.pmd_disabled && dspic33_read_word(cpu, PMP_ADDRESS) == address,
+    expect(state, !cpu->io.pmp.pmd_disabled && dspic33_read_word(cpu, PMP_ADDRESS) == address,
            "PMPMD write retains one-cycle access window");
     expect(state,
            dspic33_device_advance(cpu, 1u) && cpu->io.pmp.pmd_disabled &&
@@ -1204,8 +1125,8 @@ static void power_management_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, PMP_ADDRESS, 0x7777u);
     expect(state,
            dspic33_read_word(cpu, PMP_ADDRESS) == 0u &&
-               (uint16_t)(cpu->data[PMP_ADDRESS] |
-                          ((uint16_t)cpu->data[PMP_ADDRESS + 1u] << 8u)) == address,
+               (uint16_t)(cpu->data[PMP_ADDRESS] | ((uint16_t)cpu->data[PMP_ADDRESS + 1u] << 8u)) ==
+                   address,
            "PMPMD rejects hidden register writes");
     expect(state,
            dspic33_device_advance(cpu, 100u) && !dspic33_pmp_transmit(cpu, &transfer) &&
@@ -1234,8 +1155,7 @@ static void power_management_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, PMP_PMD, PMP_MODULE_DISABLE);
     expect(state,
            (dspic33_read_word(cpu, PMP_PMD) & PMP_MODULE_DISABLE) == 0u &&
-               !cpu->io.pmp.pmd_disabled &&
-               cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR,
+               !cpu->io.pmp.pmd_disabled && cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR,
            "PMP PMD scheduling failure rolls back request");
 }
 
@@ -1253,20 +1173,18 @@ static void slave_power_lifecycle_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     configure_pmp_slave(cpu, PMP_STOP_IDLE, 0u);
     dspic33_write_word(cpu, 0x0824u, PMP_INTERRUPT_ENABLE);
-    dspic33_write_word(cpu, priority_address,
-                       (uint16_t)((dspic33_read_word(cpu, priority_address) &
-                                   ~(7u << priority_shift)) |
-                                  (PMP_PRIORITY << priority_shift)));
+    dspic33_write_word(
+        cpu, priority_address,
+        (uint16_t)((dspic33_read_word(cpu, priority_address) & ~(7u << priority_shift)) |
+                   (PMP_PRIORITY << priority_shift)));
     cpu->program[(0x0014u + PMP_IRQ * 2u) / 2u] = PMP_VECTOR;
     cpu->w[15] = 0x1800u;
     cpu->power_state = DSPIC33_POWER_SLEEP;
     dspic33_device_power_state_changed(cpu);
-    expect(state, dspic33_pmp_slave_write(cpu, 0u, 0x71u, 2u),
-           "schedule sleeping slave write");
+    expect(state, dspic33_pmp_slave_write(cpu, 0u, 0x71u, 2u), "schedule sleeping slave write");
     expect(state,
            dspic33_device_advance(cpu, 2u) && cpu->data[PMP_DATA] == 0x71u &&
-               dspic33_device_wake(cpu) && cpu->last_interrupt == PMP_IRQ &&
-               cpu->pc == PMP_VECTOR,
+               dspic33_device_wake(cpu) && cpu->last_interrupt == PMP_IRQ && cpu->pc == PMP_VECTOR,
            "slave write completes and wakes from Sleep");
 
     dspic33_reset(cpu, 0u);
@@ -1282,35 +1200,32 @@ static void slave_power_lifecycle_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     configure_pmp_slave(cpu, 0u, PMP_SLAVE_ADDRESSABLE);
     expect(state,
-           dspic33_pmp_slave_write(cpu, 2u, 0x81u, 3u) &&
-               dspic33_pmp_slave_read(cpu, 1u, 4u) && dspic33_copy(&copy, cpu),
+           dspic33_pmp_slave_write(cpu, 2u, 0x81u, 3u) && dspic33_pmp_slave_read(cpu, 1u, 4u) &&
+               dspic33_copy(&copy, cpu),
            "copy pending slave transactions");
     dspic33_write_byte(cpu, PMP_ADDRESS + 1u, 0x91u);
     dspic33_write_byte(&copy, PMP_ADDRESS + 1u, 0xa1u);
     expect(state,
            dspic33_device_advance(cpu, 4u) && dspic33_device_advance(&copy, 4u) &&
                cpu->data[PMP_DATA + 2u] == 0x81u && copy.data[PMP_DATA + 2u] == 0x81u &&
-               dspic33_pmp_transmit(cpu, &original) &&
-               dspic33_pmp_transmit(&copy, &cloned) && original.value == 0x91u &&
-               cloned.value == 0xa1u,
+               dspic33_pmp_transmit(cpu, &original) && dspic33_pmp_transmit(&copy, &cloned) &&
+               original.value == 0x91u && cloned.value == 0xa1u,
            "copied slave events complete independently");
 
     dspic33_reset(cpu, 0u);
     configure_pmp_slave(cpu, 0u, 0u);
-    expect(state, dspic33_pmp_slave_write(cpu, 0u, 0x82u, 5u),
-           "schedule slave write before reset");
+    expect(state, dspic33_pmp_slave_write(cpu, 0u, 0x82u, 5u), "schedule slave write before reset");
     dspic33_reset(cpu, 0u);
     expect(state,
-           dspic33_device_advance(cpu, 5u) && cpu->data[PMP_DATA] == 0u &&
-               cpu->events.count == 0u,
+           dspic33_device_advance(cpu, 5u) && cpu->data[PMP_DATA] == 0u && cpu->events.count == 0u,
            "reset cancels slave transaction and restores state");
 
     configure_pmp_slave(cpu, 0u, 0u);
     dspic33_write_word(cpu, PMP_PMD, PMP_MODULE_DISABLE);
     expect(state, dspic33_device_advance(cpu, 1u), "disable PMP before slave event");
     expect(state,
-           dspic33_pmp_slave_write(cpu, 0u, 0x83u, 1u) &&
-               dspic33_device_advance(cpu, 1u) && cpu->data[PMP_DATA] == 0u,
+           dspic33_pmp_slave_write(cpu, 0u, 0x83u, 1u) && dspic33_device_advance(cpu, 1u) &&
+               cpu->data[PMP_DATA] == 0u,
            "PMPMD drops external slave event while disabled");
 
     dspic33_reset(cpu, 0u);
@@ -1362,8 +1277,7 @@ static void slave_mode_matrix_cases(TestState* state, Dspic33* cpu) {
                "buffered slave IRQM selects first-slot interrupt");
 
         dspic33_reset(cpu, 0u);
-        configure_pmp_slave(cpu, 0u,
-                            (uint16_t)(PMP_SLAVE_ADDRESSABLE | requests[index]));
+        configure_pmp_slave(cpu, 0u, (uint16_t)(PMP_SLAVE_ADDRESSABLE | requests[index]));
         expect(state,
                dspic33_pmp_slave_write(cpu, 2u, (uint8_t)(0x40u + index), 0u) &&
                    dspic33_device_advance(cpu, 0u) &&
@@ -1374,43 +1288,38 @@ static void slave_mode_matrix_cases(TestState* state, Dspic33* cpu) {
                    (requests[index] == PMP_INTERRUPT_EACH),
                "addressable slave IRQM selects nonfinal address interrupt");
         dspic33_write_word(cpu, 0x0804u, 0u);
-        expect(state,
-               dspic33_pmp_slave_read(cpu, 3u, 0u) && dspic33_device_advance(cpu, 0u),
+        expect(state, dspic33_pmp_slave_read(cpu, 3u, 0u) && dspic33_device_advance(cpu, 0u),
                "addressable slave final-address read completes");
         expect(state,
                ((dspic33_read_word(cpu, 0x0804u) & PMP_INTERRUPT_FLAG) != 0u) ==
-                   (requests[index] == PMP_INTERRUPT_EACH ||
-                    requests[index] == PMP_INTERRUPT_LAST),
+                   (requests[index] == PMP_INTERRUPT_EACH || requests[index] == PMP_INTERRUPT_LAST),
                "addressable slave IRQM selects final address interrupt");
     }
     dspic33_reset(cpu, 0u);
     configure_pmp_slave(cpu, 0u, PMP_INTERRUPT_RESERVED);
     expect(state,
-           dspic33_pmp_slave_write(cpu, 0u, 0x2fu, 0u) &&
-               dspic33_device_advance(cpu, 0u) && cpu->data[PMP_DATA] == 0x2fu,
+           dspic33_pmp_slave_write(cpu, 0u, 0x2fu, 0u) && dspic33_device_advance(cpu, 0u) &&
+               cpu->data[PMP_DATA] == 0x2fu,
            "legacy slave applies deterministic reserved IRQM policy");
     expect(state, (dspic33_read_word(cpu, 0x0804u) & PMP_INTERRUPT_FLAG) != 0u,
            "legacy reserved IRQM policy retains unconditional interrupt");
     dspic33_reset(cpu, 0u);
-    configure_pmp_slave(cpu, 0u,
-                        (uint16_t)(PMP_BUFFERED_SLAVE | PMP_INTERRUPT_RESERVED));
+    configure_pmp_slave(cpu, 0u, (uint16_t)(PMP_BUFFERED_SLAVE | PMP_INTERRUPT_RESERVED));
     expect(state,
-           dspic33_pmp_slave_write(cpu, 0u, 0x3fu, 0u) &&
-               dspic33_device_advance(cpu, 0u) && cpu->data[PMP_DATA] == 0x3fu,
+           dspic33_pmp_slave_write(cpu, 0u, 0x3fu, 0u) && dspic33_device_advance(cpu, 0u) &&
+               cpu->data[PMP_DATA] == 0x3fu,
            "buffered slave applies deterministic reserved IRQM policy");
     expect(state, (dspic33_read_word(cpu, 0x0804u) & PMP_INTERRUPT_FLAG) == 0u,
            "buffered reserved IRQM policy raises no interrupt");
     dspic33_reset(cpu, 0u);
-    configure_pmp_slave(cpu, 0u,
-                        (uint16_t)(PMP_SLAVE_ADDRESSABLE | PMP_INTERRUPT_RESERVED));
+    configure_pmp_slave(cpu, 0u, (uint16_t)(PMP_SLAVE_ADDRESSABLE | PMP_INTERRUPT_RESERVED));
     expect(state,
-           dspic33_pmp_slave_write(cpu, 2u, 0x4fu, 0u) &&
-               dspic33_device_advance(cpu, 0u) && cpu->data[PMP_DATA + 2u] == 0x4fu,
+           dspic33_pmp_slave_write(cpu, 2u, 0x4fu, 0u) && dspic33_device_advance(cpu, 0u) &&
+               cpu->data[PMP_DATA + 2u] == 0x4fu,
            "addressable slave applies deterministic reserved IRQM policy");
     expect(state, (dspic33_read_word(cpu, 0x0804u) & PMP_INTERRUPT_FLAG) == 0u,
            "addressable reserved IRQM write raises no interrupt");
-    expect(state,
-           dspic33_pmp_slave_read(cpu, 3u, 0u) && dspic33_device_advance(cpu, 0u),
+    expect(state, dspic33_pmp_slave_read(cpu, 3u, 0u) && dspic33_device_advance(cpu, 0u),
            "addressable reserved IRQM final read completes");
     expect(state, (dspic33_read_word(cpu, 0x0804u) & PMP_INTERRUPT_FLAG) == 0u,
            "addressable reserved IRQM final read raises no interrupt");
@@ -1448,20 +1357,18 @@ static void slave_dma_isolation_cases(TestState* state, Dspic33* cpu) {
                    dspic33_device_advance(cpu, 0u),
                "slave write completes with waiting PMP DMA channel");
         expect(state,
-               (dspic33_read_word(cpu, 0x0b00u) & 0x8000u) != 0u &&
-                   cpu->io.dma_index[0] == 0u &&
+               (dspic33_read_word(cpu, 0x0b00u) & 0x8000u) != 0u && cpu->io.dma_index[0] == 0u &&
                    cpu->data[PMP_DATA + address] == (uint8_t)(0x60u + index),
                "slave write raises no PMP DMA request");
         dspic33_write_byte(cpu, PMP_ADDRESS + address, (uint8_t)(0x70u + index));
         expect(state,
-               dspic33_pmp_slave_read(cpu, address, 0u) &&
-                   dspic33_device_advance(cpu, 0u) &&
+               dspic33_pmp_slave_read(cpu, address, 0u) && dspic33_device_advance(cpu, 0u) &&
                    dspic33_pmp_transmit(cpu, &transfer) &&
                    transfer.value == (uint8_t)(0x70u + index),
                "slave read completes with waiting PMP DMA channel");
         expect(state,
-               (dspic33_read_word(cpu, 0x0b00u) & 0x8000u) != 0u &&
-                   cpu->io.dma_index[0] == 0u && cpu->data[PMP_DMA_SOURCE] == 0xa5u,
+               (dspic33_read_word(cpu, 0x0b00u) & 0x8000u) != 0u && cpu->io.dma_index[0] == 0u &&
+                   cpu->data[PMP_DMA_SOURCE] == 0xa5u,
                "slave read raises no PMP DMA request");
     }
 }
@@ -1485,55 +1392,48 @@ static void pmp_extended_lifecycle_cases(TestState* state, Dspic33* cpu) {
     configure_pmp_slave(cpu, 0u, PMP_BUFFERED_SLAVE);
     dspic33_write_word(cpu, PMP_ADDRESS, 0x2211u);
     expect(state,
-           dspic33_pmp_slave_write(cpu, 0u, 0x31u, 0u) &&
-               dspic33_pmp_slave_read(cpu, 0u, 0u) && dspic33_device_advance(cpu, 0u) &&
-               cpu->io.pmp.slave_read_index == 1u &&
+           dspic33_pmp_slave_write(cpu, 0u, 0x31u, 0u) && dspic33_pmp_slave_read(cpu, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u) && cpu->io.pmp.slave_read_index == 1u &&
                cpu->io.pmp.slave_write_index == 1u,
            "buffered slave establishes sequential pointer state");
     expect(state, dspic33_copy(&copy, cpu), "copy buffered slave pointer state");
     dspic33_write_byte(cpu, PMP_ADDRESS + 1u, 0x42u);
     dspic33_write_byte(&copy, PMP_ADDRESS + 1u, 0x52u);
     expect(state,
-           dspic33_pmp_slave_read(cpu, 0u, 0u) &&
-               dspic33_pmp_slave_read(&copy, 0u, 0u) &&
+           dspic33_pmp_slave_read(cpu, 0u, 0u) && dspic33_pmp_slave_read(&copy, 0u, 0u) &&
                dspic33_device_advance(cpu, 0u) && dspic33_device_advance(&copy, 0u) &&
                dspic33_pmp_transmit(cpu, &source_transfer) &&
                dspic33_pmp_transmit(cpu, &source_transfer) &&
                dspic33_pmp_transmit(&copy, &copy_transfer) &&
-               dspic33_pmp_transmit(&copy, &copy_transfer) &&
-               source_transfer.value == 0x42u && copy_transfer.value == 0x52u,
+               dspic33_pmp_transmit(&copy, &copy_transfer) && source_transfer.value == 0x42u &&
+               copy_transfer.value == 0x52u,
            "copied buffered pointers advance independently");
 
     dspic33_reset(cpu, 0u);
     configure_pmp_slave(cpu, 0u, PMP_BUFFERED_SLAVE);
-    expect(state,
-           dspic33_pmp_slave_write(cpu, 0u, 0x61u, 0u) &&
-               dspic33_device_advance(cpu, 0u),
+    expect(state, dspic33_pmp_slave_write(cpu, 0u, 0x61u, 0u) && dspic33_device_advance(cpu, 0u),
            "seed slave state before PMPEN disable");
     dspic33_write_word(cpu, PMP_CONTROL, 0u);
     expect(state,
-           cpu->data[PMP_DATA] == 0x61u &&
-               (raw_data_word(cpu, PMP_STATUS) & 0x0100u) != 0u &&
+           cpu->data[PMP_DATA] == 0x61u && (raw_data_word(cpu, PMP_STATUS) & 0x0100u) != 0u &&
                cpu->io.pmp.slave_write_index == 1u,
            "PMPEN disable retains slave data status and pointer");
     configure_pmp_slave(cpu, 0u, PMP_BUFFERED_SLAVE);
     expect(state,
-           raw_data_word(cpu, PMP_STATUS) == 0x008fu &&
-               cpu->io.pmp.slave_read_index == 0u &&
+           raw_data_word(cpu, PMP_STATUS) == 0x008fu && cpu->io.pmp.slave_read_index == 0u &&
                cpu->io.pmp.slave_write_index == 0u,
            "PMPEN re-enable resets slave status and pointers");
 
     dspic33_reset(cpu, 0u);
     configure_pmp_slave(cpu, 0u, PMP_BUFFERED_SLAVE);
     expect(state,
-           dspic33_pmp_slave_write(cpu, 0u, 0x71u, 0u) &&
-               dspic33_pmp_slave_read(cpu, 0u, 0u) && dspic33_device_advance(cpu, 0u),
+           dspic33_pmp_slave_write(cpu, 0u, 0x71u, 0u) && dspic33_pmp_slave_read(cpu, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u),
            "seed slave state before PMD disable");
     dspic33_write_word(cpu, PMP_PMD, PMP_MODULE_DISABLE);
     expect(state,
            dspic33_device_advance(cpu, 1u) && cpu->io.pmp.pmd_disabled &&
-               cpu->io.pmp.slave_read_index == 1u &&
-               cpu->io.pmp.slave_write_index == 1u &&
+               cpu->io.pmp.slave_read_index == 1u && cpu->io.pmp.slave_write_index == 1u &&
                (raw_data_word(cpu, PMP_STATUS) & 0x0101u) == 0x0101u,
            "PMPMD retains slave status and pointers while disabled");
     for (index = 0u; index < 8u; index++) {
@@ -1547,8 +1447,7 @@ static void pmp_extended_lifecycle_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, PMP_PMD, 0u);
     expect(state,
            dspic33_device_advance(cpu, 1u) && !cpu->io.pmp.pmd_disabled &&
-               cpu->io.pmp.slave_read_index == 1u &&
-               cpu->io.pmp.slave_write_index == 1u &&
+               cpu->io.pmp.slave_read_index == 1u && cpu->io.pmp.slave_write_index == 1u &&
                (dspic33_read_word(cpu, PMP_STATUS) & 0x0101u) == 0x0101u,
            "PMPMD re-enable reveals retained slave state");
 
@@ -1560,32 +1459,28 @@ static void pmp_extended_lifecycle_cases(TestState* state, Dspic33* cpu) {
            dspic33_load_program_word(cpu, 0u, OPCODE_RESET) &&
                dspic33_step(cpu) == DSPIC33_RUNNING &&
                (dspic33_read_word(cpu, PMP_PMD) & PMP_MODULE_DISABLE) == 0u &&
-               !cpu->io.pmp.pmd_disabled &&
-               dspic33_read_word(cpu, PMP_STATUS) == 0x008fu,
+               !cpu->io.pmp.pmd_disabled && dspic33_read_word(cpu, PMP_STATUS) == 0x008fu,
            "warm reset clears PMP PMD and restores PMP state");
     configure_pmp_slave(cpu, 0u, PMP_BUFFERED_SLAVE);
     expect(state,
-           dspic33_pmp_slave_write(cpu, 0u, 0x79u, 0u) &&
-               dspic33_pmp_slave_read(cpu, 0u, 0u) && dspic33_device_advance(cpu, 0u) &&
-               cpu->io.pmp.slave_read_index == 1u &&
+           dspic33_pmp_slave_write(cpu, 0u, 0x79u, 0u) && dspic33_pmp_slave_read(cpu, 0u, 0u) &&
+               dspic33_device_advance(cpu, 0u) && cpu->io.pmp.slave_read_index == 1u &&
                cpu->io.pmp.slave_write_index == 1u,
            "seed PMP runtime before enabled warm reset");
     expect(state,
            dspic33_load_program_word(cpu, 0u, OPCODE_RESET) &&
                dspic33_step(cpu) == DSPIC33_RUNNING &&
                (dspic33_read_word(cpu, PMP_PMD) & PMP_MODULE_DISABLE) == 0u &&
-               !cpu->io.pmp.pmd_disabled &&
-               dspic33_read_word(cpu, PMP_STATUS) == 0x008fu &&
-               cpu->io.pmp.slave_read_index == 0u &&
-               cpu->io.pmp.slave_write_index == 0u,
+               !cpu->io.pmp.pmd_disabled && dspic33_read_word(cpu, PMP_STATUS) == 0x008fu &&
+               cpu->io.pmp.slave_read_index == 0u && cpu->io.pmp.slave_write_index == 0u,
            "warm reset clears enabled PMP runtime state");
 
     dspic33_reset(cpu, 0u);
     configure_pmp_slave(cpu, 0u, 0u);
     cpu->device_cycles = UINT64_MAX;
     expect(state,
-           !dspic33_pmp_slave_write(cpu, 0u, 0x81u, 1u) &&
-               !dspic33_pmp_slave_read(cpu, 0u, 1u) && cpu->events.count == 0u,
+           !dspic33_pmp_slave_write(cpu, 0u, 0x81u, 1u) && !dspic33_pmp_slave_read(cpu, 0u, 1u) &&
+               cpu->events.count == 0u,
            "slave scheduling overflow rolls back without state");
     dspic33_release(&copy);
 }
@@ -1602,8 +1497,7 @@ static void pmp_power_wake_matrix_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_byte(cpu, PMP_DATA, 0x91u);
     expect(state,
            dspic33_device_advance(cpu, 20u) && !cpu->io.pmp.active &&
-               cpu->io.pmp.completing_active &&
-               (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) == 0u,
+               cpu->io.pmp.completing_active && (dspic33_read_word(cpu, PMP_MODE) & PMP_BUSY) == 0u,
            "master reaches final completion phase before Sleep");
     cpu->power_state = DSPIC33_POWER_SLEEP;
     dspic33_device_power_state_changed(cpu);
@@ -1615,8 +1509,7 @@ static void pmp_power_wake_matrix_cases(TestState* state, Dspic33* cpu) {
            "Sleep suppresses final PMP output and interrupt");
     cpu->power_state = DSPIC33_POWER_ACTIVE;
     dspic33_device_power_state_changed(cpu);
-    expect(state, !cpu->events.items[0].paused,
-           "Sleep exit resumes final PMP completion phase");
+    expect(state, !cpu->events.items[0].paused, "Sleep exit resumes final PMP completion phase");
     expect(state,
            dspic33_device_advance(cpu, 1u) && dspic33_pmp_transmit(cpu, &transfer) &&
                transfer.value == 0x91u,
@@ -1631,13 +1524,11 @@ static void pmp_power_wake_matrix_cases(TestState* state, Dspic33* cpu) {
            "load stepped PWRSAV instruction");
     configure_pmp(cpu, PMP_FIRMWARE_MODE, 0u);
     dspic33_write_byte(cpu, PMP_DATA, 0x92u);
-    expect(state,
-           dspic33_step(cpu) == DSPIC33_SLEEPING &&
-               cpu->power_state == DSPIC33_POWER_SLEEP,
+    expect(state, dspic33_step(cpu) == DSPIC33_SLEEPING && cpu->power_state == DSPIC33_POWER_SLEEP,
            "PWRSAV enters Sleep with active PMP transfer");
     expect(state,
-           cpu->io.pmp.active && cpu->events.count == 2u &&
-               cpu->events.items[0].paused && cpu->events.items[1].paused,
+           cpu->io.pmp.active && cpu->events.count == 2u && cpu->events.items[0].paused &&
+               cpu->events.items[1].paused,
            "PWRSAV instruction pauses both PMP master phases");
     expect(state,
            dspic33_device_advance(cpu, 50u) && !dspic33_pmp_transmit(cpu, &transfer) &&
@@ -1680,13 +1571,11 @@ static void pmp_power_wake_matrix_cases(TestState* state, Dspic33* cpu) {
     dspic33_device_power_state_changed(cpu);
     expect(state, cpu->events.count == 1u && cpu->events.items[0].paused,
            "PSIDL pauses final PMP completion phase");
-    expect(state,
-           dspic33_device_advance(cpu, 40u) && !dspic33_pmp_transmit(cpu, &transfer),
+    expect(state, dspic33_device_advance(cpu, 40u) && !dspic33_pmp_transmit(cpu, &transfer),
            "PSIDL suppresses final PMP completion while Idle");
     cpu->power_state = DSPIC33_POWER_ACTIVE;
     dspic33_device_power_state_changed(cpu);
-    expect(state, !cpu->events.items[0].paused,
-           "Idle exit resumes final PMP completion phase");
+    expect(state, !cpu->events.items[0].paused, "Idle exit resumes final PMP completion phase");
     expect(state,
            dspic33_device_advance(cpu, 1u) && dspic33_pmp_transmit(cpu, &transfer) &&
                transfer.value == 0x94u,
@@ -1697,8 +1586,8 @@ static void pmp_power_wake_matrix_cases(TestState* state, Dspic33* cpu) {
     cpu->power_state = DSPIC33_POWER_IDLE;
     dspic33_device_power_state_changed(cpu);
     expect(state,
-           dspic33_pmp_slave_write(cpu, 0u, 0xa1u, 1u) &&
-               dspic33_device_advance(cpu, 1u) && cpu->data[PMP_DATA] == 0xa1u,
+           dspic33_pmp_slave_write(cpu, 0u, 0xa1u, 1u) && dspic33_device_advance(cpu, 1u) &&
+               cpu->data[PMP_DATA] == 0xa1u,
            "slave write continues in Idle with PSIDL clear");
     expect(state, (dspic33_read_word(cpu, 0x0804u) & PMP_INTERRUPT_FLAG) != 0u,
            "Idle slave write raises PMP interrupt flag");
@@ -1719,14 +1608,11 @@ static void pmp_power_wake_matrix_cases(TestState* state, Dspic33* cpu) {
     cpu->power_state = DSPIC33_POWER_SLEEP;
     dspic33_device_power_state_changed(cpu);
     expect(state,
-           dspic33_pmp_slave_write(cpu, 0u, 0xb1u, 0u) &&
-               dspic33_device_advance(cpu, 0u) &&
+           dspic33_pmp_slave_write(cpu, 0u, 0xb1u, 0u) && dspic33_device_advance(cpu, 0u) &&
                (dspic33_read_word(cpu, 0x0804u) & PMP_INTERRUPT_FLAG) != 0u,
            "sleeping slave latches interrupt with IEC disabled");
-    expect(state, !dspic33_device_wake(cpu),
-           "disabled PMP interrupt cannot wake processor");
-    expect(state,
-           cpu->power_state == DSPIC33_POWER_SLEEP && cpu->last_interrupt != PMP_IRQ,
+    expect(state, !dspic33_device_wake(cpu), "disabled PMP interrupt cannot wake processor");
+    expect(state, cpu->power_state == DSPIC33_POWER_SLEEP && cpu->last_interrupt != PMP_IRQ,
            "IEC-disabled PMP event retains sleeping state");
 
     dspic33_reset(cpu, 0u);
@@ -1735,32 +1621,25 @@ static void pmp_power_wake_matrix_cases(TestState* state, Dspic33* cpu) {
     cpu->power_state = DSPIC33_POWER_SLEEP;
     dspic33_device_power_state_changed(cpu);
     expect(state,
-           dspic33_pmp_slave_write(cpu, 0u, 0xb2u, 0u) &&
-               dspic33_device_advance(cpu, 0u) &&
+           dspic33_pmp_slave_write(cpu, 0u, 0xb2u, 0u) && dspic33_device_advance(cpu, 0u) &&
                (dspic33_read_word(cpu, 0x0804u) & PMP_INTERRUPT_FLAG) != 0u,
            "sleeping slave latches interrupt at priority zero");
-    expect(state, !dspic33_device_wake(cpu),
-           "priority-zero PMP interrupt cannot wake processor");
-    expect(state,
-           cpu->power_state == DSPIC33_POWER_SLEEP && cpu->last_interrupt != PMP_IRQ,
+    expect(state, !dspic33_device_wake(cpu), "priority-zero PMP interrupt cannot wake processor");
+    expect(state, cpu->power_state == DSPIC33_POWER_SLEEP && cpu->last_interrupt != PMP_IRQ,
            "priority-zero PMP event retains sleeping state");
 
     dspic33_reset(cpu, 0u);
     configure_pmp_slave(cpu, 0u, PMP_INTERRUPT_EACH);
     dspic33_write_word(cpu, 0x0824u, PMP_INTERRUPT_ENABLE);
-    dspic33_write_word(cpu, priority_address,
-                       (uint16_t)(PMP_PRIORITY << priority_shift));
+    dspic33_write_word(cpu, priority_address, (uint16_t)(PMP_PRIORITY << priority_shift));
     cpu->program[(0x0014u + PMP_IRQ * 2u) / 2u] = PMP_VECTOR;
     cpu->w[15] = 0x1800u;
     cpu->sr = (uint16_t)(PMP_PRIORITY << 5u);
     cpu->power_state = DSPIC33_POWER_SLEEP;
     dspic33_device_power_state_changed(cpu);
-    expect(state,
-           dspic33_pmp_slave_write(cpu, 0u, 0xb3u, 0u) &&
-               dspic33_device_advance(cpu, 0u),
+    expect(state, dspic33_pmp_slave_write(cpu, 0u, 0xb3u, 0u) && dspic33_device_advance(cpu, 0u),
            "sleeping slave raises equal-priority interrupt");
-    expect(state, dspic33_device_wake(cpu),
-           "equal-priority PMP interrupt wakes without vectoring");
+    expect(state, dspic33_device_wake(cpu), "equal-priority PMP interrupt wakes without vectoring");
     expect(state,
            cpu->pc == 0u && cpu->last_interrupt != PMP_IRQ &&
                (dspic33_read_word(cpu, 0x0804u) & PMP_INTERRUPT_FLAG) != 0u,
@@ -1780,8 +1659,8 @@ static void pmp_power_wake_matrix_cases(TestState* state, Dspic33* cpu) {
            "advance PMP to cycle before final BUSY phase");
     dspic33_write_word(cpu, PMP_PMD, PMP_MODULE_DISABLE);
     expect(state,
-           dspic33_device_advance(cpu, 1u) && cpu->io.pmp.pmd_disabled &&
-               !cpu->io.pmp.active && cpu->io.pmp.completing_active,
+           dspic33_device_advance(cpu, 1u) && cpu->io.pmp.pmd_disabled && !cpu->io.pmp.active &&
+               cpu->io.pmp.completing_active,
            "PMPMD transition pauses newly entered final phase");
     expect(state,
            dspic33_device_advance(cpu, 30u) && !dspic33_pmp_transmit(cpu, &transfer) &&
@@ -1817,8 +1696,7 @@ static void pmp_power_wake_matrix_cases(TestState* state, Dspic33* cpu) {
         dspic33_reset(cpu, 0u);
         dspic33_write_word(cpu, PMP_PMD, PMP_MODULE_DISABLE);
         expect(state, dspic33_copy(&copy, cpu), "copy pending PMP PMD transition");
-        expect(state,
-               dspic33_device_advance(cpu, 1u) && dspic33_device_advance(&copy, 1u),
+        expect(state, dspic33_device_advance(cpu, 1u) && dspic33_device_advance(&copy, 1u),
                "advance copied PMP PMD transitions");
         expect(state, cpu->io.pmp.pmd_disabled && copy.io.pmp.pmd_disabled,
                "copied PMP PMD transitions complete equally");
@@ -1848,8 +1726,7 @@ static void pmp_power_wake_matrix_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     configure_pmp_read(cpu, 0u, PMP_FIRMWARE_MODE, 0u, 0x4455u);
     expect(state,
-           dspic33_pmp_respond(cpu, 0x6677u, 0u) &&
-               dspic33_read_word(cpu, PMP_DATA) == 0x4455u &&
+           dspic33_pmp_respond(cpu, 0x6677u, 0u) && dspic33_read_word(cpu, PMP_DATA) == 0x4455u &&
                dspic33_device_advance(cpu, 5u),
            "begin master read before Sleep");
     cpu->power_state = DSPIC33_POWER_SLEEP;
@@ -1865,9 +1742,8 @@ static void pmp_power_wake_matrix_cases(TestState* state, Dspic33* cpu) {
     expect(state, !cpu->events.items[0].paused && !cpu->events.items[1].paused,
            "wake resumes both master read phases");
     expect(state,
-           dspic33_device_advance(cpu, 16u) &&
-               raw_data_word(cpu, PMP_DATA) == 0x4477u && !cpu->io.pmp.active &&
-               !cpu->io.pmp.completing_active,
+           dspic33_device_advance(cpu, 16u) && raw_data_word(cpu, PMP_DATA) == 0x4477u &&
+               !cpu->io.pmp.active && !cpu->io.pmp.completing_active,
            "wake completes retained master read");
 
     dspic33_reset(cpu, 0u);
@@ -1876,12 +1752,10 @@ static void pmp_power_wake_matrix_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, PMP_PMD, PMP_MODULE_DISABLE);
     expect(state, dspic33_device_advance(cpu, 1u) && cpu->io.pmp.pmd_disabled,
            "disable PMP before external slave read");
-    expect(state,
-           dspic33_pmp_slave_read(cpu, 0u, 1u) && dspic33_device_advance(cpu, 1u),
+    expect(state, dspic33_pmp_slave_read(cpu, 0u, 1u) && dspic33_device_advance(cpu, 1u),
            "external slave read deadline occurs while PMP disabled");
     expect(state,
-           !dspic33_pmp_transmit(cpu, &transfer) &&
-               raw_data_word(cpu, PMP_STATUS) == 0x000fu,
+           !dspic33_pmp_transmit(cpu, &transfer) && raw_data_word(cpu, PMP_STATUS) == 0x000fu,
            "disabled PMP drops external slave read without status change");
     dspic33_write_word(cpu, PMP_PMD, 0u);
     expect(state,

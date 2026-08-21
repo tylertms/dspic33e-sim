@@ -85,8 +85,7 @@ enum {
 };
 
 static uint16_t raw_word(const Dspic33* cpu, uint16_t address) {
-    return (uint16_t)(cpu->data[address] |
-                      ((uint16_t)cpu->data[(uint16_t)(address + 1u)] << 8u));
+    return (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[(uint16_t)(address + 1u)] << 8u));
 }
 
 static void raw_write_word(Dspic33* cpu, uint16_t address, uint16_t value) {
@@ -115,8 +114,7 @@ static bool module_enabled(const Dspic33* cpu, uint8_t channel) {
            (raw_word(cpu, (uint16_t)(bases[channel] + I2C_CON)) & I2C_ENABLE) != 0u;
 }
 
-static bool pin_mapping(const Dspic33* cpu, uint8_t channel,
-                        Dspic33I2cPinMapping* mapping) {
+static bool pin_mapping(const Dspic33* cpu, uint8_t channel, Dspic33I2cPinMapping* mapping) {
     uint8_t selection;
     if (channel >= DSPIC33_I2C_COUNT || mapping == NULL) {
         return false;
@@ -157,8 +155,7 @@ static void pause_events(Dspic33* cpu, uint8_t channel) {
     for (index = 0u; index < cpu->events.count; index++) {
         Dspic33Event* event = &cpu->events.items[index];
         uint8_t kind = (uint8_t)(event->value >> I2C_EVENT_KIND_SHIFT);
-        if (event->type != DSPIC33_EVENT_I2C || event->source != channel ||
-            event->paused ||
+        if (event->type != DSPIC33_EVENT_I2C || event->source != channel || event->paused ||
             (kind > I2C_EVENT_TRANSMIT_SHIFT && kind != I2C_EVENT_PIN)) {
             continue;
         }
@@ -176,8 +173,7 @@ static void resume_events(Dspic33* cpu, uint8_t channel) {
     bool changed = false;
     for (index = 0u; index < cpu->events.count; index++) {
         Dspic33Event* event = &cpu->events.items[index];
-        if (event->type != DSPIC33_EVENT_I2C || event->source != channel ||
-            !event->paused) {
+        if (event->type != DSPIC33_EVENT_I2C || event->source != channel || !event->paused) {
             continue;
         }
         if (event->paused_remaining > UINT64_MAX - cpu->device_cycles) {
@@ -208,12 +204,12 @@ void dspic33_i2c_update_pmd(Dspic33* cpu, uint16_t address, uint16_t previous) {
             return;
         }
         cpu->io.i2c_pmd_generation[channel]++;
-        if (!dspic33_schedule(cpu, DSPIC33_EVENT_I2C, channel,
-                              ((uint32_t)I2C_EVENT_PMD << I2C_EVENT_KIND_SHIFT) |
-                                  ((uint32_t)cpu->io.i2c_pmd_generation[channel]
-                                   << I2C_EVENT_GENERATION_SHIFT) |
-                                  (disabled ? 1u : 0u),
-                              dspic33_device_instruction_cycles(cpu, 1u))) {
+        if (!dspic33_schedule(
+                cpu, DSPIC33_EVENT_I2C, channel,
+                ((uint32_t)I2C_EVENT_PMD << I2C_EVENT_KIND_SHIFT) |
+                    ((uint32_t)cpu->io.i2c_pmd_generation[channel] << I2C_EVENT_GENERATION_SHIFT) |
+                    (disabled ? 1u : 0u),
+                dspic33_device_instruction_cycles(cpu, 1u))) {
             raw_write_word(cpu, address, previous);
             cpu->io.i2c_pmd_generation[channel]++;
             cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
@@ -243,8 +239,7 @@ static bool transfer_pop(Dspic33I2cQueue* queue, Dspic33I2cTransfer* transfer) {
     return true;
 }
 
-static bool response_push(Dspic33I2cResponseQueue* queue,
-                          const Dspic33I2cResponse* response) {
+static bool response_push(Dspic33I2cResponseQueue* queue, const Dspic33I2cResponse* response) {
     uint8_t index;
     uint8_t logical;
     if (queue->count == DSPIC33_I2C_QUEUE_SIZE) {
@@ -256,8 +251,7 @@ static bool response_push(Dspic33I2cResponseQueue* queue,
     logical = (uint8_t)(queue->count - 1u);
     while (logical != 0u) {
         uint8_t current = (uint8_t)((queue->head + logical) % DSPIC33_I2C_QUEUE_SIZE);
-        uint8_t prior =
-            (uint8_t)((queue->head + logical - 1u) % DSPIC33_I2C_QUEUE_SIZE);
+        uint8_t prior = (uint8_t)((queue->head + logical - 1u) % DSPIC33_I2C_QUEUE_SIZE);
         Dspic33I2cResponse temporary;
         if (queue->responses[prior].cycle <= queue->responses[current].cycle) {
             break;
@@ -270,8 +264,7 @@ static bool response_push(Dspic33I2cResponseQueue* queue,
     return true;
 }
 
-static bool response_wait(const Dspic33I2cResponseQueue* queue, uint64_t cycle,
-                          uint64_t* delay) {
+static bool response_wait(const Dspic33I2cResponseQueue* queue, uint64_t cycle, uint64_t* delay) {
     if (queue->count == 0u || queue->responses[queue->head].cycle <= cycle) {
         return false;
     }
@@ -306,34 +299,29 @@ static bool slave_acknowledges(uint16_t status) {
     return (status & (I2C_RBF | I2C_OVERFLOW)) == 0u;
 }
 
-static void record_slave_acknowledgement(Dspic33* cpu, uint8_t channel,
-                                         bool acknowledge) {
+static void record_slave_acknowledgement(Dspic33* cpu, uint8_t channel, bool acknowledge) {
     record_transfer(cpu, channel, DSPIC33_I2C_ACKNOWLEDGE, 0u, acknowledge, false);
 }
 
-static uint64_t operation_cycles(const Dspic33* cpu, uint8_t channel,
-                                 uint8_t half_periods) {
+static uint64_t operation_cycles(const Dspic33* cpu, uint8_t channel, uint8_t half_periods) {
     uint64_t scaled =
-        (uint64_t)(raw_word(cpu, (uint16_t)(bases[channel] + I2C_BRG)) + 2u) *
-        half_periods;
+        (uint64_t)(raw_word(cpu, (uint16_t)(bases[channel] + I2C_BRG)) + 2u) * half_periods;
     return (scaled + 1u) / 2u;
 }
 
 static uint32_t internal_event_value(const Dspic33* cpu, uint8_t channel, uint8_t kind,
                                      uint16_t payload) {
     return ((uint32_t)kind << I2C_EVENT_KIND_SHIFT) |
-           ((uint32_t)cpu->io.i2c_generation[channel] << I2C_EVENT_GENERATION_SHIFT) |
-           payload;
+           ((uint32_t)cpu->io.i2c_generation[channel] << I2C_EVENT_GENERATION_SHIFT) | payload;
 }
 
-static bool schedule_event(Dspic33* cpu, uint8_t channel, uint32_t value,
-                           uint64_t delay, bool external) {
+static bool schedule_event(Dspic33* cpu, uint8_t channel, uint32_t value, uint64_t delay,
+                           bool external) {
     uint64_t sequence = cpu->events.sequence;
     Dspic33Event* event;
-    bool scheduled =
-        external
-            ? dspic33_schedule_external(cpu, DSPIC33_EVENT_I2C, channel, value, delay)
-            : dspic33_schedule(cpu, DSPIC33_EVENT_I2C, channel, value, delay);
+    bool scheduled = external
+                         ? dspic33_schedule_external(cpu, DSPIC33_EVENT_I2C, channel, value, delay)
+                         : dspic33_schedule(cpu, DSPIC33_EVENT_I2C, channel, value, delay);
     if (!scheduled) {
         return false;
     }
@@ -353,20 +341,20 @@ static bool schedule_event(Dspic33* cpu, uint8_t channel, uint32_t value,
     return true;
 }
 
-static bool schedule_internal(Dspic33* cpu, uint8_t channel, uint8_t kind,
-                              uint16_t payload, uint64_t delay) {
-    bool scheduled = schedule_event(
-        cpu, channel, internal_event_value(cpu, channel, kind, payload), delay, false);
+static bool schedule_internal(Dspic33* cpu, uint8_t channel, uint8_t kind, uint16_t payload,
+                              uint64_t delay) {
+    bool scheduled = schedule_event(cpu, channel, internal_event_value(cpu, channel, kind, payload),
+                                    delay, false);
     if (!scheduled) {
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
     return scheduled;
 }
 
-static bool schedule_external_event(Dspic33* cpu, uint8_t channel, uint8_t kind,
-                                    uint16_t payload, uint64_t delay) {
-    return schedule_event(
-        cpu, channel, ((uint32_t)kind << I2C_EVENT_KIND_SHIFT) | payload, delay, true);
+static bool schedule_external_event(Dspic33* cpu, uint8_t channel, uint8_t kind, uint16_t payload,
+                                    uint64_t delay) {
+    return schedule_event(cpu, channel, ((uint32_t)kind << I2C_EVENT_KIND_SHIFT) | payload, delay,
+                          true);
 }
 
 static void raise_master(Dspic33* cpu, uint8_t channel) {
@@ -403,11 +391,10 @@ static void reset_runtime(Dspic33* cpu, uint8_t channel) {
     memset(&cpu->io.i2c_response[channel], 0, sizeof(cpu->io.i2c_response[channel]));
 }
 
-static bool pin_input_high(const Dspic33* cpu, const Dspic33I2cPinMapping* mapping,
-                           bool clock) {
+static bool pin_input_high(const Dspic33* cpu, const Dspic33I2cPinMapping* mapping, bool clock) {
     bool high = false;
-    dspic33_device_gpio_input_high(cpu, mapping->port,
-                                   clock ? mapping->clock : mapping->data, &high);
+    dspic33_device_gpio_input_high(cpu, mapping->port, clock ? mapping->clock : mapping->data,
+                                   &high);
     return high;
 }
 
@@ -457,12 +444,11 @@ static bool pin_begin(Dspic33* cpu, uint8_t channel, uint8_t operation, uint8_t 
                 operation == I2C_PIN_RESTART || operation == I2C_PIN_STOP ||
                     operation == I2C_PIN_TRANSMIT || operation == I2C_PIN_RECEIVE ||
                     operation == I2C_PIN_ACKNOWLEDGE);
-    pin_set_low(
-        cpu, channel, false,
-        operation == I2C_PIN_STOP ||
-            (operation == I2C_PIN_TRANSMIT && (value & 0x80u) == 0u) ||
-            (operation == I2C_PIN_ACKNOWLEDGE &&
-             (raw_word(cpu, (uint16_t)(bases[channel] + I2C_CON)) & I2C_ACKDT) == 0u));
+    pin_set_low(cpu, channel, false,
+                operation == I2C_PIN_STOP ||
+                    (operation == I2C_PIN_TRANSMIT && (value & 0x80u) == 0u) ||
+                    (operation == I2C_PIN_ACKNOWLEDGE &&
+                     (raw_word(cpu, (uint16_t)(bases[channel] + I2C_CON)) & I2C_ACKDT) == 0u));
     if (!pin_schedule_next(cpu, channel, 0u)) {
         pin_abort(cpu, channel);
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
@@ -479,8 +465,7 @@ static bool pin_delay_master_events(Dspic33* cpu, uint8_t channel) {
         uint8_t kind = (uint8_t)(event->value >> I2C_EVENT_KIND_SHIFT);
         uint8_t generation = (uint8_t)(event->value >> I2C_EVENT_GENERATION_SHIFT);
         if (event->type != DSPIC33_EVENT_I2C || event->source != channel ||
-            kind > I2C_EVENT_TRANSMIT_SHIFT ||
-            generation != cpu->io.i2c_generation[channel]) {
+            kind > I2C_EVENT_TRANSMIT_SHIFT || generation != cpu->io.i2c_generation[channel]) {
             continue;
         }
         if (event->paused) {
@@ -499,8 +484,7 @@ static bool pin_delay_master_events(Dspic33* cpu, uint8_t channel) {
     return true;
 }
 
-static bool pin_rising_edge(Dspic33* cpu, uint8_t channel,
-                            const Dspic33I2cPinMapping* mapping) {
+static bool pin_rising_edge(Dspic33* cpu, uint8_t channel, const Dspic33I2cPinMapping* mapping) {
     pin_set_low(cpu, channel, true, false);
     if (pin_input_high(cpu, mapping, true)) {
         return true;
@@ -514,8 +498,7 @@ static bool pin_rising_edge(Dspic33* cpu, uint8_t channel,
     return false;
 }
 
-static void pin_record_response(Dspic33* cpu, uint8_t channel, uint8_t value,
-                                bool acknowledge) {
+static void pin_record_response(Dspic33* cpu, uint8_t channel, uint8_t value, bool acknowledge) {
     Dspic33I2cResponse response;
     response.cycle = cpu->device_cycles;
     response.value = value;
@@ -538,8 +521,7 @@ static void pin_run(Dspic33* cpu, uint8_t channel) {
     }
     if (operation == I2C_PIN_START) {
         if (phase == 1u) {
-            if (!pin_input_high(cpu, &mapping, true) ||
-                !pin_input_high(cpu, &mapping, false)) {
+            if (!pin_input_high(cpu, &mapping, true) || !pin_input_high(cpu, &mapping, false)) {
                 collide(cpu, channel);
                 return;
             }
@@ -593,8 +575,7 @@ static void pin_run(Dspic33* cpu, uint8_t channel) {
             pin_set_low(cpu, channel, true, true);
             if (phase < 16u) {
                 uint8_t data_bit = (uint8_t)(7u - phase / 2u);
-                pin_set_low(cpu, channel, false,
-                            (value & (uint8_t)(1u << data_bit)) == 0u);
+                pin_set_low(cpu, channel, false, (value & (uint8_t)(1u << data_bit)) == 0u);
             } else {
                 pin_set_low(cpu, channel, false, false);
             }
@@ -609,8 +590,7 @@ static void pin_run(Dspic33* cpu, uint8_t channel) {
                 (uint8_t)((cpu->io.i2c_pin_receive[channel] << 1u) |
                           (pin_input_high(cpu, &mapping, false) ? 1u : 0u));
             if (phase == 15u) {
-                pin_record_response(cpu, channel, cpu->io.i2c_pin_receive[channel],
-                                    true);
+                pin_record_response(cpu, channel, cpu->io.i2c_pin_receive[channel], true);
             }
         } else {
             pin_set_low(cpu, channel, true, true);
@@ -659,8 +639,7 @@ static void begin_control(Dspic33* cpu, uint8_t channel, uint16_t operation) {
     raw_write_word(cpu, (uint16_t)(bases[channel] + I2C_CON), control);
     if (selected != 0u) {
         uint64_t periods = 2u;
-        bool condition =
-            selected == I2C_SEN || selected == I2C_RSEN || selected == I2C_PEN;
+        bool condition = selected == I2C_SEN || selected == I2C_RSEN || selected == I2C_PEN;
         if (selected == I2C_RCEN) {
             periods = 16u;
         } else if (selected == I2C_RSEN || selected == I2C_PEN) {
@@ -719,8 +698,7 @@ static void complete_bus_status(Dspic33* cpu, uint8_t channel, uint16_t operatio
     raw_write_word(cpu, (uint16_t)(base + I2C_STAT), status);
 }
 
-static void write_transmit(Dspic33* cpu, uint8_t channel, uint16_t previous,
-                           uint8_t value) {
+static void write_transmit(Dspic33* cpu, uint8_t channel, uint16_t previous, uint8_t value) {
     uint16_t base = bases[channel];
     uint16_t control = raw_word(cpu, (uint16_t)(base + I2C_CON));
     uint16_t status = raw_word(cpu, (uint16_t)(base + I2C_STAT));
@@ -729,17 +707,14 @@ static void write_transmit(Dspic33* cpu, uint8_t channel, uint16_t previous,
         raw_write_word(cpu, (uint16_t)(base + I2C_TRN), previous);
         return;
     }
-    if ((control & I2C_MASTER_MASK) != 0u ||
-        (status & (I2C_TBF | I2C_TRANSMIT_ACTIVE)) != 0u) {
+    if ((control & I2C_MASTER_MASK) != 0u || (status & (I2C_TBF | I2C_TRANSMIT_ACTIVE)) != 0u) {
         raw_write_word(cpu, (uint16_t)(base + I2C_TRN), previous);
-        raw_write_word(cpu, (uint16_t)(base + I2C_STAT),
-                       (uint16_t)(status | I2C_WRITE_COLLISION));
+        raw_write_word(cpu, (uint16_t)(base + I2C_STAT), (uint16_t)(status | I2C_WRITE_COLLISION));
         return;
     }
     raw_write_word(cpu, (uint16_t)(base + I2C_TRN), value);
     status |= I2C_TBF;
-    if ((cpu->io.i2c_slave_active & bit) != 0u &&
-        (cpu->io.i2c_slave_read & bit) != 0u) {
+    if ((cpu->io.i2c_slave_active & bit) != 0u && (cpu->io.i2c_slave_read & bit) != 0u) {
         raw_write_word(cpu, (uint16_t)(base + I2C_STAT), status);
         return;
     }
@@ -785,8 +760,8 @@ static void complete_control(Dspic33* cpu, uint8_t channel, uint16_t operation) 
         status = (uint16_t)((status | I2C_START_STATUS) & ~I2C_STOP_STATUS);
         cpu->io.i2c_master_active |= bit;
         record_transfer(cpu, channel,
-                        operation == I2C_SEN ? DSPIC33_I2C_START : DSPIC33_I2C_RESTART,
-                        0u, false, true);
+                        operation == I2C_SEN ? DSPIC33_I2C_START : DSPIC33_I2C_RESTART, 0u, false,
+                        true);
     } else if (operation == I2C_PEN) {
         status = (uint16_t)((status | I2C_STOP_STATUS) & ~I2C_START_STATUS);
         cpu->io.i2c_master_active &= (uint8_t)~bit;
@@ -794,8 +769,7 @@ static void complete_control(Dspic33* cpu, uint8_t channel, uint16_t operation) 
     } else if (operation == I2C_RCEN) {
         Dspic33I2cResponse response;
         uint8_t received = 0xffu;
-        if (response_pop(&cpu->io.i2c_response[channel], cpu->device_cycles,
-                         &response)) {
+        if (response_pop(&cpu->io.i2c_response[channel], cpu->device_cycles, &response)) {
             received = response.value;
         }
         if ((status & I2C_RBF) != 0u) {
@@ -806,8 +780,8 @@ static void complete_control(Dspic33* cpu, uint8_t channel, uint16_t operation) 
         }
         record_transfer(cpu, channel, DSPIC33_I2C_READ, received, true, true);
     } else if (operation == I2C_ACKEN) {
-        record_transfer(cpu, channel, DSPIC33_I2C_ACKNOWLEDGE, 0u,
-                        (control & I2C_ACKDT) == 0u, true);
+        record_transfer(cpu, channel, DSPIC33_I2C_ACKNOWLEDGE, 0u, (control & I2C_ACKDT) == 0u,
+                        true);
     }
     raw_write_word(cpu, (uint16_t)(base + I2C_CON), control);
     raw_write_word(cpu, (uint16_t)(base + I2C_STAT), status);
@@ -864,8 +838,7 @@ static bool address_matches(const Dspic33* cpu, uint8_t channel, uint16_t addres
     return ((address ^ configured) & (uint16_t)~mask & 0x007fu) == 0u;
 }
 
-static bool ten_bit_high_matches(const Dspic33* cpu, uint8_t channel,
-                                 uint16_t address) {
+static bool ten_bit_high_matches(const Dspic33* cpu, uint8_t channel, uint16_t address) {
     uint16_t control = raw_word(cpu, (uint16_t)(bases[channel] + I2C_CON));
     uint16_t configured = raw_word(cpu, (uint16_t)(bases[channel] + I2C_ADD));
     uint16_t mask = raw_word(cpu, (uint16_t)(bases[channel] + I2C_MSK));
@@ -881,8 +854,8 @@ static void reject_slave(Dspic33* cpu, uint8_t channel) {
     cpu->io.i2c_slave_rejected |= bit;
 }
 
-static void slave_start(Dspic33* cpu, uint8_t channel, uint16_t payload,
-                        bool schedule_ten_second, bool interrupt) {
+static void slave_start(Dspic33* cpu, uint8_t channel, uint16_t payload, bool schedule_ten_second,
+                        bool interrupt) {
     uint16_t base = bases[channel];
     uint16_t address = payload & 0x03ffu;
     uint16_t control = raw_word(cpu, (uint16_t)(base + I2C_CON));
@@ -948,14 +921,12 @@ static void slave_start(Dspic33* cpu, uint8_t channel, uint16_t payload,
         raise_slave(cpu, channel);
     }
     if (ten_bit && acknowledge && schedule_ten_second &&
-        !schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_TEN_SECOND, address,
-                                 1u)) {
+        !schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_TEN_SECOND, address, 1u)) {
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
 }
 
-static void slave_ten_second(Dspic33* cpu, uint8_t channel, uint16_t address,
-                             bool interrupt) {
+static void slave_ten_second(Dspic33* cpu, uint8_t channel, uint16_t address, bool interrupt) {
     uint16_t base = bases[channel];
     uint16_t control = raw_word(cpu, (uint16_t)(base + I2C_CON));
     uint16_t status = raw_word(cpu, (uint16_t)(base + I2C_STAT));
@@ -993,8 +964,7 @@ static void slave_ten_second(Dspic33* cpu, uint8_t channel, uint16_t address,
     }
 }
 
-static void slave_ten_restart(Dspic33* cpu, uint8_t channel, uint16_t address,
-                              bool interrupt) {
+static void slave_ten_restart(Dspic33* cpu, uint8_t channel, uint16_t address, bool interrupt) {
     uint16_t base = bases[channel];
     uint16_t control = raw_word(cpu, (uint16_t)(base + I2C_CON));
     uint16_t status = raw_word(cpu, (uint16_t)(base + I2C_STAT));
@@ -1012,8 +982,7 @@ static void slave_ten_restart(Dspic33* cpu, uint8_t channel, uint16_t address,
     }
     ipmi = (control & I2C_IPMIEN) != 0u;
     cpu->io.i2c_slave_read |= bit;
-    status = (uint16_t)((status | I2C_START_STATUS | I2C_READ) &
-                        ~(I2C_STOP_STATUS | I2C_DATA));
+    status = (uint16_t)((status | I2C_START_STATUS | I2C_READ) & ~(I2C_STOP_STATUS | I2C_DATA));
     if ((status & I2C_RBF) != 0u) {
         status |= I2C_OVERFLOW;
     } else {
@@ -1068,8 +1037,7 @@ static void slave_write(Dspic33* cpu, uint8_t channel, uint8_t value, bool inter
     }
 }
 
-static void slave_read(Dspic33* cpu, uint8_t channel, bool acknowledge,
-                       bool require_buffer) {
+static void slave_read(Dspic33* cpu, uint8_t channel, bool acknowledge, bool require_buffer) {
     uint16_t base = bases[channel];
     uint16_t control = raw_word(cpu, (uint16_t)(base + I2C_CON));
     uint16_t status = raw_word(cpu, (uint16_t)(base + I2C_STAT));
@@ -1077,13 +1045,11 @@ static void slave_read(Dspic33* cpu, uint8_t channel, bool acknowledge,
     bool ten_bit = (status & I2C_TEN_BIT) != 0u;
     uint8_t value;
     if (!module_enabled(cpu, channel) || (cpu->io.i2c_slave_active & bit) == 0u ||
-        (cpu->io.i2c_slave_read & bit) == 0u ||
-        (require_buffer && (status & I2C_TBF) == 0u)) {
+        (cpu->io.i2c_slave_read & bit) == 0u || (require_buffer && (status & I2C_TBF) == 0u)) {
         return;
     }
     if ((control & I2C_SCLREL) == 0u) {
-        schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_READ,
-                                acknowledge ? 1u : 0u, 1u);
+        schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_READ, acknowledge ? 1u : 0u, 1u);
         return;
     }
     value = (uint8_t)raw_word(cpu, (uint16_t)(base + I2C_TRN));
@@ -1130,8 +1096,7 @@ static void collide(Dspic33* cpu, uint8_t channel) {
         return;
     }
     control &= (uint16_t)~I2C_MASTER_MASK;
-    status =
-        (uint16_t)((status | I2C_BUS_COLLISION) & ~(I2C_TBF | I2C_TRANSMIT_ACTIVE));
+    status = (uint16_t)((status | I2C_BUS_COLLISION) & ~(I2C_TBF | I2C_TRANSMIT_ACTIVE));
     raw_write_word(cpu, (uint16_t)(base + I2C_CON), control);
     raw_write_word(cpu, (uint16_t)(base + I2C_STAT), status);
     pin_abort(cpu, channel);
@@ -1156,8 +1121,7 @@ static bool resolved_pin_high(const Dspic33* cpu, uint8_t channel,
     return pin_input_high(cpu, mapping, clock);
 }
 
-static void slave_pin_baseline(Dspic33* cpu, uint8_t channel,
-                               const Dspic33I2cPinMapping* mapping) {
+static void slave_pin_baseline(Dspic33* cpu, uint8_t channel, const Dspic33I2cPinMapping* mapping) {
     uint8_t bit = (uint8_t)(1u << channel);
     if (resolved_pin_high(cpu, channel, mapping, true)) {
         cpu->io.i2c_pin_clock_high |= bit;
@@ -1183,8 +1147,8 @@ static void slave_pin_prepare_transmit(Dspic33* cpu, uint8_t channel) {
         return;
     }
     pin_set_low(cpu, channel, false,
-                (raw_word(cpu, (uint16_t)(base + I2C_TRN)) &
-                 (uint16_t)(0x0080u >> bit_index)) == 0u);
+                (raw_word(cpu, (uint16_t)(base + I2C_TRN)) & (uint16_t)(0x0080u >> bit_index)) ==
+                    0u);
 }
 
 static void slave_pin_start(Dspic33* cpu, uint8_t channel) {
@@ -1246,13 +1210,11 @@ static void slave_pin_receive_falling(Dspic33* cpu, uint8_t channel) {
                 address = cpu->io.i2c_slave_address[channel];
                 slave_ten_restart(cpu, channel, address, false);
             } else {
-                slave_start(cpu, channel, (uint16_t)(address | I2C_EXTERNAL_TEN_BIT),
-                            false, false);
+                slave_start(cpu, channel, (uint16_t)(address | I2C_EXTERNAL_TEN_BIT), false, false);
             }
         } else {
             uint8_t address = (uint8_t)(byte >> 1u);
-            slave_start(cpu, channel,
-                        (uint16_t)(address | (read ? I2C_EXTERNAL_READ : 0u)), true,
+            slave_start(cpu, channel, (uint16_t)(address | (read ? I2C_EXTERNAL_READ : 0u)), true,
                         false);
         }
         acknowledge = acknowledge && (cpu->io.i2c_slave_active & bit) != 0u &&
@@ -1294,8 +1256,7 @@ static void slave_pin_receive_falling(Dspic33* cpu, uint8_t channel) {
     resulting_control = raw_word(cpu, (uint16_t)(base + I2C_CON));
     if ((resulting_control & I2C_SCLREL) == 0u) {
         cpu->io.i2c_slave_pin_stretch |= bit;
-        raw_write_word(cpu, (uint16_t)(base + I2C_CON),
-                       (uint16_t)(resulting_control | I2C_SCLREL));
+        raw_write_word(cpu, (uint16_t)(base + I2C_CON), (uint16_t)(resulting_control | I2C_SCLREL));
     } else {
         cpu->io.i2c_slave_pin_stretch &= (uint8_t)~bit;
     }
@@ -1335,9 +1296,8 @@ static void slave_pin_falling(Dspic33* cpu, uint8_t channel) {
         slave_pin_receive_falling(cpu, channel);
     } else if (state == I2C_SLAVE_PIN_ACKNOWLEDGE) {
         if (cpu->io.i2c_slave_pin_bits[channel] == 0u) {
-            pin_set_low(
-                cpu, channel, false,
-                (cpu->io.i2c_slave_pin_acknowledge & (uint8_t)(1u << channel)) != 0u);
+            pin_set_low(cpu, channel, false,
+                        (cpu->io.i2c_slave_pin_acknowledge & (uint8_t)(1u << channel)) != 0u);
             cpu->io.i2c_slave_pin_bits[channel] = 1u;
         } else if (cpu->io.i2c_slave_pin_bits[channel] == 2u) {
             pin_set_low(cpu, channel, false, false);
@@ -1347,8 +1307,7 @@ static void slave_pin_falling(Dspic33* cpu, uint8_t channel) {
                 uint16_t base = bases[channel];
                 uint16_t control = raw_word(cpu, (uint16_t)(base + I2C_CON));
                 cpu->io.i2c_slave_pin_stretch &= (uint8_t)~bit;
-                raw_write_word(cpu, (uint16_t)(base + I2C_CON),
-                               (uint16_t)(control & ~I2C_SCLREL));
+                raw_write_word(cpu, (uint16_t)(base + I2C_CON), (uint16_t)(control & ~I2C_SCLREL));
                 pin_set_low(cpu, channel, true, true);
             }
             if ((cpu->io.i2c_slave_pin_interrupt & bit) != 0u) {
@@ -1363,8 +1322,7 @@ static void slave_pin_falling(Dspic33* cpu, uint8_t channel) {
         if (cpu->io.i2c_slave_pin_bits[channel] == 0u) {
             uint16_t base = bases[channel];
             uint16_t status = raw_word(cpu, (uint16_t)(base + I2C_STAT));
-            raw_write_word(cpu, (uint16_t)(base + I2C_STAT),
-                           (uint16_t)(status & ~I2C_TBF));
+            raw_write_word(cpu, (uint16_t)(base + I2C_STAT), (uint16_t)(status & ~I2C_TBF));
             pin_set_low(cpu, channel, false, false);
             cpu->io.i2c_slave_pin_bits[channel] = 1u;
         } else if (cpu->io.i2c_slave_pin_bits[channel] == 2u) {
@@ -1391,18 +1349,15 @@ void dspic33_i2c_refresh_pins(Dspic33* cpu) {
         if (!pin_mapping(cpu, channel, &mapping)) {
             continue;
         }
-        if ((cpu->io.i2c_pin_active & bit) == 0u &&
-            (cpu->io.i2c_slave_active & bit) != 0u) {
+        if ((cpu->io.i2c_pin_active & bit) == 0u && (cpu->io.i2c_slave_active & bit) != 0u) {
             pin_set_low(cpu, channel, true,
-                        (raw_word(cpu, (uint16_t)(bases[channel] + I2C_CON)) &
-                         I2C_SCLREL) == 0u);
+                        (raw_word(cpu, (uint16_t)(bases[channel] + I2C_CON)) & I2C_SCLREL) == 0u);
         }
         clock_high = resolved_pin_high(cpu, channel, &mapping, true);
         data_high = resolved_pin_high(cpu, channel, &mapping, false);
         previous_clock_high = (cpu->io.i2c_pin_clock_high & bit) != 0u;
         previous_data_high = (cpu->io.i2c_pin_data_high & bit) != 0u;
-        if (!slave_pin_operating(cpu, channel) ||
-            (cpu->io.i2c_pin_active & bit) != 0u ||
+        if (!slave_pin_operating(cpu, channel) || (cpu->io.i2c_pin_active & bit) != 0u ||
             (cpu->io.i2c_master_active & bit) != 0u) {
             slave_pin_baseline(cpu, channel, &mapping);
             continue;
@@ -1471,9 +1426,8 @@ bool dspic33_i2c_write_register(Dspic33* cpu, uint16_t address, uint16_t previou
             begin_control(cpu, channel, control & I2C_MASTER_MASK);
         }
     } else if (offset == I2C_STAT) {
-        raw_write_word(
-            cpu, base,
-            (uint16_t)((previous & ~0x04c0u) | (previous & requested & 0x04c0u)));
+        raw_write_word(cpu, base,
+                       (uint16_t)((previous & ~0x04c0u) | (previous & requested & 0x04c0u)));
     } else if (offset == I2C_ADD || offset == I2C_MSK) {
         raw_write_word(cpu, base, requested & 0x03ffu);
     }
@@ -1495,14 +1449,12 @@ bool dspic33_i2c_read_register(Dspic33* cpu, uint16_t address, uint8_t* value) {
     }
     if (offset == I2C_RCV) {
         raw_write_word(cpu, (uint16_t)(bases[channel] + I2C_STAT),
-                       (uint16_t)(raw_word(cpu, (uint16_t)(bases[channel] + I2C_STAT)) &
-                                  ~I2C_RBF));
+                       (uint16_t)(raw_word(cpu, (uint16_t)(bases[channel] + I2C_STAT)) & ~I2C_RBF));
     }
     return true;
 }
 
-void dspic33_i2c_process_event(Dspic33* cpu, uint8_t channel, uint32_t value,
-                               bool external) {
+void dspic33_i2c_process_event(Dspic33* cpu, uint8_t channel, uint32_t value, bool external) {
     uint8_t kind = (uint8_t)(value >> I2C_EVENT_KIND_SHIFT);
     uint8_t generation = (uint8_t)(value >> I2C_EVENT_GENERATION_SHIFT);
     uint16_t payload = (uint16_t)(value & I2C_EVENT_PAYLOAD_MASK);
@@ -1596,29 +1548,25 @@ bool dspic33_i2c_slave_start(Dspic33* cpu, uint8_t channel, uint16_t address, bo
         uint8_t bit = (uint8_t)(1u << channel);
         if ((cpu->io.i2c_slave_active & bit) == 0u ||
             cpu->io.i2c_slave_address[channel] != address ||
-            (raw_word(cpu, (uint16_t)(bases[channel] + I2C_STAT)) & I2C_TEN_BIT) ==
-                0u) {
+            (raw_word(cpu, (uint16_t)(bases[channel] + I2C_STAT)) & I2C_TEN_BIT) == 0u) {
             return false;
         }
-        return schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_TEN_RESTART,
-                                       address, delay);
+        return schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_TEN_RESTART, address, delay);
     }
     payload = (uint16_t)(address | (read ? I2C_EXTERNAL_READ : 0u) |
                          (ten_bit ? I2C_EXTERNAL_TEN_BIT : 0u));
     return schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_START, payload, delay);
 }
 
-bool dspic33_i2c_slave_write(Dspic33* cpu, uint8_t channel, uint8_t value,
-                             uint64_t delay) {
+bool dspic33_i2c_slave_write(Dspic33* cpu, uint8_t channel, uint8_t value, uint64_t delay) {
     return channel < DSPIC33_I2C_COUNT &&
            schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_WRITE, value, delay);
 }
 
-bool dspic33_i2c_slave_read(Dspic33* cpu, uint8_t channel, bool acknowledge,
-                            uint64_t delay) {
+bool dspic33_i2c_slave_read(Dspic33* cpu, uint8_t channel, bool acknowledge, uint64_t delay) {
     return channel < DSPIC33_I2C_COUNT &&
-           schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_READ,
-                                   acknowledge ? 1u : 0u, delay);
+           schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_READ, acknowledge ? 1u : 0u,
+                                   delay);
 }
 
 bool dspic33_i2c_slave_stop(Dspic33* cpu, uint8_t channel, uint64_t delay) {
@@ -1645,8 +1593,7 @@ bool dspic33_i2c_pin(const Dspic33* cpu, uint8_t port, uint8_t pin, bool* high) 
         uint8_t channel_bit;
         bool clock;
         if (!pin_mapping(cpu, channel, &mapping) || mapping.port != port ||
-            (mapping.clock != pin && mapping.data != pin) ||
-            !module_enabled(cpu, channel)) {
+            (mapping.clock != pin && mapping.data != pin) || !module_enabled(cpu, channel)) {
             continue;
         }
         if (high == NULL) {
@@ -1657,22 +1604,20 @@ bool dspic33_i2c_pin(const Dspic33* cpu, uint8_t port, uint8_t pin, bool* high) 
         channel_bit = (uint8_t)(1u << channel);
         clock = mapping.clock == pin;
         if ((cpu->io.i2c_pin_physical & channel_bit) != 0u) {
-            if ((clock ? cpu->io.i2c_pin_clock_low : cpu->io.i2c_pin_data_low) &
-                channel_bit) {
+            if ((clock ? cpu->io.i2c_pin_clock_low : cpu->io.i2c_pin_data_low) & channel_bit) {
                 *high = false;
                 return true;
             }
             return dspic33_device_gpio_input_high(cpu, port, pin, high);
         }
         if ((control & I2C_MASTER_MASK) != 0u || (status & I2C_TRANSMIT_ACTIVE) != 0u ||
-            (((cpu->io.i2c_slave_active & cpu->io.i2c_slave_read) & channel_bit) !=
-                 0u &&
+            (((cpu->io.i2c_slave_active & cpu->io.i2c_slave_read) & channel_bit) != 0u &&
              (control & I2C_SCLREL) != 0u)) {
             return false;
         }
-        if (clock && (((cpu->io.i2c_slave_active & channel_bit) != 0u &&
-                       (control & I2C_SCLREL) == 0u) ||
-                      (cpu->io.i2c_master_active & channel_bit) != 0u)) {
+        if (clock &&
+            (((cpu->io.i2c_slave_active & channel_bit) != 0u && (control & I2C_SCLREL) == 0u) ||
+             (cpu->io.i2c_master_active & channel_bit) != 0u)) {
             *high = false;
             return true;
         }

@@ -10,8 +10,7 @@
 #include "test.h"
 
 static const uint8_t compare_irqs[DSPIC33_OUTPUT_COMPARE_COUNT] = {
-    2u,  6u,   25u,  26u,  41u,  42u,  43u,  44u,
-    92u, 124u, 126u, 128u, 134u, 136u, 138u, 140u};
+    2u, 6u, 25u, 26u, 41u, 42u, 43u, 44u, 92u, 124u, 126u, 128u, 134u, 136u, 138u, 140u};
 
 enum {
     COMPARE_BASE = 0x0900u,
@@ -73,8 +72,7 @@ static inline void clear_interrupt(Dspic33* cpu, uint8_t channel) {
     uint8_t irq = compare_irqs[channel];
     uint16_t address = (uint16_t)(0x0800u + (irq / 16u) * 2u);
     uint16_t bit = (uint16_t)(1u << (irq % 16u));
-    dspic33_write_word(cpu, address,
-                       (uint16_t)(dspic33_read_word(cpu, address) & ~bit));
+    dspic33_write_word(cpu, address, (uint16_t)(dspic33_read_word(cpu, address) & ~bit));
 }
 
 static inline bool output_is(const Dspic33* cpu, uint8_t channel, bool expected) {
@@ -96,13 +94,11 @@ static inline uint16_t compare_fault_status(uint8_t source) {
 }
 
 static inline bool drive_compare_fault(Dspic33* cpu, uint8_t source, bool high) {
-    return dspic33_output_compare_fault(cpu, source, high, 0u) &&
-           dspic33_device_advance(cpu, 0u);
+    return dspic33_output_compare_fault(cpu, source, high, 0u) && dspic33_device_advance(cpu, 0u);
 }
 
-static inline void configure_compare_source(Dspic33* cpu, uint8_t channel,
-                                            uint16_t period, uint16_t duty,
-                                            uint16_t synchronization) {
+static inline void configure_compare_source(Dspic33* cpu, uint8_t channel, uint16_t period,
+                                            uint16_t duty, uint16_t synchronization) {
     uint16_t base = compare_base(channel);
     dspic33_write_word(cpu, base, 0u);
     dspic33_write_word(cpu, (uint16_t)(base + 2u), 0u);
@@ -114,8 +110,7 @@ static inline void configure_compare_source(Dspic33* cpu, uint8_t channel,
 }
 
 static inline void configure_compare_mode(Dspic33* cpu, uint8_t channel, uint8_t mode,
-                                          uint16_t secondary, uint16_t primary,
-                                          uint16_t control2) {
+                                          uint16_t secondary, uint16_t primary, uint16_t control2) {
     uint16_t base = compare_base(channel);
     dspic33_write_word(cpu, base, 0u);
     dspic33_write_word(cpu, (uint16_t)(base + 2u), 0u);
@@ -131,16 +126,14 @@ static inline void configure_compare(Dspic33* cpu, uint8_t channel, uint16_t per
     configure_compare_source(cpu, channel, period, duty, COMPARE_SELF_SYNC);
 }
 
-static inline void configure_cascade(Dspic33* cpu, uint8_t low, uint8_t mode,
-                                     uint32_t secondary, uint32_t primary,
-                                     uint16_t clock, uint16_t synchronization,
+static inline void configure_cascade(Dspic33* cpu, uint8_t low, uint8_t mode, uint32_t secondary,
+                                     uint32_t primary, uint16_t clock, uint16_t synchronization,
                                      bool trigger) {
     uint8_t high = (uint8_t)(low + 1u);
     uint16_t low_base = compare_base(low);
     uint16_t high_base = compare_base(high);
-    uint16_t low_control2 =
-        (uint16_t)(COMPARE_CASCADE | COMPARE_TRISTATE | synchronization |
-                   (trigger ? COMPARE_TRIGGER : 0u));
+    uint16_t low_control2 = (uint16_t)(COMPARE_CASCADE | COMPARE_TRISTATE | synchronization |
+                                       (trigger ? COMPARE_TRIGGER : 0u));
     uint16_t high_control2 = (uint16_t)(COMPARE_CASCADE | synchronization);
     dspic33_write_word(cpu, low_base, 0u);
     dspic33_write_word(cpu, (uint16_t)(low_base + 2u), 0u);
@@ -163,13 +156,11 @@ static inline void configure_interrupt(Dspic33* cpu, uint8_t channel) {
     uint16_t enable = (uint16_t)(0x0820u + (irq / 16u) * 2u);
     uint16_t priority = (uint16_t)(0x0840u + (irq / 4u) * 2u);
     uint16_t shift = (uint16_t)((irq % 4u) * 4u);
-    dspic33_write_word(
-        cpu, enable,
-        (uint16_t)(dspic33_read_word(cpu, enable) | (uint16_t)(1u << (irq % 16u))));
-    dspic33_write_word(
-        cpu, priority,
-        (uint16_t)((dspic33_read_word(cpu, priority) & ~(uint16_t)(7u << shift)) |
-                   (uint16_t)(3u << shift)));
+    dspic33_write_word(cpu, enable,
+                       (uint16_t)(dspic33_read_word(cpu, enable) | (uint16_t)(1u << (irq % 16u))));
+    dspic33_write_word(cpu, priority,
+                       (uint16_t)((dspic33_read_word(cpu, priority) & ~(uint16_t)(7u << shift)) |
+                                  (uint16_t)(3u << shift)));
     cpu->program[(0x0014u + irq * 2u) / 2u] = COMPARE_VECTOR;
     cpu->w[15] = 0x1800u;
 }
@@ -204,13 +195,11 @@ static inline void unsupported_case(TestState* state, Dspic33* cpu, uint16_t con
 static inline void configure_fault_compare(Dspic33* cpu, uint8_t channel, uint8_t mode,
                                            uint8_t source, uint16_t control2) {
     uint16_t base = compare_base(channel);
-    configure_compare_mode(cpu, channel, mode, 4u, 2u,
-                           (uint16_t)(COMPARE_SELF_SYNC | control2));
+    configure_compare_mode(cpu, channel, mode, 4u, 2u, (uint16_t)(COMPARE_SELF_SYNC | control2));
     dspic33_output_compare_fault(cpu, source, true, 0u);
     dspic33_device_advance(cpu, 0u);
-    dspic33_write_word(
-        cpu, base,
-        (uint16_t)(dspic33_read_word(cpu, base) | compare_fault_enable(source)));
+    dspic33_write_word(cpu, base,
+                       (uint16_t)(dspic33_read_word(cpu, base) | compare_fault_enable(source)));
 }
 
 #endif

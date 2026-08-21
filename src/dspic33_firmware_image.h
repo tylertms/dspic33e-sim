@@ -12,19 +12,16 @@ typedef struct {
     size_t size;
 } FirmwareImage;
 
-bool firmware_image_open(FirmwareImage* image, const char* path, char* error,
-                         size_t error_size);
+bool firmware_image_open(FirmwareImage* image, const char* path, char* error, size_t error_size);
 void firmware_image_close(FirmwareImage* image);
 bool firmware_image_load_program(const FirmwareImage* image, Dspic33* cpu, char* error,
                                  size_t error_size);
-bool firmware_image_symbol(const FirmwareImage* image, const char* name,
-                           uint32_t* address, char* error, size_t error_size);
+bool firmware_image_symbol(const FirmwareImage* image, const char* name, uint32_t* address,
+                           char* error, size_t error_size);
 
-bool dspic33_load_elf_data(Dspic33* cpu, const void* data, size_t size,
-                           uint32_t* entry_address);
-bool dspic33_load_binary_data(Dspic33* cpu, const void* data, size_t size,
-                              uint32_t load_address, uint32_t* entry_address);
-bool dspic33_elf_symbol_data(const void* data, size_t size, const char* name,
-                             uint32_t* address);
+bool dspic33_load_elf_data(Dspic33* cpu, const void* data, size_t size, uint32_t* entry_address);
+bool dspic33_load_binary_data(Dspic33* cpu, const void* data, size_t size, uint32_t load_address,
+                              uint32_t* entry_address);
+bool dspic33_elf_symbol_data(const void* data, size_t size, const char* name, uint32_t* address);
 
 #endif

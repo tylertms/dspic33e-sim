@@ -29,8 +29,7 @@ int main(void) {
         return 2;
     }
     dspic33_reset(&cpu, 0u);
-    expect(&state, snapshot_hash(&cpu) == UINT64_C(0x083f22f9aefd2c8f),
-           "power-on SFR snapshot");
+    expect(&state, snapshot_hash(&cpu) == UINT64_C(0x083f22f9aefd2c8f), "power-on SFR snapshot");
     for (uint16_t address = 0u; address < SFR_LIMIT; address += 2u) {
         cpu.data[address] = 0xffu;
         cpu.data[address + 1u] = 0xffu;
@@ -38,8 +37,8 @@ int main(void) {
     dspic33_mclr_reset(&cpu);
     expect(&state, snapshot_hash(&cpu) == UINT64_C(0x2106aea681db4041),
            "master-clear SFR snapshot");
-    printf("[sfr-reset] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
-           state.cases, state.passed, state.failed);
+    printf("[sfr-reset] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n", state.cases,
+           state.passed, state.failed);
     dspic33_release(&cpu);
     return test_finish(&state);
 }
