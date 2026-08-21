@@ -1,6 +1,7 @@
 #include "dspic33_firmware_image.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static bool is_elf(const char* path) {
@@ -16,6 +17,28 @@ static bool is_elf(const char* path) {
     return result;
 }
 
+static bool read_file(const char* path, uint8_t** bytes, size_t* size) {
+    FILE* file = fopen(path, "rb");
+    long length;
+    if (file == NULL || fseek(file, 0, SEEK_END) != 0 || (length = ftell(file)) <= 0 ||
+        fseek(file, 0, SEEK_SET) != 0) {
+        if (file != NULL) {
+            fclose(file);
+        }
+        return false;
+    }
+    *bytes = malloc((size_t)length);
+    if (*bytes == NULL || fread(*bytes, 1u, (size_t)length, file) != (size_t)length) {
+        free(*bytes);
+        *bytes = NULL;
+        fclose(file);
+        return false;
+    }
+    fclose(file);
+    *size = (size_t)length;
+    return true;
+}
+
 bool firmware_image_open(FirmwareImage* image, const char* path, char* error,
                          size_t error_size) {
     memset(image, 0, sizeof(*image));
@@ -23,25 +46,23 @@ bool firmware_image_open(FirmwareImage* image, const char* path, char* error,
         image->type = FIRMWARE_IMAGE_ELF;
         return elf_image_open(&image->elf, path, error, error_size);
     }
-    image->type = FIRMWARE_IMAGE_HEX;
-    return hex_image_open(&image->hex, path, error, error_size);
-}
-
-bool firmware_image_open_data(FirmwareImage* image, const void* data, size_t size,
-                              FirmwareImageType type, char* error, size_t error_size) {
-    memset(image, 0, sizeof(*image));
-    image->type = type;
-    if (type == FIRMWARE_IMAGE_ELF) {
-        return elf_image_open_data(&image->elf, data, size, error, error_size);
+    image->type = FIRMWARE_IMAGE_BINARY;
+    if (!read_file(path, &image->bytes, &image->size)) {
+        if (error_size != 0u) {
+            snprintf(error, error_size, "cannot read firmware image");
+        }
+        return false;
     }
-    return hex_image_open_data(&image->hex, data, size, error, error_size);
+    return true;
 }
 
 void firmware_image_close(FirmwareImage* image) {
     if (image->type == FIRMWARE_IMAGE_ELF) {
         elf_image_close(&image->elf);
     } else {
-        hex_image_close(&image->hex);
+        free(image->bytes);
+        image->bytes = NULL;
+        image->size = 0u;
     }
 }
 
@@ -50,7 +71,14 @@ bool firmware_image_load_program(const FirmwareImage* image, Dspic33* cpu, char*
     if (image->type == FIRMWARE_IMAGE_ELF) {
         return elf_image_load_program(&image->elf, cpu, error, error_size);
     }
-    return hex_image_load_program(&image->hex, cpu, error, error_size);
+    uint32_t entry;
+    if (!dspic33_load_binary_data(cpu, image->bytes, image->size, 0u, &entry)) {
+        if (error_size != 0u) {
+            snprintf(error, error_size, "binary firmware image is invalid");
+        }
+        return false;
+    }
+    return true;
 }
 
 bool firmware_image_symbol(const FirmwareImage* image, const char* name,
@@ -59,33 +87,53 @@ bool firmware_image_symbol(const FirmwareImage* image, const char* name,
         return elf_image_symbol(&image->elf, name, address, error, error_size);
     }
     if (error_size != 0u) {
-        snprintf(error, error_size, "Intel HEX images do not contain symbols");
+        snprintf(error, error_size, "binary images do not contain symbols");
     }
     return false;
 }
 
-static bool load_data(Dspic33* cpu, const void* data, size_t size,
-                      FirmwareImageType type, uint32_t* entry_address) {
-    FirmwareImage image;
+bool dspic33_load_elf_data(Dspic33* cpu, const void* data, size_t size,
+                           uint32_t* entry_address) {
+    ElfImage image;
     char error[160];
     if (cpu == NULL || entry_address == NULL ||
-        !firmware_image_open_data(&image, data, size, type, error, sizeof(error))) {
+        !elf_image_open_data(&image, data, size, error, sizeof(error))) {
         return false;
     }
-    const bool loaded = firmware_image_load_program(&image, cpu, error, sizeof(error));
-    firmware_image_close(&image);
-    *entry_address = 0u;
+    const bool loaded = elf_image_load_program(&image, cpu, error, sizeof(error));
+    elf_image_close(&image);
     return loaded;
 }
 
-bool dspic33_load_elf_data(Dspic33* cpu, const void* data, size_t size,
-                           uint32_t* entry_address) {
-    return load_data(cpu, data, size, FIRMWARE_IMAGE_ELF, entry_address);
-}
-
-bool dspic33_load_hex_data(Dspic33* cpu, const void* data, size_t size,
-                           uint32_t* entry_address) {
-    return load_data(cpu, data, size, FIRMWARE_IMAGE_HEX, entry_address);
+bool dspic33_load_binary_data(Dspic33* cpu, const void* data, size_t size,
+                              uint32_t load_address, uint32_t* entry_address) {
+    const uint8_t* bytes = data;
+    size_t offset;
+    if (cpu == NULL || bytes == NULL || size == 0u || (size & 3u) != 0u ||
+        (load_address & 3u) != 0u || size > UINT32_MAX - load_address ||
+        entry_address == NULL) {
+        return false;
+    }
+    for (offset = 0u; offset < size; offset += 4u) {
+        uint32_t storage = load_address + (uint32_t)offset;
+        uint32_t program_address = storage / 2u;
+        uint32_t word = (uint32_t)bytes[offset] | ((uint32_t)bytes[offset + 1u] << 8u) |
+                        ((uint32_t)bytes[offset + 2u] << 16u);
+        if (word == 0x00ffffffu && bytes[offset + 3u] == 0xffu) {
+            continue;
+        }
+        if (dspic33_program_range_implemented(program_address, 2u) &&
+            !dspic33_load_program_word(cpu, program_address, word)) {
+            return false;
+        }
+        if (program_address >= DSPIC33_CONFIGURATION_BASE &&
+            program_address < DSPIC33_CONFIGURATION_BASE + DSPIC33_CONFIGURATION_SIZE &&
+            !dspic33_load_configuration_word(cpu, program_address, word)) {
+            return false;
+        }
+    }
+    *entry_address = load_address / 2u;
+    return true;
 }
 
 bool dspic33_elf_symbol_data(const void* data, size_t size, const char* name,

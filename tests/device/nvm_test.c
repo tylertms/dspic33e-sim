@@ -6,8 +6,8 @@
 
 #include "device.h"
 #include "dspic33.h"
+#include "dspic33_firmware_image.h"
 #include "elf_image.h"
-#include "hex_image.h"
 #include "test.h"
 
 enum {
@@ -817,19 +817,21 @@ static void write_u32(uint8_t* bytes, uint32_t offset, uint32_t value) {
 }
 
 static void auxiliary_loader_cases(TestState* state, Dspic33* cpu) {
-    static uint8_t hex_bytes[] = ":0200000400FFFB\n:0480000056341200E0\n:00000001FF\n";
+    static const uint8_t binary_bytes[] = {0x56u, 0x34u, 0x12u, 0x00u};
     uint8_t elf_bytes[136] = {0u};
-    HexImage hex = {hex_bytes, sizeof(hex_bytes) - 1u, false};
     ElfImage elf = {elf_bytes, sizeof(elf_bytes)};
+    uint32_t entry;
     char error[128] = {0};
 
     dspic33_reset(cpu, 0u);
-    expect(state, hex_image_load_program(&hex, cpu, error, sizeof(error)),
-           "Intel HEX loads auxiliary program section");
+    expect(state,
+           dspic33_load_binary_data(cpu, binary_bytes, sizeof(binary_bytes),
+                                    DSPIC33_AUXILIARY_PROGRAM_BASE * 2u, &entry),
+           "binary loads auxiliary program section");
     expect(state,
            dspic33_read_program_word(cpu, DSPIC33_AUXILIARY_PROGRAM_BASE) ==
                0x00123456u,
-           "Intel HEX auxiliary word retained");
+           "binary auxiliary word retained");
 
     elf_bytes[0] = 0x7fu;
     elf_bytes[1] = 'E';

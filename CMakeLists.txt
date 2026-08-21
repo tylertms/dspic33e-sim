@@ -21,7 +21,6 @@ add_library(dspic33e::simulator ALIAS dspic33e_simulator)
 
 add_library(
     dspic33e_firmware_image STATIC src/elf_image.c src/dspic33_firmware_image.c
-                                   src/hex_image.c
 )
 add_library(dspic33e::firmware_image ALIAS dspic33e_firmware_image)
 
@@ -51,10 +50,6 @@ else()
             ${target} PRIVATE -Wall -Wextra -Wpedantic -Werror
         )
     endforeach()
-endif()
-
-if(WIN32)
-    target_link_libraries(dspic33e_firmware_image PUBLIC advapi32)
 endif()
 
 if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
@@ -176,8 +171,8 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
         NAME dspic33e_firmware_runner_smoke_test
         COMMAND
             dspic33e_firmware_runner
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/system/runner_smoke.hex 0 --stop
-            2
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/system/runner_smoke.bin 0
+            --program-word 0 0x2005a0 --program-word 2 0xfe4000 --stop 2
             --max-instructions 10
     )
     set_tests_properties(
