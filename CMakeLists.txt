@@ -62,24 +62,6 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     set_tests_properties(${target} PROPERTIES LABELS "${labels}")
   endfunction()
 
-  function(dspic33e_add_grouped_test name source labels)
-    set(target "dspic33e_${name}_test")
-    add_executable(${target} ${source})
-    target_compile_features(${target} PRIVATE c_std_11)
-    target_include_directories(${target} PRIVATE tests/support src)
-    target_link_libraries(${target} PRIVATE dspic33e_simulator)
-    if(MSVC)
-      target_compile_options(${target} PRIVATE /W4 /WX)
-    else()
-      target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Werror)
-    endif()
-    foreach(group IN LISTS ARGN)
-      set(test "${target}_${group}")
-      add_test(NAME ${test} COMMAND ${target} ${group})
-      set_tests_properties(${test} PROPERTIES LABELS "${labels}")
-    endforeach()
-  endfunction()
-
   dspic33e_add_test(event_scheduler tests/core/event_scheduler_test.c
                     "core;integration")
   dspic33e_add_test(core_api tests/core/api_test.c "core;unit;integration")
@@ -87,32 +69,10 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
                     "core;integration")
   dspic33e_add_test(processor_timing tests/core/processor_timing_test.c
                     "core;integration")
-  dspic33e_add_grouped_test(
-    processor_data
-    tests/core/processor_data_test.c
-    "core;integration"
-    loop_bit
-    table_system
-    divide_decimal
-    arithmetic
-    shift
-    stack_unary
-    compare
-    direct_arithmetic
-    direct_logical
-    direct_unary)
-  dspic33e_add_grouped_test(
-    processor_control
-    tests/core/processor_control_test.c
-    "core;integration"
-    branch
-    literal_return
-    dsp_general
-    dsp_other
-    multiply
-    move
-    errata
-    behavior)
+  dspic33e_add_test(processor_data tests/core/processor_data_test.c
+                    "core;integration")
+  dspic33e_add_test(processor_control tests/core/processor_control_test.c
+                    "core;integration")
 
   dspic33e_add_test(adc tests/device/adc_test.c "device;integration")
   dspic33e_add_test(auxiliary_clock tests/device/auxiliary_clock_test.c

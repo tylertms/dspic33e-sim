@@ -3623,61 +3623,37 @@ static void compare_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     compare_control_encoding_matrix_cases(state, cpu);
 }
 
-static bool group_selected(int argc, char** argv, const char* group) {
-    return argc == 1 || (argc == 2 && strcmp(argv[1], group) == 0);
-}
-
-int main(int argc, char** argv) {
+int main(void) {
     TestState state = {0u, 0u, 0u};
     Dspic33 cpu;
     bool initialized = dspic33_initialize(&cpu);
     expect(&state, initialized, "processor data test initializes");
     if (initialized) {
-        if (group_selected(argc, argv, "loop_bit")) {
-            loop_encoding_matrix_cases(&state, &cpu);
-            bit_encoding_matrix_cases(&state, &cpu);
-            direct_file_bit_value_cases(&state, &cpu);
-            bit_operand_lifecycle_cases(&state, &cpu);
-        }
-        if (group_selected(argc, argv, "table_system")) {
-            table_encoding_matrix_cases(&state, &cpu);
-            table_value_cases(&state, &cpu);
-            table_operand_lifecycle_cases(&state, &cpu);
-            system_encoding_matrix_cases(&state, &cpu);
-            system_control_value_cases(&state, &cpu);
-        }
-        if (group_selected(argc, argv, "divide_decimal")) {
-            divide_encoding_matrix_cases(&state, &cpu);
-            decimal_adjust_cases(&state, &cpu);
-        }
-        if (group_selected(argc, argv, "arithmetic")) {
-            arithmetic_encoding_matrix_cases(&state, &cpu);
-        }
-        if (group_selected(argc, argv, "shift")) {
-            shift_encoding_matrix_cases(&state, &cpu);
-        }
-        if (group_selected(argc, argv, "stack_unary")) {
-            byte_extension_encoding_matrix_cases(&state, &cpu);
-            byte_extension_value_matrix_cases(&state, &cpu);
-            byte_extension_lifecycle_cases(&state, &cpu);
-            direct_stack_encoding_matrix_cases(&state, &cpu);
-            direct_stack_value_cases(&state, &cpu);
-            link_encoding_matrix_cases(&state, &cpu);
-            shadow_stack_encoding_cases(&state, &cpu);
-            general_unary_encoding_matrix_cases(&state, &cpu);
-        }
-        if (group_selected(argc, argv, "compare")) {
-            compare_encoding_matrix_cases(&state, &cpu);
-        }
-        if (group_selected(argc, argv, "direct_arithmetic")) {
-            direct_file_arithmetic_encoding_matrix_cases(&state);
-        }
-        if (group_selected(argc, argv, "direct_logical")) {
-            direct_file_logical_encoding_matrix_cases(&state, &cpu);
-        }
-        if (group_selected(argc, argv, "direct_unary")) {
-            direct_file_unary_encoding_matrix_cases(&state);
-        }
+        loop_encoding_matrix_cases(&state, &cpu);
+        bit_encoding_matrix_cases(&state, &cpu);
+        direct_file_bit_value_cases(&state, &cpu);
+        bit_operand_lifecycle_cases(&state, &cpu);
+        table_encoding_matrix_cases(&state, &cpu);
+        table_value_cases(&state, &cpu);
+        table_operand_lifecycle_cases(&state, &cpu);
+        system_encoding_matrix_cases(&state, &cpu);
+        system_control_value_cases(&state, &cpu);
+        divide_encoding_matrix_cases(&state, &cpu);
+        decimal_adjust_cases(&state, &cpu);
+        arithmetic_encoding_matrix_cases(&state, &cpu);
+        shift_encoding_matrix_cases(&state, &cpu);
+        byte_extension_encoding_matrix_cases(&state, &cpu);
+        byte_extension_value_matrix_cases(&state, &cpu);
+        byte_extension_lifecycle_cases(&state, &cpu);
+        direct_stack_encoding_matrix_cases(&state, &cpu);
+        direct_stack_value_cases(&state, &cpu);
+        link_encoding_matrix_cases(&state, &cpu);
+        shadow_stack_encoding_cases(&state, &cpu);
+        general_unary_encoding_matrix_cases(&state, &cpu);
+        compare_encoding_matrix_cases(&state, &cpu);
+        direct_file_arithmetic_encoding_matrix_cases(&state);
+        direct_file_logical_encoding_matrix_cases(&state, &cpu);
+        direct_file_unary_encoding_matrix_cases(&state);
         dspic33_release(&cpu);
     }
     return test_finish(&state);

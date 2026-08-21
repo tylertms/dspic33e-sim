@@ -2509,55 +2509,35 @@ static void run_limit_cases(TestState* state, Dspic33* cpu) {
            "run stops at the instruction limit");
 }
 
-static bool group_selected(int argc, char** argv, const char* group) {
-    return argc == 1 || (argc == 2 && strcmp(argv[1], group) == 0);
-}
-
-int main(int argc, char** argv) {
+int main(void) {
     TestState state = {0u, 0u, 0u};
     Dspic33 cpu;
     bool initialized = dspic33_initialize(&cpu);
     expect(&state, initialized, "processor control test initializes");
     if (initialized) {
-        if (group_selected(argc, argv, "branch")) {
-            conditional_branch_encoding_matrix_cases(&state, &cpu);
-            computed_control_encoding_matrix_cases(&state, &cpu);
-        }
-        if (group_selected(argc, argv, "literal_return")) {
-            literal_control_encoding_matrix_cases(&state, &cpu);
-            return_encoding_matrix_cases(&state, &cpu);
-        }
-        if (group_selected(argc, argv, "dsp_general")) {
-            dspic33_reset(&cpu, 0u);
-            dspic33_set_async_events(&cpu, false);
-            general_dsp_encoding_matrix_cases(&state, &cpu);
-        }
-        if (group_selected(argc, argv, "dsp_other")) {
-            dspic33_reset(&cpu, 0u);
-            dspic33_set_async_events(&cpu, false);
-            special_dsp_encoding_matrix_cases(&state, &cpu);
-            square_dsp_encoding_matrix_cases(&state, &cpu);
-            euclidean_dsp_encoding_matrix_cases(&state, &cpu);
-            invalid_dsp_encoding_matrix_cases(&state, &cpu);
-        }
-        if (group_selected(argc, argv, "multiply")) {
-            generic_multiply_encoding_matrix_cases(&state, &cpu);
-            file_multiply_encoding_matrix_cases(&state, &cpu);
-        }
-        if (group_selected(argc, argv, "move")) {
-            move_encoding_matrix_cases(&state, &cpu);
-        }
-        if (group_selected(argc, argv, "errata")) {
-            flash_read_erratum_cases(&state, &cpu);
-            do_flash_access_erratum_cases(&state, &cpu);
-            illegal_condition_reset_cases(&state, &cpu);
-        }
-        if (group_selected(argc, argv, "behavior")) {
-            accumulator_operation_cases(&state, &cpu);
-            accumulator_store_cases(&state, &cpu);
-            bit_reversed_addressing_cases(&state, &cpu);
-            run_limit_cases(&state, &cpu);
-        }
+        conditional_branch_encoding_matrix_cases(&state, &cpu);
+        computed_control_encoding_matrix_cases(&state, &cpu);
+        literal_control_encoding_matrix_cases(&state, &cpu);
+        return_encoding_matrix_cases(&state, &cpu);
+        dspic33_reset(&cpu, 0u);
+        dspic33_set_async_events(&cpu, false);
+        general_dsp_encoding_matrix_cases(&state, &cpu);
+        dspic33_reset(&cpu, 0u);
+        dspic33_set_async_events(&cpu, false);
+        special_dsp_encoding_matrix_cases(&state, &cpu);
+        square_dsp_encoding_matrix_cases(&state, &cpu);
+        euclidean_dsp_encoding_matrix_cases(&state, &cpu);
+        invalid_dsp_encoding_matrix_cases(&state, &cpu);
+        generic_multiply_encoding_matrix_cases(&state, &cpu);
+        file_multiply_encoding_matrix_cases(&state, &cpu);
+        move_encoding_matrix_cases(&state, &cpu);
+        flash_read_erratum_cases(&state, &cpu);
+        do_flash_access_erratum_cases(&state, &cpu);
+        illegal_condition_reset_cases(&state, &cpu);
+        accumulator_operation_cases(&state, &cpu);
+        accumulator_store_cases(&state, &cpu);
+        bit_reversed_addressing_cases(&state, &cpu);
+        run_limit_cases(&state, &cpu);
         dspic33_release(&cpu);
     }
     return test_finish(&state);
