@@ -57,8 +57,6 @@ The `tests` directory has this structure:
 
 The device tests include interrupt, reset, copy, power, lifecycle, and error cases.
 
-CTest stops an ordinary test after 60 seconds. It gives each exhaustive processor test 10 minutes.
-
 Run one test group:
 
 ```

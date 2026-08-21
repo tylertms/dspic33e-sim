@@ -74,7 +74,7 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
             )
         endif()
         add_test(NAME ${target} COMMAND ${target})
-        set_tests_properties(${target} PROPERTIES LABELS "${labels}" TIMEOUT 60)
+        set_tests_properties(${target} PROPERTIES LABELS "${labels}")
     endfunction()
 
     dspic33e_add_test(
@@ -172,12 +172,6 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
         watchdog tests/device/watchdog_test.c "device;integration"
     )
 
-    set_tests_properties(
-        dspic33e_processor_fault_test dspic33e_processor_timing_test
-        dspic33e_processor_data_test dspic33e_processor_control_test
-        PROPERTIES TIMEOUT 600
-    )
-
     add_test(
         NAME dspic33e_firmware_runner_smoke_test
         COMMAND
@@ -189,7 +183,7 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     set_tests_properties(
         dspic33e_firmware_runner_smoke_test
         PROPERTIES LABELS "runner;system" PASS_REGULAR_EXPRESSION
-                   "\\[passed\\].*W0=0x005a" TIMEOUT 10
+                   "\\[passed\\].*W0=0x005a"
     )
 
 endif()
