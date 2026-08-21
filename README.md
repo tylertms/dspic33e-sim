@@ -9,7 +9,7 @@ C simulator for the Microchip dsPIC33E architecture and dsPIC33EP512MU810 microc
 
 ## Build
 
-```console
+```
 cmake -S . -B build/simulator -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build/simulator --parallel
 ```
@@ -24,7 +24,7 @@ cmake --build build/simulator --parallel
 
 ## Run Firmware
 
-```console
+```
 dspic33e_firmware_runner <IMAGE> --reset-address <ADDRESS> [OPTIONS]
 ```
 
@@ -49,13 +49,13 @@ target_link_libraries(your_target PRIVATE dspic33e::simulator)
 
 Run all unit and device tests:
 
-```console
+```
 ctest --test-dir build/simulator --output-on-failure --parallel
 ```
 
 Run specific test groups:
 
-```console
+```
 ctest --test-dir build/simulator -L core --output-on-failure --parallel
 ctest --test-dir build/simulator -L device --output-on-failure --parallel
 ctest --test-dir build/simulator -L system --output-on-failure --parallel
