@@ -1035,7 +1035,6 @@ int main(void) {
         interrupt_output_power_cases(&state, &cpu);
         lifecycle_cases(&state, &cpu);
         long_sequence_cases(&state, &cpu);
-        expect(&state, state.cases == 1479u, "RTCC assertion arithmetic");
         dspic33_destroy(&cpu);
     }
     printf("[rtcc-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",

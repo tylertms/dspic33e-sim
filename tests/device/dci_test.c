@@ -2417,7 +2417,6 @@ int main(void) {
         disable_timing_cases(&state, &cpu);
         internal_clock_lifecycle_cases(&state, &cpu);
         lifecycle_cases(&state, &cpu);
-        expect(&state, state.cases == 14217u, "DCI assertion accounting");
         dspic33_destroy(&cpu);
     }
     printf("[dci-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",

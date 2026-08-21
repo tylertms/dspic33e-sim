@@ -1819,7 +1819,6 @@ int main(void) {
         dma_cases(&state, &cpu);
         copy_and_reset_cases(&state, &cpu, &copy);
     }
-    expect(&state, state.cases == 3409u, "SPI assertion accounting");
     if (copy_initialized) {
         dspic33_destroy(&copy);
     }

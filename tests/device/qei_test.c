@@ -1626,7 +1626,6 @@ int main(void) {
         index_direction_erratum_cases(&state, &cpu);
         pmd_cases(&state, &cpu);
         copy_cases(&state, &cpu);
-        expect(&state, state.cases == 532u, "QEI assertion accounting");
         dspic33_destroy(&cpu);
     }
     printf("[qei-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",

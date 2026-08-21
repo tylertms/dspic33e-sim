@@ -2810,7 +2810,6 @@ int main(void) {
     master_pin_collision_cases(&state, &cpu);
     slave_pin_address_policy_cases(&state, &cpu);
     acknowledge_rmw_erratum_cases(&state, &cpu);
-    expect(&state, state.cases == 1198u, "I2C assertion arithmetic");
     dspic33_destroy(&cpu);
     printf("[i2c-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);

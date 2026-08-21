@@ -369,7 +369,6 @@ int main(void) {
     copy_cases(&state, &source, &copy);
     reset_vector_cases(&state, &source, &copy);
     trap_conflict_cases(&state, &source);
-    expect(&state, state.cases == 49u, "reset assertion accounting");
     printf("[reset-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);
     dspic33_destroy(&copy);

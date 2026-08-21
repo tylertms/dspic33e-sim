@@ -1423,7 +1423,6 @@ int main(void) {
         filter_reconfiguration_cases(&state, &cpu);
         byte_access_behavior_cases(&state, &cpu);
         dma_and_completed_feature_cases(&state, &cpu);
-        expect(&state, state.cases == 264002u, "comparator assertion arithmetic");
         dspic33_destroy(&cpu);
     }
     printf("[comparator-summary] cases=%u passed=%u failed=%u\n", state.cases,

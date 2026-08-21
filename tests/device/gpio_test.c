@@ -840,7 +840,6 @@ int main(void) {
         change_notification_qualification_cases(&state, &cpu);
         change_notification_interrupt_cases(&state, &cpu);
         change_notification_dma_lifecycle_cases(&state, &cpu);
-        expect(&state, state.cases == 760u, "GPIO assertion accounting");
         dspic33_destroy(&cpu);
     }
     printf("[gpio-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",

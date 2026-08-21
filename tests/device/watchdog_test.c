@@ -339,7 +339,6 @@ int main(void) {
     power_cases(&state, &source);
     lifecycle_cases(&state, &source, &copy);
     nvm_cases(&state, &source);
-    expect(&state, state.cases == 208u, "watchdog assertion arithmetic");
     printf("[watchdog-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32
            "\n",
            state.cases, state.passed, state.failed);

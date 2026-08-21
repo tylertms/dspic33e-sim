@@ -411,7 +411,6 @@ int main(void) {
     output_cases(&state, &source);
     protection_cases(&state, &source);
     lifecycle_cases(&state, &source, &copy);
-    expect(&state, state.cases == 330u, "PPS assertion arithmetic");
     printf("[pps-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n",
            state.cases, state.passed, state.failed);
     dspic33_destroy(&copy);

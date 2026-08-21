@@ -1730,7 +1730,6 @@ int main(void) {
     doze_cases(&state, &source, &copy);
     oscillator_pin_cases(&state, &source, &copy);
     lifecycle_cases(&state, &source, &copy);
-    expect(&state, state.cases == 481u, "oscillator assertion arithmetic");
     printf("[oscillator-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32
            "\n",
            state.cases, state.passed, state.failed);

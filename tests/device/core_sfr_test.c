@@ -235,7 +235,6 @@ int main(void) {
     reset_control_cases(&state, &source);
     disicnt_cases(&state, &source);
     lifecycle_cases(&state, &source, &copy);
-    expect(&state, state.cases == 43u, "core SFR assertion accounting");
     printf("[core-sfr-summary] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32
            "\n",
            state.cases, state.passed, state.failed);

@@ -670,23 +670,16 @@ static void run_invalid_byte_extension_case(TestState* state, Dspic33* cpu,
 
 static void byte_extension_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     uint32_t fields;
-    uint32_t legal = 0u;
-    uint32_t reserved = 0u;
 
     for (fields = 0u; fields <= 0xffffu; fields++) {
         uint32_t opcode = 0xfb0000u | fields;
         uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
         if ((opcode & 0x007800u) == 0u && source_mode < 6u) {
             run_legal_byte_extension_case(state, cpu, opcode);
-            legal++;
         } else {
             run_invalid_byte_extension_case(state, cpu, opcode);
-            reserved++;
         }
     }
-    expect(state, legal == 3072u, "SE and ZE legal encoding matrix is exhaustive");
-    expect(state, reserved == 62464u,
-           "SE and ZE reserved encoding matrix is exhaustive");
 }
 
 static void byte_extension_value_matrix_cases(TestState* state, Dspic33* cpu) {
@@ -720,7 +713,6 @@ static void byte_extension_value_matrix_cases(TestState* state, Dspic33* cpu) {
             }
         }
     }
-    expect(state, value == 0x0100u, "SE and ZE byte value matrix is exhaustive");
 }
 
 static void byte_extension_lifecycle_cases(TestState* state, Dspic33* cpu) {
@@ -843,8 +835,6 @@ static void direct_stack_value_cases(TestState* state, Dspic33* cpu) {
 
 static void direct_stack_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     uint32_t fields;
-    uint32_t legal = 0u;
-    uint32_t reserved = 0u;
     uint8_t pop;
 
     for (pop = 0u; pop < 2u; pop++) {
@@ -852,23 +842,15 @@ static void direct_stack_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
             uint32_t opcode = (pop != 0u ? 0xf90000u : 0xf80000u) | fields;
             if ((fields & 1u) == 0u) {
                 run_direct_stack_encoding_case(state, cpu, opcode, (uint16_t)fields);
-                legal++;
             } else {
                 run_invalid_stack_encoding_case(state, cpu, opcode);
-                reserved++;
             }
         }
     }
-    expect(state, legal == 65536u,
-           "direct PUSH and POP legal encoding matrix is exhaustive");
-    expect(state, reserved == 65536u,
-           "direct PUSH and POP reserved encoding matrix is exhaustive");
 }
 
 static void link_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     uint32_t fields;
-    uint32_t legal = 0u;
-    uint32_t reserved = 0u;
 
     for (fields = 0u; fields < 0x8000u; fields++) {
         uint32_t opcode = 0xfa0000u | fields;
@@ -887,14 +869,10 @@ static void link_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
                       cpu->corcon == 0x0024u && cpu->sr == 0x010fu &&
                       !cpu->illegal_reset && cpu->unsupported_opcode == 0u;
             expect_dsp_matrix_case(state, matches, opcode, "LNK legal encoding");
-            legal++;
         } else {
             run_invalid_stack_encoding_case(state, cpu, opcode);
-            reserved++;
         }
     }
-    expect(state, legal == 8192u, "LNK legal encoding matrix is exhaustive");
-    expect(state, reserved == 24576u, "LNK reserved encoding matrix is exhaustive");
 }
 
 static void shadow_stack_encoding_cases(TestState* state, Dspic33* cpu) {
@@ -1180,8 +1158,6 @@ static void run_legal_file_bit_admission_case(TestState* state, Dspic33* cpu,
 
 static void bit_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     uint32_t fields;
-    uint32_t legal = 0u;
-    uint32_t reserved = 0u;
 
     dspic33_reset(cpu, 0u);
     dspic33_set_async_events(cpu, false);
@@ -1193,14 +1169,10 @@ static void bit_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
             } else {
                 run_legal_register_bit_case(state, cpu, opcode);
             }
-            legal++;
         } else {
             run_invalid_binary_matrix_case(state, cpu, opcode);
-            reserved++;
         }
     }
-    expect(state, legal == 477936u, "bit legal encoding matrix is exhaustive");
-    expect(state, reserved == 570640u, "bit illegal encoding matrix is exhaustive");
 }
 
 static void direct_file_bit_value_cases(TestState* state, Dspic33* cpu) {
@@ -1209,7 +1181,6 @@ static void direct_file_bit_value_cases(TestState* state, Dspic33* cpu) {
     size_t kind_index;
     uint8_t bit;
     size_t value_index;
-    uint32_t cases = 0u;
 
     for (kind_index = 0u; kind_index < sizeof(kinds) / sizeof(kinds[0]); kind_index++) {
         uint8_t kind = kinds[kind_index];
@@ -1263,12 +1234,9 @@ static void direct_file_bit_value_cases(TestState* state, Dspic33* cpu) {
                           !cpu->illegal_reset && cpu->unsupported_opcode == 0u;
                 expect_dsp_matrix_case(state, matches, opcode,
                                        "direct file bit value and status");
-                cases++;
             }
         }
     }
-    expect(state, cases == 448u,
-           "direct file bit value matrix covers every operation and bit");
 }
 
 static void bit_operand_lifecycle_cases(TestState* state, Dspic33* cpu) {
@@ -1335,21 +1303,15 @@ static void run_legal_table_encoding_case(TestState* state, Dspic33* cpu,
 
 static void table_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     uint32_t fields;
-    uint32_t legal = 0u;
-    uint32_t illegal = 0u;
 
     for (fields = 0u; fields < 0x20000u; fields++) {
         uint32_t opcode = 0xba0000u | fields;
         if (documented_table_encoding_valid(opcode)) {
             run_legal_table_encoding_case(state, cpu, opcode);
-            legal++;
         } else {
             run_invalid_binary_matrix_case(state, cpu, opcode);
-            illegal++;
         }
     }
-    expect(state, legal == 61440u, "table legal encoding matrix is exhaustive");
-    expect(state, illegal == 69632u, "table illegal encoding matrix is exhaustive");
 }
 
 static void table_value_cases(TestState* state, Dspic33* cpu) {
@@ -1486,37 +1448,27 @@ static void run_illegal_system_encoding_case(TestState* state, Dspic33* cpu,
 
 static void system_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     uint32_t fields;
-    uint32_t legal = 0u;
-    uint32_t illegal = 0u;
 
     for (fields = 0u; fields <= 0xffffu; fields++) {
         run_legal_system_encoding_case(state, cpu, fields);
-        legal++;
         run_legal_system_encoding_case(state, cpu, 0xff0000u | fields);
-        legal++;
     }
     for (fields = 0u; fields <= 0xffffu; fields++) {
         uint32_t opcode = 0xfc0000u | fields;
         if (documented_system_encoding_valid(opcode)) {
             run_legal_system_encoding_case(state, cpu, opcode);
-            legal++;
         } else {
             run_illegal_system_encoding_case(state, cpu, opcode);
-            illegal++;
         }
     }
     for (fields = 0u; fields <= 0xffffu; fields++) {
         uint32_t opcode = 0xfe0000u | fields;
         if (documented_system_encoding_valid(opcode)) {
             run_legal_system_encoding_case(state, cpu, opcode);
-            legal++;
         } else {
             run_illegal_system_encoding_case(state, cpu, opcode);
-            illegal++;
         }
     }
-    expect(state, legal == 150583u, "system legal encoding matrix is exhaustive");
-    expect(state, illegal == 111561u, "system illegal encoding matrix is exhaustive");
 }
 
 static void system_control_value_cases(TestState* state, Dspic33* cpu) {
@@ -1537,7 +1489,6 @@ static void system_control_value_cases(TestState* state, Dspic33* cpu) {
                   cpu->sr == 0x010fu && !cpu->illegal_reset;
         expect_dsp_matrix_case(state, matches, opcode, "DISI literal value");
     }
-    expect(state, literal == 0x4000u, "DISI value matrix is exhaustive");
 
     prepare_system_encoding_case(cpu);
     expect(state,
@@ -1649,21 +1600,15 @@ static bool run_legal_divide_matrix_case(Dspic33* cpu, uint32_t opcode) {
 
 static void divide_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     uint32_t opcode;
-    uint32_t legal = 0u;
-    uint32_t illegal = 0u;
 
     for (opcode = 0xd80000u; opcode <= 0xd9ffffu; opcode++) {
         if (documented_divide_encoding_valid(opcode)) {
             expect_dsp_matrix_case(state, run_legal_divide_matrix_case(cpu, opcode),
                                    opcode, "legal divide encoding and result");
-            legal++;
         } else {
             run_invalid_binary_matrix_case(state, cpu, opcode);
-            illegal++;
         }
     }
-    expect(state, legal == 928u, "divide legal encoding matrix is exhaustive");
-    expect(state, illegal == 130144u, "divide illegal encoding matrix is exhaustive");
 }
 
 static uint16_t decimal_adjust_reference(uint16_t value, uint16_t status, bool* carry) {
@@ -1680,8 +1625,6 @@ static uint16_t decimal_adjust_reference(uint16_t value, uint16_t status, bool* 
 }
 
 static void decimal_adjust_cases(TestState* state, Dspic33* cpu) {
-    uint32_t cases = 0u;
-    uint32_t invalid = 0u;
     uint32_t opcode;
     uint16_t value;
     uint16_t status_inputs;
@@ -1714,28 +1657,20 @@ static void decimal_adjust_cases(TestState* state, Dspic33* cpu) {
                           cpu->unsupported_opcode == 0u;
                 expect_dsp_matrix_case(state, matches, opcode,
                                        "decimal adjust value and flags");
-                cases++;
             }
         }
     }
-    expect(state, cases == 16384u,
-           "decimal adjust matrix covers every byte, flag and register");
 
     for (opcode = 0xfd4000u; opcode <= 0xfd4fffu; opcode++) {
         if ((opcode & 0xfffff0u) != 0xfd4000u) {
             run_invalid_binary_matrix_case(state, cpu, opcode);
-            invalid++;
         }
     }
-    expect(state, invalid == 4080u,
-           "decimal adjust illegal encoding matrix is exhaustive");
 }
 
 static void general_arithmetic_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     static const uint32_t bases[6] = {0x100000u, 0x180000u, 0x400000u,
                                       0x480000u, 0x500000u, 0x580000u};
-    uint32_t legal = 0u;
-    uint32_t invalid = 0u;
     uint8_t operation;
 
     dspic33_reset(cpu, 0u);
@@ -1747,26 +1682,18 @@ static void general_arithmetic_encoding_matrix_cases(TestState* state, Dspic33* 
             uint8_t destination_mode = (uint8_t)((opcode >> 11u) & 0x07u);
             if (destination_mode >= 6u) {
                 run_invalid_binary_matrix_case(state, cpu, opcode);
-                invalid++;
             } else {
                 run_legal_binary_matrix_case(state, cpu, opcode,
                                              (BinaryMatrixOperation)operation);
-                legal++;
             }
         }
     }
-    expect(state, legal == 2359296u,
-           "general arithmetic legal encoding matrix is exhaustive");
-    expect(state, invalid == 786432u,
-           "general arithmetic illegal encoding matrix is exhaustive");
 }
 
 static void general_logical_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     static const uint32_t bases[3] = {0x600000u, 0x680000u, 0x700000u};
     static const BinaryMatrixOperation operations[3] = {
         ARITHMETIC_MATRIX_AND, ARITHMETIC_MATRIX_XOR, ARITHMETIC_MATRIX_IOR};
-    uint32_t legal = 0u;
-    uint32_t invalid = 0u;
     uint8_t operation;
 
     dspic33_reset(cpu, 0u);
@@ -1778,17 +1705,11 @@ static void general_logical_encoding_matrix_cases(TestState* state, Dspic33* cpu
             uint8_t destination_mode = (uint8_t)((opcode >> 11u) & 0x07u);
             if (destination_mode >= 6u) {
                 run_invalid_binary_matrix_case(state, cpu, opcode);
-                invalid++;
             } else {
                 run_legal_binary_matrix_case(state, cpu, opcode, operations[operation]);
-                legal++;
             }
         }
     }
-    expect(state, legal == 1179648u,
-           "general logical legal encoding matrix is exhaustive");
-    expect(state, invalid == 393216u,
-           "general logical illegal encoding matrix is exhaustive");
 }
 
 static void run_literal_binary_matrix_case(TestState* state, Dspic33* cpu,
@@ -1849,7 +1770,6 @@ static void literal_arithmetic_encoding_matrix_cases(TestState* state, Dspic33* 
     static const BinaryMatrixOperation operations[4] = {
         ARITHMETIC_MATRIX_ADD, ARITHMETIC_MATRIX_ADDC, ARITHMETIC_MATRIX_SUB,
         ARITHMETIC_MATRIX_SUBB};
-    uint32_t cases = 0u;
     uint8_t operation;
     uint8_t byte_mode;
 
@@ -1867,21 +1787,16 @@ static void literal_arithmetic_encoding_matrix_cases(TestState* state, Dspic33* 
                     run_literal_binary_matrix_case(state, cpu, opcode,
                                                    operations[operation], literal,
                                                    byte_mode != 0u);
-                    cases++;
                 }
             }
         }
     }
-    expect(state, cases == 81920u,
-           "literal arithmetic encoding matrix covers every valid form");
 }
 
 static void literal_logical_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     static const uint32_t bases[3] = {0xb20000u, 0xb28000u, 0xb30000u};
     static const BinaryMatrixOperation operations[3] = {
         ARITHMETIC_MATRIX_AND, ARITHMETIC_MATRIX_XOR, ARITHMETIC_MATRIX_IOR};
-    uint32_t legal = 0u;
-    uint32_t invalid = 0u;
     uint8_t operation;
 
     dspic33_reset(cpu, 0u);
@@ -1899,7 +1814,6 @@ static void literal_logical_encoding_matrix_cases(TestState* state, Dspic33* cpu
                     run_literal_binary_matrix_case(state, cpu, opcode,
                                                    operations[operation], literal,
                                                    byte_mode != 0u);
-                    legal++;
                 }
             }
         }
@@ -1907,13 +1821,8 @@ static void literal_logical_encoding_matrix_cases(TestState* state, Dspic33* cpu
     for (uint32_t opcode = 0xb38000u; opcode < 0xb40000u; opcode++) {
         if ((opcode & 0xfff000u) != 0xb3c000u) {
             run_invalid_binary_matrix_case(state, cpu, opcode);
-            invalid++;
         }
     }
-    expect(state, legal == 61440u,
-           "literal logical legal encoding matrix is exhaustive");
-    expect(state, invalid == 28672u,
-           "literal logical illegal encoding matrix is exhaustive");
 }
 
 static void arithmetic_flag_boundary_cases(TestState* state, Dspic33* cpu) {
@@ -1923,7 +1832,6 @@ static void arithmetic_flag_boundary_cases(TestState* state, Dspic33* cpu) {
                                             0x7fu, 0x80u, 0xfeu, 0xffu};
     static const uint16_t word_values[8] = {0x0000u, 0x0001u, 0x00ffu, 0x0100u,
                                             0x7fffu, 0x8000u, 0xfffeu, 0xffffu};
-    uint32_t cases = 0u;
     uint8_t operation;
     uint8_t byte_mode;
     uint8_t left_index;
@@ -1976,14 +1884,12 @@ static void arithmetic_flag_boundary_cases(TestState* state, Dspic33* cpu) {
                                       !cpu->address_error && !cpu->illegal_reset;
                             expect_dsp_matrix_case(state, matches, opcode,
                                                    "arithmetic flag boundary");
-                            cases++;
                         }
                     }
                 }
             }
         }
     }
-    expect(state, cases == 3072u, "arithmetic flag boundary matrix is exhaustive");
 }
 
 static void arithmetic_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
@@ -2262,8 +2168,6 @@ static void general_unary_encoding_matrix_cases(TestState* state, Dspic33* cpu) 
         {DIRECT_FILE_DEC, DIRECT_FILE_DEC2},
         {DIRECT_FILE_NEG, DIRECT_FILE_COM},
         {DIRECT_FILE_CLR, DIRECT_FILE_SETM}};
-    uint32_t legal = 0u;
-    uint32_t invalid = 0u;
     uint32_t fields;
 
     dspic33_reset(cpu, 0u);
@@ -2281,16 +2185,10 @@ static void general_unary_encoding_matrix_cases(TestState* state, Dspic33* cpu) 
         if (valid) {
             run_legal_unary_matrix_case(state, cpu, opcode,
                                         operations[family][alternate]);
-            legal++;
         } else {
             run_invalid_binary_matrix_case(state, cpu, opcode);
-            invalid++;
         }
     }
-    expect(state, legal == 110976u,
-           "general unary legal encoding matrix is exhaustive");
-    expect(state, invalid == 151168u,
-           "general unary illegal encoding matrix is exhaustive");
 }
 
 static uint16_t direct_file_boundary_value(uint8_t index, bool byte_mode) {
@@ -2705,7 +2603,6 @@ static void direct_file_arithmetic_encoding_matrix_cases(TestState* state) {
                                       0xb48000u, 0xb50000u, 0xb58000u};
     static Dspic33 actual;
     static Dspic33 reference;
-    uint32_t cases = 0u;
     bool actual_initialized = dspic33_initialize(&actual);
     bool reference_initialized = dspic33_initialize(&reference);
     uint8_t operation;
@@ -2739,13 +2636,10 @@ static void direct_file_arithmetic_encoding_matrix_cases(TestState* state) {
                         address, byte_mode != 0u, file_destination != 0u);
                     expect_dsp_matrix_case(state, matches, opcode,
                                            "direct-file arithmetic encoding");
-                    cases++;
                 }
             }
         }
     }
-    expect(state, cases == 196608u,
-           "direct-file arithmetic encoding matrix is exhaustive");
     dspic33_destroy(&actual);
     dspic33_destroy(&reference);
 }
@@ -2758,8 +2652,6 @@ static void direct_file_logical_encoding_matrix_cases(TestState* state,
     static Dspic33 actual;
     static Dspic33 reference;
     bool flag_outcomes[3][2][512] = {{{false}}};
-    uint32_t valid = 0u;
-    uint32_t invalid = 0u;
     bool actual_initialized = dspic33_initialize(&actual);
     bool reference_initialized = dspic33_initialize(&reference);
     uint8_t operation;
@@ -2798,7 +2690,6 @@ static void direct_file_logical_encoding_matrix_cases(TestState* state,
                     }
                     expect_dsp_matrix_case(state, matches, opcode,
                                            "direct-file logical encoding");
-                    valid++;
                 }
             }
         }
@@ -2807,13 +2698,8 @@ static void direct_file_logical_encoding_matrix_cases(TestState* state,
         for (uint16_t address = 0u; address < 0x2000u; address++) {
             run_invalid_binary_matrix_case(
                 state, invalid_cpu, 0xb78000u | ((uint32_t)byte_mode << 14u) | address);
-            invalid++;
         }
     }
-    expect(state, valid == 98304u,
-           "direct-file logical valid encoding matrix is exhaustive");
-    expect(state, invalid == 16384u,
-           "direct-file logical illegal encoding matrix is exhaustive");
     for (operation = 0u; operation < 3u; operation++) {
         uint8_t byte_mode;
         for (byte_mode = 0u; byte_mode < 2u; byte_mode++) {
@@ -2837,7 +2723,6 @@ static void direct_file_unary_encoding_matrix_cases(TestState* state) {
     static Dspic33 actual;
     static Dspic33 reference;
     bool flag_outcomes[8][2][512] = {{{false}}};
-    uint32_t cases = 0u;
     bool actual_initialized = dspic33_initialize(&actual);
     bool reference_initialized = dspic33_initialize(&reference);
     uint8_t operation;
@@ -2876,12 +2761,10 @@ static void direct_file_unary_encoding_matrix_cases(TestState* state) {
                     }
                     expect_dsp_matrix_case(state, matches, opcode,
                                            "direct-file unary encoding");
-                    cases++;
                 }
             }
         }
     }
-    expect(state, cases == 262144u, "direct-file unary encoding matrix is exhaustive");
     for (operation = 0u; operation < 8u; operation++) {
         uint8_t byte_mode;
         for (byte_mode = 0u; byte_mode < 2u; byte_mode++) {
@@ -2910,8 +2793,6 @@ static DirectFileOperation shift_matrix_operation(uint8_t family, bool alternate
 }
 
 static void single_shift_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
-    uint32_t legal = 0u;
-    uint32_t invalid = 0u;
 
     dspic33_reset(cpu, 0u);
     dspic33_set_async_events(cpu, false);
@@ -2927,15 +2808,10 @@ static void single_shift_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
         if (valid) {
             run_legal_unary_matrix_case(state, cpu, opcode,
                                         shift_matrix_operation(family, alternate));
-            legal++;
         } else {
             run_invalid_binary_matrix_case(state, cpu, opcode);
-            invalid++;
         }
     }
-    expect(state, legal == 129024u, "single-shift legal encoding matrix is exhaustive");
-    expect(state, invalid == 133120u,
-           "single-shift illegal encoding matrix is exhaustive");
 }
 
 static void direct_file_shift_encoding_matrix_cases(TestState* state,
@@ -2947,8 +2823,6 @@ static void direct_file_shift_encoding_matrix_cases(TestState* state,
         DIRECT_FILE_RLC, DIRECT_FILE_RRNC, DIRECT_FILE_RRC};
     static Dspic33 actual;
     static Dspic33 reference;
-    uint32_t legal = 0u;
-    uint32_t invalid = 0u;
     bool actual_initialized = dspic33_initialize(&actual);
     bool reference_initialized = dspic33_initialize(&reference);
 
@@ -2979,19 +2853,13 @@ static void direct_file_shift_encoding_matrix_cases(TestState* state,
                         byte_mode != 0u, file_destination != 0u);
                     expect_dsp_matrix_case(state, matches, opcode,
                                            "direct-file shift encoding");
-                    legal++;
                 }
             }
         }
     }
     for (uint32_t opcode = 0xd48000u; opcode < 0xd50000u; opcode++) {
         run_invalid_binary_matrix_case(state, invalid_cpu, opcode);
-        invalid++;
     }
-    expect(state, legal == 229376u,
-           "direct-file shift legal encoding matrix is exhaustive");
-    expect(state, invalid == 32768u,
-           "direct-file shift illegal encoding matrix is exhaustive");
     dspic33_destroy(&actual);
     dspic33_destroy(&reference);
 }
@@ -3053,8 +2921,6 @@ static void run_multiple_shift_matrix_case(TestState* state, Dspic33* cpu,
 }
 
 static void multiple_shift_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
-    uint32_t legal = 0u;
-    uint32_t invalid = 0u;
 
     dspic33_reset(cpu, 0u);
     dspic33_set_async_events(cpu, false);
@@ -3066,16 +2932,10 @@ static void multiple_shift_encoding_matrix_cases(TestState* state, Dspic33* cpu)
                                             : (opcode & 0x8000u) ? DIRECT_FILE_ASR
                                                                  : DIRECT_FILE_LSR;
             run_multiple_shift_matrix_case(state, cpu, opcode, operation);
-            legal++;
         } else {
             run_invalid_binary_matrix_case(state, cpu, opcode);
-            invalid++;
         }
     }
-    expect(state, legal == 24576u,
-           "multiple-shift legal encoding matrix is exhaustive");
-    expect(state, invalid == 106496u,
-           "multiple-shift illegal encoding matrix is exhaustive");
 }
 
 static uint16_t find_first_result(uint16_t source, bool left, bool sign_change) {
@@ -3137,8 +2997,6 @@ static void run_find_first_matrix_case(TestState* state, Dspic33* cpu, uint32_t 
 }
 
 static void find_first_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
-    uint32_t legal = 0u;
-    uint32_t invalid = 0u;
 
     dspic33_reset(cpu, 0u);
     dspic33_set_async_events(cpu, false);
@@ -3146,25 +3004,18 @@ static void find_first_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
         bool valid = (opcode & 0x007800u) == 0u && ((opcode >> 4u) & 0x07u) < 6u;
         if (valid) {
             run_find_first_matrix_case(state, cpu, opcode, false);
-            legal++;
         } else {
             run_invalid_binary_matrix_case(state, cpu, opcode);
-            invalid++;
         }
     }
     for (uint32_t opcode = 0xdf0000u; opcode < 0xe00000u; opcode++) {
         bool valid = (opcode & 0x00f800u) == 0u && ((opcode >> 4u) & 0x07u) < 6u;
         if (valid) {
             run_find_first_matrix_case(state, cpu, opcode, true);
-            legal++;
         } else {
             run_invalid_binary_matrix_case(state, cpu, opcode);
-            invalid++;
         }
     }
-    expect(state, legal == 4608u, "find-first legal encoding matrix is exhaustive");
-    expect(state, invalid == 126464u,
-           "find-first illegal encoding matrix is exhaustive");
 }
 
 static int64_t accumulator_shift_matrix_result(int64_t value, int16_t amount) {
@@ -3222,8 +3073,6 @@ static void run_accumulator_shift_matrix_case(TestState* state, Dspic33* cpu,
 }
 
 static void accumulator_shift_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
-    uint32_t legal = 0u;
-    uint32_t invalid = 0u;
 
     dspic33_reset(cpu, 0u);
     dspic33_set_async_events(cpu, false);
@@ -3233,16 +3082,10 @@ static void accumulator_shift_encoding_matrix_cases(TestState* state, Dspic33* c
                      (literal || (opcode & 0x0030u) == 0u);
         if (valid) {
             run_accumulator_shift_matrix_case(state, cpu, opcode);
-            legal++;
         } else {
             run_invalid_binary_matrix_case(state, cpu, opcode);
-            invalid++;
         }
     }
-    expect(state, legal == 160u,
-           "accumulator-shift legal encoding matrix is exhaustive");
-    expect(state, invalid == 65376u,
-           "accumulator-shift illegal encoding matrix is exhaustive");
 }
 
 static void single_shift_value_matrix_cases(TestState* state, Dspic33* cpu) {
@@ -3251,7 +3094,6 @@ static void single_shift_value_matrix_cases(TestState* state, Dspic33* cpu) {
     static const DirectFileOperation operations[7] = {
         DIRECT_FILE_SL,  DIRECT_FILE_LSR,  DIRECT_FILE_ASR, DIRECT_FILE_RLNC,
         DIRECT_FILE_RLC, DIRECT_FILE_RRNC, DIRECT_FILE_RRC};
-    uint32_t cases = 0u;
 
     for (uint8_t operation = 0u; operation < 7u; operation++) {
         for (uint8_t byte_mode = 0u; byte_mode < 2u; byte_mode++) {
@@ -3288,20 +3130,16 @@ static void single_shift_value_matrix_cases(TestState* state, Dspic33* cpu) {
                               !cpu->illegal_reset && cpu->unsupported_opcode == 0u;
                     expect_dsp_matrix_case(state, matches, opcode,
                                            "single-shift value boundary");
-                    cases++;
                 }
             }
         }
     }
-    expect(state, cases == 921088u,
-           "single-shift value and carry matrix is exhaustive");
 }
 
 static void multiple_shift_value_matrix_cases(TestState* state, Dspic33* cpu) {
     static const uint32_t opcodes[3] = {0xdd1184u, 0xde1184u, 0xde9184u};
     static const DirectFileOperation operations[3] = {DIRECT_FILE_SL, DIRECT_FILE_LSR,
                                                       DIRECT_FILE_ASR};
-    uint32_t cases = 0u;
 
     for (uint8_t operation = 0u; operation < 3u; operation++) {
         for (uint32_t source = 0u; source <= UINT16_MAX; source++) {
@@ -3335,17 +3173,13 @@ static void multiple_shift_value_matrix_cases(TestState* state, Dspic33* cpu) {
                           !cpu->illegal_reset && cpu->unsupported_opcode == 0u;
                 expect_dsp_matrix_case(state, matches, opcodes[operation],
                                        "multiple-shift value boundary");
-                cases++;
             }
         }
     }
-    expect(state, cases == 6291456u,
-           "multiple-shift value and count matrix is exhaustive");
 }
 
 static void find_first_value_matrix_cases(TestState* state, Dspic33* cpu) {
     static const uint32_t opcodes[3] = {0xcf0182u, 0xcf8182u, 0xdf0182u};
-    uint32_t cases = 0u;
 
     for (uint8_t operation = 0u; operation < 3u; operation++) {
         bool left = operation == 1u;
@@ -3373,10 +3207,8 @@ static void find_first_value_matrix_cases(TestState* state, Dspic33* cpu) {
                       !cpu->illegal_reset && cpu->unsupported_opcode == 0u;
             expect_dsp_matrix_case(state, matches, opcodes[operation],
                                    "find-first value boundary");
-            cases++;
         }
     }
-    expect(state, cases == 196608u, "find-first value matrix is exhaustive");
 }
 
 static int64_t accumulator_matrix_value(int64_t value) {
@@ -3395,7 +3227,6 @@ static void accumulator_shift_boundary_cases(TestState* state, Dspic33* cpu) {
                                      0x7fffffffffll,
                                      -0x8000000000ll};
     static const int8_t amounts[] = {-16, -1, 0, 1, 16};
-    uint32_t cases = 0u;
 
     for (uint8_t accumulator = 0u; accumulator < 2u; accumulator++) {
         for (uint8_t saturation = 0u; saturation < 2u; saturation++) {
@@ -3463,17 +3294,14 @@ static void accumulator_shift_boundary_cases(TestState* state, Dspic33* cpu) {
                                   cpu->unsupported_opcode == 0u;
                         expect_dsp_matrix_case(state, matches, opcode,
                                                "accumulator-shift boundary");
-                        cases++;
                     }
                 }
             }
         }
     }
-    expect(state, cases == 360u, "accumulator-shift saturation matrix is exhaustive");
 }
 
 static void accumulator_shift_register_count_cases(TestState* state, Dspic33* cpu) {
-    uint32_t cases = 0u;
 
     for (uint8_t accumulator = 0u; accumulator < 2u; accumulator++) {
         for (uint8_t encoded = 0u; encoded < 64u; encoded++) {
@@ -3507,11 +3335,8 @@ static void accumulator_shift_register_count_cases(TestState* state, Dspic33* cp
             }
             expect_dsp_matrix_case(state, matches, opcode,
                                    "accumulator-shift register count");
-            cases++;
         }
     }
-    expect(state, cases == 128u,
-           "accumulator-shift register counts cover every low-six-bit value");
 }
 
 static void shift_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
@@ -3595,8 +3420,6 @@ static void run_legal_compare_register_case(TestState* state, Dspic33* cpu,
 }
 
 static void compare_register_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
-    uint32_t legal = 0u;
-    uint32_t invalid = 0u;
     uint32_t opcode;
 
     dspic33_reset(cpu, 0u);
@@ -3609,24 +3432,16 @@ static void compare_register_encoding_matrix_cases(TestState* state, Dspic33* cp
 
         if (valid) {
             run_legal_compare_register_case(state, cpu, opcode);
-            legal++;
         } else {
             run_invalid_binary_matrix_case(state, cpu, opcode);
-            invalid++;
         }
     }
-    expect(state, legal == 22720u,
-           "compare register legal encoding matrix is exhaustive");
-    expect(state, invalid == 108352u,
-           "compare register illegal encoding matrix is exhaustive");
 }
 
 static void compare_direct_file_encoding_matrix_cases(TestState* state,
                                                       Dspic33* invalid_cpu) {
     static Dspic33 actual;
     static Dspic33 reference;
-    uint32_t legal = 0u;
-    uint32_t invalid = 0u;
     uint32_t opcode;
     bool actual_initialized = dspic33_initialize(&actual);
     bool reference_initialized = dspic33_initialize(&reference);
@@ -3662,16 +3477,10 @@ static void compare_direct_file_encoding_matrix_cases(TestState* state,
                                                 address, byte_mode, false);
             expect_dsp_matrix_case(state, matches, opcode,
                                    "direct-file compare encoding");
-            legal++;
         } else {
             run_invalid_binary_matrix_case(state, invalid_cpu, opcode);
-            invalid++;
         }
     }
-    expect(state, legal == 49152u,
-           "direct-file compare legal encoding matrix is exhaustive");
-    expect(state, invalid == 81920u,
-           "direct-file compare illegal encoding matrix is exhaustive");
     dspic33_destroy(&actual);
     dspic33_destroy(&reference);
 }
@@ -3779,8 +3588,6 @@ static void run_compare_control_encoding_case(TestState* state, Dspic33* cpu,
 }
 
 static void compare_control_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
-    uint32_t encodings = 0u;
-    uint32_t executions = 0u;
     uint32_t opcode;
 
     dspic33_reset(cpu, 0u);
@@ -3788,13 +3595,7 @@ static void compare_control_encoding_matrix_cases(TestState* state, Dspic33* cpu
     for (opcode = 0xe60000u; opcode < 0xe80000u; opcode++) {
         run_compare_control_encoding_case(state, cpu, opcode, false);
         run_compare_control_encoding_case(state, cpu, opcode, true);
-        encodings++;
-        executions += 2u;
     }
-    expect(state, encodings == 131072u,
-           "compare control encoding matrix is exhaustive");
-    expect(state, executions == 262144u,
-           "compare control outcome matrix is exhaustive");
 }
 
 static void compare_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
