@@ -36,6 +36,12 @@ static void test_execution(TestState* state) {
     Dspic33Result run = dspic33_run_with_limits(cpu, (Dspic33RunLimits){1u, 0u});
     expect(state, run.stop == DSPIC33_INSTRUCTION_LIMIT, "run.stop == DSPIC33_INSTRUCTION_LIMIT");
     expect(state, run.instructions == 2u, "run.instructions == 2u");
+    dspic33_reset(cpu, 0u);
+    expect(state, dspic33_run_until(cpu, 2u, 2u) == DSPIC33_STOPPED,
+           "dspic33_run_until(cpu, 2u, 2u) == DSPIC33_STOPPED");
+    dspic33_set_stop_on_trap(cpu, true);
+    dspic33_set_stop_on_trap(cpu, false);
+    dspic33_set_stop_on_trap(NULL, true);
     dspic33_destroy(cpu);
 
     expect(state, dspic33_step_result(NULL).stop == DSPIC33_HALTED,
@@ -87,11 +93,114 @@ static void test_null_getters(TestState* state) {
            "dspic33_get_interrupt_depth(NULL) == 0u");
 }
 
+static void test_memory_guards(TestState* state) {
+    Dspic33* cpu = dspic33_create();
+    expect(state, cpu != NULL, "cpu != NULL");
+    Dspic33epMuDevice device = DSPIC33EP_MU_DEVICE_COUNT;
+    expect(state, dspic33_create_for_device(DSPIC33EP_MU_DEVICE_COUNT) == NULL,
+           "dspic33_create_for_device(DSPIC33EP_MU_DEVICE_COUNT) == NULL");
+    expect(state, dspic33_device_profile(NULL) == NULL, "dspic33_device_profile(NULL) == NULL");
+    expect(state, !dspic33ep_mu_device_from_name(NULL, &device),
+           "!dspic33ep_mu_device_from_name(NULL, &device)");
+    expect(state, !dspic33ep_mu_device_from_name("256MU806", NULL),
+           "!dspic33ep_mu_device_from_name(\"256MU806\", NULL)");
+    dspic33_set_working_register(cpu, 16u, 0u);
+    expect(state, !dspic33_load_program_word(NULL, 0u, 0u),
+           "!dspic33_load_program_word(NULL, 0u, 0u)");
+    expect(state, !dspic33_load_program_word(cpu, 1u, 0u),
+           "!dspic33_load_program_word(cpu, 1u, 0u)");
+    expect(state, !dspic33_program_range_implemented(UINT32_MAX, 2u),
+           "!dspic33_program_range_implemented(UINT32_MAX, 2u)");
+    expect(state, !dspic33_device_program_range_implemented(NULL, 0u, 2u),
+           "!dspic33_device_program_range_implemented(NULL, 0u, 2u)");
+    expect(state, !dspic33_data_range_valid(UINT32_MAX, 2u),
+           "!dspic33_data_range_valid(UINT32_MAX, 2u)");
+    expect(state, !dspic33_device_data_range_implemented(NULL, 0u, 2u),
+           "!dspic33_device_data_range_implemented(NULL, 0u, 2u)");
+    expect(state,
+           !dspic33_load_configuration_word(
+               cpu, DSPIC33_CONFIGURATION_BASE + DSPIC33_CONFIGURATION_SIZE - 1u, 0u),
+           "!dspic33_load_configuration_word(cpu, configuration limit - 1u, 0u)");
+    expect(state, dspic33_read_program_word(NULL, 0u) == 0xffffffu,
+           "dspic33_read_program_word(NULL, 0u) == 0xffffffu");
+    expect(state, dspic33_read_program_byte(NULL, 0u) == 0xffu,
+           "dspic33_read_program_byte(NULL, 0u) == 0xffu");
+    expect(state, !dspic33_seed_data(NULL, 0u, NULL, 0u), "!dspic33_seed_data(NULL, 0u, NULL, 0u)");
+    expect(state, !dspic33_seed_data(cpu, 0u, NULL, 1u), "!dspic33_seed_data(cpu, 0u, NULL, 1u)");
+    dspic33_destroy(cpu);
+}
+
+static void test_peripheral_guards(TestState* state) {
+    Dspic33* cpu = dspic33_create();
+    expect(state, cpu != NULL, "cpu != NULL");
+    bool high = false;
+    uint64_t edges = 0u;
+    Dspic33UartFrame uart = {0};
+    Dspic33I2cTransfer i2c = {0};
+    Dspic33CanFrame can = {0};
+    expect(state, !dspic33_uart_receive(cpu, DSPIC33_UART_COUNT, 0u, 0u),
+           "!dspic33_uart_receive(cpu, DSPIC33_UART_COUNT, 0u, 0u)");
+    expect(state, !dspic33_uart_transmit(cpu, DSPIC33_UART_COUNT, &uart),
+           "!dspic33_uart_transmit(cpu, DSPIC33_UART_COUNT, &uart)");
+    expect(state, !dspic33_spi_receive(cpu, DSPIC33_SPI_COUNT, 0u, 0u),
+           "!dspic33_spi_receive(cpu, DSPIC33_SPI_COUNT, 0u, 0u)");
+    expect(state, !dspic33_spi_transmit(cpu, DSPIC33_SPI_COUNT, NULL),
+           "!dspic33_spi_transmit(cpu, DSPIC33_SPI_COUNT, NULL)");
+    expect(state, !dspic33_spi_clock_output(cpu, DSPIC33_SPI_COUNT, &high),
+           "!dspic33_spi_clock_output(cpu, DSPIC33_SPI_COUNT, &high)");
+    expect(state, !dspic33_i2c_respond(cpu, DSPIC33_I2C_COUNT, 0u, false, 0u),
+           "!dspic33_i2c_respond(cpu, DSPIC33_I2C_COUNT, 0u, false, 0u)");
+    expect(state, !dspic33_i2c_transmit(cpu, DSPIC33_I2C_COUNT, &i2c),
+           "!dspic33_i2c_transmit(cpu, DSPIC33_I2C_COUNT, &i2c)");
+    expect(state, !dspic33_i2c_pin(cpu, DSPIC33_GPIO_PORT_COUNT, 0u, &high),
+           "!dspic33_i2c_pin(cpu, DSPIC33_GPIO_PORT_COUNT, 0u, &high)");
+    expect(state, !dspic33_input_capture_input(cpu, DSPIC33_INPUT_CAPTURE_COUNT, false, 0u),
+           "!dspic33_input_capture_input(cpu, DSPIC33_INPUT_CAPTURE_COUNT, false, 0u)");
+    expect(state, !dspic33_output_compare_output(cpu, DSPIC33_OUTPUT_COMPARE_COUNT, &high),
+           "!dspic33_output_compare_output(cpu, DSPIC33_OUTPUT_COMPARE_COUNT, &high)");
+    expect(state, !dspic33_output_compare_fault(cpu, DSPIC33_OUTPUT_COMPARE_FAULT_COUNT, false, 0u),
+           "!dspic33_output_compare_fault(cpu, DSPIC33_OUTPUT_COMPARE_FAULT_COUNT, false, 0u)");
+    expect(state, !dspic33_comparator_output(cpu, DSPIC33_COMPARATOR_COUNT, &high),
+           "!dspic33_comparator_output(cpu, DSPIC33_COMPARATOR_COUNT, &high)");
+    expect(state, !dspic33_qei_compare_output(cpu, DSPIC33_QEI_COUNT, &high),
+           "!dspic33_qei_compare_output(cpu, DSPIC33_QEI_COUNT, &high)");
+    expect(state, !dspic33_timer_pulse(cpu, DSPIC33_TIMER_COUNT, 1u, 0u),
+           "!dspic33_timer_pulse(cpu, DSPIC33_TIMER_COUNT, 1u, 0u)");
+    expect(state, !dspic33_adc_trigger(cpu, DSPIC33_ADC_COUNT, 0u, 0u),
+           "!dspic33_adc_trigger(cpu, DSPIC33_ADC_COUNT, 0u, 0u)");
+    expect(state, !dspic33_pwm_dead_time(cpu, DSPIC33_PWM_MAX_COUNT, false, 0u),
+           "!dspic33_pwm_dead_time(cpu, DSPIC33_PWM_MAX_COUNT, false, 0u)");
+    expect(state, !dspic33_pwm_sync_output(cpu, 2u), "!dspic33_pwm_sync_output(cpu, 2u)");
+    expect(state, !dspic33_can_receive(cpu, DSPIC33_CAN_COUNT, &can, 0u),
+           "!dspic33_can_receive(cpu, DSPIC33_CAN_COUNT, &can, 0u)");
+    can.length = 9u;
+    expect(state, !dspic33_can_receive(cpu, 0u, &can, 0u),
+           "!dspic33_can_receive(cpu, 0u, &can, 0u)");
+    expect(state, !dspic33_can_error(cpu, DSPIC33_CAN_COUNT, false, 1u, 0u),
+           "!dspic33_can_error(cpu, DSPIC33_CAN_COUNT, false, 1u, 0u)");
+    expect(state, !dspic33_can_error(cpu, 0u, false, 0u, 0u),
+           "!dspic33_can_error(cpu, 0u, false, 0u, 0u)");
+    expect(state, !dspic33_usb_receive(cpu, DSPIC33_USB_ENDPOINT_COUNT, NULL, 0u, 0u),
+           "!dspic33_usb_receive(cpu, DSPIC33_USB_ENDPOINT_COUNT, NULL, 0u, 0u)");
+    expect(state, !dspic33_usb_receive(cpu, 0u, NULL, 1u, 0u),
+           "!dspic33_usb_receive(cpu, 0u, NULL, 1u, 0u)");
+    expect(state, !dspic33_usb_bus(cpu, (Dspic33UsbBusEvent)UINT8_MAX, 0u, 0u),
+           "!dspic33_usb_bus(cpu, (Dspic33UsbBusEvent)UINT8_MAX, 0u, 0u)");
+    expect(state, !dspic33_gpio_drive(cpu, DSPIC33_GPIO_PORT_COUNT, 0u, 0u),
+           "!dspic33_gpio_drive(cpu, DSPIC33_GPIO_PORT_COUNT, 0u, 0u)");
+    expect(state, !dspic33_gpio_pin(cpu, 0u, 16u, &high), "!dspic33_gpio_pin(cpu, 0u, 16u, &high)");
+    expect(state, !dspic33_reference_clock_pin(cpu, UINT8_MAX, 1u, &edges),
+           "!dspic33_reference_clock_pin(cpu, UINT8_MAX, 1u, &edges)");
+    dspic33_destroy(cpu);
+}
+
 int main(void) {
     TestState state = {0};
     test_lifecycle(&state);
     test_execution(&state);
     test_host_operations(&state);
     test_null_getters(&state);
+    test_memory_guards(&state);
+    test_peripheral_guards(&state);
     return test_finish(&state);
 }
