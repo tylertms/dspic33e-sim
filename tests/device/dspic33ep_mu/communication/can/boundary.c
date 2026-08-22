@@ -39,11 +39,13 @@ void dspic33_device_internal_can_capture_received_frame(Dspic33* cpu, uint8_t ch
 uint64_t dspic33_device_internal_can_bit_cycles(const Dspic33* cpu, uint8_t channel);
 void dspic33_device_internal_can_encode_frame(const Dspic33CanFrame* frame, uint8_t filter,
                                               uint16_t words[8]);
+Dspic33CanFrame dspic33_device_internal_can_decode_frame(const uint16_t words[8]);
 uint16_t dspic33_device_internal_can_frame_bits(const Dspic33CanFrame* frame, bool bits[160]);
 void dspic33_device_internal_can_monitor_transmit_sample(Dspic33* cpu, uint8_t channel,
                                                          bool bus_high);
 void dspic33_device_internal_can_receive_error(Dspic33* cpu, uint8_t channel,
                                                const Dspic33CanFrame* frame);
+void dspic33_device_internal_can_update_vector(Dspic33* cpu, uint8_t channel);
 
 #ifdef DSPIC33_TEST_ALLOCATION_FAILURE
 static void fill_event_queue(TestState* state, Dspic33* cpu) {
@@ -182,8 +184,50 @@ static void event_guard_cases(TestState* state, Dspic33* cpu) {
     expect(state, cpu->io.can_overload_active == 0u, "stale CAN overload event is ignored");
 }
 
+static void controller_boundary_cases(TestState* state, Dspic33* cpu) {
+    const uint16_t status_address = (uint16_t)(bases[0] + 0x0au);
+    const uint16_t enable_address = (uint16_t)(bases[0] + 0x0cu);
+    const uint16_t vector_address = (uint16_t)(bases[0] + 4u);
+
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, status_address, CAN_INTERRUPT_ERROR);
+    dspic33_device_internal_raw_write_word(cpu, enable_address, CAN_INTERRUPT_ERROR);
+    dspic33_device_internal_can_update_vector(cpu, 0u);
+    expect(state, (dspic33_read_word(cpu, vector_address) & 0xffu) == 0x41u,
+           "CAN error interrupt selects the error vector");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, status_address, 0x0004u);
+    dspic33_device_internal_raw_write_word(cpu, enable_address, 0x0004u);
+    dspic33_device_internal_can_update_vector(cpu, 0u);
+    expect(state, (dspic33_read_word(cpu, vector_address) & 0xffu) == 0x43u,
+           "CAN overflow interrupt selects the overflow vector");
+
+    uint16_t words[8] = {0u};
+    words[2] = 0x000fu;
+    Dspic33CanFrame decoded = dspic33_device_internal_can_decode_frame(words);
+    expect(state, decoded.length == 8u, "CAN decoder clamps invalid payload lengths");
+
+    dspic33_reset(cpu, 0u);
+    const Dspic33CanFrame frame = dspic33_can_test_frame(0x123u, false, false, 1u, 0x20u);
+    dspic33_device_internal_can_encode_frame(&frame, 0u, cpu->io.can_tx_words[0]);
+    bool bits[160];
+    uint16_t count = dspic33_device_internal_can_frame_bits(&frame, bits);
+    cpu->io.can_tx_on_bus = 1u;
+    cpu->io.can_tx_phase_adjustment[0] = 1;
+    dspic33_device_internal_can_monitor_transmit_sample(cpu, 0u, bits[0]);
+    expect(state, cpu->io.can_tx_on_bus == 1u,
+           "CAN transmit sampling clamps negative elapsed time");
+
+    cpu->io.can_tx_phase_adjustment[0] = 0;
+    cpu->device_cycles = (uint64_t)count * dspic33_device_internal_can_bit_cycles(cpu, 0u);
+    dspic33_device_internal_can_monitor_transmit_sample(cpu, 0u, false);
+    expect(state, cpu->io.can_tx_on_bus == 1u, "CAN transmit sampling ignores elapsed frames");
+}
+
 void dspic33_can_test_boundary_groups(TestState* state, Dspic33* cpu) {
     event_guard_cases(state, cpu);
+    controller_boundary_cases(state, cpu);
 #ifdef DSPIC33_TEST_ALLOCATION_FAILURE
     allocation_failure_cases(state, cpu);
 #else

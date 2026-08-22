@@ -360,6 +360,7 @@ int main(void) {
     dspic33_usb_test_descriptor_behavior_cases(&state, &cpu);
     dspic33_usb_test_status_fifo_cases(&state, &cpu);
     dspic33_usb_test_boundary_and_order_cases(&state, &cpu);
+    dspic33_usb_test_runtime_boundary_cases(&state, &cpu);
     dspic33_usb_test_bus_access_error_cases(&state, &cpu);
     dspic33_usb_test_interrupt_and_bus_cases(&state, &cpu);
     dspic33_usb_test_idle_rearm_cases(&state, &cpu);

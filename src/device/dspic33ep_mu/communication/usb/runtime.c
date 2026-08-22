@@ -42,13 +42,9 @@ static bool usb_memory_word(const Dspic33* cpu, uint32_t address, uint16_t* valu
     return true;
 }
 
-static bool usb_write_memory_word(Dspic33* cpu, uint32_t address, uint16_t value) {
-    if (!dspic33_data_range_valid(address, 2u)) {
-        return false;
-    }
+static void usb_write_memory_word(Dspic33* cpu, uint32_t address, uint16_t value) {
     cpu->data[address] = (uint8_t)value;
     cpu->data[address + 1u] = (uint8_t)(value >> 8u);
-    return true;
 }
 
 void dspic33_device_internal_usb_refresh_activity_pending(Dspic33* cpu) {
@@ -76,16 +72,13 @@ bool dspic33_device_internal_usb_descriptor(const Dspic33* cpu, uint8_t endpoint
     return true;
 }
 
-static bool usb_write_descriptor(Dspic33* cpu, uint8_t endpoint, uint8_t direction, uint8_t bank,
+static void usb_write_descriptor(Dspic33* cpu, uint8_t endpoint, uint8_t direction, uint8_t bank,
                                  const uint16_t words[4]) {
     uint32_t address = usb_descriptor_address(cpu, endpoint, direction, bank);
     uint8_t index;
     for (index = 0u; index < 4u; index++) {
-        if (!usb_write_memory_word(cpu, address + index * 2u, words[index])) {
-            return false;
-        }
+        usb_write_memory_word(cpu, address + index * 2u, words[index]);
     }
-    return true;
 }
 
 void dspic33_device_internal_usb_refresh_interrupt(Dspic33* cpu) {

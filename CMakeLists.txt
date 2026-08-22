@@ -290,7 +290,8 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
   dspic33ep_mu_add_test(
     usb tests/device/dspic33ep_mu/communication/usb/registers.c
     "device;integration"
-    tests/device/dspic33ep_mu/communication/usb/transactions.c)
+    tests/device/dspic33ep_mu/communication/usb/transactions.c
+    tests/device/dspic33ep_mu/communication/usb/boundary.c)
   dspic33ep_mu_add_test(
     watchdog tests/device/dspic33ep_mu/timing/watchdog_test.c
     "device;integration")

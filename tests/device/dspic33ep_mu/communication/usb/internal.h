@@ -55,6 +55,7 @@ bool dspic33_usb_test_packet_data(const Dspic33UsbPacket* packet, const uint8_t*
 uint16_t dspic33_usb_test_memory_word(const Dspic33* cpu, uint32_t address);
 uint32_t dspic33_usb_test_descriptor_address(uint8_t endpoint, uint8_t direction, uint8_t bank);
 void dspic33_usb_test_boundary_and_order_cases(TestState* state, Dspic33* cpu);
+void dspic33_usb_test_runtime_boundary_cases(TestState* state, Dspic33* cpu);
 void dspic33_usb_test_bus_access_error_cases(TestState* state, Dspic33* cpu);
 void dspic33_usb_test_clear_transaction(Dspic33* cpu);
 void dspic33_usb_test_configure_device(Dspic33* cpu);
