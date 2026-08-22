@@ -4,12 +4,71 @@ project(dspic33ep_mu_sim LANGUAGES C)
 
 if(PROJECT_IS_TOP_LEVEL)
   option(BUILD_TESTING "Build the simulator tests" ON)
+  option(DSPIC33EP_MU_ENABLE_COVERAGE "Enable simulator source coverage" OFF)
+  set(CMAKE_CTEST_ARGUMENTS --output-on-failure --parallel)
+  set(CMAKE_SKIP_TEST_ALL_DEPENDENCY FALSE)
+endif()
+
+if(DSPIC33EP_MU_ENABLE_COVERAGE)
+  if(NOT CMAKE_C_COMPILER_ID STREQUAL "GNU")
+    message(FATAL_ERROR "Simulator source coverage requires GCC")
+  endif()
+  add_compile_options(--coverage)
+  add_link_options(--coverage)
 endif()
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE
       Release
       CACHE STRING "Build type" FORCE)
+endif()
+
+if(PROJECT_IS_TOP_LEVEL AND NOT DSPIC33EP_MU_ENABLE_COVERAGE)
+  get_filename_component(dspic33ep_mu_compiler_directory "${CMAKE_C_COMPILER}"
+                         DIRECTORY)
+  find_program(dspic33ep_mu_gcov gcov
+               HINTS "${dspic33ep_mu_compiler_directory}")
+  set(dspic33ep_mu_coverage_build_directory
+      "${CMAKE_CURRENT_SOURCE_DIR}/build/test-coverage")
+  set(dspic33ep_mu_coverage_report_directory
+      "${CMAKE_CURRENT_SOURCE_DIR}/build/coverage")
+
+  if(dspic33ep_mu_gcov)
+    add_custom_target(
+      test-coverage
+      COMMAND
+        "${CMAKE_COMMAND}" -E rm -rf "${dspic33ep_mu_coverage_build_directory}"
+        "${dspic33ep_mu_coverage_report_directory}"
+      COMMAND
+        "${CMAKE_COMMAND}" -S "${CMAKE_CURRENT_SOURCE_DIR}" -B
+        "${dspic33ep_mu_coverage_build_directory}" -G Ninja
+        -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+        -DDSPIC33EP_MU_ENABLE_COVERAGE=ON
+        "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
+      COMMAND "${CMAKE_COMMAND}" --build
+              "${dspic33ep_mu_coverage_build_directory}" --parallel
+      COMMAND
+        "${CMAKE_CTEST_COMMAND}" --test-dir
+        "${dspic33ep_mu_coverage_build_directory}" --output-on-failure
+        --parallel
+      COMMAND
+        "${CMAKE_COMMAND}"
+        "-DCOVERAGE_BUILD_DIRECTORY=${dspic33ep_mu_coverage_build_directory}"
+        "-DCOVERAGE_REPORT_DIRECTORY=${dspic33ep_mu_coverage_report_directory}"
+        "-DCOVERAGE_SOURCE_DIRECTORY=${CMAKE_CURRENT_SOURCE_DIR}"
+        "-DCOVERAGE_TARGET_PREFIX=dspic33ep_mu"
+        "-DGCOV_EXECUTABLE=${dspic33ep_mu_gcov}" -P
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Coverage.cmake"
+      COMMENT "Testing the dsPIC33EP-MU simulator with source coverage"
+      USES_TERMINAL VERBATIM)
+  else()
+    add_custom_target(
+      test-coverage
+      COMMAND "${CMAKE_COMMAND}" -E echo
+              "Simulator source coverage requires gcov"
+      COMMAND "${CMAKE_COMMAND}" -E false
+      USES_TERMINAL VERBATIM)
+  endif()
 endif()
 
 set(dspic33ep_mu_simulator_sources
