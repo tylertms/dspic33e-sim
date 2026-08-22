@@ -22,6 +22,8 @@ enum {
     MAIN_OSCILLATOR_TUNING = 0x0748u,
     RESET_CONTROL = 0x0740u,
     INTERRUPT_FLAGS = 0x0800u,
+    INTERRUPT_ENABLE = 0x0820u,
+    INTERRUPT_PRIORITY = 0x0840u,
     INTERRUPT_CONTROL_TWO = 0x08c2u,
     TIMER_ONE_CONTROL = 0x0104u,
     PORT_A_LATCH = 0x0e04u,
@@ -67,6 +69,27 @@ static bool start_nvm_pair(Dspic33* cpu, uint32_t address, uint32_t value) {
         }
     }
     return cpu->nvm.active;
+}
+
+static bool delay_nvm_completion(Dspic33* cpu, uint64_t delay) {
+    size_t index;
+    for (index = 0u; index < cpu->events.count; index++) {
+        if (cpu->events.items[index].type == DSPIC33_EVENT_NVM) {
+            cpu->events.items[index].cycle =
+                cpu->device_cycles + dspic33_device_instruction_cycles(cpu, delay);
+            cpu->nvm.completion_cycle = cpu->cycles + delay;
+            dspic33_reorder_events(cpu);
+            return true;
+        }
+    }
+    return false;
+}
+
+static void enable_interrupt_zero(Dspic33* cpu) {
+    dspic33_write_word(cpu, INTERRUPT_ENABLE, 1u);
+    dspic33_write_word(cpu, INTERRUPT_PRIORITY, 1u);
+    dspic33_load_program_word(cpu, 0x0014u, 0x0300u);
+    dspic33_load_program_word(cpu, 0x0300u, OPCODE_NOP);
 }
 
 static void master_clear_register_cases(TestState* state, Dspic33* cpu) {
@@ -215,6 +238,9 @@ static void brown_out_clock_cases(TestState* state, Dspic33* cpu) {
 }
 
 static void nvm_reset_cases(TestState* state, Dspic33* cpu) {
+    bool serviced;
+    uint64_t cycles;
+    uint64_t instructions;
     dspic33_reset(cpu, 0u);
     expect(state, configure_primary_frc_reset(cpu), "configure NVM reset vector");
     dspic33_reset(cpu, 0u);
@@ -231,6 +257,71 @@ static void nvm_reset_cases(TestState* state, Dspic33* cpu) {
            "NVM completion releases deferred MCLR");
     expect(state, (dspic33_read_word(cpu, INTERRUPT_FLAGS) & 0x8000u) == 0u,
            "deferred MCLR suppresses NVM completion interrupt");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_load_program_word(cpu, 0x3400u, 0x00ffffffu);
+    expect(state, start_nvm_pair(cpu, 0x3400u, 0x00234567u),
+           "start NVM operation before stepped MCLR");
+    dspic33_mclr_reset(cpu);
+    cycles = cpu->cycles;
+    instructions = cpu->instructions;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && !cpu->nvm.active && !cpu->nvm.reset_pending &&
+               cpu->pc == 0u && cpu->cycles == cycles + 1u && cpu->instructions == instructions &&
+               dspic33_read_program_word(cpu, 0x3400u) == 0x00234567u &&
+               (dspic33_read_word(cpu, INTERRUPT_FLAGS) & 0x8000u) == 0u,
+           "step reaches NVM completion and resets without executing the interrupted program");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_load_program_word(cpu, 0x3600u, 0x00ffffffu);
+    expect(state, start_nvm_pair(cpu, 0x3600u, 0x00345678u),
+           "start NVM operation before first interrupt-entry phase");
+    enable_interrupt_zero(cpu);
+    dspic33_set_working_register(cpu, 15u, 0x5000u);
+    dspic33_write_word(cpu, 0x5000u, 0xa55au);
+    dspic33_write_word(cpu, 0x5002u, 0x5aa5u);
+    dspic33_raise_interrupt(cpu, 0u);
+    dspic33_mclr_reset(cpu);
+    cycles = cpu->cycles;
+    expect(state,
+           dspic33_device_service_interrupt(cpu) && !cpu->nvm.active && !cpu->nvm.reset_pending &&
+               cpu->pc == 0u && cpu->cycles == cycles + 6u && cpu->w[15] == 0x1000u &&
+               cpu->interrupt_count == 0u && dspic33_read_word(cpu, 0x5000u) == 0xa55au &&
+               dspic33_read_word(cpu, 0x5002u) == 0x5aa5u &&
+               dspic33_read_program_word(cpu, 0x3600u) == 0x00345678u,
+           "deferred MCLR during the first interrupt-entry phase prevents frame mutation");
+
+    expect(state, dspic33_load_configuration_word(cpu, 0xf8000au, 0xffc0u),
+           "enable watchdog before second interrupt-entry phase");
+    dspic33_reset(cpu, 0u);
+    dspic33_load_program_word(cpu, 0x3800u, 0x00ffffffu);
+    expect(state, start_nvm_pair(cpu, 0x3800u, 0x00456789u) && delay_nvm_completion(cpu, 7u),
+           "delay NVM completion into the second interrupt-entry phase");
+    dspic33_watchdog_advance_lprc(cpu, 32u);
+    expect(state, cpu->nvm.active && cpu->watchdog.reset_pending,
+           "active NVM defers watchdog reset before interrupt entry");
+    enable_interrupt_zero(cpu);
+    dspic33_set_working_register(cpu, 15u, 0x5000u);
+    dspic33_write_word(cpu, 0x5000u, 0xa55au);
+    dspic33_write_word(cpu, 0x5002u, 0x5aa5u);
+    dspic33_raise_interrupt(cpu, 0u);
+    cycles = cpu->cycles;
+    serviced = dspic33_device_service_interrupt(cpu);
+    expect(state, serviced,
+           "second-phase deferred watchdog services the pending interrupt boundary");
+    expect(state,
+           !cpu->nvm.active && !cpu->watchdog.reset_pending && cpu->pc == 0u &&
+               (dspic33_read_word(cpu, RESET_CONTROL) & 0x0010u) != 0u,
+           "second-phase deferred watchdog completes reset state");
+    expect(state, cpu->cycles == cycles + 9u && cpu->w[15] == 0x1000u,
+           "second-phase deferred watchdog retains full entry timing and reset stack state");
+    expect(state, cpu->interrupt_count == 0u,
+           "second-phase deferred watchdog prevents interrupt vector commit");
+    expect(state,
+           dspic33_read_word(cpu, 0x5000u) == 0x040au && dspic33_read_word(cpu, 0x5002u) == 0x5aa5u,
+           "second-phase deferred watchdog retains only the staged low return PC");
+    expect(state, dspic33_read_program_word(cpu, 0x3800u) == 0x00456789u,
+           "second-phase deferred watchdog commits the NVM write before reset");
 
     dspic33_reset(cpu, 0u);
     dspic33_load_program_word(cpu, 0x3200u, 0x00ffffffu);

@@ -630,7 +630,77 @@ void dspic33_data_test_table_value_cases(TestState* state, Dspic33* cpu) {
     }
 }
 
+static void table_pointer_boundary_cases(TestState* state, Dspic33* cpu) {
+    for (uint8_t byte_mode = 0u; byte_mode < 2u; byte_mode++) {
+        uint16_t width = byte_mode != 0u ? 1u : 2u;
+        for (uint8_t mode = 2u; mode <= 5u; mode++) {
+            bool decrement = mode == 2u || mode == 4u;
+            bool pre_modify = mode >= 4u;
+            for (uint8_t wrap = 0u; wrap < 2u; wrap++) {
+                uint16_t initial;
+                uint16_t expected_pointer;
+                uint16_t effective;
+                uint16_t expected_value;
+                uint32_t opcode;
+                bool latches_unchanged;
+
+                if (decrement) {
+                    initial = wrap != 0u ? 0x8000u : (uint16_t)(0x8000u + width);
+                    expected_pointer = wrap != 0u ? (uint16_t)(UINT16_MAX - width + 1u) : 0x8000u;
+                } else {
+                    initial = wrap != 0u ? (uint16_t)(UINT16_MAX - width + 1u)
+                                         : (uint16_t)(0x8000u - width);
+                    expected_pointer = 0x8000u;
+                }
+                effective = pre_modify ? expected_pointer : initial;
+                expected_value =
+                    byte_mode != 0u
+                        ? (uint16_t)(0xa500u | ((effective & 1u) != 0u ? 0x00abu : 0x0056u))
+                        : 0xab56u;
+
+                opcode = 0xba0000u | ((uint32_t)byte_mode << 14u) | ((uint32_t)3u << 7u) |
+                         ((uint32_t)mode << 4u) | 2u;
+                reset_processor_test(cpu, 0u);
+                load_instruction(state, cpu, 0u, opcode);
+                load_instruction(state, cpu, (uint32_t)(effective & 0xfffeu), 0x12ab56u);
+                cpu->tblpag = 0u;
+                dspic33_set_working_register(cpu, 2u, initial);
+                dspic33_set_working_register(cpu, 3u, 0xa500u);
+                expect(state,
+                       dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u && cpu->cycles == 5u &&
+                           cpu->w[2] == expected_pointer && cpu->w[3] == expected_value &&
+                           !cpu->illegal_reset,
+                       "table read preserves high-half pointer wrap and boundary transitions");
+
+                opcode = 0xbb0000u | ((uint32_t)byte_mode << 14u) | ((uint32_t)mode << 11u) |
+                         ((uint32_t)3u << 7u) | 2u;
+                reset_processor_test(cpu, 0u);
+                load_instruction(state, cpu, 0u, opcode);
+                cpu->tblpag = 0x00fau;
+                dspic33_set_working_register(cpu, 2u, 0xa5c3u);
+                dspic33_set_working_register(cpu, 3u, initial);
+                for (size_t index = 0u; index < DSPIC33_WRITE_LATCH_WORDS; index++) {
+                    cpu->write_latches[index] = 0x0055aa33u;
+                }
+                expect(state,
+                       dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 2u && cpu->cycles == 2u &&
+                           cpu->w[2] == 0xa5c3u && cpu->w[3] == expected_pointer &&
+                           !cpu->illegal_reset,
+                       "table write preserves high-half pointer wrap and boundary transitions");
+                latches_unchanged = true;
+                for (size_t index = 0u; index < DSPIC33_WRITE_LATCH_WORDS; index++) {
+                    latches_unchanged =
+                        latches_unchanged && cpu->write_latches[index] == 0x0055aa33u;
+                }
+                expect(state, latches_unchanged,
+                       "out-of-row table write does not alias the write-latch window");
+            }
+        }
+    }
+}
+
 void dspic33_data_test_table_operand_lifecycle_cases(TestState* state, Dspic33* cpu) {
+    table_pointer_boundary_cases(state, cpu);
     reset_processor_test(cpu, 0u);
     load_instruction(state, cpu, 0u, 0xbb0982u);
     dspic33_set_working_register(cpu, 2u, 0xa55au);

@@ -611,13 +611,13 @@ void dspic33_can_test_triple_sample_cases(TestState* state, Dspic33* cpu) {
     }
 }
 
-static void prepare_resynchronization(Dspic33* cpu, uint16_t config1) {
+static void prepare_resynchronization(Dspic33* cpu, uint16_t config1, uint16_t config2) {
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, 0x0e30u, 0xffffu);
     dspic33_write_word(cpu, 0x0e3eu, 0u);
     dspic33_write_word(cpu, 0x06d4u, 64u);
     dspic33_write_word(cpu, 0x0410u, config1);
-    dspic33_write_word(cpu, 0x0412u, 0u);
+    dspic33_write_word(cpu, 0x0412u, config2);
     dspic33_can_test_set_mode(cpu, 0u, 0u);
     dspic33_can_input_pin(cpu, 64u, false, 0u);
     dspic33_device_advance(cpu, 3u);
@@ -626,7 +626,7 @@ static void prepare_resynchronization(Dspic33* cpu, uint16_t config1) {
 }
 
 void dspic33_can_test_resynchronization_cases(TestState* state, Dspic33* cpu) {
-    prepare_resynchronization(cpu, 0u);
+    prepare_resynchronization(cpu, 0u, 0u);
     expect(state,
            cpu->io.can_rx_serial_count[0] == 1u && dspic33_can_input_pin(cpu, 64u, false, 0u) &&
                dspic33_device_advance(cpu, 2u) && cpu->io.can_rx_serial_count[0] == 1u,
@@ -634,7 +634,7 @@ void dspic33_can_test_resynchronization_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_device_advance(cpu, 1u) && cpu->io.can_rx_serial_count[0] == 2u,
            "early CAN edge advances the next sample point by one TQ");
 
-    prepare_resynchronization(cpu, 0u);
+    prepare_resynchronization(cpu, 0u, 0u);
     expect(state,
            dspic33_device_advance(cpu, 3u) && dspic33_can_input_pin(cpu, 64u, false, 0u) &&
                dspic33_device_advance(cpu, 1u) && cpu->io.can_rx_serial_count[0] == 1u,
@@ -642,13 +642,21 @@ void dspic33_can_test_resynchronization_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_device_advance(cpu, 1u) && cpu->io.can_rx_serial_count[0] == 2u,
            "one-TQ SJW limits a late CAN resynchronization");
 
-    prepare_resynchronization(cpu, 0x0040u);
+    prepare_resynchronization(cpu, 0x0040u, 0u);
     expect(state,
            dspic33_device_advance(cpu, 3u) && dspic33_can_input_pin(cpu, 64u, false, 0u) &&
                dspic33_device_advance(cpu, 2u) && cpu->io.can_rx_serial_count[0] == 1u,
            "two-TQ SJW permits a larger CAN phase correction");
     expect(state, dspic33_device_advance(cpu, 1u) && cpu->io.can_rx_serial_count[0] == 2u,
            "two-TQ CAN resynchronization reaches its adjusted sample point");
+
+    prepare_resynchronization(cpu, 0u, 0x0300u);
+    expect(state,
+           cpu->io.can_rx_serial_count[0] == 1u && dspic33_can_input_pin(cpu, 64u, false, 0u) &&
+               dspic33_device_advance(cpu, 5u) && cpu->io.can_rx_serial_count[0] == 1u,
+           "one-TQ SJW clamps an early edge four TQ before the next bit");
+    expect(state, dspic33_device_advance(cpu, 1u) && cpu->io.can_rx_serial_count[0] == 2u,
+           "negative SJW clamp advances the sample point by exactly one TQ");
 }
 
 static bool drive_can_to_intermission(Dspic33* cpu) {

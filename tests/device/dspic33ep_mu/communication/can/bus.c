@@ -1,6 +1,96 @@
 #include "device/dspic33ep_mu/communication/can/internal.h"
 
+static void loopback_cases(TestState* state, Dspic33* cpu) {
+    for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint16_t base = bases[channel];
+        uint8_t pin = (uint8_t)(65u + channel);
+        uint32_t receive_memory = (uint32_t)(0xd000u + channel * 0x400u);
+        uint32_t transmit_memory = receive_memory + 0x200u;
+        Dspic33CanFrame input =
+            dspic33_can_test_frame(channel == 0u ? 0x345u : 0x1234567u, channel != 0u,
+                                   channel != 0u, channel == 0u ? 8u : 3u, 0x40u);
+        Dspic33CanFrame output;
+        uint16_t transmit_cycles = 0u;
+        uint8_t receive_cycles = 0u;
+        bool isolated = true;
+
+        dspic33_reset(cpu, 0u);
+        for (uint8_t word = 0u; word < 8u; word++) {
+            dspic33_can_test_write_memory_word(cpu, receive_memory + word * 2u, 0xa55au);
+        }
+        dspic33_write_word(cpu, channel == 0u ? 0x0680u : 0x0682u,
+                           channel == 0u ? 0x0e00u : 0x000fu);
+        dspic33_can_test_configure_receive(cpu, channel, receive_memory, 4u, 0u);
+        dspic33_can_test_configure_filter(cpu, channel, 0u, input.identifier, input.extended,
+                                          input.extended ? 0x1fffffffu : 0x7ffu, true, 1u, 0u);
+        dspic33_can_test_enable_filter(cpu, channel, 1u);
+        dspic33_can_test_configure_transmit(cpu, channel, transmit_memory);
+        dspic33_can_test_write_transmit_frame(cpu, transmit_memory, &input);
+        dspic33_can_test_select_window(cpu, channel, false);
+        dspic33_write_word(cpu, (uint16_t)(base + 0x10u), 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 0x12u), 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 0x0cu), 3u);
+        dspic33_can_test_set_mode(cpu, channel, 2u);
+        dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x008bu);
+        expect(state,
+               dspic33_device_advance(cpu, 8u) &&
+                   (cpu->io.can_tx_on_bus & (uint8_t)(1u << channel)) != 0u &&
+                   !dspic33_can_test_receive_full(cpu, channel, 1u) &&
+                   ((dspic33_read_word(cpu, base) >> 5u) & 7u) == 2u,
+               "CAN loopback enters transmission without early receive completion");
+
+        while ((cpu->io.can_tx_on_bus & (uint8_t)(1u << channel)) != 0u && transmit_cycles < 800u) {
+            bool high = false;
+            bool pin_read = dspic33_can_pin(cpu, pin, &high);
+            bool receive_incomplete = !dspic33_can_test_receive_full(cpu, channel, 1u);
+            bool advanced = dspic33_device_advance(cpu, 1u);
+            isolated = isolated && pin_read && high && receive_incomplete && advanced;
+            transmit_cycles++;
+        }
+        expect(state,
+               isolated && transmit_cycles != 0u && transmit_cycles < 800u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 3u) == 1u &&
+                   !dspic33_can_transmit(cpu, channel, &output),
+               "CAN loopback completes transmit internally without driving or exporting a frame");
+        expect(state,
+               cpu->io.can_rx[channel].count != 0u ||
+                   (cpu->io.can_rx_busy & (uint8_t)(1u << channel)) != 0u,
+               "CAN loopback queues or starts internal receive delivery");
+        dspic33_can_test_clear_interrupt_flag(cpu, event_irqs[channel]);
+        expect(state, !dspic33_can_test_interrupt_flag(cpu, event_irqs[channel]),
+               "CAN loopback transmit interrupt can be acknowledged before receive completion");
+
+        while (!dspic33_can_test_receive_full(cpu, channel, 1u) && receive_cycles < 64u) {
+            bool advanced = dspic33_device_advance(cpu, 1u);
+            isolated = isolated && advanced;
+            receive_cycles++;
+        }
+        expect(state, isolated && receive_cycles != 0u && receive_cycles < 64u,
+               "CAN loopback completes internal receive DMA within its bounded latency");
+        expect(state, dspic33_can_test_receive_full(cpu, channel, 1u),
+               "CAN loopback marks the selected receive buffer full");
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 3u) == 3u,
+               "CAN loopback raises transmit then receive status");
+        expect(state, dspic33_can_test_interrupt_flag(cpu, event_irqs[channel]),
+               "CAN loopback raises the enabled module interrupt");
+
+        bool exact = true;
+        for (uint8_t word = 0u; word < 8u; word++) {
+            exact = exact &&
+                    dspic33_can_test_memory_word(cpu, receive_memory + 16u + word * 2u) ==
+                        dspic33_can_test_memory_word(cpu, transmit_memory + word * 2u) &&
+                    dspic33_can_test_memory_word(cpu, receive_memory + word * 2u) == 0xa55au;
+        }
+        expect(state, exact, "CAN loopback preserves every encoded frame word");
+        expect(state,
+               (cpu->io.can_tx_busy & (uint8_t)(1u << channel)) == 0u &&
+                   (cpu->io.can_rx_busy & (uint8_t)(1u << channel)) == 0u,
+               "CAN loopback finishes both internal engines");
+    }
+}
+
 void dspic33_can_test_bus_groups(TestState* state, Dspic33* cpu) {
+    loopback_cases(state, cpu);
     dspic33_can_test_arbitration_field_cases(state, cpu);
     dspic33_can_test_arbitration_cases(state, cpu);
     dspic33_can_test_acknowledge_error_cases(state, cpu);

@@ -139,6 +139,7 @@ static bool direct_file_states_match(const Dspic33* actual, const Dspic33* expec
     actual_state.auxiliary_program = NULL;
     actual_state.persistent_program = NULL;
     actual_state.data = NULL;
+    actual_state.initialized_data = NULL;
     actual_state.var_write_domains = NULL;
     actual_state.events.items = NULL;
     actual_state.events.capacity = 0u;
@@ -146,11 +147,13 @@ static bool direct_file_states_match(const Dspic33* actual, const Dspic33* expec
     expected_state.auxiliary_program = NULL;
     expected_state.persistent_program = NULL;
     expected_state.data = NULL;
+    expected_state.initialized_data = NULL;
     expected_state.var_write_domains = NULL;
     expected_state.events.items = NULL;
     expected_state.events.capacity = 0u;
     return memcmp(&actual_state, &expected_state, sizeof(actual_state)) == 0 &&
            memcmp(actual->data, expected->data, 0x2000u) == 0 &&
+           memcmp(actual->initialized_data, expected->initialized_data, DSPIC33_DATA_SIZE) == 0 &&
            direct_file_event_queues_match(actual, expected);
 }
 
