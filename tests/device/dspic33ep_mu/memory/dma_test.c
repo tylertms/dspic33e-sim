@@ -29,6 +29,8 @@ static const uint8_t dma_irqs[DSPIC33_DMA_COUNT] = {4u,   14u,  24u,  36u,  46u,
 
 static uint16_t channel_base(uint8_t channel) { return (uint16_t)(0x0b00u + channel * 0x10u); }
 
+void dspic33_dma_test_boundary_cases(TestState* state, Dspic33* cpu);
+
 static uint16_t stored_word(const Dspic33* cpu, uint16_t address) {
     return (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[address + 1u] << 8u));
 }
@@ -884,6 +886,7 @@ int main(void) {
         peripheral_collision_cases(&state, &cpu);
         memory_collision_cases(&state, &cpu);
         stale_request_cases(&state, &cpu);
+        dspic33_dma_test_boundary_cases(&state, &cpu);
         can_receive_arbiter_erratum_cases(&state, &cpu);
         {
             Dspic33 copy;

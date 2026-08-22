@@ -592,9 +592,6 @@ static uint8_t dma_read_memory_byte(const Dspic33* cpu, uint32_t address) {
 }
 
 static uint16_t dma_read_memory(const Dspic33* cpu, uint32_t address, uint8_t width) {
-    if (!dma_memory_address_valid(address, width)) {
-        return 0u;
-    }
     if (width == 1u) {
         return dma_read_memory_byte(cpu, address);
     }
@@ -603,9 +600,6 @@ static uint16_t dma_read_memory(const Dspic33* cpu, uint32_t address, uint8_t wi
 }
 
 static void dma_write_memory(Dspic33* cpu, uint32_t address, uint8_t width, uint16_t value) {
-    if (!dma_memory_address_valid(address, width)) {
-        return;
-    }
     if (!dma_cpu_wrote_byte(cpu, address)) {
         cpu->data[address] = (uint8_t)value;
     }

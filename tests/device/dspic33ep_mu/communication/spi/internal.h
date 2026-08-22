@@ -20,6 +20,7 @@ bool dspic33_spi_test_transfer_interrupt_after_cycle(Dspic33* cpu, uint8_t irq);
 uint16_t dspic33_spi_test_dma_base(uint8_t channel);
 uint64_t dspic33_spi_test_transfer_cycles(uint16_t control);
 void dspic33_spi_test_b1_frame_output_cases(TestState* state, Dspic33* cpu, Dspic33* copy);
+void dspic33_spi_test_boundary_cases(TestState* state, Dspic33* cpu);
 void dspic33_spi_test_clear_interrupt(Dspic33* cpu, uint8_t irq);
 void dspic33_spi_test_configure_dma(Dspic33* cpu, uint8_t channel, uint16_t control,
                                     uint8_t request, uint32_t memory, uint16_t pad, uint16_t count);

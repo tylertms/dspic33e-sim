@@ -37,6 +37,7 @@ uint64_t dspic33_i2c_test_receive_cycles(uint16_t baud);
 void dspic33_i2c_test_address_mode_cases(TestState* state, Dspic33* cpu);
 void dspic33_i2c_test_address_rejection_cases(TestState* state, Dspic33* cpu);
 void dspic33_i2c_test_bus_status_timing_cases(TestState* state, Dspic33* cpu);
+void dspic33_i2c_test_boundary_cases(TestState* state, Dspic33* cpu);
 void dspic33_i2c_test_clear_interrupt(Dspic33* cpu, uint8_t irq);
 void dspic33_i2c_test_configure_dma_channel(Dspic33* cpu, uint8_t channel, uint8_t request,
                                             uint16_t start, uint16_t pad);

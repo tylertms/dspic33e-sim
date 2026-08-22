@@ -79,6 +79,7 @@ uint16_t dspic33_dci_test_serial_word_mask(uint8_t width);
 void dspic33_dci_test_ac_link_cases(TestState* state, Dspic33* cpu);
 void dspic33_dci_test_access_cases(TestState* state, Dspic33* cpu);
 void dspic33_dci_test_admission_and_clock_cases(TestState* state, Dspic33* cpu);
+void dspic33_dci_test_boundary_cases(TestState* state, Dspic33* cpu);
 void dspic33_dci_test_clear_interrupt(Dspic33* cpu, uint8_t irq);
 void dspic33_dci_test_configure_dma(Dspic33* cpu, uint8_t channel, uint16_t control,
                                     uint32_t memory, uint16_t pad, uint16_t count, uint8_t request);

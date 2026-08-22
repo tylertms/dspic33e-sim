@@ -94,20 +94,6 @@ static void spi_begin_frame(Dspic33* cpu, uint8_t channel) {
         return;
     }
     cpu->io.spi_frame_active &= (uint8_t)~bit;
-    if ((control & (SPI_FRAME_ENABLE | SPI_FRAME_SLAVE | SPI_FRAME_ACTIVE_HIGH)) ==
-        (SPI_FRAME_ENABLE | SPI_FRAME_ACTIVE_HIGH)) {
-        if (dspic33_device_internal_spi_master(cpu, channel) && (control & SPI_FRAME_DELAY) != 0u) {
-            uint16_t data_control = dspic33_device_internal_raw_word(
-                cpu, (uint16_t)(dspic33_device_spi_bases[channel] + 2u));
-            uint8_t bits = (data_control & SPI_MODE_16) != 0u ? 16u : 8u;
-            uint32_t event_value = SPI_EVENT_FRAME | ((uint32_t)cpu->io.spi_generation[channel]
-                                                      << SPI_EVENT_GENERATION_SHIFT);
-            dspic33_schedule(cpu, DSPIC33_EVENT_SPI, channel, event_value,
-                             dspic33_device_internal_spi_transfer_cycles(cpu, channel) / bits);
-        } else {
-            cpu->io.spi_frame_active |= bit;
-        }
-    }
 }
 
 bool dspic33_device_internal_spi_power_enabled(const Dspic33* cpu, uint8_t channel) {

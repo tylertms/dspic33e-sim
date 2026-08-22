@@ -310,6 +310,7 @@ int main(void) {
         dspic33_spi_test_selection_and_frame_cases(&state, &cpu);
         dspic33_spi_test_slave_select_retry_cases(&state, &cpu);
         dspic33_spi_test_b1_frame_output_cases(&state, &cpu, &copy);
+        dspic33_spi_test_boundary_cases(&state, &cpu);
         master_frame_slave_cases(&state, &cpu);
         clock_and_power_cases(&state, &cpu);
         pmd_cases(&state, &cpu);

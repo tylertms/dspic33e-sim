@@ -226,11 +226,6 @@ static bool dci_begin_internal_word(Dspic33* cpu) {
         (dspic33_device_internal_raw_word(cpu, DCI_CONTROL1) & DCI_CONTROL_SAMPLE_RISING) != 0u
             ? 0u
             : dci_bit_cycles(cpu) / 2u;
-    if (word_cycles == UINT64_MAX) {
-        dci_abort(cpu);
-        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
-        return false;
-    }
     dci->serial_input = 0u;
     dci->serial_bits = 0u;
     if (!dci_schedule_internal(cpu, DCI_EVENT_INTERNAL, word_cycles)) {
@@ -899,7 +894,6 @@ void dspic33_device_internal_run_dci(Dspic33* cpu, uint16_t source, uint32_t val
 static void dci_start(Dspic33* cpu) {
     Dspic33Dci* dci = &cpu->io.dci;
     uint16_t control = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
-    uint16_t clock = dspic33_device_internal_raw_word(cpu, DCI_CONTROL3);
     uint64_t start_delay;
     dspic33_device_internal_dci_discard_internal_events(cpu);
     dci->generation++;
@@ -925,9 +919,6 @@ static void dci_start(Dspic33* cpu) {
         return;
     }
     if ((control & DCI_CONTROL_EXTERNAL_CLOCK) != 0u) {
-        return;
-    }
-    if (clock == 0u) {
         return;
     }
     start_delay = dci_bit_cycles(cpu) * 3u;

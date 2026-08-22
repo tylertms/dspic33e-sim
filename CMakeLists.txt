@@ -109,6 +109,15 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     set_tests_properties(${target} PROPERTIES LABELS "${labels}")
   endfunction()
 
+  function(dspic33ep_mu_enable_allocation_failure target)
+    target_sources(${target} PRIVATE tests/support/allocation_failure.c)
+    if(NOT MSVC)
+      target_link_options(${target} PRIVATE -Wl,--wrap=realloc)
+      target_compile_definitions(${target}
+                                 PRIVATE DSPIC33_TEST_ALLOCATION_FAILURE=1)
+    endif()
+  endfunction()
+
   dspic33ep_mu_add_test(
     event_scheduler tests/architecture/dspic33/timing/events_test.c
     "core;integration")
@@ -158,7 +167,9 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     tests/device/dspic33ep_mu/communication/can/receive.c
     tests/device/dspic33ep_mu/communication/can/bus.c
     tests/device/dspic33ep_mu/communication/can/errors.c
+    tests/device/dspic33ep_mu/communication/can/boundary.c
     tests/device/dspic33ep_mu/communication/can/main.c)
+  dspic33ep_mu_enable_allocation_failure(dspic33ep_mu_can_test)
   dspic33ep_mu_add_test(
     comparator tests/device/dspic33ep_mu/analog/comparator/registers.c
     "device;integration" tests/device/dspic33ep_mu/analog/comparator/behavior.c)
@@ -173,12 +184,16 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     "device;integration"
     tests/device/dspic33ep_mu/communication/dci/transfer.c
     tests/device/dspic33ep_mu/communication/dci/clock.c
+    tests/device/dspic33ep_mu/communication/dci/boundary.c
     tests/device/dspic33ep_mu/communication/dci/main.c)
+  dspic33ep_mu_enable_allocation_failure(dspic33ep_mu_dci_test)
   dspic33ep_mu_add_test(
     device_data tests/device/dspic33ep_mu/memory/device_data_test.c
     "device;unit")
-  dspic33ep_mu_add_test(dma tests/device/dspic33ep_mu/memory/dma_test.c
-                        "device;integration")
+  dspic33ep_mu_add_test(
+    dma tests/device/dspic33ep_mu/memory/dma_test.c "device;integration"
+    tests/device/dspic33ep_mu/memory/dma/boundary.c)
+  dspic33ep_mu_enable_allocation_failure(dspic33ep_mu_dma_test)
   dspic33ep_mu_add_test(gpio tests/device/dspic33ep_mu/platform/gpio_test.c
                         "device;integration")
   dspic33ep_mu_add_test(
@@ -187,7 +202,9 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     "device;integration"
     tests/device/dspic33ep_mu/communication/i2c/master.c
     tests/device/dspic33ep_mu/communication/i2c/slave.c
-    tests/device/dspic33ep_mu/communication/i2c/pins.c)
+    tests/device/dspic33ep_mu/communication/i2c/pins.c
+    tests/device/dspic33ep_mu/communication/i2c/boundary.c)
+  dspic33ep_mu_enable_allocation_failure(dspic33ep_mu_i2c_test)
   dspic33ep_mu_add_test(
     input_capture tests/device/dspic33ep_mu/control/input_capture/registers.c
     "device;integration"
@@ -262,7 +279,9 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
   dspic33ep_mu_add_test(
     spi tests/device/dspic33ep_mu/communication/spi/registers.c
     "device;integration" tests/device/dspic33ep_mu/communication/spi/master.c
-    tests/device/dspic33ep_mu/communication/spi/slave.c)
+    tests/device/dspic33ep_mu/communication/spi/slave.c
+    tests/device/dspic33ep_mu/communication/spi/boundary.c)
+  dspic33ep_mu_enable_allocation_failure(dspic33ep_mu_spi_test)
   dspic33ep_mu_add_test(timer tests/device/dspic33ep_mu/timing/timer_test.c
                         "device;integration")
   dspic33ep_mu_add_test(

@@ -7,6 +7,7 @@ int main(void) {
     expect(&state, initialized, "initialize DCI processor");
     if (initialized) {
         dspic33_dci_test_access_cases(&state, &cpu);
+        dspic33_dci_test_boundary_cases(&state, &cpu);
         dspic33_dci_test_width_and_lane_cases(&state, &cpu);
         dspic33_dci_test_slot_buffer_status_cases(&state, &cpu);
         dspic33_dci_test_admission_and_clock_cases(&state, &cpu);

@@ -19,6 +19,7 @@ int main(void) {
         dspic33_can_test_receive_groups,
         dspic33_can_test_bus_groups,
         dspic33_can_test_error_groups,
+        dspic33_can_test_boundary_groups,
     };
     for (size_t index = 0u; index < sizeof(groups) / sizeof(groups[0]); index++) {
         if (!run_group(&state, groups[index])) {

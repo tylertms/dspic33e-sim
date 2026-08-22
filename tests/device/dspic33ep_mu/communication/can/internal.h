@@ -107,6 +107,7 @@ void dspic33_can_test_write_memory_word(Dspic33* cpu, uint32_t address, uint16_t
 void dspic33_can_test_write_transmit_frame(Dspic33* cpu, uint32_t memory,
                                            const Dspic33CanFrame* value);
 void dspic33_can_test_bus_groups(TestState* state, Dspic33* cpu);
+void dspic33_can_test_boundary_groups(TestState* state, Dspic33* cpu);
 void dspic33_can_test_error_groups(TestState* state, Dspic33* cpu);
 void dspic33_can_test_receive_groups(TestState* state, Dspic33* cpu);
 void dspic33_can_test_register_groups(TestState* state, Dspic33* cpu);

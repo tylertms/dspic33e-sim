@@ -446,6 +446,7 @@ int main(void) {
     dspic33_i2c_test_master_pin_lifecycle_cases(&state, &cpu);
     dspic33_i2c_test_slave_pin_receive_cases(&state, &cpu);
     dspic33_i2c_test_slave_pin_rejection_and_transmit_cases(&state, &cpu);
+    dspic33_i2c_test_boundary_cases(&state, &cpu);
     slave_pin_ten_bit_cases(&state, &cpu);
     slave_pin_lifecycle_cases(&state, &cpu);
     master_pin_collision_cases(&state, &cpu);
