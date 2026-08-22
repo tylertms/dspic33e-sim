@@ -9,6 +9,7 @@
 
 void dspic33_device_internal_raw_write_word(Dspic33* cpu, uint16_t address, uint16_t value);
 void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous);
+uint8_t dspic33_device_internal_pps_output_function(const Dspic33* cpu, uint8_t pin);
 
 enum {
     OSCILLATOR_CONTROL = 0x0742u,
@@ -375,6 +376,55 @@ static void lifecycle_cases(TestState* state, Dspic33* source, Dspic33* copy) {
            "cold reset clears PPS shadow and one-way session state");
 }
 
+static void package_output_cases(TestState* state) {
+    static const uint32_t expected_outputs[DSPIC33EP_MU_DEVICE_COUNT] = {
+        UINT32_C(0x060efeff), UINT32_C(0x3fffffff), UINT32_C(0x3fffffff),
+        UINT32_C(0x3fffffff), UINT32_C(0x3fffffff),
+    };
+    for (Dspic33epMuDevice device = DSPIC33EP_MU_DEVICE_256MU806;
+         device < DSPIC33EP_MU_DEVICE_COUNT; device++) {
+        Dspic33 cpu;
+        expect(state, dspic33_initialize_for_device(&cpu, device),
+               "initialize PPS package profile");
+        dspic33_reset(&cpu, 0u);
+        for (size_t index = 0u; index < sizeof(outputs) / sizeof(outputs[0]); index++) {
+            uint16_t value = dspic33_read_word(&cpu, outputs[index].address);
+            value = (uint16_t)((value & ~(uint16_t)(0x3fu << outputs[index].shift)) |
+                               (uint16_t)(49u << outputs[index].shift));
+            dspic33_device_internal_raw_write_word(&cpu, outputs[index].address, value);
+            const uint8_t expected =
+                (expected_outputs[device] & (UINT32_C(1) << index)) != 0u ? 49u : 0u;
+            expect(state,
+                   dspic33_device_internal_pps_output_function(&cpu, outputs[index].pin) ==
+                       expected,
+                   "PPS output availability matches the package pin map");
+        }
+
+        if (device == DSPIC33EP_MU_DEVICE_256MU806) {
+            uint64_t edges = 0u;
+            dspic33_device_internal_raw_write_word(&cpu, 0x0690u, 0x3131u);
+            dspic33_device_internal_raw_write_word(&cpu, 0x074eu, 0x8000u);
+            expect(state, !dspic33_reference_clock_pin(&cpu, 98u, 0u, &edges),
+                   "unbonded RP98 rejects a mapped reference clock");
+            expect(state, dspic33_reference_clock_pin(&cpu, 99u, 0u, &edges),
+                   "bonded RP99 exposes a mapped reference clock");
+            const size_t queued = cpu.events.count;
+            expect(state,
+                   !dspic33_input_capture_pin(&cpu, 98u, true, 0u) &&
+                       !dspic33_output_compare_fault_pin(&cpu, 98u, true, 0u) &&
+                       !dspic33_can_input_pin(&cpu, 98u, true, 0u) && cpu.events.count == queued,
+                   "unbonded RP98 rejects all PPS input stimuli");
+            expect(state,
+                   dspic33_input_capture_pin(&cpu, 99u, true, 0u) &&
+                       dspic33_output_compare_fault_pin(&cpu, 99u, true, 0u) &&
+                       dspic33_can_input_pin(&cpu, 99u, true, 0u) &&
+                       cpu.events.count == queued + 3u,
+                   "bonded RP99 accepts all PPS input stimuli");
+        }
+        dspic33_release(&cpu);
+    }
+}
+
 int main(void) {
     Dspic33 source;
     Dspic33 copy;
@@ -389,6 +439,7 @@ int main(void) {
     output_cases(&state, &source);
     protection_cases(&state, &source);
     lifecycle_cases(&state, &source, &copy);
+    package_output_cases(&state);
     dspic33_release(&copy);
     dspic33_release(&source);
     return test_finish(&state);

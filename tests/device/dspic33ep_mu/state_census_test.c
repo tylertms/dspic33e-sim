@@ -18,34 +18,34 @@ static bool communication_operation(Dspic33* cpu, uint8_t operation, uint32_t va
     uint8_t channel = (uint8_t)((value >> 8u) & 7u);
     uint64_t delay = (value >> 16u) & 3u;
     switch (operation) {
-        case 0u:
-            return dspic33_uart_receive(cpu, channel, (uint8_t)value, delay);
-        case 1u:
-            return dspic33_uart_set_cts(cpu, channel, (value & 1u) != 0u, delay);
-        case 2u:
-            return dspic33_spi_receive(cpu, channel, (uint16_t)value, delay);
-        case 3u:
-            return dspic33_spi_select(cpu, channel, (value & 1u) != 0u, delay);
-        case 4u:
-            return dspic33_spi_pin_input(cpu, channel, (value & 1u) != 0u,
-                                         (value & 2u) != 0u, (value & 4u) != 0u);
-        case 5u:
-            return dspic33_i2c_respond(cpu, channel, (uint8_t)value, (value & 1u) != 0u, delay);
-        case 6u:
-            return dspic33_i2c_slave_start(cpu, channel, (uint16_t)(value & 0x3ffu),
-                                            (value & 1u) != 0u, (value & 2u) != 0u, delay);
-        case 7u:
-            return dspic33_i2c_slave_write(cpu, channel, (uint8_t)value, delay);
-        case 8u:
-            return dspic33_i2c_slave_read(cpu, channel, (value & 1u) != 0u, delay);
-        case 9u:
-            return dspic33_i2c_slave_stop(cpu, channel, delay);
-        case 10u:
-            return dspic33_i2c_collision(cpu, channel, delay);
-        case 11u:
-            return dspic33_dci_clock(cpu, (uint16_t)value, (value & 1u) != 0u, delay);
-        default:
-            return dspic33_can_error(cpu, channel, (value & 1u) != 0u, (uint8_t)value, delay);
+    case 0u:
+        return dspic33_uart_receive(cpu, channel, (uint8_t)value, delay);
+    case 1u:
+        return dspic33_uart_set_cts(cpu, channel, (value & 1u) != 0u, delay);
+    case 2u:
+        return dspic33_spi_receive(cpu, channel, (uint16_t)value, delay);
+    case 3u:
+        return dspic33_spi_select(cpu, channel, (value & 1u) != 0u, delay);
+    case 4u:
+        return dspic33_spi_pin_input(cpu, channel, (value & 1u) != 0u, (value & 2u) != 0u,
+                                     (value & 4u) != 0u);
+    case 5u:
+        return dspic33_i2c_respond(cpu, channel, (uint8_t)value, (value & 1u) != 0u, delay);
+    case 6u:
+        return dspic33_i2c_slave_start(cpu, channel, (uint16_t)(value & 0x3ffu), (value & 1u) != 0u,
+                                       (value & 2u) != 0u, delay);
+    case 7u:
+        return dspic33_i2c_slave_write(cpu, channel, (uint8_t)value, delay);
+    case 8u:
+        return dspic33_i2c_slave_read(cpu, channel, (value & 1u) != 0u, delay);
+    case 9u:
+        return dspic33_i2c_slave_stop(cpu, channel, delay);
+    case 10u:
+        return dspic33_i2c_collision(cpu, channel, delay);
+    case 11u:
+        return dspic33_dci_clock(cpu, (uint16_t)value, (value & 1u) != 0u, delay);
+    default:
+        return dspic33_can_error(cpu, channel, (value & 1u) != 0u, (uint8_t)value, delay);
     }
 }
 
@@ -53,41 +53,41 @@ static bool peripheral_operation(Dspic33* cpu, uint8_t operation, uint32_t value
     uint8_t channel = (uint8_t)((value >> 8u) & 0x1fu);
     uint64_t delay = (value >> 16u) & 3u;
     switch (operation) {
-        case 0u:
-            return dspic33_dma_request(cpu, (uint8_t)value, (uint16_t)value, delay);
-        case 1u:
-            return dspic33_pmp_respond(cpu, (uint16_t)value, delay);
-        case 2u:
-            return dspic33_pmp_slave_read(cpu, (uint8_t)value, delay);
-        case 3u:
-            return dspic33_pmp_slave_write(cpu, (uint8_t)(value >> 8u), (uint8_t)value, delay);
-        case 4u:
-            return dspic33_input_capture_input(cpu, channel, (value & 1u) != 0u, delay);
-        case 5u:
-            return dspic33_output_compare_fault(cpu, channel, (value & 1u) != 0u, delay);
-        case 6u:
-            return dspic33_comparator_input(cpu, channel, (Dspic33ComparatorInput)(value & 7u),
-                                             (uint16_t)value, delay);
-        case 7u:
-            return dspic33_comparator_reference(
-                cpu, (Dspic33ComparatorReference)(value & 7u), (uint16_t)value, delay);
-        case 8u:
-            return dspic33_rtcc_clock(cpu, value & 0xffu, delay);
-        case 9u:
-            return dspic33_qei_input(cpu, channel, (Dspic33QeiInput)(value & 7u),
-                                     (value & 8u) != 0u, delay);
-        case 10u:
-            return dspic33_timer_pulse(cpu, channel, value & 0xffu, delay);
-        case 11u:
-            return dspic33_timer_gate(cpu, channel, (value & 1u) != 0u, delay);
-        case 12u:
-            return dspic33_adc_trigger(cpu, channel, (uint8_t)value, delay);
-        case 13u:
-            return dspic33_pwm_fault(cpu, channel, (value & 1u) != 0u, delay);
-        case 14u:
-            return dspic33_pwm_current_limit(cpu, channel, (value & 1u) != 0u, delay);
-        default:
-            return dspic33_pwm_sync(cpu, channel, (value & 1u) != 0u, delay);
+    case 0u:
+        return dspic33_dma_request(cpu, (uint8_t)value, (uint16_t)value, delay);
+    case 1u:
+        return dspic33_pmp_respond(cpu, (uint16_t)value, delay);
+    case 2u:
+        return dspic33_pmp_slave_read(cpu, (uint8_t)value, delay);
+    case 3u:
+        return dspic33_pmp_slave_write(cpu, (uint8_t)(value >> 8u), (uint8_t)value, delay);
+    case 4u:
+        return dspic33_input_capture_input(cpu, channel, (value & 1u) != 0u, delay);
+    case 5u:
+        return dspic33_output_compare_fault(cpu, channel, (value & 1u) != 0u, delay);
+    case 6u:
+        return dspic33_comparator_input(cpu, channel, (Dspic33ComparatorInput)(value & 7u),
+                                        (uint16_t)value, delay);
+    case 7u:
+        return dspic33_comparator_reference(cpu, (Dspic33ComparatorReference)(value & 7u),
+                                            (uint16_t)value, delay);
+    case 8u:
+        return dspic33_rtcc_clock(cpu, value & 0xffu, delay);
+    case 9u:
+        return dspic33_qei_input(cpu, channel, (Dspic33QeiInput)(value & 7u), (value & 8u) != 0u,
+                                 delay);
+    case 10u:
+        return dspic33_timer_pulse(cpu, channel, value & 0xffu, delay);
+    case 11u:
+        return dspic33_timer_gate(cpu, channel, (value & 1u) != 0u, delay);
+    case 12u:
+        return dspic33_adc_trigger(cpu, channel, (uint8_t)value, delay);
+    case 13u:
+        return dspic33_pwm_fault(cpu, channel, (value & 1u) != 0u, delay);
+    case 14u:
+        return dspic33_pwm_current_limit(cpu, channel, (value & 1u) != 0u, delay);
+    default:
+        return dspic33_pwm_sync(cpu, channel, (value & 1u) != 0u, delay);
     }
 }
 
@@ -103,24 +103,23 @@ static bool usb_operation(Dspic33* cpu, uint8_t operation, uint32_t value) {
         size = sizeof(data);
     }
     switch (operation) {
-        case 0u:
-            return dspic33_usb_receive(cpu, endpoint, data, size, delay);
-        case 1u:
-            return dspic33_usb_receive_toggle(cpu, endpoint, data, size, (value & 1u) != 0u, delay);
-        case 2u:
-            return dspic33_usb_setup(cpu, endpoint, data, size, delay);
-        case 3u:
-            return dspic33_usb_request(cpu, endpoint, delay);
-        case 4u:
-            return dspic33_usb_token(cpu, (uint8_t)value, endpoint,
-                                     (Dspic33UsbPid)((value >> 16u) & 0x0fu), data, size,
-                                     (value & 1u) != 0u, delay);
-        case 5u:
-            return dspic33_usb_host_response(cpu,
-                                              (Dspic33UsbHandshake)((value >> 8u) & 7u), data,
-                                              size, (value & 1u) != 0u, delay);
-        default:
-            return dspic33_usb_bus(cpu, (Dspic33UsbBusEvent)(value & 7u), (uint16_t)value, delay);
+    case 0u:
+        return dspic33_usb_receive(cpu, endpoint, data, size, delay);
+    case 1u:
+        return dspic33_usb_receive_toggle(cpu, endpoint, data, size, (value & 1u) != 0u, delay);
+    case 2u:
+        return dspic33_usb_setup(cpu, endpoint, data, size, delay);
+    case 3u:
+        return dspic33_usb_request(cpu, endpoint, delay);
+    case 4u:
+        return dspic33_usb_token(cpu, (uint8_t)value, endpoint,
+                                 (Dspic33UsbPid)((value >> 16u) & 0x0fu), data, size,
+                                 (value & 1u) != 0u, delay);
+    case 5u:
+        return dspic33_usb_host_response(cpu, (Dspic33UsbHandshake)((value >> 8u) & 7u), data, size,
+                                         (value & 1u) != 0u, delay);
+    default:
+        return dspic33_usb_bus(cpu, (Dspic33UsbBusEvent)(value & 7u), (uint16_t)value, delay);
     }
 }
 
@@ -175,7 +174,7 @@ int main(void) {
     expect(&state, initialized, "initialize peripheral state census");
     if (initialized) {
         uint64_t fingerprint = census(&cpu);
-        expect(&state, fingerprint == UINT64_C(18345084362457565972),
+        expect(&state, fingerprint == UINT64_C(7762651056802707732),
                "peripheral state census matches");
         dspic33_release(&cpu);
     }

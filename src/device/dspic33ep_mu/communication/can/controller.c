@@ -391,7 +391,8 @@ static uint16_t can_arbitration_bit_count(const Dspic33CanFrame* frame) {
 uint16_t dspic33_device_internal_can_frame_bits(const Dspic33CanFrame* frame, bool bits[160]) {
     bool raw[128];
     uint8_t raw_count = 0u;
-    uint8_t length = frame->length > 8u ? 8u : frame->length;
+    uint8_t dlc = frame->length > 15u ? 15u : frame->length;
+    uint8_t length = dlc > 8u ? 8u : dlc;
     uint16_t count;
     can_append_bits(raw, &raw_count, 0u, 1u);
     if (frame->extended) {
@@ -405,7 +406,7 @@ uint16_t dspic33_device_internal_can_frame_bits(const Dspic33CanFrame* frame, bo
         can_append_bits(raw, &raw_count, frame->remote ? 1u : 0u, 1u);
         can_append_bits(raw, &raw_count, 0u, 2u);
     }
-    can_append_bits(raw, &raw_count, length, 4u);
+    can_append_bits(raw, &raw_count, dlc, 4u);
     if (!frame->remote) {
         for (uint8_t index = 0u; index < length; index++) {
             can_append_bits(raw, &raw_count, frame->data[index], 8u);
@@ -519,9 +520,6 @@ Dspic33CanSerialResult dspic33_device_internal_can_decode_serial(const Dspic33* 
             }
             expected = (uint16_t)(34u + (remote ? 0u : length * 8u));
         } else if (extended && raw_count >= 39u) {
-            if (!raw[12]) {
-                return CAN_SERIAL_INVALID;
-            }
             remote = raw[32];
             length = (uint8_t)can_serial_value(raw, 35u, 4u);
             if (length > 8u) {
@@ -564,7 +562,7 @@ Dspic33CanSerialResult dspic33_device_internal_can_decode_serial(const Dspic33* 
         !cpu->io.can_rx_serial_bits[channel][serial_index + 2u]) {
         return CAN_SERIAL_INVALID;
     }
-    for (uint8_t index = 3u; index < 10u; index++) {
+    for (uint8_t index = 3u; index < 9u; index++) {
         if (!cpu->io.can_rx_serial_bits[channel][serial_index + index]) {
             return CAN_SERIAL_INVALID;
         }
@@ -865,7 +863,7 @@ bool dspic33_device_internal_can_schedule_intermission(Dspic33* cpu, uint8_t cha
                             3u * dspic33_device_internal_can_bit_cycles(cpu, channel));
 }
 
-static void can_start_overload(Dspic33* cpu, uint8_t channel) {
+void dspic33_device_internal_can_start_overload(Dspic33* cpu, uint8_t channel) {
     uint8_t bit = (uint8_t)(1u << channel);
     if (cpu->io.can_overload_count[channel] >= 2u) {
         return;
@@ -937,7 +935,7 @@ static void can_receive_pin_level(Dspic33* cpu, uint8_t pin, bool high) {
             continue;
         }
         if (previous && !high && (cpu->io.can_intermission_active & bit) != 0u) {
-            can_start_overload(cpu, channel);
+            dspic33_device_internal_can_start_overload(cpu, channel);
             continue;
         }
         if (previous && !high && cpu->power_state == DSPIC33_POWER_SLEEP &&

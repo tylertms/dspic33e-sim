@@ -17,6 +17,7 @@ typedef struct {
     uint16_t io_pin_count;
     uint8_t pwm_generator_count;
     uint8_t adc_channel_count;
+    const uint16_t* gpio_masks;
     uint32_t implemented_words;
     uint32_t absent_ranges;
     size_t reset_count;
@@ -24,20 +25,32 @@ typedef struct {
     uint64_t reset_hash;
 } ExpectedProfile;
 
+static const uint16_t gpio_masks_806[DSPIC33_GPIO_PORT_COUNT] = {
+    0u, 0xffffu, 0xf000u, 0x0fffu, 0x00ffu, 0x003bu, 0x03ccu, 0u, 0u, 0u};
+static const uint16_t gpio_masks_810[DSPIC33_GPIO_PORT_COUNT] = {
+    0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x313fu, 0xf3cfu, 0u, 0u, 0u};
+static const uint16_t gpio_masks_814[DSPIC33_GPIO_PORT_COUNT] = {
+    0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x313fu, 0xf3cfu, 0xffffu, 0xffffu, 0xf803u};
+
 static const ExpectedProfile expected_profiles[] = {
     {DSPIC33EP_MU_DEVICE_256MU806, "dsPIC33EP256MU806", 0x2ac00u, 0x8000u, 0x18614000u, 64u, 51u,
-     4u, 24u, 935u, 77u, 48u, UINT64_C(0xe5286ef2ae44471e), UINT64_C(0xd305ae808264e876)},
+     4u, 24u, gpio_masks_806, 935u, 77u, 48u, UINT64_C(0xe5286ef2ae44471e),
+     UINT64_C(0xd305ae808264e876)},
     {DSPIC33EP_MU_DEVICE_256MU810, "dsPIC33EP256MU810", 0x2ac00u, 0x8000u, 0x18624000u, 100u, 83u,
-     6u, 32u, 977u, 77u, 49u, UINT64_C(0xa0bac28c616ad517), UINT64_C(0xbf0a068cbb5ee5a6)},
+     6u, 32u, gpio_masks_810, 977u, 77u, 49u, UINT64_C(0xa0bac28c616ad517),
+     UINT64_C(0xbf0a068cbb5ee5a6)},
     {DSPIC33EP_MU_DEVICE_256MU814, "dsPIC33EP256MU814", 0x2ac00u, 0x8000u, 0x18634000u, 144u, 122u,
-     7u, 32u, 1014u, 80u, 52u, UINT64_C(0xbc4bc14d6f2cea50), UINT64_C(0xcf445290ea30727b)},
+     7u, 32u, gpio_masks_814, 1014u, 80u, 52u, UINT64_C(0xbc4bc14d6f2cea50),
+     UINT64_C(0xcf445290ea30727b)},
     {DSPIC33EP_MU_DEVICE_512MU810, "dsPIC33EP512MU810", 0x55800u, 0xe000u, 0x18724000u, 100u, 83u,
-     6u, 32u, 977u, 77u, 49u, UINT64_C(0xa0bac28c616ad517), UINT64_C(0xbf0a068cbb5ee5a6)},
+     6u, 32u, gpio_masks_810, 977u, 77u, 49u, UINT64_C(0xa0bac28c616ad517),
+     UINT64_C(0xbf0a068cbb5ee5a6)},
     {DSPIC33EP_MU_DEVICE_512MU814, "dsPIC33EP512MU814", 0x55800u, 0xe000u, 0x18734000u, 144u, 122u,
-     7u, 32u, 1014u, 80u, 52u, UINT64_C(0xbc4bc14d6f2cea50), UINT64_C(0xcf445290ea30727b)},
+     7u, 32u, gpio_masks_814, 1014u, 80u, 52u, UINT64_C(0xbc4bc14d6f2cea50),
+     UINT64_C(0xcf445290ea30727b)},
 };
 
-static uint32_t count_bits(uint8_t value) {
+static uint32_t count_bits(uint16_t value) {
     uint32_t count = 0u;
     while (value != 0u) {
         count += value & 1u;
@@ -52,6 +65,49 @@ static uint64_t hash_byte(uint64_t hash, uint8_t value) {
 
 static uint64_t hash_word(uint64_t hash, uint16_t value) {
     return hash_byte(hash_byte(hash, (uint8_t)value), (uint8_t)(value >> 8u));
+}
+
+static void test_gpio_sfr_profile(TestState* state, Dspic33* cpu, const ExpectedProfile* expected) {
+    static const uint8_t offsets[] = {0u, 4u, 6u, 8u, 10u, 12u, 14u};
+    static const uint16_t register_masks[][DSPIC33_GPIO_PORT_COUNT] = {
+        {0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x317fu, 0xf3c3u, 0xffffu, 0xffffu, 0xf803u},
+        {0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x317fu, 0xf3c3u, 0xffffu, 0xffffu, 0xf803u},
+        {0xc03fu, 0u, 0u, 0xff3fu, 0u, 0x317fu, 0xf003u, 0xffffu, 0xffffu, 0xf803u},
+        {0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x317fu, 0xf3cfu, 0xffffu, 0xffffu, 0xf803u},
+        {0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x317fu, 0xf3c3u, 0xffffu, 0xffffu, 0xf803u},
+        {0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x317fu, 0xf3c3u, 0xffffu, 0xffffu, 0xf803u},
+        {0x06c0u, 0xffffu, 0x601eu, 0x00c0u, 0x03ffu, 0u, 0x03c0u, 0u, 0u, 0u},
+    };
+
+    cpu->configuration[8u] = 0u;
+    for (uint8_t port = 0u; port < DSPIC33_GPIO_PORT_COUNT; port++) {
+        const uint16_t base = (uint16_t)(0x0e00u + port * 0x10u);
+        const uint16_t bonded = expected->gpio_masks[port];
+        for (size_t index = 0u; index < sizeof(offsets) / sizeof(offsets[0]); index++) {
+            const uint16_t address = (uint16_t)(base + offsets[index]);
+            const uint16_t writable = (uint16_t)(register_masks[index][port] & bonded);
+            dspic33_write_word(cpu, address, UINT16_MAX);
+            expect(state, dspic33_read_word(cpu, address) == writable,
+                   "profile GPIO SFR masks unbonded pins");
+        }
+
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 14u), 0u);
+        dspic33_gpio_input(cpu, port, 0u);
+        dspic33_write_word(cpu, base, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 4u), UINT16_MAX);
+        uint16_t output = dspic33_read_word(cpu, (uint16_t)(base + 2u));
+        expect(state, output == (uint16_t)(register_masks[1][port] & bonded),
+               "profile GPIO output uses only bonded latch pins");
+
+        dspic33_write_word(cpu, base, UINT16_MAX);
+        expect(state, dspic33_gpio_drive(cpu, port, UINT16_MAX, UINT16_MAX) == (bonded != 0u),
+               "profile GPIO input drive availability matches bonded pins");
+        uint16_t input = dspic33_read_word(cpu, (uint16_t)(base + 2u));
+        expect(state, input == bonded, "profile GPIO input exposes only bonded pins");
+        expect(state, dspic33_gpio_release(cpu, port, UINT16_MAX) == (bonded != 0u),
+               "profile GPIO input release availability matches bonded pins");
+    }
 }
 
 static void test_profile(TestState* state, const ExpectedProfile* expected) {
@@ -145,6 +201,38 @@ static void test_profile(TestState* state, const ExpectedProfile* expected) {
            "device data end seed accepted");
     expect(state, dspic33_seed_data(cpu, expected->data_limit, &data, 1u),
            "architectural data backing seed accepted");
+
+    uint32_t io_pin_count = 0u;
+    for (uint8_t port = 0u; port < DSPIC33_GPIO_PORT_COUNT; port++) {
+        uint16_t mask = expected->gpio_masks[port];
+        io_pin_count += count_bits(mask);
+        expect(state, dspic33ep_mu_gpio_port_mask(expected->device, port) == mask,
+               "profile GPIO mask");
+        cpu->io.gpio_driven[port] = 0u;
+        expect(state, dspic33_gpio_drive(cpu, port, UINT16_MAX, UINT16_MAX) == (mask != 0u),
+               "profile GPIO drive availability");
+        expect(state, cpu->io.gpio_driven[port] == mask, "profile GPIO drive mask");
+        expect(state, dspic33_gpio_release(cpu, port, UINT16_MAX) == (mask != 0u),
+               "profile GPIO release availability");
+    }
+    expect(state, io_pin_count == expected->io_pin_count, "profile bonded GPIO count");
+    test_gpio_sfr_profile(state, cpu, expected);
+
+    uint8_t last_adc = (uint8_t)(expected->adc_channel_count - 1u);
+    dspic33_adc_input(cpu, last_adc, 0x1abcu);
+    expect(state, cpu->io.adc[last_adc] == 0x0abcu, "profile last ADC channel accepts input");
+    if (expected->adc_channel_count < DSPIC33_ADC_CHANNEL_COUNT) {
+        cpu->io.adc[expected->adc_channel_count] = 0x0123u;
+        dspic33_adc_input(cpu, expected->adc_channel_count, 0x0456u);
+        expect(state, cpu->io.adc[expected->adc_channel_count] == 0x0123u,
+               "profile first absent ADC channel rejects input");
+    }
+
+    expect(state,
+           dspic33_pwm_dead_time(cpu, (uint8_t)(expected->pwm_generator_count - 1u), false, 0u),
+           "profile last PWM generator accepts input");
+    expect(state, !dspic33_pwm_dead_time(cpu, expected->pwm_generator_count, false, 0u),
+           "profile first absent PWM generator rejects input");
     dspic33_destroy(cpu);
 }
 
@@ -165,6 +253,11 @@ int main(void) {
            "unknown profile name rejected");
     expect(&state, !dspic33ep_mu_address_implemented(DSPIC33EP_MU_DEVICE_COUNT, 0u),
            "invalid device address rejected");
+    expect(&state,
+           dspic33ep_mu_gpio_port_mask(DSPIC33EP_MU_DEVICE_COUNT, 0u) == 0u &&
+               dspic33ep_mu_gpio_port_mask(DSPIC33EP_MU_DEVICE_512MU814, DSPIC33_GPIO_PORT_COUNT) ==
+                   0u,
+           "invalid profile GPIO lookup rejected");
     printf("[device-data] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n", state.cases,
            state.passed, state.failed);
     return test_finish(&state);

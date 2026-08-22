@@ -180,6 +180,32 @@ static void pad_collision_cases(TestState* state, Dspic33* cpu) {
     dspic33_device_internal_run_dma(cpu, 0u, DMA_TEST_FORCE);
     expect(state, (cpu->io.dma_active & 1u) != 0u && !cpu->io.dma_transfer_active,
            "byte DMA null write schedules transfer completion");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE, DMA_TEST_CONTROL_ENABLE | 0x4800u);
+    dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 4u, 0x4000u);
+    dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 0x0cu, 0x0248u);
+    cpu->io.dma_forced_pending = 1u;
+    cpu->io.cpu_write_valid = true;
+    cpu->io.cpu_write_cycle = cpu->cycles;
+    cpu->io.cpu_write_address = 0x0248u;
+    cpu->io.cpu_write_width = 1u;
+    dspic33_device_internal_run_dma(cpu, 0u, DMA_TEST_FORCE);
+    expect(state, dspic33_read_word(cpu, 0x0bf0u) == 1u,
+           "DMA null write collision records its status bit");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE, DMA_TEST_CONTROL_ENABLE | 0x4800u);
+    dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 4u, 0x4000u);
+    dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 0x0cu, 0x0442u);
+    cpu->io.dma_forced_pending = 1u;
+    cpu->io.cpu_write_valid = true;
+    cpu->io.cpu_write_cycle = cpu->cycles;
+    cpu->io.cpu_write_address = 0x0442u;
+    cpu->io.cpu_write_width = 1u;
+    dspic33_device_internal_run_dma(cpu, 0u, DMA_TEST_FORCE);
+    expect(state, dspic33_read_word(cpu, 0x0bf0u) == 0u,
+           "DMA null write to CAN avoids a peripheral collision");
 }
 
 void dspic33_dma_test_boundary_cases(TestState* state, Dspic33* cpu) {

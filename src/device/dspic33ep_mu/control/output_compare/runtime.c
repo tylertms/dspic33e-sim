@@ -486,17 +486,6 @@ static bool output_compare_function_channel(uint8_t function, uint8_t* channel) 
 
 bool dspic33_device_internal_output_compare_pin_channel(const Dspic33* cpu, uint8_t pin,
                                                         uint8_t* channel) {
-    size_t index;
-    for (index = 0u;
-         index < sizeof(dspic33_device_pps_outputs) / sizeof(dspic33_device_pps_outputs[0]);
-         index++) {
-        if (dspic33_device_pps_outputs[index].pin == pin) {
-            uint8_t function = (uint8_t)((dspic33_device_internal_raw_word(
-                                              cpu, dspic33_device_pps_outputs[index].address) >>
-                                          dspic33_device_pps_outputs[index].shift) &
-                                         0x003fu);
-            return output_compare_function_channel(function, channel);
-        }
-    }
-    return false;
+    return output_compare_function_channel(dspic33_device_internal_pps_output_function(cpu, pin),
+                                           channel);
 }

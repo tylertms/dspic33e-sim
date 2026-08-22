@@ -20,6 +20,7 @@ typedef struct {
 } Dspic33SfrMasterClearReset;
 
 bool dspic33ep_mu_address_implemented(Dspic33epMuDevice device, uint32_t address);
+uint16_t dspic33ep_mu_gpio_port_mask(Dspic33epMuDevice device, uint8_t port);
 const uint8_t* dspic33ep_mu_implementation_bitmap(Dspic33epMuDevice device);
 const Dspic33SfrMasterClearReset* dspic33ep_mu_master_clear_resets(Dspic33epMuDevice device,
                                                                    size_t* count);

@@ -8,7 +8,7 @@ bool dspic33_input_capture_input(Dspic33* cpu, uint8_t channel, bool high, uint6
 }
 
 bool dspic33_input_capture_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t delay) {
-    return dspic33_device_internal_pps_pin(pin) != NULL &&
+    return dspic33_device_internal_pps_pin_bonded(cpu, pin) &&
            dspic33_schedule_external(
                cpu, DSPIC33_EVENT_INPUT_CAPTURE, pin,
                INPUT_CAPTURE_EVENT_PIN | (high ? INPUT_CAPTURE_EVENT_HIGH : 0u), delay);
@@ -66,7 +66,7 @@ bool dspic33_output_compare_fault(Dspic33* cpu, uint8_t source, bool high, uint6
 }
 
 bool dspic33_output_compare_fault_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t delay) {
-    return dspic33_device_internal_pps_pin(pin) != NULL &&
+    return dspic33_device_internal_pps_pin_bonded(cpu, pin) &&
            dspic33_schedule_external(cpu, DSPIC33_EVENT_OUTPUT_COMPARE_FAULT, pin,
                                      OUTPUT_COMPARE_FAULT_EVENT_PIN |
                                          (high ? OUTPUT_COMPARE_FAULT_EVENT_HIGH : 0u),
@@ -154,26 +154,13 @@ bool dspic33_dci_transmit(Dspic33* cpu, Dspic33DciTransfer* transfer) {
 }
 
 bool dspic33_dci_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
-    uint8_t function = 0u;
     uint16_t control;
-    size_t index;
     if (high == NULL) {
         return false;
     }
-    for (index = 0u;
-         index < sizeof(dspic33_device_pps_outputs) / sizeof(dspic33_device_pps_outputs[0]);
-         index++) {
-        if (dspic33_device_pps_outputs[index].pin == pin) {
-            function = (uint8_t)((dspic33_device_internal_raw_word(
-                                      cpu, dspic33_device_pps_outputs[index].address) >>
-                                  dspic33_device_pps_outputs[index].shift) &
-                                 0x003fu);
-            break;
-        }
-    }
+    uint8_t function = dspic33_device_internal_pps_output_function(cpu, pin);
     control = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
-    if (index == sizeof(dspic33_device_pps_outputs) / sizeof(dspic33_device_pps_outputs[0]) ||
-        cpu->io.dci.pmd_disabled) {
+    if (function == 0u || cpu->io.dci.pmd_disabled) {
         return false;
     }
     if (function == DCI_PPS_CLOCK_OUTPUT && (control & DCI_CONTROL_EXTERNAL_CLOCK) == 0u &&
@@ -252,10 +239,8 @@ bool dspic33_pwm_sync_output(const Dspic33* cpu, uint8_t time_base) {
 }
 
 bool dspic33_pwm_sync_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
-    uint8_t function = 0u;
     uint8_t time_base;
     uint16_t control;
-    size_t index;
     if (high == NULL || dspic33_device_internal_pwm_global_pmd_disabled(cpu)) {
         return false;
     }
@@ -263,19 +248,8 @@ bool dspic33_pwm_sync_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
     if (cpu->power_state == DSPIC33_POWER_IDLE && (control & PWM_STOP_IDLE) != 0u) {
         return false;
     }
-    for (index = 0u;
-         index < sizeof(dspic33_device_pps_outputs) / sizeof(dspic33_device_pps_outputs[0]);
-         index++) {
-        if (dspic33_device_pps_outputs[index].pin == pin) {
-            function = (uint8_t)((dspic33_device_internal_raw_word(
-                                      cpu, dspic33_device_pps_outputs[index].address) >>
-                                  dspic33_device_pps_outputs[index].shift) &
-                                 0x003fu);
-            break;
-        }
-    }
-    if (index == sizeof(dspic33_device_pps_outputs) / sizeof(dspic33_device_pps_outputs[0]) ||
-        function < 0x2du || function > 0x2eu) {
+    uint8_t function = dspic33_device_internal_pps_output_function(cpu, pin);
+    if (function < 0x2du || function > 0x2eu) {
         return false;
     }
     time_base = (uint8_t)(function - 0x2du);
@@ -338,25 +312,12 @@ bool dspic33_can_transmit(Dspic33* cpu, uint8_t channel, Dspic33CanFrame* frame)
 }
 
 bool dspic33_can_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
-    uint8_t function = 0u;
     uint8_t channel;
-    size_t mapping;
     if (high == NULL) {
         return false;
     }
-    for (mapping = 0u;
-         mapping < sizeof(dspic33_device_pps_outputs) / sizeof(dspic33_device_pps_outputs[0]);
-         mapping++) {
-        if (dspic33_device_pps_outputs[mapping].pin == pin) {
-            function = (uint8_t)((dspic33_device_internal_raw_word(
-                                      cpu, dspic33_device_pps_outputs[mapping].address) >>
-                                  dspic33_device_pps_outputs[mapping].shift) &
-                                 0x003fu);
-            break;
-        }
-    }
-    if (mapping == sizeof(dspic33_device_pps_outputs) / sizeof(dspic33_device_pps_outputs[0]) ||
-        function < 14u || function > 15u) {
+    uint8_t function = dspic33_device_internal_pps_output_function(cpu, pin);
+    if (function < 14u || function > 15u) {
         return false;
     }
     channel = (uint8_t)(function - 14u);
@@ -417,7 +378,7 @@ bool dspic33_can_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
 }
 
 bool dspic33_can_input_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t delay) {
-    return dspic33_device_internal_pps_pin(pin) != NULL &&
+    return dspic33_device_internal_pps_pin_bonded(cpu, pin) &&
            dspic33_schedule_external(cpu, DSPIC33_EVENT_CAN, pin,
                                      CAN_EVENT_RECEIVE_PIN | (high ? CAN_EVENT_PIN_HIGH : 0u),
                                      delay);

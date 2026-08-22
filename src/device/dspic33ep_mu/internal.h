@@ -65,7 +65,8 @@ bool dspic33_device_internal_pmp_response_push(Dspic33PmpResponseQueue* queue,
                                                const Dspic33PmpResponse* response);
 bool dspic33_device_internal_pps_physical_input_enabled(const Dspic33* cpu, uint8_t pin);
 bool dspic33_device_internal_pps_physical_input_high(const Dspic33* cpu, uint8_t pin, bool* high);
-bool dspic33_device_internal_pps_register_write_mask(uint16_t address, uint16_t* writable);
+bool dspic33_device_internal_pps_register_write_mask(const Dspic33* cpu, uint16_t address,
+                                                     uint16_t* writable);
 bool dspic33_device_internal_pps_shadow_matches(const Dspic33* cpu);
 bool dspic33_device_internal_protect_oscillator_write(Dspic33* cpu, uint16_t address,
                                                       uint16_t previous);
@@ -82,7 +83,8 @@ bool dspic33_device_internal_qei_compare_output_value(const Dspic33* cpu, uint8_
 bool dspic33_device_internal_qei_pps_output_value(const Dspic33* cpu, uint8_t port, uint8_t bit,
                                                   bool* high);
 bool dspic33_device_internal_qei_read_register(Dspic33* cpu, uint16_t address, uint8_t* value);
-bool dspic33_device_internal_register_write_mask(uint16_t address, uint16_t* writable);
+bool dspic33_device_internal_register_write_mask(const Dspic33* cpu, uint16_t address,
+                                                 uint16_t* writable);
 bool dspic33_device_internal_schedule_dma_channel(Dspic33* cpu, uint8_t channel,
                                                   uint16_t indirect_address, bool forced,
                                                   uint64_t delay);
@@ -129,6 +131,7 @@ bool dspic33_device_internal_word_queue_pop(Dspic33WordQueue* queue, uint16_t* v
 bool dspic33_device_internal_word_queue_push_front(Dspic33WordQueue* queue, uint16_t value);
 bool dspic33_device_internal_word_queue_push(Dspic33WordQueue* queue, uint16_t value);
 const Dspic33PpsPin* dspic33_device_internal_pps_pin(uint8_t pin);
+bool dspic33_device_internal_pps_pin_bonded(const Dspic33* cpu, uint8_t pin);
 Dspic33CanFrame dspic33_device_internal_can_decode_frame(const uint16_t words[8]);
 Dspic33Event dspic33_device_internal_event_pop(Dspic33EventQueue* queue);
 uint16_t dspic33_device_internal_adc_register(const Dspic33* cpu, uint8_t module, uint16_t offset);
@@ -141,6 +144,7 @@ uint16_t dspic33_device_internal_comparator_base(uint8_t comparator);
 uint16_t dspic33_device_internal_dma_channel_base(uint8_t channel);
 uint16_t dspic33_device_internal_dma_channel_bit(uint8_t channel);
 uint16_t dspic33_device_internal_gpio_pin_values(const Dspic33* cpu, uint8_t port);
+uint16_t dspic33_device_internal_gpio_port_mask(const Dspic33* cpu, uint8_t port);
 uint16_t dspic33_device_internal_output_compare_base(uint8_t channel);
 uint16_t dspic33_device_internal_pwm_generator_base(uint8_t generator);
 uint16_t dspic33_device_internal_pwm_register(const Dspic33* cpu, uint8_t generator,
@@ -362,6 +366,7 @@ bool dspic33_device_internal_can_buffer_flag(const Dspic33* cpu, uint8_t channel
 bool dspic33_device_internal_can_dma_ready(const Dspic33* cpu, uint8_t request, uint16_t pad,
                                            bool transmit);
 bool dspic33_device_internal_can_schedule_intermission(Dspic33* cpu, uint8_t channel);
+void dspic33_device_internal_can_start_overload(Dspic33* cpu, uint8_t channel);
 bool dspic33_device_internal_can_schedule_receive_sample(Dspic33* cpu, uint8_t channel,
                                                          uint64_t delay);
 bool dspic33_device_internal_can_schedule_transmit_sample(Dspic33* cpu, uint8_t channel,

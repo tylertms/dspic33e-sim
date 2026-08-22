@@ -255,7 +255,7 @@ static void serial_decode_matrix_cases(TestState* state, Dspic33* cpu) {
     uint32_t valid = 0u;
     uint32_t incomplete = 0u;
     uint32_t invalid = 0u;
-    const uint8_t lengths[] = {0u, 1u, 8u, 9u};
+    const uint8_t lengths[] = {0u, 1u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u};
     for (uint8_t extended = 0u; extended < 2u; extended++) {
         for (uint8_t remote = 0u; remote < 2u; remote++) {
             for (uint8_t length_index = 0u; length_index < sizeof(lengths) / sizeof(lengths[0]);
@@ -272,8 +272,13 @@ static void serial_decode_matrix_cases(TestState* state, Dspic33* cpu) {
                     cpu->io.can_rx_serial_bits[0][index] = bits[index];
                 }
                 cpu->io.can_rx_serial_count[0] = count;
-                valid += dspic33_device_internal_can_decode_serial(cpu, 0u, &decoded, &tail) ==
-                         CAN_TEST_SERIAL_VALID;
+                int status = dspic33_device_internal_can_decode_serial(cpu, 0u, &decoded, &tail);
+                valid += status == CAN_TEST_SERIAL_VALID;
+                expect(state,
+                       status != CAN_TEST_SERIAL_VALID ||
+                           decoded.length ==
+                               (lengths[length_index] > 8u ? 8u : lengths[length_index]),
+                       "CAN serial decoder applies classical DLC length");
                 cpu->io.can_rx_serial_count[0] = (uint16_t)(tail + 5u);
                 incomplete += dspic33_device_internal_can_decode_serial(cpu, 0u, &decoded, &tail) ==
                               CAN_TEST_SERIAL_INCOMPLETE;
@@ -284,8 +289,151 @@ static void serial_decode_matrix_cases(TestState* state, Dspic33* cpu) {
             }
         }
     }
-    expect(state, valid == 16u && incomplete == 16u && invalid == 16u,
+    expect(state, valid == 40u && incomplete == 40u && invalid == 40u,
            "CAN serial decode matrix matches");
+}
+
+static uint16_t load_serial_vector(Dspic33* cpu, const char* vector) {
+    const uint16_t count = (uint16_t)strlen(vector);
+    for (uint16_t index = 0u; index < count; index++) {
+        cpu->io.can_rx_serial_bits[0][index] = vector[index] == '1';
+    }
+    cpu->io.can_rx_serial_count[0] = count;
+    return count;
+}
+
+static bool encoded_vector_matches(const Dspic33CanFrame* frame, const char* vector) {
+    bool bits[160];
+    const uint16_t count = dspic33_device_internal_can_frame_bits(frame, bits);
+    if (count != strlen(vector)) {
+        return false;
+    }
+    for (uint16_t index = 0u; index < count; index++) {
+        if (bits[index] != (vector[index] == '1')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void independent_serial_vector_cases(TestState* state, Dspic33* cpu) {
+    static const char standard_vector[] =
+        "000100100011000100100010001001000100011001101000100010101010110011001110111100010001"
+        "101001011010011111111111111";
+    static const char extended_vector[] =
+        "000001100100011110100010101100111000111110101111010101101101111100111011110000010010"
+        "010001101000101011001111011000010001011111111111111";
+    static const char dominant_srr_vector[] =
+        "000100100011010001000101011001110000011100010010001101000101011010111101000101011111"
+        "11111111";
+    const Dspic33CanFrame standard = {
+        0x123u, {0x11u, 0x22u, 0x33u, 0x44u, 0x55u, 0x66u, 0x77u, 0x88u}, 9u, false, false};
+    const Dspic33CanFrame extended = {
+        0x01234567u, {0xdeu, 0xadu, 0xbeu, 0xefu, 0x01u, 0x23u, 0x45u, 0x67u}, 15u, true, false};
+    Dspic33CanFrame decoded;
+    uint16_t tail;
+
+    expect(state, encoded_vector_matches(&standard, standard_vector),
+           "standard CAN encoder matches the independent wire vector");
+    expect(state, encoded_vector_matches(&extended, extended_vector),
+           "extended CAN encoder matches the independent wire vector");
+
+    dspic33_reset(cpu, 0u);
+    load_serial_vector(cpu, standard_vector);
+    expect(state,
+           dspic33_device_internal_can_decode_serial(cpu, 0u, &decoded, &tail) ==
+                   CAN_TEST_SERIAL_VALID &&
+               tail == 98u && decoded.identifier == standard.identifier && !decoded.extended &&
+               !decoded.remote && decoded.length == 8u &&
+               memcmp(decoded.data, standard.data, sizeof(decoded.data)) == 0,
+           "standard independent CAN vector decodes with raw DLC nine");
+
+    dspic33_reset(cpu, 0u);
+    load_serial_vector(cpu, standard_vector);
+    cpu->io.can_rx_serial_bits[0][107u] = false;
+    expect(state,
+           dspic33_device_internal_can_decode_serial(cpu, 0u, &decoded, &tail) ==
+                   CAN_TEST_SERIAL_VALID &&
+               tail == 98u && decoded.identifier == standard.identifier,
+           "dominant final EOF bit preserves a valid CAN frame");
+
+    dspic33_reset(cpu, 0u);
+    load_serial_vector(cpu, extended_vector);
+    expect(state,
+           dspic33_device_internal_can_decode_serial(cpu, 0u, &decoded, &tail) ==
+                   CAN_TEST_SERIAL_VALID &&
+               tail == 122u && decoded.identifier == extended.identifier && decoded.extended &&
+               !decoded.remote && decoded.length == 8u &&
+               memcmp(decoded.data, extended.data, sizeof(decoded.data)) == 0,
+           "extended independent CAN vector decodes with raw DLC fifteen");
+
+    dspic33_reset(cpu, 0u);
+    load_serial_vector(cpu, dominant_srr_vector);
+    expect(state,
+           dspic33_device_internal_can_decode_serial(cpu, 0u, &decoded, &tail) ==
+                   CAN_TEST_SERIAL_VALID &&
+               tail == 79u && decoded.identifier == 0x048c4567u && decoded.extended &&
+               !decoded.remote && decoded.length == 3u && decoded.data[0] == 0x12u &&
+               decoded.data[1] == 0x34u && decoded.data[2] == 0x56u,
+           "extended CAN vector with dominant SRR decodes");
+
+    const uint16_t invalid_indices[] = {5u, 13u, 14u, 110u, 122u, 124u, 125u};
+    for (size_t index = 0u; index < sizeof(invalid_indices) / sizeof(invalid_indices[0]); index++) {
+        dspic33_reset(cpu, 0u);
+        load_serial_vector(cpu, extended_vector);
+        cpu->io.can_rx_serial_bits[0][invalid_indices[index]] =
+            !cpu->io.can_rx_serial_bits[0][invalid_indices[index]];
+        expect(state,
+               dspic33_device_internal_can_decode_serial(cpu, 0u, &decoded, &tail) ==
+                   CAN_TEST_SERIAL_INVALID,
+               "corrupted independent CAN vector is rejected");
+    }
+}
+
+static void independent_remote_serial_vector_cases(TestState* state, Dspic33* cpu) {
+    static const char standard_vector[] = "010001010110100100001111100101100011111111111111";
+    static const char extended_vector[] =
+        "00000110010001111010001010110011110001011000101100110011111111111111";
+    static const uint8_t empty_data[8] = {0};
+    const Dspic33CanFrame standard = {
+        0x456u, {0xdeu, 0xadu, 0xbeu, 0xefu, 0x01u, 0x23u, 0x45u, 0x67u}, 8u, false, true};
+    const Dspic33CanFrame extended = {
+        0x01234567u, {0x89u, 0xabu, 0xcdu, 0xefu, 0x10u, 0x32u, 0x54u, 0x76u}, 5u, true, true};
+    const Dspic33CanFrame frames[] = {standard, extended};
+    const char* vectors[] = {standard_vector, extended_vector};
+    const uint16_t tails[] = {35u, 55u};
+    const uint16_t rtr_indices[] = {12u, 33u};
+    const uint16_t crc_indices[] = {27u, 47u};
+
+    for (size_t index = 0u; index < sizeof(frames) / sizeof(frames[0]); index++) {
+        Dspic33CanFrame decoded;
+        uint16_t tail = 0u;
+        expect(state, encoded_vector_matches(&frames[index], vectors[index]),
+               "remote CAN encoder matches the independent wire vector");
+        dspic33_reset(cpu, 0u);
+        load_serial_vector(cpu, vectors[index]);
+        expect(state,
+               dspic33_device_internal_can_decode_serial(cpu, 0u, &decoded, &tail) ==
+                       CAN_TEST_SERIAL_VALID &&
+                   tail == tails[index] && decoded.identifier == frames[index].identifier &&
+                   decoded.extended == frames[index].extended && decoded.remote &&
+                   decoded.length == frames[index].length &&
+                   memcmp(decoded.data, empty_data, sizeof(decoded.data)) == 0,
+               "independent remote CAN vector decodes without payload data");
+
+        const uint16_t corruptions[] = {rtr_indices[index], crc_indices[index]};
+        for (size_t corruption = 0u; corruption < sizeof(corruptions) / sizeof(corruptions[0]);
+             corruption++) {
+            dspic33_reset(cpu, 0u);
+            load_serial_vector(cpu, vectors[index]);
+            cpu->io.can_rx_serial_bits[0][corruptions[corruption]] =
+                !cpu->io.can_rx_serial_bits[0][corruptions[corruption]];
+            expect(state,
+                   dspic33_device_internal_can_decode_serial(cpu, 0u, &decoded, &tail) !=
+                       CAN_TEST_SERIAL_VALID,
+                   "corrupted independent remote CAN vector is rejected");
+        }
+    }
 }
 
 static void controller_admission_matrix_cases(TestState* state, Dspic33* cpu) {
@@ -326,6 +474,8 @@ void dspic33_can_test_boundary_groups(TestState* state, Dspic33* cpu) {
     event_guard_cases(state, cpu);
     controller_boundary_cases(state, cpu);
     serial_decode_matrix_cases(state, cpu);
+    independent_serial_vector_cases(state, cpu);
+    independent_remote_serial_vector_cases(state, cpu);
     controller_admission_matrix_cases(state, cpu);
 #ifdef DSPIC33_TEST_ALLOCATION_FAILURE
     allocation_failure_cases(state, cpu);

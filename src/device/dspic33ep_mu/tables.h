@@ -27,7 +27,7 @@ typedef struct {
 
 extern const Dspic33PpsOutput dspic33_device_pps_outputs[30];
 extern const Dspic33PpsPin dspic33_device_pps_pins[78];
-extern const Dspic33ResetValue dspic33_device_reset_values[97];
+extern const Dspic33ResetValue dspic33_device_reset_values[100];
 extern const uint16_t dspic33_device_adc_buffers[DSPIC33_ADC_COUNT];
 extern const uint16_t dspic33_device_adc_controls[DSPIC33_ADC_COUNT];
 extern const uint16_t dspic33_device_can_bases[DSPIC33_CAN_COUNT];

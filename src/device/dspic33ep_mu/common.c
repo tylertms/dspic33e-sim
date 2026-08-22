@@ -101,27 +101,31 @@ const uint8_t dspic33_device_qei_irqs[DSPIC33_QEI_COUNT] = {58u, 75u};
 const uint16_t dspic33_device_qei_pps_registers[DSPIC33_QEI_COUNT][2] = {{0x06bcu, 0x06beu},
                                                                          {0x06c0u, 0x06c2u}};
 const uint16_t dspic33_device_gpio_port_addresses[DSPIC33_GPIO_PORT_COUNT] = {
-    0x0e02u, 0x0e12u, 0x0e22u, 0x0e32u, 0x0e42u, 0x0e52u, 0x0e62u};
+    0x0e02u, 0x0e12u, 0x0e22u, 0x0e32u, 0x0e42u, 0x0e52u, 0x0e62u, 0x0e72u, 0x0e82u, 0x0e92u};
 const uint16_t dspic33_device_gpio_tris_addresses[DSPIC33_GPIO_PORT_COUNT] = {
-    0x0e00u, 0x0e10u, 0x0e20u, 0x0e30u, 0x0e40u, 0x0e50u, 0x0e60u};
+    0x0e00u, 0x0e10u, 0x0e20u, 0x0e30u, 0x0e40u, 0x0e50u, 0x0e60u, 0x0e70u, 0x0e80u, 0x0e90u};
 const uint16_t dspic33_device_gpio_latch_addresses[DSPIC33_GPIO_PORT_COUNT] = {
-    0x0e04u, 0x0e14u, 0x0e24u, 0x0e34u, 0x0e44u, 0x0e54u, 0x0e64u};
+    0x0e04u, 0x0e14u, 0x0e24u, 0x0e34u, 0x0e44u, 0x0e54u, 0x0e64u, 0x0e74u, 0x0e84u, 0x0e94u};
 const uint16_t dspic33_device_gpio_open_drain_addresses[DSPIC33_GPIO_PORT_COUNT] = {
-    0x0e06u, 0x0e16u, 0x0e26u, 0x0e36u, 0x0e46u, 0x0e56u, 0x0e66u};
+    0x0e06u, 0x0e16u, 0x0e26u, 0x0e36u, 0x0e46u, 0x0e56u, 0x0e66u, 0x0e76u, 0x0e86u, 0x0e96u};
 const uint16_t dspic33_device_gpio_change_notification_addresses[DSPIC33_GPIO_PORT_COUNT] = {
-    0x0e08u, 0x0e18u, 0x0e28u, 0x0e38u, 0x0e48u, 0x0e58u, 0x0e68u};
+    0x0e08u, 0x0e18u, 0x0e28u, 0x0e38u, 0x0e48u, 0x0e58u, 0x0e68u, 0x0e78u, 0x0e88u, 0x0e98u};
 const uint16_t dspic33_device_gpio_analog_addresses[DSPIC33_GPIO_PORT_COUNT] = {
-    0x0e0eu, 0x0e1eu, 0x0e2eu, 0x0e3eu, 0x0e4eu, 0u, 0x0e6eu};
+    0x0e0eu, 0x0e1eu, 0x0e2eu, 0x0e3eu, 0x0e4eu, 0u, 0x0e6eu, 0u, 0u, 0u};
 const uint16_t dspic33_device_gpio_analog_masks[DSPIC33_GPIO_PORT_COUNT] = {
-    0x06c0u, 0xffffu, 0x601eu, 0x00c0u, 0x03ffu, 0u, 0x03c0u};
+    0x06c0u, 0xffffu, 0x601eu, 0x00c0u, 0x03ffu, 0u, 0x03c0u, 0u, 0u, 0u};
 const uint16_t dspic33_device_gpio_pull_up_addresses[DSPIC33_GPIO_PORT_COUNT] = {
-    0x0e0au, 0x0e1au, 0x0e2au, 0x0e3au, 0x0e4au, 0x0e5au, 0x0e6au};
+    0x0e0au, 0x0e1au, 0x0e2au, 0x0e3au, 0x0e4au, 0x0e5au, 0x0e6au, 0x0e7au, 0x0e8au, 0x0e9au};
 const uint16_t dspic33_device_gpio_pull_down_addresses[DSPIC33_GPIO_PORT_COUNT] = {
-    0x0e0cu, 0x0e1cu, 0x0e2cu, 0x0e3cu, 0x0e4cu, 0x0e5cu, 0x0e6cu};
+    0x0e0cu, 0x0e1cu, 0x0e2cu, 0x0e3cu, 0x0e4cu, 0x0e5cu, 0x0e6cu, 0x0e7cu, 0x0e8cu, 0x0e9cu};
 const uint16_t dspic33_device_gpio_port_masks[DSPIC33_GPIO_PORT_COUNT] = {
-    0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x317fu, 0xf3cfu};
-const uint16_t dspic33_device_gpio_input_only_masks[DSPIC33_GPIO_PORT_COUNT] = {0u, 0u, 0u,     0u,
-                                                                                0u, 0u, 0x000cu};
+    0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x313fu, 0xf3cfu, 0xffffu, 0xffffu, 0xf803u};
+const uint16_t dspic33_device_gpio_input_only_masks[DSPIC33_GPIO_PORT_COUNT] = {
+    0u, 0u, 0u, 0u, 0u, 0u, 0x000cu, 0u, 0u, 0u};
+
+uint16_t dspic33_device_internal_gpio_port_mask(const Dspic33* cpu, uint8_t port) {
+    return cpu == NULL ? 0u : dspic33ep_mu_gpio_port_mask(cpu->device, port);
+}
 
 const Dspic33PpsOutput dspic33_device_pps_outputs[] = {
     {0x0680u, 64u, 0u},  {0x0680u, 65u, 8u},  {0x0682u, 66u, 0u},  {0x0682u, 67u, 8u},
@@ -210,7 +214,12 @@ static const Dspic33RegisterMask register_masks[] = {
     {0x0e54u, 0x317fu}, {0x0e56u, 0x317fu}, {0x0e58u, 0x317fu}, {0x0e5au, 0x317fu},
     {0x0e5cu, 0x317fu}, {0x0e60u, 0xf3c3u}, {0x0e64u, 0xf3c3u}, {0x0e66u, 0xf003u},
     {0x0e68u, 0xf3cfu}, {0x0e6au, 0xf3c3u}, {0x0e6cu, 0xf3c3u}, {0x0e6eu, 0x03c0u},
-    {0x0efeu, 0x0003u}, {0x0f82u, 0x00ffu}, {0x0f8cu, 0x00ffu}, {0x0fa4u, 0x001fu}};
+    {0x0e70u, 0xffffu}, {0x0e74u, 0xffffu}, {0x0e76u, 0xffffu}, {0x0e78u, 0xffffu},
+    {0x0e7au, 0xffffu}, {0x0e7cu, 0xffffu}, {0x0e80u, 0xffffu}, {0x0e84u, 0xffffu},
+    {0x0e86u, 0xffffu}, {0x0e88u, 0xffffu}, {0x0e8au, 0xffffu}, {0x0e8cu, 0xffffu},
+    {0x0e90u, 0xf803u}, {0x0e94u, 0xf803u}, {0x0e96u, 0xf803u}, {0x0e98u, 0xf803u},
+    {0x0e9au, 0xf803u}, {0x0e9cu, 0xf803u}, {0x0efeu, 0x0003u}, {0x0f82u, 0x00ffu},
+    {0x0f8cu, 0x00ffu}, {0x0fa4u, 0x001fu}};
 
 const Dspic33ResetValue dspic33_device_reset_values[] = {
     {0x004au, 0x0001u}, {0x004eu, 0x0001u}, {0x0102u, 0xffffu}, {0x010cu, 0xffffu},
@@ -236,8 +245,8 @@ const Dspic33ResetValue dspic33_device_reset_values[] = {
     {0x098eu, 0x000cu}, {0x0998u, 0x000cu}, {0x0c04u, 0xffffu}, {0x0c12u, 0xffffu},
     {0x0e00u, 0xc6ffu}, {0x0e0eu, 0x06c0u}, {0x0e10u, 0xffffu}, {0x0e1eu, 0xffffu},
     {0x0e20u, 0xf01eu}, {0x0e2eu, 0x601eu}, {0x0e30u, 0xffffu}, {0x0e3eu, 0x00c0u},
-    {0x0e40u, 0x03ffu}, {0x0e4eu, 0x03ffu}, {0x0e50u, 0x317fu}, {0x0e60u, 0xf3c3u},
-    {0x0e6eu, 0x03c0u}};
+    {0x0e40u, 0x03ffu}, {0x0e4eu, 0x03ffu}, {0x0e50u, 0x313fu}, {0x0e60u, 0xf3c3u},
+    {0x0e6eu, 0x03c0u}, {0x0e70u, 0xffffu}, {0x0e80u, 0xffffu}, {0x0e90u, 0xf803u}};
 
 uint16_t dspic33_device_internal_raw_word(const Dspic33* cpu, uint16_t address) {
     return (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[(uint16_t)(address + 1u)] << 8u));
@@ -248,7 +257,8 @@ void dspic33_device_internal_raw_write_word(Dspic33* cpu, uint16_t address, uint
     cpu->data[(uint16_t)(address + 1u)] = (uint8_t)(value >> 8u);
 }
 
-bool dspic33_device_internal_register_write_mask(uint16_t address, uint16_t* writable) {
+bool dspic33_device_internal_register_write_mask(const Dspic33* cpu, uint16_t address,
+                                                 uint16_t* writable) {
     size_t first = 0u;
     size_t count = sizeof(register_masks) / sizeof(register_masks[0]);
 
@@ -268,12 +278,17 @@ bool dspic33_device_internal_register_write_mask(uint16_t address, uint16_t* wri
         return false;
     }
     *writable = register_masks[first].writable;
+    if (address >= 0x0e00u && address < 0x0ea0u) {
+        uint8_t port = (uint8_t)((address - 0x0e00u) / 0x10u);
+        *writable &= dspic33_device_internal_gpio_port_mask(cpu, port);
+    }
     return true;
 }
 
-bool dspic33_device_internal_pps_register_write_mask(uint16_t address, uint16_t* writable) {
+bool dspic33_device_internal_pps_register_write_mask(const Dspic33* cpu, uint16_t address,
+                                                     uint16_t* writable) {
     return address >= 0x0680u && address <= 0x06f6u &&
-           dspic33_device_internal_register_write_mask(address, writable);
+           dspic33_device_internal_register_write_mask(cpu, address, writable);
 }
 
 void dspic33_device_internal_pps_capture_shadow(Dspic33* cpu) {
@@ -282,7 +297,7 @@ void dspic33_device_internal_pps_capture_shadow(Dspic33* cpu) {
         uint16_t address = (uint16_t)(0x0680u + index * 2u);
         uint16_t writable;
         cpu->io.pps.shadow[index] =
-            dspic33_device_internal_pps_register_write_mask(address, &writable)
+            dspic33_device_internal_pps_register_write_mask(cpu, address, &writable)
                 ? (uint16_t)(dspic33_device_internal_raw_word(cpu, address) & writable)
                 : 0u;
     }
@@ -290,7 +305,7 @@ void dspic33_device_internal_pps_capture_shadow(Dspic33* cpu) {
 
 void dspic33_device_internal_pps_update_shadow(Dspic33* cpu, uint16_t address) {
     uint16_t writable;
-    if (dspic33_device_internal_pps_register_write_mask(address, &writable)) {
+    if (dspic33_device_internal_pps_register_write_mask(cpu, address, &writable)) {
         cpu->io.pps.shadow[(address - 0x0680u) / 2u] =
             (uint16_t)(dspic33_device_internal_raw_word(cpu, address) & writable);
     }
@@ -301,7 +316,7 @@ bool dspic33_device_internal_pps_shadow_matches(const Dspic33* cpu) {
     for (index = 0u; index < DSPIC33_PPS_REGISTER_COUNT; index++) {
         uint16_t address = (uint16_t)(0x0680u + index * 2u);
         uint16_t writable;
-        if (dspic33_device_internal_pps_register_write_mask(address, &writable) &&
+        if (dspic33_device_internal_pps_register_write_mask(cpu, address, &writable) &&
             (dspic33_device_internal_raw_word(cpu, address) & writable) !=
                 cpu->io.pps.shadow[index]) {
             return false;
@@ -419,7 +434,7 @@ void dspic33_device_internal_update_gpio_latch(Dspic33* cpu, uint16_t address, u
         } else {
             latch = requested & 0xff00u;
         }
-        if (dspic33_device_internal_register_write_mask(latch_address, &writable)) {
+        if (dspic33_device_internal_register_write_mask(cpu, latch_address, &writable)) {
             latch = (uint16_t)((dspic33_device_internal_raw_word(cpu, latch_address) & ~writable) |
                                (latch & writable));
         }

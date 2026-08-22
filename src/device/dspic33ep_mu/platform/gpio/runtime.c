@@ -1,7 +1,8 @@
 #include "device/dspic33ep_mu/internal.h"
 
 void dspic33_adc_input(Dspic33* cpu, uint8_t channel, uint16_t value) {
-    if (channel < DSPIC33_ADC_CHANNEL_COUNT) {
+    const Dspic33epMuProfile* profile = dspic33_device_profile(cpu);
+    if (profile != NULL && channel < profile->adc_channel_count) {
         cpu->io.adc[channel] = (uint16_t)(value & 0x0fffu);
     }
 }
@@ -11,7 +12,10 @@ bool dspic33_gpio_drive(Dspic33* cpu, uint8_t port, uint16_t value, uint16_t mas
     if (port >= DSPIC33_GPIO_PORT_COUNT) {
         return false;
     }
-    selected = (uint16_t)(mask & dspic33_device_gpio_port_masks[port]);
+    selected = (uint16_t)(mask & dspic33_device_internal_gpio_port_mask(cpu, port));
+    if (selected == 0u) {
+        return false;
+    }
     cpu->io.gpio[port] = (uint16_t)((cpu->io.gpio[port] & ~selected) | (value & selected));
     cpu->io.gpio_driven[port] |= selected;
     dspic33_device_internal_refresh_physical_pin_inputs(cpu);
@@ -22,7 +26,11 @@ bool dspic33_gpio_release(Dspic33* cpu, uint8_t port, uint16_t mask) {
     if (port >= DSPIC33_GPIO_PORT_COUNT) {
         return false;
     }
-    cpu->io.gpio_driven[port] &= (uint16_t)~(mask & dspic33_device_gpio_port_masks[port]);
+    mask &= dspic33_device_internal_gpio_port_mask(cpu, port);
+    if (mask == 0u) {
+        return false;
+    }
+    cpu->io.gpio_driven[port] &= (uint16_t)~mask;
     dspic33_device_internal_refresh_physical_pin_inputs(cpu);
     return true;
 }
@@ -33,7 +41,7 @@ bool dspic33_gpio_pin(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* high)
         return false;
     }
     mask = (uint16_t)(1u << bit);
-    if ((dspic33_device_gpio_port_masks[port] & mask) == 0u ||
+    if ((dspic33_device_internal_gpio_port_mask(cpu, port) & mask) == 0u ||
         (port == 2u && bit == 15u && dspic33_device_internal_oscillator_pin_owned(cpu))) {
         return false;
     }
@@ -67,25 +75,12 @@ bool dspic33_oscillator_pin(const Dspic33* cpu, bool* clock_output, uint64_t* ed
 
 bool dspic33_reference_clock_pin(const Dspic33* cpu, uint8_t pin, uint64_t primary_edges,
                                  uint64_t* edges) {
-    uint8_t function = 0u;
-    size_t mapping;
     if (edges == NULL) {
         return false;
     }
-    for (mapping = 0u;
-         mapping < sizeof(dspic33_device_pps_outputs) / sizeof(dspic33_device_pps_outputs[0]);
-         mapping++) {
-        if (dspic33_device_pps_outputs[mapping].pin == pin) {
-            function = (uint8_t)((dspic33_device_internal_raw_word(
-                                      cpu, dspic33_device_pps_outputs[mapping].address) >>
-                                  dspic33_device_pps_outputs[mapping].shift) &
-                                 0x003fu);
-            break;
-        }
-    }
+    uint8_t function = dspic33_device_internal_pps_output_function(cpu, pin);
     uint16_t control = dspic33_device_internal_raw_word(cpu, REFERENCE_CLOCK_CONTROL);
-    if (mapping == sizeof(dspic33_device_pps_outputs) / sizeof(dspic33_device_pps_outputs[0]) ||
-        function != 49u || (control & REFERENCE_CLOCK_ENABLE) == 0u ||
+    if (function != 49u || (control & REFERENCE_CLOCK_ENABLE) == 0u ||
         (cpu->power_state == DSPIC33_POWER_SLEEP && (control & 0x2000u) == 0u)) {
         return false;
     }
@@ -106,7 +101,7 @@ bool dspic33_device_gpio_input_high(const Dspic33* cpu, uint8_t port, uint8_t bi
         return false;
     }
     mask = (uint16_t)(1u << bit);
-    if ((dspic33_device_gpio_port_masks[port] & mask) == 0u) {
+    if ((dspic33_device_internal_gpio_port_mask(cpu, port) & mask) == 0u) {
         return false;
     }
     driven = cpu->io.gpio_driven[port];
@@ -119,7 +114,7 @@ bool dspic33_device_gpio_input_high(const Dspic33* cpu, uint8_t port, uint8_t bi
 
 void dspic33_gpio_input(Dspic33* cpu, uint8_t port, uint16_t value) {
     if (port < DSPIC33_GPIO_PORT_COUNT) {
-        dspic33_gpio_drive(cpu, port, value, dspic33_device_gpio_port_masks[port]);
+        dspic33_gpio_drive(cpu, port, value, dspic33_device_internal_gpio_port_mask(cpu, port));
     }
 }
 

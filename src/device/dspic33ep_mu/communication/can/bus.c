@@ -35,6 +35,7 @@ static void can_receive_sample(Dspic33* cpu, uint8_t channel, bool bus_high) {
         }
     }
     if (result == CAN_SERIAL_VALID) {
+        const bool overload = !cpu->io.can_rx_serial_bits[channel][tail_start + 9u];
         cpu->io.can_rx_serial_active &= (uint8_t)~bit;
         cpu->io.can_intermission_generation[channel]++;
         cpu->io.can_overload_count[channel] = 0u;
@@ -53,6 +54,9 @@ static void can_receive_sample(Dspic33* cpu, uint8_t channel, bool bus_high) {
              !dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_RETRY,
                                3u * dspic33_device_internal_can_bit_cycles(cpu, channel)))) {
             cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+        }
+        if (overload && dspic33_device_internal_can_mode(cpu, channel) != CAN_MODE_LISTEN) {
+            dspic33_device_internal_can_start_overload(cpu, channel);
         }
         return;
     }

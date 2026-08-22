@@ -710,6 +710,29 @@ void dspic33_i2c_test_slave_acknowledgement_cases(TestState* state, Dspic33* cpu
                dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
                    dspic33_device_advance(cpu, 0u) &&
                    dspic33_i2c_test_pop_slave_acknowledgement(cpu, channel, true),
+               "ten bit full restart high acknowledgement output");
+        dspic33_read_word(cpu, base);
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+        expect(state,
+               dspic33_device_advance(cpu, 1u) &&
+                   dspic33_i2c_test_pop_slave_acknowledgement(cpu, channel, true),
+               "ten bit full restart low acknowledgement output");
+        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x02abu, true, true, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   dspic33_i2c_test_pop_slave_acknowledgement(cpu, channel, false) &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x014au) == 0x014au &&
+                   dspic33_read_word(cpu, base) == 0x00abu,
+               "ten bit repeated read preserves full data and records overflow");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x02abu);
+        dspic33_i2c_test_enable(cpu, channel, 0x0400u, 0u);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   dspic33_i2c_test_pop_slave_acknowledgement(cpu, channel, true),
                "ten bit buffered high acknowledgement output");
         dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
         expect(state,

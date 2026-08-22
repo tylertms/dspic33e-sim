@@ -9,7 +9,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
         return;
     }
     if (base >= 0x0680u && base <= 0x06f6u &&
-        !dspic33_device_internal_pps_register_write_mask(base, &writable)) {
+        !dspic33_device_internal_pps_register_write_mask(cpu, base, &writable)) {
         dspic33_device_internal_raw_write_word(cpu, base, previous);
         return;
     }
@@ -36,7 +36,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
         dspic33_device_internal_raw_write_word(cpu, base, previous);
         return;
     }
-    if (dspic33_device_internal_register_write_mask(base, &writable) ||
+    if (dspic33_device_internal_register_write_mask(cpu, base, &writable) ||
         dspic33_device_internal_input_capture_register_write_mask(base, &writable) ||
         dspic33_device_internal_output_compare_register_write_mask(base, &writable) ||
         dspic33_device_internal_comparator_register_write_mask(base, &writable) ||

@@ -2,22 +2,11 @@
 
 bool dspic33_device_internal_comparator_pin_channel(const Dspic33* cpu, uint8_t pin,
                                                     uint8_t* comparator) {
-    size_t index;
-    for (index = 0u;
-         index < sizeof(dspic33_device_pps_outputs) / sizeof(dspic33_device_pps_outputs[0]);
-         index++) {
-        if (dspic33_device_pps_outputs[index].pin == pin) {
-            uint8_t function = (uint8_t)((dspic33_device_internal_raw_word(
-                                              cpu, dspic33_device_pps_outputs[index].address) >>
-                                          dspic33_device_pps_outputs[index].shift) &
-                                         0x003fu);
-            if (function >= COMPARATOR_PPS_FUNCTION &&
-                function < COMPARATOR_PPS_FUNCTION + DSPIC33_COMPARATOR_COUNT) {
-                *comparator = (uint8_t)(function - COMPARATOR_PPS_FUNCTION);
-                return true;
-            }
-            return false;
-        }
+    uint8_t function = dspic33_device_internal_pps_output_function(cpu, pin);
+    if (function >= COMPARATOR_PPS_FUNCTION &&
+        function < COMPARATOR_PPS_FUNCTION + DSPIC33_COMPARATOR_COUNT) {
+        *comparator = (uint8_t)(function - COMPARATOR_PPS_FUNCTION);
+        return true;
     }
     return false;
 }

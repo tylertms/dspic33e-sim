@@ -15,6 +15,13 @@ static const Dspic33epMuProfile profiles[DSPIC33EP_MU_DEVICE_COUNT] = {
      7u, 32u},
 };
 
+static const uint16_t gpio_masks_806[DSPIC33_GPIO_PORT_COUNT] = {
+    0u, 0xffffu, 0xf000u, 0x0fffu, 0x00ffu, 0x003bu, 0x03ccu, 0u, 0u, 0u};
+static const uint16_t gpio_masks_810[DSPIC33_GPIO_PORT_COUNT] = {
+    0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x313fu, 0xf3cfu, 0u, 0u, 0u};
+static const uint16_t gpio_masks_814[DSPIC33_GPIO_PORT_COUNT] = {
+    0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x313fu, 0xf3cfu, 0xffffu, 0xffffu, 0xf803u};
+
 static const uint8_t sfr_bitmap_806[DSPIC33_SFR_IMPLEMENTATION_BITMAP_SIZE] = {
     0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0x17u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u,
     0x00u, 0x00u, 0x00u, 0xffu, 0xffu, 0xffu, 0x7fu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu,
@@ -183,6 +190,23 @@ const uint8_t* dspic33ep_mu_implementation_bitmap(Dspic33epMuDevice device) {
 
 const Dspic33epMuProfile* dspic33ep_mu_profile(Dspic33epMuDevice device) {
     return (unsigned)device < DSPIC33EP_MU_DEVICE_COUNT ? &profiles[device] : NULL;
+}
+
+uint16_t dspic33ep_mu_gpio_port_mask(Dspic33epMuDevice device, uint8_t port) {
+    const uint16_t* masks;
+    if (port >= DSPIC33_GPIO_PORT_COUNT) {
+        return 0u;
+    }
+    if (device == DSPIC33EP_MU_DEVICE_256MU806) {
+        masks = gpio_masks_806;
+    } else if (device == DSPIC33EP_MU_DEVICE_256MU810 || device == DSPIC33EP_MU_DEVICE_512MU810) {
+        masks = gpio_masks_810;
+    } else if (device == DSPIC33EP_MU_DEVICE_256MU814 || device == DSPIC33EP_MU_DEVICE_512MU814) {
+        masks = gpio_masks_814;
+    } else {
+        return 0u;
+    }
+    return masks[port];
 }
 
 bool dspic33ep_mu_device_from_name(const char* name, Dspic33epMuDevice* device) {

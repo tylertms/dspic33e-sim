@@ -258,26 +258,11 @@ bool dspic33_spi_data_output(const Dspic33* cpu, uint8_t channel, bool* high) {
 bool dspic33_spi_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
     static const uint8_t data_functions[DSPIC33_SPI_COUNT] = {5u, 0u, 31u, 34u};
     static const uint8_t clock_functions[DSPIC33_SPI_COUNT] = {6u, 0u, 32u, 35u};
-    uint8_t function = 0u;
     uint8_t channel;
-    size_t index;
     if (high == NULL) {
         return false;
     }
-    for (index = 0u;
-         index < sizeof(dspic33_device_pps_outputs) / sizeof(dspic33_device_pps_outputs[0]);
-         index++) {
-        if (dspic33_device_pps_outputs[index].pin == pin) {
-            function = (uint8_t)((dspic33_device_internal_raw_word(
-                                      cpu, dspic33_device_pps_outputs[index].address) >>
-                                  dspic33_device_pps_outputs[index].shift) &
-                                 0x003fu);
-            break;
-        }
-    }
-    if (index == sizeof(dspic33_device_pps_outputs) / sizeof(dspic33_device_pps_outputs[0])) {
-        return false;
-    }
+    uint8_t function = dspic33_device_internal_pps_output_function(cpu, pin);
     for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
         if (function == data_functions[channel] && data_functions[channel] != 0u) {
             return dspic33_spi_data_output(cpu, channel, high);
@@ -311,26 +296,11 @@ bool dspic33_spi_frame_output(const Dspic33* cpu, uint8_t channel, bool* high) {
 
 bool dspic33_spi_frame_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
     static const uint8_t functions[DSPIC33_SPI_COUNT] = {7u, 10u, 33u, 36u};
-    uint8_t function = 0u;
     uint8_t channel;
-    size_t index;
     if (high == NULL) {
         return false;
     }
-    for (index = 0u;
-         index < sizeof(dspic33_device_pps_outputs) / sizeof(dspic33_device_pps_outputs[0]);
-         index++) {
-        if (dspic33_device_pps_outputs[index].pin == pin) {
-            function = (uint8_t)((dspic33_device_internal_raw_word(
-                                      cpu, dspic33_device_pps_outputs[index].address) >>
-                                  dspic33_device_pps_outputs[index].shift) &
-                                 0x003fu);
-            break;
-        }
-    }
-    if (index == sizeof(dspic33_device_pps_outputs) / sizeof(dspic33_device_pps_outputs[0])) {
-        return false;
-    }
+    uint8_t function = dspic33_device_internal_pps_output_function(cpu, pin);
     for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
         if (function == functions[channel]) {
             return dspic33_spi_frame_output(cpu, channel, high);

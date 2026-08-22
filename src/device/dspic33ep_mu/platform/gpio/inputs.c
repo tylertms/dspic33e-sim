@@ -51,7 +51,7 @@ uint16_t dspic33_device_internal_gpio_pin_values(const Dspic33* cpu, uint8_t por
     }
     values = (uint16_t)(((external & inputs & ~analog) | (lat & ~inputs & ~open_drain) |
                          (external & ~inputs & open_drain & lat)) &
-                        dspic33_device_gpio_port_masks[port]);
+                        dspic33_device_internal_gpio_port_mask(cpu, port));
     for (pin = 0u; pin < 16u; pin++) {
         bool high;
         uint16_t bit = (uint16_t)(1u << pin);
@@ -97,7 +97,7 @@ static uint16_t gpio_change_notification_qualified(const Dspic33* cpu, uint8_t p
     }
     return (uint16_t)(dspic33_device_internal_raw_word(
                           cpu, dspic33_device_gpio_change_notification_addresses[port]) &
-                      inputs & ~analog & dspic33_device_gpio_port_masks[port]);
+                      inputs & ~analog & dspic33_device_internal_gpio_port_mask(cpu, port));
 }
 
 static uint16_t gpio_change_notification_mismatch(const Dspic33* cpu, uint8_t port) {

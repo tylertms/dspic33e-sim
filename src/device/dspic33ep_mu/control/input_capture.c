@@ -491,6 +491,13 @@ const Dspic33PpsPin* dspic33_device_internal_pps_pin(uint8_t pin) {
     return &dspic33_device_pps_pins[first];
 }
 
+bool dspic33_device_internal_pps_pin_bonded(const Dspic33* cpu, uint8_t pin) {
+    const Dspic33PpsPin* mapping = dspic33_device_internal_pps_pin(pin);
+    return cpu != NULL && mapping != NULL &&
+           (dspic33_device_internal_gpio_port_mask(cpu, mapping->port) &
+            (uint16_t)(1u << mapping->bit)) != 0u;
+}
+
 static bool pps_output_capable(uint8_t pin) {
     for (size_t index = 0u;
          index < sizeof(dspic33_device_pps_outputs) / sizeof(dspic33_device_pps_outputs[0]);
@@ -503,6 +510,9 @@ static bool pps_output_capable(uint8_t pin) {
 }
 
 uint8_t dspic33_device_internal_pps_output_function(const Dspic33* cpu, uint8_t pin) {
+    if (!dspic33_device_internal_pps_pin_bonded(cpu, pin)) {
+        return 0u;
+    }
     for (size_t index = 0u;
          index < sizeof(dspic33_device_pps_outputs) / sizeof(dspic33_device_pps_outputs[0]);
          index++) {

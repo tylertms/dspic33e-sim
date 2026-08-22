@@ -7,33 +7,34 @@
 #include "dspic33.h"
 #include "test.h"
 
-static const uint16_t tris_addresses[DSPIC33_GPIO_PORT_COUNT] = {0x0e00u, 0x0e10u, 0x0e20u, 0x0e30u,
-                                                                 0x0e40u, 0x0e50u, 0x0e60u};
-static const uint16_t port_addresses[DSPIC33_GPIO_PORT_COUNT] = {0x0e02u, 0x0e12u, 0x0e22u, 0x0e32u,
-                                                                 0x0e42u, 0x0e52u, 0x0e62u};
+static const uint16_t tris_addresses[DSPIC33_GPIO_PORT_COUNT] = {
+    0x0e00u, 0x0e10u, 0x0e20u, 0x0e30u, 0x0e40u, 0x0e50u, 0x0e60u, 0x0e70u, 0x0e80u, 0x0e90u};
+static const uint16_t port_addresses[DSPIC33_GPIO_PORT_COUNT] = {
+    0x0e02u, 0x0e12u, 0x0e22u, 0x0e32u, 0x0e42u, 0x0e52u, 0x0e62u, 0x0e72u, 0x0e82u, 0x0e92u};
 static const uint16_t latch_addresses[DSPIC33_GPIO_PORT_COUNT] = {
-    0x0e04u, 0x0e14u, 0x0e24u, 0x0e34u, 0x0e44u, 0x0e54u, 0x0e64u};
+    0x0e04u, 0x0e14u, 0x0e24u, 0x0e34u, 0x0e44u, 0x0e54u, 0x0e64u, 0x0e74u, 0x0e84u, 0x0e94u};
 static const uint16_t open_drain_addresses[DSPIC33_GPIO_PORT_COUNT] = {
-    0x0e06u, 0x0e16u, 0x0e26u, 0x0e36u, 0x0e46u, 0x0e56u, 0x0e66u};
+    0x0e06u, 0x0e16u, 0x0e26u, 0x0e36u, 0x0e46u, 0x0e56u, 0x0e66u, 0x0e76u, 0x0e86u, 0x0e96u};
 static const uint16_t change_notification_addresses[DSPIC33_GPIO_PORT_COUNT] = {
-    0x0e08u, 0x0e18u, 0x0e28u, 0x0e38u, 0x0e48u, 0x0e58u, 0x0e68u};
+    0x0e08u, 0x0e18u, 0x0e28u, 0x0e38u, 0x0e48u, 0x0e58u, 0x0e68u, 0x0e78u, 0x0e88u, 0x0e98u};
 static const uint16_t analog_addresses[DSPIC33_GPIO_PORT_COUNT] = {
-    0x0e0eu, 0x0e1eu, 0x0e2eu, 0x0e3eu, 0x0e4eu, 0u, 0x0e6eu};
+    0x0e0eu, 0x0e1eu, 0x0e2eu, 0x0e3eu, 0x0e4eu, 0u, 0x0e6eu, 0u, 0u, 0u};
 static const uint16_t pull_up_addresses[DSPIC33_GPIO_PORT_COUNT] = {
-    0x0e0au, 0x0e1au, 0x0e2au, 0x0e3au, 0x0e4au, 0x0e5au, 0x0e6au};
+    0x0e0au, 0x0e1au, 0x0e2au, 0x0e3au, 0x0e4au, 0x0e5au, 0x0e6au, 0x0e7au, 0x0e8au, 0x0e9au};
 static const uint16_t pull_down_addresses[DSPIC33_GPIO_PORT_COUNT] = {
-    0x0e0cu, 0x0e1cu, 0x0e2cu, 0x0e3cu, 0x0e4cu, 0x0e5cu, 0x0e6cu};
-static const uint16_t port_masks[DSPIC33_GPIO_PORT_COUNT] = {0xc6ffu, 0xffffu, 0xf01eu, 0xffffu,
-                                                             0x03ffu, 0x317fu, 0xf3cfu};
-static const uint16_t latch_masks[DSPIC33_GPIO_PORT_COUNT] = {0xc6ffu, 0xffffu, 0xf01eu, 0xffffu,
-                                                              0x03ffu, 0x317fu, 0xf3c3u};
-static const uint16_t analog_masks[DSPIC33_GPIO_PORT_COUNT] = {0x06c0u, 0xffffu, 0x601eu, 0x00c0u,
-                                                               0x03ffu, 0u,      0x03c0u};
-static const uint16_t input_only_masks[DSPIC33_GPIO_PORT_COUNT] = {0u, 0u, 0u, 0u, 0u, 0u, 0x000cu};
-static const uint16_t pull_masks[DSPIC33_GPIO_PORT_COUNT] = {0xc6ffu, 0xffffu, 0xf01eu, 0xffffu,
-                                                             0x03ffu, 0x317fu, 0xf3c3u};
-static const uint16_t open_drain_masks[DSPIC33_GPIO_PORT_COUNT] = {0xc03fu, 0u,     0u, 0xff3fu, 0u,
-                                                                   0x317fu, 0xf003u};
+    0x0e0cu, 0x0e1cu, 0x0e2cu, 0x0e3cu, 0x0e4cu, 0x0e5cu, 0x0e6cu, 0x0e7cu, 0x0e8cu, 0x0e9cu};
+static const uint16_t port_masks[DSPIC33_GPIO_PORT_COUNT] = {
+    0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x313fu, 0xf3cfu, 0u, 0u, 0u};
+static const uint16_t latch_masks[DSPIC33_GPIO_PORT_COUNT] = {
+    0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x313fu, 0xf3c3u, 0u, 0u, 0u};
+static const uint16_t analog_masks[DSPIC33_GPIO_PORT_COUNT] = {
+    0x06c0u, 0xffffu, 0x601eu, 0x00c0u, 0x03ffu, 0u, 0x03c0u, 0u, 0u, 0u};
+static const uint16_t input_only_masks[DSPIC33_GPIO_PORT_COUNT] = {0u, 0u,      0u, 0u, 0u,
+                                                                   0u, 0x000cu, 0u, 0u, 0u};
+static const uint16_t pull_masks[DSPIC33_GPIO_PORT_COUNT] = {
+    0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x313fu, 0xf3c3u, 0u, 0u, 0u};
+static const uint16_t open_drain_masks[DSPIC33_GPIO_PORT_COUNT] = {
+    0xc03fu, 0u, 0u, 0xff3fu, 0u, 0x313fu, 0xf003u, 0u, 0u, 0u};
 enum {
     CHANGE_NOTIFICATION_FLAG = 0x0008u,
     CHANGE_NOTIFICATION_IRQ = 19u,
@@ -225,6 +226,14 @@ static void pull_cases(TestState* state, Dspic33* cpu) {
         dspic33_write_word(cpu, pull_up_addresses[port], pull_masks[port]);
         expect(state, dspic33_read_word(cpu, port_addresses[port]) == pull_masks[port],
                "released GPIO inputs resolve through weak pull-ups");
+
+        if (pull_masks[port] == 0u) {
+            expect(state,
+                   !dspic33_gpio_drive(cpu, port, 0u, UINT16_MAX) &&
+                       !dspic33_gpio_release(cpu, port, UINT16_MAX),
+                   "unbonded GPIO port rejects external drive");
+            continue;
+        }
 
         expect(state,
                dspic33_gpio_drive(cpu, port, 0u, pull_masks[port]) &&
