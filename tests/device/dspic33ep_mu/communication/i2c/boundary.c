@@ -1,9 +1,9 @@
 #include <string.h>
 
+#include "../../../../../src/device/dspic33ep_mu/communication/i2c/internal.h"
 #include "allocation_failure.h"
 #include "device/dspic33ep_mu/communication/i2c/internal.h"
 #include "device/dspic33ep_mu/internal.h"
-#include "../../../../../src/device/dspic33ep_mu/communication/i2c/internal.h"
 
 #ifdef DSPIC33_TEST_ALLOCATION_FAILURE
 static void fill_event_queue(TestState* state, Dspic33* cpu) {
@@ -41,13 +41,34 @@ void dspic33_i2c_test_boundary_cases(TestState* state, Dspic33* cpu) {
     Dspic33I2cResponseQueue responses;
     memset(&responses, 0, sizeof(responses));
     responses.count = DSPIC33_I2C_QUEUE_SIZE;
-    expect(state, !dspic33_i2c_internal_pin_mapping(cpu, DSPIC33_I2C_COUNT, &mapping) &&
-                      !dspic33_i2c_internal_pin_mapping(cpu, 0u, NULL),
+    expect(state,
+           !dspic33_i2c_internal_pin_mapping(cpu, DSPIC33_I2C_COUNT, &mapping) &&
+               !dspic33_i2c_internal_pin_mapping(cpu, 0u, NULL),
            "I2C invalid pin mappings are rejected");
     expect(state, !dspic33_i2c_internal_transfer_pop(&cpu->io.i2c_tx[0], &transfer),
            "I2C empty transfer queue cannot pop");
     expect(state, !dspic33_i2c_internal_response_push(&responses, &response),
            "I2C full response queue cannot grow");
+
+    memset(&responses, 0, sizeof(responses));
+    response.cycle = 1u;
+    expect(state, dspic33_i2c_internal_response_push(&responses, &response),
+           "I2C response queue accepts its first response");
+    response.cycle = 2u;
+    expect(state, dspic33_i2c_internal_response_push(&responses, &response),
+           "I2C response queue preserves ordered responses");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_i2c_internal_complete_control(cpu, 0u, I2C_RCEN);
+    dspic33_i2c_test_enable(cpu, 0u, 0u, 0u);
+    dspic33_device_internal_raw_write_word(cpu, (uint16_t)(bases[0] + I2C_CON),
+                                           (uint16_t)(I2C_ENABLE | I2C_RCEN));
+    memset(&cpu->io.i2c_response[0], 0, sizeof(cpu->io.i2c_response[0]));
+    response.cycle = cpu->device_cycles + 5u;
+    expect(state, dspic33_i2c_internal_response_push(&cpu->io.i2c_response[0], &response),
+           "I2C delayed receive response is queued");
+    dspic33_i2c_internal_complete_control(cpu, 0u, I2C_RCEN);
+    expect(state, cpu->events.count != 0u, "I2C receive waits for its scheduled response");
 
     dspic33_reset(cpu, 0u);
     expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_I2C, 0u, 0u, 5u),
@@ -61,8 +82,9 @@ void dspic33_i2c_test_boundary_cases(TestState* state, Dspic33* cpu) {
 
     dspic33_reset(cpu, 0u);
     cpu->io.i2c_pmd_disabled = 1u;
-    expect(state, dspic33_i2c_internal_schedule_event(cpu, 0u, 0u, 7u, false) &&
-                      cpu->events.items[0].paused && cpu->events.items[0].paused_remaining == 7u,
+    expect(state,
+           dspic33_i2c_internal_schedule_event(cpu, 0u, 0u, 7u, false) &&
+               cpu->events.items[0].paused && cpu->events.items[0].paused_remaining == 7u,
            "I2C disabled module pauses internal events");
 
 #ifdef DSPIC33_TEST_ALLOCATION_FAILURE
