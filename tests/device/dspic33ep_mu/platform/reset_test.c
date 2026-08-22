@@ -160,6 +160,33 @@ static void reset_flag_cases(TestState* state, Dspic33* cpu) {
            "POR clears prior causes and sets POR and BOR");
 }
 
+static void external_queue_reset_cases(TestState* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    cpu->io.i2c_response[0].count = 1u;
+    cpu->io.i2c_response[0].responses[0].value = 0x5au;
+    dspic33_mclr_reset(cpu);
+    expect(state,
+           cpu->io.i2c_response[0].count == 1u &&
+               cpu->io.i2c_response[0].responses[0].value == 0x5au,
+           "warm reset preserves external I2C responses");
+
+    dspic33_reset(cpu, 0u);
+    cpu->io.can_rx[0].count = 1u;
+    cpu->io.can_rx[0].frames[0].identifier = 0x123u;
+    dspic33_mclr_reset(cpu);
+    expect(state, cpu->io.can_rx[0].count == 1u && cpu->io.can_rx[0].frames[0].identifier == 0x123u,
+           "warm reset preserves external CAN frames");
+
+    dspic33_reset(cpu, 0u);
+    expect(state, dspic33_schedule_external(cpu, DSPIC33_EVENT_USB, 0u, 0u, 5u),
+           "schedule external USB response before reset");
+    dspic33_mclr_reset(cpu);
+    expect(state,
+           cpu->events.count == 1u && cpu->events.items[0].external &&
+               cpu->events.items[0].type == DSPIC33_EVENT_USB,
+           "warm reset preserves external USB responses");
+}
+
 static void brown_out_clock_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     expect(state, configure_primary_frc_reset(cpu), "configure BOR clock source");
@@ -344,6 +371,7 @@ int main(void) {
     }
     master_clear_register_cases(&state, &source);
     reset_flag_cases(&state, &source);
+    external_queue_reset_cases(&state, &source);
     brown_out_clock_cases(&state, &source);
     nvm_reset_cases(&state, &source);
     copy_cases(&state, &source, &copy);

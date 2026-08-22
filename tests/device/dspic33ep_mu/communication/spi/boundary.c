@@ -56,6 +56,8 @@ static void allocation_failure_cases(TestState* state, Dspic33* cpu) {
 #endif
 
 void dspic33_spi_test_boundary_cases(TestState* state, Dspic33* cpu) {
+    bool high;
+    dspic33_spi_test_state_matrix_cases(state, cpu);
     configure(cpu, SPI_MASTER,
               (uint16_t)(SPI_FRAME_ENABLE | SPI_FRAME_ACTIVE_HIGH | SPI_FRAME_DELAY));
     dspic33_write_word(cpu, (uint16_t)(bases[0] + 8u), 0x55aau);
@@ -85,8 +87,21 @@ void dspic33_spi_test_boundary_cases(TestState* state, Dspic33* cpu) {
     dspic33_device_internal_run_spi(cpu, DSPIC33_SPI_COUNT, SPI_EVENT_INTERNAL);
     dspic33_device_internal_run_spi_select(cpu, DSPIC33_SPI_COUNT, true);
     dspic33_device_internal_run_spi(cpu, 0u,
-                                   SPI_EVENT_FRAME_START | (1u << SPI_EVENT_GENERATION_SHIFT));
+                                    SPI_EVENT_FRAME_START | (1u << SPI_EVENT_GENERATION_SHIFT));
     expect(state, cpu->stop_reason == DSPIC33_RUNNING, "SPI stale and invalid events are ignored");
+
+    configure(cpu, 0u, 0u);
+    cpu->io.spi_pin_output_index[0] = UINT8_MAX;
+    cpu->io.spi_shift[0] = 1u;
+    expect(state, dspic33_spi_data_output(cpu, 0u, &high) && high,
+           "slave SPI output clamps a completed bit index");
+
+    configure(cpu, SPI_MASTER, 0u);
+    cpu->io.spi_busy = 1u;
+    cpu->io.spi_shift[0] = 1u;
+    cpu->device_cycles = 1000u;
+    expect(state, dspic33_spi_data_output(cpu, 0u, &high),
+           "master SPI output clamps an elapsed transfer index");
 
 #ifdef DSPIC33_TEST_ALLOCATION_FAILURE
     allocation_failure_cases(state, cpu);

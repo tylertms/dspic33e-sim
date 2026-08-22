@@ -32,10 +32,23 @@ static void test_execution(TestState* state) {
            "dspic33_get_cycle_count(cpu) == step.cycles");
     expect(state, dspic33_get_program_counter(cpu) == step.pc,
            "dspic33_get_program_counter(cpu) == step.pc");
+    expect(state, dspic33_get_interrupt_count(cpu) == 0u, "dspic33_get_interrupt_count(cpu) == 0u");
+    expect(state, dspic33_get_last_interrupt(cpu) == UINT16_MAX,
+           "dspic33_get_last_interrupt(cpu) == UINT16_MAX");
+    expect(state, dspic33_get_interrupt_depth(cpu) == 0u, "dspic33_get_interrupt_depth(cpu) == 0u");
 
     Dspic33Result run = dspic33_run_with_limits(cpu, (Dspic33RunLimits){1u, 0u});
     expect(state, run.stop == DSPIC33_INSTRUCTION_LIMIT, "run.stop == DSPIC33_INSTRUCTION_LIMIT");
     expect(state, run.instructions == 2u, "run.instructions == 2u");
+
+    dspic33_reset(cpu, 0u);
+    Dspic33Result cycle_limited = dspic33_run_with_limits(cpu, (Dspic33RunLimits){0u, 1u});
+    expect(state, cycle_limited.stop == DSPIC33_INSTRUCTION_LIMIT,
+           "cycle-limited run stops at its limit");
+    expect(state, cycle_limited.cycles >= 1u, "cycle-limited run consumes a cycle");
+    expect(state, dspic33_get_stop(cpu) == DSPIC33_RUNNING,
+           "execution limit does not change the processor stop reason");
+
     dspic33_reset(cpu, 0u);
     expect(state, dspic33_run_until(cpu, 2u, 2u) == DSPIC33_STOPPED,
            "dspic33_run_until(cpu, 2u, 2u) == DSPIC33_STOPPED");
@@ -89,6 +102,7 @@ static void test_host_operations(TestState* state) {
            "dspic33_seed_data(cpu, 0x100u, bytes, sizeof(bytes))");
     expect(state, dspic33_read_word(cpu, 0x100u) == 0x1234u,
            "dspic33_read_word(cpu, 0x100u) == 0x1234u");
+    expect(state, dspic33_get_register(cpu, 16u) == 0u, "dspic33_get_register(cpu, 16u) == 0u");
     expect(state, !dspic33_seed_data(cpu, DSPIC33_DATA_SIZE, bytes, sizeof(bytes)),
            "!dspic33_seed_data(cpu, DSPIC33_DATA_SIZE, bytes, sizeof(bytes))");
     expect(state, dspic33_seed_data(cpu, DSPIC33_DATA_SIZE, NULL, 0u),
@@ -158,6 +172,18 @@ static void test_memory_guards(TestState* state) {
            "dspic33_read_program_byte(NULL, 0u) == 0xffu");
     expect(state, !dspic33_seed_data(NULL, 0u, NULL, 0u), "!dspic33_seed_data(NULL, 0u, NULL, 0u)");
     expect(state, !dspic33_seed_data(cpu, 0u, NULL, 1u), "!dspic33_seed_data(cpu, 0u, NULL, 1u)");
+    expect(state, !dspic33_seed_data(cpu, 0u, &device, SIZE_MAX),
+           "seed data rejects a host-size overflow");
+    expect(state, !dspic33_begin_call(NULL, 0u, false), "begin call rejects a null processor");
+    expect(state, dspic33_read_configuration_byte(cpu, DSPIC33_CONFIGURATION_BASE - 1u) == 0xffu,
+           "configuration read rejects address below range");
+    expect(state,
+           dspic33_read_configuration_byte(cpu, DSPIC33_CONFIGURATION_BASE +
+                                                    DSPIC33_CONFIGURATION_SIZE) == 0xffu,
+           "configuration read rejects address above range");
+    cpu->nvm.control = 0u;
+    cpu->nvm.address = DSPIC33_CONFIGURATION_BASE - 1u;
+    dspic33_complete_nvm(cpu);
     dspic33_destroy(cpu);
 }
 

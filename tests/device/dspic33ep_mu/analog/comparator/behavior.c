@@ -1,4 +1,46 @@
+#include "allocation_failure.h"
 #include "device/dspic33ep_mu/analog/comparator/internal.h"
+
+void dspic33_device_internal_comparator_update_filter_power(Dspic33* cpu);
+void dspic33_device_internal_raw_write_word(Dspic33* cpu, uint16_t address, uint16_t value);
+
+#ifdef DSPIC33_TEST_ALLOCATION_FAILURE
+enum { COMPARATOR_FILTER_EVENT_SOURCE = 0xfff0u };
+
+static void fill_event_queue(TestState* state, Dspic33* cpu) {
+    while (cpu->events.capacity == 0u || cpu->events.count < cpu->events.capacity) {
+        expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 0u, 0u, 0u),
+               "fill comparator event queue");
+    }
+}
+
+static void filter_boundary_cases(TestState* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, COMPARATOR_BASE, COMPARATOR_ENABLE);
+    dspic33_device_internal_raw_write_word(cpu, (uint16_t)(COMPARATOR_BASE + 6u),
+                                           COMPARATOR_FILTER_ENABLE);
+    expect(state,
+           dspic33_schedule(cpu, DSPIC33_EVENT_COMPARATOR, COMPARATOR_FILTER_EVENT_SOURCE, 0u, 0u),
+           "schedule paused comparator filter event");
+    cpu->events.items[0].paused = true;
+    cpu->events.items[0].paused_remaining = UINT64_MAX;
+    cpu->device_cycles = 1u;
+    dspic33_device_internal_comparator_update_filter_power(cpu);
+    expect(state, cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR,
+           "comparator filter resume rejects cycle overflow");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, COMPARATOR_BASE, COMPARATOR_ENABLE);
+    dspic33_device_internal_raw_write_word(cpu, (uint16_t)(COMPARATOR_BASE + 6u),
+                                           COMPARATOR_FILTER_ENABLE);
+    fill_event_queue(state, cpu);
+    test_reject_reallocation(true);
+    dspic33_device_internal_comparator_update_filter_power(cpu);
+    test_reject_reallocation(false);
+    expect(state, cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR,
+           "comparator filter creation rejects a full queue");
+}
+#endif
 
 static void reference_selection_cases(TestState* state, Dspic33* cpu) {
     static const uint16_t band_gap_levels[4] = {1200u, 600u, 200u, 1700u};
@@ -645,7 +687,11 @@ int main(void) {
         filter_reconfiguration_cases(&state, &cpu);
         byte_access_behavior_cases(&state, &cpu);
         dma_and_completed_feature_cases(&state, &cpu);
+#ifdef DSPIC33_TEST_ALLOCATION_FAILURE
+        filter_boundary_cases(&state, &cpu);
+#endif
         dspic33_release(&cpu);
     }
+    test_reject_reallocation(false);
     return test_finish(&state);
 }

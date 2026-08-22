@@ -11,6 +11,7 @@ bool dspic33_device_internal_can_queue_push(Dspic33CanQueue* queue, const Dspic3
 bool dspic33_device_internal_comparator_pin_channel(const Dspic33* cpu, uint8_t pin,
                                                     uint8_t* comparator);
 void dspic33_device_internal_dma_advance_generation(Dspic33* cpu, uint8_t channel);
+void dspic33_device_internal_dma_request_collision(Dspic33* cpu, uint8_t channel);
 void dspic33_device_internal_dma_update_power_state(Dspic33* cpu);
 bool dspic33_device_service_interrupt(Dspic33* cpu);
 
@@ -108,6 +109,25 @@ static void event_guard_cases(TestState* state, Dspic33* cpu) {
     expect(state, cpu->events.count == 1u, "DMA generation wrap preserves unrelated event");
 
     dspic33_reset(cpu, 0u);
+    expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_DMA, 1u, 0u, 0u),
+           "schedule another DMA channel event");
+    cpu->io.dma_generation[0] = 0x7fffu;
+    dspic33_device_internal_dma_advance_generation(cpu, 0u);
+    expect(state, cpu->events.count == 1u, "DMA generation wrap preserves another channel event");
+
+    dspic33_reset(cpu, 0u);
+    expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_DMA, 0u, 0u, 4u),
+           "schedule DMA power-state event");
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    dspic33_device_internal_dma_update_power_state(cpu);
+    expect(state, cpu->events.items[0].paused, "sleep pauses an active DMA event");
+    dspic33_device_internal_dma_update_power_state(cpu);
+    expect(state, cpu->events.items[0].paused, "sleep preserves a paused DMA event");
+    cpu->power_state = DSPIC33_POWER_ACTIVE;
+    dspic33_device_internal_dma_update_power_state(cpu);
+    expect(state, !cpu->events.items[0].paused, "active power resumes a paused DMA event");
+
+    dspic33_reset(cpu, 0u);
     expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_DMA, 0u, 0u, 0u),
            "schedule paused DMA overflow event");
     cpu->events.items[0].paused = true;
@@ -129,10 +149,42 @@ static void event_guard_cases(TestState* state, Dspic33* cpu) {
     cpu->async_events_enabled = false;
     expect(state, !dspic33_device_service_interrupt(cpu),
            "disabled asynchronous events suppress interrupt service");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_dma_request_collision(cpu, 0u);
+    dspic33_device_internal_dma_request_collision(cpu, 0u);
+    expect(state, dspic33_read_word(cpu, 0x0bf2u) == 1u,
+           "repeated DMA request collision preserves its status bit");
+}
+
+static void pad_collision_cases(TestState* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE, DMA_TEST_CONTROL_ENABLE | 0x2000u);
+    dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 4u, 0x4000u);
+    dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 0x0cu, 0x0298u);
+    cpu->io.dma_forced_pending = 1u;
+    cpu->io.cpu_write_valid = true;
+    cpu->io.cpu_write_cycle = cpu->cycles;
+    cpu->io.cpu_write_address = 0x0298u;
+    cpu->io.cpu_write_width = 2u;
+    dspic33_device_internal_run_dma(cpu, 0u, DMA_TEST_FORCE);
+    expect(state, dspic33_read_word(cpu, 0x0bf0u) == 1u,
+           "DMA overlapping peripheral write records a collision");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE, DMA_TEST_CONTROL_ENABLE | 0x4800u);
+    dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 4u, 0x4000u);
+    dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 0x0cu, 0x0248u);
+    dspic33_device_internal_raw_write_word(cpu, 0x0248u, 0x00a5u);
+    cpu->io.dma_forced_pending = 1u;
+    dspic33_device_internal_run_dma(cpu, 0u, DMA_TEST_FORCE);
+    expect(state, (cpu->io.dma_active & 1u) != 0u && !cpu->io.dma_transfer_active,
+           "byte DMA null write schedules transfer completion");
 }
 
 void dspic33_dma_test_boundary_cases(TestState* state, Dspic33* cpu) {
     event_guard_cases(state, cpu);
+    pad_collision_cases(state, cpu);
 #ifdef DSPIC33_TEST_ALLOCATION_FAILURE
     active_channel_failure_cases(state, cpu);
     completion_failure_cases(state, cpu);

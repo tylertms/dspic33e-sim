@@ -3,6 +3,8 @@
 #include "allocation_failure.h"
 #include "device/dspic33ep_mu/communication/can/internal.h"
 
+enum { CAN_TEST_SERIAL_INCOMPLETE, CAN_TEST_SERIAL_VALID, CAN_TEST_SERIAL_INVALID };
+
 enum {
     CAN_TEST_EVENT_RECEIVE_START = 1u,
     CAN_TEST_EVENT_RECEIVE_WORD,
@@ -46,6 +48,17 @@ void dspic33_device_internal_can_monitor_transmit_sample(Dspic33* cpu, uint8_t c
 void dspic33_device_internal_can_receive_error(Dspic33* cpu, uint8_t channel,
                                                const Dspic33CanFrame* frame);
 void dspic33_device_internal_can_update_vector(Dspic33* cpu, uint8_t channel);
+bool dspic33_device_internal_can_select_receive_buffer(Dspic33* cpu, uint8_t channel,
+                                                       const Dspic33CanFrame* frame,
+                                                       uint8_t* buffer, uint8_t* matched_filter);
+void dspic33_device_internal_can_set_buffer_control(Dspic33* cpu, uint8_t channel, uint8_t buffer,
+                                                    uint16_t value);
+bool dspic33_device_internal_can_dma_ready(const Dspic33* cpu, uint8_t request, uint16_t pad,
+                                           bool transmit);
+bool dspic33_device_internal_can_power_enabled(const Dspic33* cpu, uint8_t channel);
+bool dspic33_device_internal_can_serial_receive_enabled(const Dspic33* cpu, uint8_t channel);
+int dspic33_device_internal_can_decode_serial(const Dspic33* cpu, uint8_t channel,
+                                              Dspic33CanFrame* frame, uint16_t* tail_start);
 
 #ifdef DSPIC33_TEST_ALLOCATION_FAILURE
 static void fill_event_queue(TestState* state, Dspic33* cpu) {
@@ -223,11 +236,97 @@ static void controller_boundary_cases(TestState* state, Dspic33* cpu) {
     cpu->device_cycles = (uint64_t)count * dspic33_device_internal_can_bit_cycles(cpu, 0u);
     dspic33_device_internal_can_monitor_transmit_sample(cpu, 0u, false);
     expect(state, cpu->io.can_tx_on_bus == 1u, "CAN transmit sampling ignores elapsed frames");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_can_test_configure_receive(cpu, 0u, 0x8000u, 0u, 0u);
+    dspic33_can_test_configure_filter(cpu, 0u, 0u, 0x456u, false, 0x7ffu, true, 0u, 0u);
+    dspic33_can_test_enable_filter(cpu, 0u, 1u);
+    dspic33_device_internal_can_set_buffer_control(cpu, 0u, 0u, 0x008cu);
+    Dspic33CanFrame remote = dspic33_can_test_frame(0x456u, false, true, 0u, 0u);
+    uint8_t buffer = UINT8_MAX;
+    uint8_t filter = UINT8_MAX;
+    expect(state,
+           !dspic33_device_internal_can_select_receive_buffer(cpu, 0u, &remote, &buffer, &filter) &&
+               cpu->events.count != 0u,
+           "remote frame requests transmission from a configured response buffer");
+}
+
+static void serial_decode_matrix_cases(TestState* state, Dspic33* cpu) {
+    uint32_t valid = 0u;
+    uint32_t incomplete = 0u;
+    uint32_t invalid = 0u;
+    const uint8_t lengths[] = {0u, 1u, 8u, 9u};
+    for (uint8_t extended = 0u; extended < 2u; extended++) {
+        for (uint8_t remote = 0u; remote < 2u; remote++) {
+            for (uint8_t length_index = 0u; length_index < sizeof(lengths) / sizeof(lengths[0]);
+                 length_index++) {
+                Dspic33CanFrame frame =
+                    dspic33_can_test_frame(extended != 0u ? 0x1234567u : 0x456u, extended != 0u,
+                                           remote != 0u, lengths[length_index], 0x20u);
+                Dspic33CanFrame decoded;
+                uint16_t tail = 0u;
+                bool bits[160];
+                const uint16_t count = dspic33_device_internal_can_frame_bits(&frame, bits);
+                dspic33_reset(cpu, 0u);
+                for (uint16_t index = 0u; index < count; index++) {
+                    cpu->io.can_rx_serial_bits[0][index] = bits[index];
+                }
+                cpu->io.can_rx_serial_count[0] = count;
+                valid += dspic33_device_internal_can_decode_serial(cpu, 0u, &decoded, &tail) ==
+                         CAN_TEST_SERIAL_VALID;
+                cpu->io.can_rx_serial_count[0] = (uint16_t)(tail + 5u);
+                incomplete += dspic33_device_internal_can_decode_serial(cpu, 0u, &decoded, &tail) ==
+                              CAN_TEST_SERIAL_INCOMPLETE;
+                cpu->io.can_rx_serial_count[0] = count;
+                cpu->io.can_rx_serial_bits[0][tail] = false;
+                invalid += dspic33_device_internal_can_decode_serial(cpu, 0u, &decoded, &tail) ==
+                           CAN_TEST_SERIAL_INVALID;
+            }
+        }
+    }
+    expect(state, valid == 16u && incomplete == 16u && invalid == 16u,
+           "CAN serial decode matrix matches");
+}
+
+static void controller_admission_matrix_cases(TestState* state, Dspic33* cpu) {
+    static const uint16_t controls[] = {0u,      0x8000u, 0x8000u, 0xc020u,
+                                        0x8010u, 0x8020u, 0x8020u, 0xa020u};
+    static const uint8_t requests[] = {7u, 6u, 7u, 7u, 7u, 7u, 7u, 7u};
+    static const uint16_t pads[] = {0x0440u, 0x0440u, 0x0442u, 0x0440u,
+                                    0x0440u, 0x0440u, 0x0440u, 0x0440u};
+    static const bool transmit[] = {false, false, false, false, false, true, false, true};
+    static const bool expected[] = {false, false, false, false, false, false, true, true};
+    for (size_t index = 0u; index < sizeof(controls) / sizeof(controls[0]); index++) {
+        dspic33_reset(cpu, 0u);
+        dspic33_device_internal_raw_write_word(cpu, 0x0b00u, controls[index]);
+        dspic33_device_internal_raw_write_word(cpu, 0x0b02u, requests[index]);
+        dspic33_device_internal_raw_write_word(cpu, 0x0b0cu, pads[index]);
+        expect(state,
+               dspic33_device_internal_can_dma_ready(cpu, 7u, 0x0440u, transmit[index]) ==
+                   expected[index],
+               "CAN DMA admission matrix matches");
+    }
+
+    dspic33_reset(cpu, 0u);
+    cpu->power_state = DSPIC33_POWER_ACTIVE;
+    expect(state, dspic33_device_internal_can_power_enabled(cpu, 0u),
+           "active CAN controller is powered");
+    cpu->power_state = DSPIC33_POWER_IDLE;
+    expect(state, dspic33_device_internal_can_power_enabled(cpu, 0u),
+           "idle CAN controller continues without stop-idle");
+    dspic33_device_internal_raw_write_word(cpu, bases[0], 0x2000u);
+    expect(state, !dspic33_device_internal_can_power_enabled(cpu, 0u),
+           "stop-idle suspends an idle CAN controller");
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    expect(state, !dspic33_device_internal_can_serial_receive_enabled(cpu, 0u),
+           "sleep disables serial CAN reception");
 }
 
 void dspic33_can_test_boundary_groups(TestState* state, Dspic33* cpu) {
     event_guard_cases(state, cpu);
     controller_boundary_cases(state, cpu);
+    serial_decode_matrix_cases(state, cpu);
+    controller_admission_matrix_cases(state, cpu);
 #ifdef DSPIC33_TEST_ALLOCATION_FAILURE
     allocation_failure_cases(state, cpu);
 #else

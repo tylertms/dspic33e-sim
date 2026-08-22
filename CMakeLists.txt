@@ -155,6 +155,14 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     tests/architecture/dspic33/execution/encoding_census_test.c
     "core;unit;integration")
   dspic33ep_mu_add_test(
+    processor_state_census
+    tests/architecture/dspic33/execution/state_census_test.c
+    "core;unit;integration")
+  dspic33ep_mu_add_test(
+    peripheral_state_census
+    tests/device/dspic33ep_mu/state_census_test.c
+    "device;unit;integration")
+  dspic33ep_mu_add_test(
     processor_boundary tests/architecture/dspic33/execution/boundary.c
     "core;unit")
 
@@ -176,6 +184,7 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
   dspic33ep_mu_add_test(
     comparator tests/device/dspic33ep_mu/analog/comparator/registers.c
     "device;integration" tests/device/dspic33ep_mu/analog/comparator/behavior.c)
+  dspic33ep_mu_enable_allocation_failure(dspic33ep_mu_comparator_test)
   dspic33ep_mu_add_test(
     core_sfr tests/device/dspic33ep_mu/platform/core_sfr_test.c
     "device;integration")
@@ -190,6 +199,8 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     tests/device/dspic33ep_mu/communication/dci/transfer.c
     tests/device/dspic33ep_mu/communication/dci/clock.c
     tests/device/dspic33ep_mu/communication/dci/boundary.c
+    tests/device/dspic33ep_mu/communication/dci/state_census.c
+    tests/device/dspic33ep_mu/communication/dci/state_matrix.c
     tests/device/dspic33ep_mu/communication/dci/main.c)
   dspic33ep_mu_enable_allocation_failure(dspic33ep_mu_dci_test)
   dspic33ep_mu_add_test(
@@ -208,13 +219,15 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     tests/device/dspic33ep_mu/communication/i2c/master.c
     tests/device/dspic33ep_mu/communication/i2c/slave.c
     tests/device/dspic33ep_mu/communication/i2c/pins.c
-    tests/device/dspic33ep_mu/communication/i2c/boundary.c)
+    tests/device/dspic33ep_mu/communication/i2c/boundary.c
+    tests/device/dspic33ep_mu/communication/i2c/state_matrix.c)
   dspic33ep_mu_enable_allocation_failure(dspic33ep_mu_i2c_test)
   dspic33ep_mu_add_test(
     input_capture tests/device/dspic33ep_mu/control/input_capture/registers.c
     "device;integration"
     tests/device/dspic33ep_mu/control/input_capture/events.c
     tests/device/dspic33ep_mu/control/input_capture/boundary.c)
+  dspic33ep_mu_enable_allocation_failure(dspic33ep_mu_input_capture_test)
   dspic33ep_mu_add_test(
     interrupt_control
     tests/device/dspic33ep_mu/platform/interrupt_control_test.c
@@ -223,6 +236,11 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     peripheral_census
     tests/device/dspic33ep_mu/platform/peripheral_census_test.c
     "device;unit;integration")
+  dspic33ep_mu_add_test(
+    peripheral_api_boundary
+    tests/device/dspic33ep_mu/platform/peripheral_api_boundary_test.c
+    "device;unit")
+  dspic33ep_mu_enable_allocation_failure(dspic33ep_mu_peripheral_api_boundary_test)
   dspic33ep_mu_add_test(
     nvm
     tests/device/dspic33ep_mu/memory/nvm/registers.c
@@ -243,6 +261,15 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     tests/device/dspic33ep_mu/control/output_compare_basic_test.c
     "device;integration")
   dspic33ep_mu_add_test(
+    output_compare_boundary
+    tests/device/dspic33ep_mu/control/output_compare/boundary_test.c
+    "device;unit")
+  dspic33ep_mu_enable_allocation_failure(dspic33ep_mu_output_compare_boundary_test)
+  dspic33ep_mu_add_test(
+    output_compare_register_matrix
+    tests/device/dspic33ep_mu/control/output_compare/register_matrix_test.c
+    "device;unit")
+  dspic33ep_mu_add_test(
     output_compare_fault
     tests/device/dspic33ep_mu/control/output_compare_fault_test.c
     "device;integration")
@@ -261,10 +288,16 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     tests/device/dspic33ep_mu/control/output_compare_sync/synchronization.c
     tests/device/dspic33ep_mu/control/output_compare_sync/main.c)
   dspic33ep_mu_add_test(
+    output_compare_state_census
+    tests/device/dspic33ep_mu/control/output_compare/state_census_test.c
+    "device;unit;integration")
+  dspic33ep_mu_add_test(
     pmp tests/device/dspic33ep_mu/communication/pmp/registers.c
     "device;integration" tests/device/dspic33ep_mu/communication/pmp/master.c
     tests/device/dspic33ep_mu/communication/pmp/slave.c
-    tests/device/dspic33ep_mu/communication/pmp/boundary.c)
+    tests/device/dspic33ep_mu/communication/pmp/boundary.c
+    tests/device/dspic33ep_mu/communication/pmp/state_matrix.c)
+  dspic33ep_mu_enable_allocation_failure(dspic33ep_mu_pmp_test)
   dspic33ep_mu_add_test(pps tests/device/dspic33ep_mu/platform/pps_test.c
                         "device;integration")
   dspic33ep_mu_add_test(
@@ -287,13 +320,15 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     spi tests/device/dspic33ep_mu/communication/spi/registers.c
     "device;integration" tests/device/dspic33ep_mu/communication/spi/master.c
     tests/device/dspic33ep_mu/communication/spi/slave.c
-    tests/device/dspic33ep_mu/communication/spi/boundary.c)
+    tests/device/dspic33ep_mu/communication/spi/boundary.c
+    tests/device/dspic33ep_mu/communication/spi/state_matrix.c)
   dspic33ep_mu_enable_allocation_failure(dspic33ep_mu_spi_test)
   dspic33ep_mu_add_test(timer tests/device/dspic33ep_mu/timing/timer_test.c
                         "device;integration")
   dspic33ep_mu_add_test(
     uart tests/device/dspic33ep_mu/communication/uart_test.c
-    "device;integration" tests/device/dspic33ep_mu/communication/uart/boundary.c)
+    "device;integration" tests/device/dspic33ep_mu/communication/uart/boundary.c
+    tests/device/dspic33ep_mu/communication/uart/state_matrix.c)
   dspic33ep_mu_enable_allocation_failure(dspic33ep_mu_uart_test)
   dspic33ep_mu_add_test(
     usb tests/device/dspic33ep_mu/communication/usb/registers.c

@@ -160,6 +160,11 @@ int main(void) {
            "invalid bitmap rejected");
     expect(&state, !dspic33ep_mu_device_from_name("dsPIC33EP512MU806", NULL),
            "invalid profile lookup rejected");
+    Dspic33epMuDevice device = DSPIC33EP_MU_DEVICE_COUNT;
+    expect(&state, !dspic33ep_mu_device_from_name("unknown", &device),
+           "unknown profile name rejected");
+    expect(&state, !dspic33ep_mu_address_implemented(DSPIC33EP_MU_DEVICE_COUNT, 0u),
+           "invalid device address rejected");
     printf("[device-data] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n", state.cases,
            state.passed, state.failed);
     return test_finish(&state);

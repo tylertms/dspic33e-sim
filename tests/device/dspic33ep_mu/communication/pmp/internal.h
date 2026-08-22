@@ -95,6 +95,7 @@ void dspic33_pmp_test_sixteen_bit_lane_cases(TestState* state, Dspic33* cpu);
 void dspic33_pmp_test_slave_dma_isolation_cases(TestState* state, Dspic33* cpu);
 void dspic33_pmp_test_slave_mode_matrix_cases(TestState* state, Dspic33* cpu);
 void dspic33_pmp_test_slave_power_lifecycle_cases(TestState* state, Dspic33* cpu);
+void dspic33_pmp_test_state_matrix_cases(TestState* state, Dspic33* cpu);
 void dspic33_pmp_test_timing_cases(TestState* state, Dspic33* cpu);
 void dspic33_pmp_test_wait_state_matrix_cases(TestState* state, Dspic33* cpu);
 

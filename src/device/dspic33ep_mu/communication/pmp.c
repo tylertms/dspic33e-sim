@@ -45,8 +45,7 @@ static bool pmp_slave_enabled(const Dspic33* cpu, bool reading) {
     uint16_t enabled_strobe = reading ? PMP_READ_STROBE_ENABLE : PMP_WRITE_STROBE_ENABLE;
     if (!pmp_slave_configured(cpu) || (control & enabled_strobe) == 0u ||
         (dspic33_device_internal_raw_word(cpu, PMP_ADDRESS_ENABLE_REGISTER) &
-         PMP_CHIP_SELECT_ENABLE) == 0u ||
-        (slave != 0u && slave != PMP_SLAVE_ADDRESSABLE)) {
+         PMP_CHIP_SELECT_ENABLE) == 0u) {
         return false;
     }
     return slave != PMP_SLAVE_ADDRESSABLE ||
@@ -357,7 +356,7 @@ static void pmp_write_slave_buffer(Dspic33* cpu, uint16_t address) {
     uint16_t empty;
     uint8_t first;
     uint8_t width;
-    if (!pmp_slave_configured(cpu) || address < PMP_ADDRESS || address > PMP_OUTPUT_2 + 1u) {
+    if (!pmp_slave_configured(cpu)) {
         return;
     }
     first = (uint8_t)(address - PMP_ADDRESS);

@@ -168,16 +168,10 @@ static void qei_capture_interval(Dspic33* cpu, uint8_t channel) {
     qei_write_counter(cpu, channel, QEI_INTERVAL_LOW, 0u);
 }
 
-static void qei_count_pulse(Dspic33* cpu, uint8_t channel, int8_t direction,
-                            bool interval_measurement) {
+static void qei_count_pulse(Dspic33* cpu, uint8_t channel, int8_t direction) {
     qei_update_position(cpu, channel, direction);
     qei_update_velocity(cpu, channel, direction);
-    if (interval_measurement) {
-        qei_capture_interval(cpu, channel);
-    } else {
-        qei_update_index_counter(cpu, channel, direction);
-        qei_update_interval(cpu, channel, 1u);
-    }
+    qei_capture_interval(cpu, channel);
 }
 
 static void qei_timer_pulse(Dspic33* cpu, uint8_t channel, int8_t direction, bool position_gate,
@@ -302,19 +296,14 @@ static uint8_t qei_logical_inputs(const Dspic33* cpu, uint8_t channel) {
     return (uint8_t)(inputs ^ ((io_control & QEI_IO_POLARITY_MASK) >> 4u));
 }
 
-static void qei_index_event(Dspic33* cpu, uint8_t channel, uint8_t logical) {
+static void qei_index_event(Dspic33* cpu, uint8_t channel) {
     uint16_t base = dspic33_device_qei_bases[channel];
     uint16_t control = dspic33_device_internal_raw_word(cpu, base);
-    uint8_t match =
-        (uint8_t)((control & QEI_CONTROL_INDEX_MATCH_MASK) >> QEI_CONTROL_INDEX_MATCH_SHIFT);
     uint8_t mode =
         (uint8_t)((control & QEI_CONTROL_POSITION_MODE_MASK) >> QEI_CONTROL_POSITION_MODE_SHIFT);
     uint8_t count_mode = (uint8_t)(control & QEI_CONTROL_COUNT_MODE_MASK);
     if (count_mode >= 2u) {
         mode = 0u;
-    }
-    if ((logical & 3u) != match) {
-        return;
     }
     qei_raise_status(cpu, channel, QEI_STATUS_INDEX);
     if (count_mode < 2u) {
@@ -362,16 +351,16 @@ static void qei_apply_filtered_inputs(Dspic33* cpu, uint8_t channel) {
             direction = (int8_t)-direction;
         }
         if (direction != 0) {
-            qei_count_pulse(cpu, channel, direction, true);
+            qei_count_pulse(cpu, channel, direction);
         }
     } else if ((mode == 1u || mode == 2u) && (previous & 1u) == 0u && (logical & 1u) != 0u) {
         bool gate_allows = (control & QEI_CONTROL_GATE_ENABLE) == 0u || (logical & 2u) != 0u;
         if (mode == 1u) {
-            int8_t direction = mode == 1u ? ((logical & 2u) != 0u ? 1 : -1) : 1;
+            int8_t direction = (logical & 2u) != 0u ? 1 : -1;
             if ((control & QEI_CONTROL_DIRECTION_INVERT) != 0u) {
                 direction = (int8_t)-direction;
             }
-            qei_count_pulse(cpu, channel, direction, true);
+            qei_count_pulse(cpu, channel, direction);
         } else {
             int8_t direction = (control & QEI_CONTROL_DIRECTION_INVERT) != 0u ? -1 : 1;
             qei_timer_pulse(cpu, channel, direction, gate_allows, logical);
@@ -390,7 +379,7 @@ static void qei_apply_filtered_inputs(Dspic33* cpu, uint8_t channel) {
     if (!cpu->io.qei.index_latched[channel] && (logical & 4u) != 0u &&
         (logical & 3u) == index_match) {
         cpu->io.qei.index_latched[channel] = true;
-        qei_index_event(cpu, channel, logical);
+        qei_index_event(cpu, channel);
     }
 }
 
@@ -547,9 +536,6 @@ bool dspic33_device_internal_qei_pps_output_value(const Dspic33* cpu, uint8_t po
 static void qei_filter_ticks(Dspic33* cpu, uint8_t channel, uint64_t ticks) {
     uint8_t input;
     bool changed = false;
-    if (ticks == 0u) {
-        return;
-    }
     for (input = 0u; input < 4u; input++) {
         uint8_t bit = (uint8_t)(1u << input);
         bool raw = (cpu->qei_inputs[channel] & bit) != 0u;

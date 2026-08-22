@@ -2,6 +2,8 @@
 #include "device/dspic33ep_mu/internal.h"
 #include "test.h"
 
+void dspic33_uart_test_state_matrix_cases(TestState* state, Dspic33* cpu);
+
 #ifdef DSPIC33_TEST_ALLOCATION_FAILURE
 static void fill_event_queue(TestState* state, Dspic33* cpu) {
     while (cpu->events.capacity == 0u || cpu->events.count < cpu->events.capacity) {
@@ -112,8 +114,23 @@ static void transmit_completion_case(TestState* state, Dspic33* cpu) {
     expect(state, cpu->io.uart_tx_active == 0u, "UART empty completion raises its interrupt");
 }
 
+static void active_power_stop_case(TestState* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    cpu->io.uart_rx_active = 1u;
+    cpu->io.uart_tx_active = 1u;
+    cpu->io.uart_tx_scheduled = 1u;
+    cpu->io.uart_tx_shift[0].value = 0x5au;
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    dspic33_device_internal_uart_update_power_state(cpu);
+    expect(state,
+           cpu->io.uart_rx_active == 0u && cpu->io.uart_tx_active == 0u &&
+               cpu->io.uart_tx_scheduled == 0u && cpu->io.uart_tx_shift[0].value == 0u,
+           "sleep cancels active physical UART reception and transmission");
+}
+
 void dspic33_uart_test_boundary_cases(TestState* state, Dspic33* cpu) {
     bool high;
+    dspic33_uart_test_state_matrix_cases(state, cpu);
     dspic33_reset(cpu, 0u);
     dspic33_device_internal_uart_auto_baud_edge(cpu, 0u, true, true);
     expect(state, cpu->io.uart_auto_baud_active == 0u, "UART auto-baud ignores a stable input");
@@ -126,6 +143,7 @@ void dspic33_uart_test_boundary_cases(TestState* state, Dspic33* cpu) {
     parity_output_case(state, cpu);
     receive_sampling_cases(state, cpu);
     transmit_completion_case(state, cpu);
+    active_power_stop_case(state, cpu);
 #ifdef DSPIC33_TEST_ALLOCATION_FAILURE
     allocation_failure_cases(state, cpu);
 #endif

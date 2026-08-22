@@ -7,6 +7,9 @@
 #include "dspic33.h"
 #include "test.h"
 
+void dspic33_device_internal_raw_write_word(Dspic33* cpu, uint16_t address, uint16_t value);
+void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous);
+
 enum {
     OSCILLATOR_CONTROL = 0x0742u,
     OSCILLATOR_IO_LOCK = 0x0040u,
@@ -142,6 +145,10 @@ static void register_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x06ccu, 0xffffu);
     expect(state, dspic33_read_word(cpu, 0x0694u) == 0u, "absent RPOR10 reads zero");
     expect(state, dspic33_read_word(cpu, 0x06ccu) == 0u, "absent RPINR22 reads zero");
+    dspic33_device_internal_raw_write_word(cpu, 0x0694u, 0xffffu);
+    dspic33_device_write_byte(cpu, 0x0694u, 0u);
+    expect(state, cpu->data[0x0694u] == 0u && cpu->data[0x0695u] == 0u,
+           "absent PPS dispatch restores the prior storage value");
     dspic33_write_word(cpu, 0x0680u, 0x1212u);
     dspic33_write_byte(cpu, 0x0680u, 0x2au);
     expect(state, dspic33_read_word(cpu, 0x0680u) == 0x122au,

@@ -62,6 +62,7 @@ void dspic33_i2c_test_slave_pin_rejection_and_transmit_cases(TestState* state, D
 void dspic33_i2c_test_slave_power_cases(TestState* state, Dspic33* cpu);
 void dspic33_i2c_test_slave_receive_cases(TestState* state, Dspic33* cpu);
 void dspic33_i2c_test_slave_transmit_cases(TestState* state, Dspic33* cpu);
+void dspic33_i2c_test_state_matrix_cases(TestState* state, Dspic33* cpu);
 void dspic33_i2c_test_timing_cases(TestState* state, Dspic33* cpu);
 
 #endif

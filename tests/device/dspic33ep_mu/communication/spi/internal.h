@@ -38,6 +38,7 @@ void dspic33_spi_test_register_cases(TestState* state, Dspic33* cpu);
 void dspic33_spi_test_selection_and_frame_cases(TestState* state, Dspic33* cpu);
 void dspic33_spi_test_slave_select_retry_cases(TestState* state, Dspic33* cpu);
 void dspic33_spi_test_split_buffer_cases(TestState* state, Dspic33* cpu);
+void dspic33_spi_test_state_matrix_cases(TestState* state, Dspic33* cpu);
 void dspic33_spi_test_standard_buffer_cases(TestState* state, Dspic33* cpu);
 void dspic33_spi_test_timing_matrix_cases(TestState* state, Dspic33* cpu);
 void dspic33_spi_test_transmit_output_cases(TestState* state, Dspic33* cpu);

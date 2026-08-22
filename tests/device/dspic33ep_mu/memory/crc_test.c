@@ -31,6 +31,23 @@ enum {
     CRC_PRIORITY = 3u
 };
 
+void dspic33_device_internal_run_crc(Dspic33* cpu, uint16_t generation);
+static bool interrupt_flag(Dspic33* cpu);
+
+static void empty_active_case(TestState* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    cpu->data[CRC_CONTROL] = (uint8_t)(CRC_ENABLE | CRC_GO);
+    cpu->data[CRC_CONTROL + 1u] = (uint8_t)((CRC_ENABLE | CRC_GO) >> 8u);
+    cpu->io.crc.active = true;
+    cpu->io.crc.count = 0u;
+    cpu->io.crc.bits_remaining = 0u;
+    dspic33_device_internal_run_crc(cpu, cpu->io.crc.generation);
+    expect(state,
+           !cpu->io.crc.active && (dspic33_read_word(cpu, CRC_CONTROL) & CRC_GO) == 0u &&
+               interrupt_flag(cpu),
+           "active empty CRC completes immediately");
+}
+
 static uint32_t shift_value(Dspic33* cpu) {
     return (uint32_t)dspic33_read_word(cpu, CRC_SHIFT_LOW) |
            ((uint32_t)dspic33_read_word(cpu, CRC_SHIFT_HIGH) << 16u);
@@ -208,6 +225,13 @@ static void lane_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, CRC_DATA_HIGH, 0x89abu);
     expect(state, valid_words(cpu) == 1u && cpu->io.crc.words[0] == 0x89abcdefu,
            "32-bit word lane assembly");
+
+    configure(cpu, 32u, 32u, 0x04c11db7u, false, false);
+    dspic33_write_byte(cpu, CRC_DATA_LOW, 0xefu);
+    dspic33_write_byte(cpu, CRC_DATA_LOW + 1u, 0xcdu);
+    dspic33_write_word(cpu, CRC_DATA_HIGH, 0x89abu);
+    expect(state, valid_words(cpu) == 1u && cpu->io.crc.words[0] == 0x89abcdefu,
+           "32-bit byte lanes assemble the low half");
 }
 
 static void run_vector(TestState* state, Dspic33* cpu, const uint32_t* words, uint8_t count,
@@ -626,6 +650,7 @@ int main(void) {
     if (initialized) {
         reset_and_access_cases(&state, &cpu);
         fifo_cases(&state, &cpu);
+        empty_active_case(&state, &cpu);
         lane_cases(&state, &cpu);
         known_vector_cases(&state, &cpu);
         width_matrix_cases(&state, &cpu);

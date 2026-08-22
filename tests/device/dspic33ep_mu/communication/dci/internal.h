@@ -116,6 +116,8 @@ void dspic33_dci_test_protocol_frame_cases(TestState* state, Dspic33* cpu);
 void dspic33_dci_test_protocol_geometry_cases(TestState* state, Dspic33* cpu);
 void dspic33_dci_test_protocol_integration_cases(TestState* state, Dspic33* cpu);
 void dspic33_dci_test_slot_buffer_status_cases(TestState* state, Dspic33* cpu);
+void dspic33_dci_test_state_census_cases(TestState* state, Dspic33* cpu);
+void dspic33_dci_test_state_matrix_cases(TestState* state, Dspic33* cpu);
 void dspic33_dci_test_width_and_lane_cases(TestState* state, Dspic33* cpu);
 
 #endif

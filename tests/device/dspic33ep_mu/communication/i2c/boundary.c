@@ -21,16 +21,56 @@ static void allocation_failure_cases(TestState* state, Dspic33* cpu) {
     test_reject_reallocation(false);
     expect(state, !scheduled, "I2C internal scheduling reports allocation failure");
 
-    dspic33_reset(cpu, 0u);
-    dspic33_i2c_test_enable(cpu, 0u, 0u, 0u);
-    dspic33_device_internal_raw_write_word(cpu, (uint16_t)(bases[0] + I2C_CON),
-                                           (uint16_t)(I2C_ENABLE | I2C_SEN));
-    fill_event_queue(state, cpu);
-    test_reject_reallocation(true);
-    dspic33_i2c_internal_begin_control(cpu, 0u, I2C_SEN);
-    test_reject_reallocation(false);
-    expect(state, (dspic33_read_word(cpu, (uint16_t)(bases[0] + I2C_CON)) & I2C_SEN) == 0u,
-           "I2C control scheduling failure clears the operation");
+    const uint16_t operations[] = {I2C_SEN, I2C_RSEN, I2C_PEN, I2C_RCEN, I2C_ACKEN};
+    for (uint8_t index = 0u; index < sizeof(operations) / sizeof(operations[0]); index++) {
+        dspic33_reset(cpu, 0u);
+        dspic33_i2c_test_enable(cpu, 0u, 0u, 0u);
+        expect(state, dspic33_gpio_drive(cpu, 3u, 0x0600u, 0x0600u),
+               "drive I2C pins for scheduling failure");
+        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(bases[0] + I2C_CON),
+                                               (uint16_t)(I2C_ENABLE | operations[index]));
+        fill_event_queue(state, cpu);
+        test_reject_reallocation(true);
+        dspic33_i2c_internal_begin_control(cpu, 0u, operations[index]);
+        test_reject_reallocation(false);
+        expect(state,
+               (dspic33_read_word(cpu, (uint16_t)(bases[0] + I2C_CON)) & operations[index]) == 0u,
+               "I2C control scheduling failure clears the operation");
+    }
+
+    for (uint8_t index = 0u; index < 3u; index++) {
+        dspic33_reset(cpu, 0u);
+        dspic33_i2c_test_enable(cpu, 0u, 0u, 0u);
+        cpu->configuration[12u] &= (uint8_t)~0x10u;
+        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(bases[0] + I2C_CON),
+                                               (uint16_t)(I2C_ENABLE | operations[index]));
+        fill_event_queue(state, cpu);
+        cpu->events.count--;
+        test_reject_reallocation(true);
+        dspic33_i2c_internal_begin_control(cpu, 0u, operations[index]);
+        test_reject_reallocation(false);
+        expect(state,
+               (dspic33_read_word(cpu, (uint16_t)(bases[0] + I2C_CON)) & operations[index]) == 0u,
+               "I2C bus-status scheduling failure clears the operation");
+    }
+
+    for (uint8_t index = 0u; index < sizeof(operations) / sizeof(operations[0]); index++) {
+        dspic33_reset(cpu, 0u);
+        dspic33_i2c_test_enable(cpu, 0u, 0u, 0u);
+        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(bases[0] + I2C_CON),
+                                               (uint16_t)(I2C_ENABLE | operations[index]));
+        cpu->io.gpio[3] |= 0x0600u;
+        cpu->io.gpio_driven[3] |= 0x0600u;
+        cpu->configuration[12u] &= (uint8_t)~0x10u;
+        fill_event_queue(state, cpu);
+        cpu->events.count -= index < 3u ? 2u : 1u;
+        test_reject_reallocation(true);
+        dspic33_i2c_internal_begin_control(cpu, 0u, operations[index]);
+        test_reject_reallocation(false);
+        expect(state,
+               (dspic33_read_word(cpu, (uint16_t)(bases[0] + I2C_CON)) & operations[index]) == 0u,
+               "I2C pin scheduling failure clears the operation");
+    }
 }
 #endif
 
@@ -40,6 +80,29 @@ void dspic33_i2c_test_boundary_cases(TestState* state, Dspic33* cpu) {
     Dspic33I2cResponse response = {1u, 0u, false};
     Dspic33I2cResponseQueue responses;
     memset(&responses, 0, sizeof(responses));
+    dspic33_i2c_test_state_matrix_cases(state, cpu);
+    dspic33_reset(cpu, 0u);
+    cpu->device_cycles = 1u;
+    expect(state,
+           !dspic33_i2c_respond(cpu, DSPIC33_I2C_COUNT, 0u, false, 0u) &&
+               !dspic33_i2c_respond(cpu, 0u, 0u, false, UINT64_MAX) &&
+               !dspic33_i2c_status(cpu, DSPIC33_I2C_COUNT, 0u) &&
+               !dspic33_i2c_status(cpu, 0u, 1u) &&
+               !dspic33_i2c_slave_start(cpu, DSPIC33_I2C_COUNT, 0u, false, false, 0u) &&
+               !dspic33_i2c_slave_start(cpu, 0u, 0x80u, false, false, 0u) &&
+               !dspic33_i2c_slave_start(cpu, 0u, 0u, false, false, UINT64_MAX) &&
+               !dspic33_i2c_slave_write(cpu, DSPIC33_I2C_COUNT, 0u, 0u) &&
+               !dspic33_i2c_slave_write(cpu, 0u, 0u, UINT64_MAX) &&
+               !dspic33_i2c_slave_read(cpu, DSPIC33_I2C_COUNT, false, 0u) &&
+               !dspic33_i2c_slave_read(cpu, 0u, false, UINT64_MAX) &&
+               !dspic33_i2c_slave_stop(cpu, DSPIC33_I2C_COUNT, 0u) &&
+               !dspic33_i2c_slave_stop(cpu, 0u, UINT64_MAX) &&
+               !dspic33_i2c_collision(cpu, DSPIC33_I2C_COUNT, 0u) &&
+               !dspic33_i2c_collision(cpu, 0u, UINT64_MAX) &&
+               !dspic33_i2c_transmit(cpu, DSPIC33_I2C_COUNT, &transfer) &&
+               !dspic33_i2c_transmit(cpu, 0u, NULL),
+           "I2C public APIs reject invalid boundaries");
+    cpu->device_cycles = 0u;
     responses.count = DSPIC33_I2C_QUEUE_SIZE;
     expect(state,
            !dspic33_i2c_internal_pin_mapping(cpu, DSPIC33_I2C_COUNT, &mapping) &&

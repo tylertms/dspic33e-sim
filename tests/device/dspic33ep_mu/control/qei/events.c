@@ -1,5 +1,8 @@
 #include "device/dspic33ep_mu/control/qei/internal.h"
 
+void dspic33_device_internal_raw_write_word(Dspic33* cpu, uint16_t address, uint16_t value);
+void dspic33_device_internal_run_qei(Dspic33* cpu, uint16_t source, uint32_t value);
+
 static void compare_refresh_cases(TestState* state, Dspic33* cpu) {
     uint8_t channel;
     for (channel = 0u; channel < DSPIC33_QEI_COUNT; channel++) {
@@ -376,6 +379,32 @@ static void large_timer_advance_cases(TestState* state, Dspic33* cpu) {
     }
 }
 
+static void wrapped_timer_advance_cases(TestState* state, Dspic33* cpu) {
+    static const uint32_t starts[] = {0u, 2u, 0x7ffffffdu, 0x7fffffffu, 0x80000000u, 0xfffffffdu};
+    for (uint8_t channel = 0u; channel < DSPIC33_QEI_COUNT; channel++) {
+        const uint16_t base = bases[channel];
+        for (uint8_t index = 0u; index < sizeof(starts) / sizeof(starts[0]); index++) {
+            const bool inverted = (index & 1u) != 0u;
+            const uint32_t expected = inverted ? starts[index] - 5u : starts[index] + 5u;
+            dspic33_qei_test_reset_qei(cpu);
+            dspic33_qei_test_write_counter(cpu, (uint16_t)(base + 6u), (uint16_t)(base + 0x0au),
+                                           starts[index]);
+            dspic33_qei_test_write_counter(cpu, (uint16_t)(base + 0x1cu), (uint16_t)(base + 0x1eu),
+                                           starts[index] + 2u);
+            dspic33_qei_test_write_counter(cpu, (uint16_t)(base + 0x20u), (uint16_t)(base + 0x22u),
+                                           starts[index] - 2u);
+            dspic33_write_word(cpu, (uint16_t)(base + 0x0cu), (uint16_t)(inverted ? 2u : 0xfffdu));
+            dspic33_write_word(
+                cpu, base,
+                (uint16_t)(QEI_ENABLE | QEI_MODE_TIMER | (inverted ? QEI_DIRECTION_INVERT : 0u)));
+            expect(state,
+                   dspic33_device_advance(cpu, 5u) &&
+                       dspic33_qei_test_read_counter(cpu, (uint16_t)(base + 6u)) == expected,
+                   "QEI wrapped timer advance preserves modular position");
+        }
+    }
+}
+
 static void pmd_cases(TestState* state, Dspic33* cpu) {
     uint8_t channel;
     for (channel = 0u; channel < DSPIC33_QEI_COUNT; channel++) {
@@ -620,6 +649,51 @@ static void index_direction_erratum_cases(TestState* state, Dspic33* cpu) {
     }
 }
 
+static void pmd_index_latch_cases(TestState* state, Dspic33* cpu) {
+    for (uint8_t channel = 0u; channel < DSPIC33_QEI_COUNT; channel++) {
+        dspic33_qei_test_reset_qei(cpu);
+        cpu->qei_inputs[channel] = 4u;
+        cpu->io.qei.pmd_generation[channel] = 3u;
+        cpu->io.qei.pmd_disabled[channel] = true;
+        dspic33_device_internal_run_qei(cpu, (uint16_t)(0x0100u + channel), 6u);
+        expect(state, cpu->io.qei.index_latched[channel],
+               "QEI PMD resume latches a matching active index");
+
+        dspic33_qei_test_reset_qei(cpu);
+        dspic33_device_internal_raw_write_word(cpu, bases[channel], QEI_ENABLE);
+        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(bases[channel] + 4u),
+                                               QEI_STATUS_INDEX_ENABLE);
+        expect(state,
+               dspic33_qei_test_input(cpu, channel, DSPIC33_QEI_INDEX, true) &&
+                   dspic33_qei_test_interrupt_set(cpu, channel),
+               "QEI enabled index event raises its interrupt");
+    }
+}
+
+static void event_boundary_cases(TestState* state, Dspic33* cpu) {
+    dspic33_qei_test_reset_qei(cpu);
+    dspic33_qei_test_configure_interrupt(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, (uint16_t)(bases[0] + 4u),
+                                           (uint16_t)(QEI_STATUS_INDEX_ENABLE | QEI_STATUS_INDEX));
+    dspic33_write_word(cpu, (uint16_t)(bases[0] + 4u),
+                       (uint16_t)(QEI_STATUS_INDEX_ENABLE | QEI_STATUS_INDEX));
+    expect(state, dspic33_qei_test_interrupt_set(cpu, 0u),
+           "QEI status refresh raises a pending enabled interrupt");
+
+    dspic33_qei_test_reset_qei(cpu);
+    cpu->qei_inputs[0] = 4u;
+    cpu->io.qei.pmd_disabled[0] = true;
+    dspic33_device_internal_raw_write_word(cpu, bases[0], (uint16_t)(1u << QEI_INDEX_MATCH_SHIFT));
+    dspic33_device_internal_run_qei(cpu, 0x0100u, 0u);
+    dspic33_device_internal_run_qei(cpu, 0x0100u, 2u);
+    dspic33_device_internal_run_qei(cpu, 0x0102u, 0u);
+    dspic33_device_internal_run_qei(cpu, 8u, 1u);
+    expect(state,
+           !cpu->io.qei.index_latched[0] && cpu->qei_inputs[0] == 4u &&
+               cpu->io.qei.pmd_generation[0] == 0u,
+           "QEI event dispatcher rejects mismatched and out-of-range events");
+}
+
 int main(void) {
     Dspic33 cpu;
     TestState state = {0u, 0u, 0u};
@@ -637,7 +711,10 @@ int main(void) {
         power_lifecycle_cases(&state, &cpu);
         pps_cases(&state, &cpu);
         large_timer_advance_cases(&state, &cpu);
+        wrapped_timer_advance_cases(&state, &cpu);
         index_direction_erratum_cases(&state, &cpu);
+        pmd_index_latch_cases(&state, &cpu);
+        event_boundary_cases(&state, &cpu);
         pmd_cases(&state, &cpu);
         copy_cases(&state, &cpu);
         dspic33_release(&cpu);

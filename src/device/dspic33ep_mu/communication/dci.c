@@ -198,9 +198,6 @@ static void dci_abort(Dspic33* cpu) {
 
 static bool dci_schedule_internal(Dspic33* cpu, uint16_t source, uint64_t delay) {
     Dspic33Dci* dci = &cpu->io.dci;
-    if (dci->internal_scheduled) {
-        return true;
-    }
     if (!dspic33_schedule(cpu, DSPIC33_EVENT_DCI, source, dci->generation, delay)) {
         dci_abort(cpu);
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;

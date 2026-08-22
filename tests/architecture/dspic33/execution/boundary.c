@@ -94,6 +94,36 @@ static void range_cases(TestState* state, Dspic33* cpu) {
            "codeguard recognizes an unlocked configuration");
     expect(state, dspic33_internal_codeguard_high_security(0x33u),
            "codeguard recognizes a mismatched security key");
+
+    Dspic33epMuDevice device = cpu->device;
+    cpu->device = DSPIC33EP_MU_DEVICE_COUNT;
+    expect(state,
+           !dspic33_device_program_range_implemented(cpu, 0u, 2u) &&
+               !dspic33_device_data_range_implemented(cpu, 0u, 2u) &&
+               dspic33_internal_device_program_limit(cpu) == 0u,
+           "invalid device profile exposes no implemented memory");
+    cpu->device = device;
+}
+
+static void rmw_admission_cases(TestState* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    cpu->io.cpu_write_valid = true;
+    expect(state, !dspic33_cpu_rmw_matches(cpu, 0x100u, 2u),
+           "non-RMW write does not match a target");
+    cpu->io.cpu_write_rmw = true;
+    expect(state, !dspic33_cpu_rmw_matches(cpu, 0x100u, 2u),
+           "non-advancing RMW does not match a target");
+    cpu->instruction_advancing = true;
+    cpu->io.cpu_write_instruction = 1u;
+    expect(state, !dspic33_cpu_rmw_matches(cpu, 0x100u, 2u),
+           "RMW from a different instruction does not match");
+    cpu->io.cpu_write_instruction = cpu->instructions;
+    cpu->io.cpu_write_address = 0x100u;
+    cpu->io.cpu_write_width = 2u;
+    expect(state,
+           !dspic33_cpu_rmw_matches(cpu, 0x0fcu, 2u) && !dspic33_cpu_rmw_matches(cpu, 0x104u, 2u) &&
+               dspic33_cpu_rmw_matches(cpu, 0x101u, 2u),
+           "RMW target matching requires overlapping ranges");
 }
 
 static void operand_resolution_cases(TestState* state, Dspic33* cpu) {
@@ -186,6 +216,65 @@ static void operand_resolution_cases(TestState* state, Dspic33* cpu) {
            "indirect program-space read selects the high byte");
 }
 
+static void indirect_address_boundary_cases(TestState* state, Dspic33* cpu) {
+    uint32_t address = 0u;
+    uint16_t registers[16] = {0u};
+    OperandResolution resolution;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_working_register(cpu, 15u, 0u);
+    expect(state,
+           dspic33_internal_indirect_literal_address(cpu, 15u, -1, true, &address) &&
+               address == UINT16_MAX,
+           "stack indirect addressing retains a negative effective address result");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_working_register(cpu, 15u, UINT16_MAX);
+    cpu->w[15] = UINT16_MAX;
+    expect(state,
+           dspic33_internal_indirect_literal_address(cpu, 15u, 1, true, &address) && address == 0u,
+           "stack indirect addressing retains an overflowing effective address result");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_working_register(cpu, 14u, 0x8000u);
+    cpu->corcon = 0x0004u;
+    expect(state,
+           dspic33_internal_indirect_literal_address(cpu, 14u, 0, false, &address) &&
+               address == 0x8000u,
+           "frame pointer bypasses paged addressing when enabled");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_set_working_register(cpu, 13u, 0x8000u);
+    cpu->dsrpag = 0u;
+    expect(state,
+           dspic33_internal_indirect_literal_address(cpu, 13u, 0, false, &address) &&
+               cpu->address_error,
+           "ordinary indirect access rejects an unset data page");
+
+    dspic33_reset(cpu, 0u);
+    registers[14] = 0x8000u;
+    expect(state,
+           dspic33_internal_resolve_operand_address(cpu, registers, 2u, 14u, 0u, 2u, false,
+                                                    &resolution),
+           "frame-pointer postdecrement resolves without pseudo-linear addressing");
+
+    cpu->data[0x0046u] = 0xffu;
+    cpu->data[0x0047u] = 0xffu;
+    expect(state,
+           dspic33_internal_modulo_address(cpu, 15u, 0x1234, 1, false) == 0x1234u &&
+               dspic33_internal_modulo_address(cpu, 0u, 0x1234, 1, false) == 0x1234u,
+           "reserved and mismatched modulo selectors preserve their addresses");
+
+    cpu->data[0x0046u] = 0x00u;
+    cpu->data[0x0047u] = 0x80u;
+    cpu->data[0x0048u] = 0x10u;
+    cpu->data[0x0049u] = 0x00u;
+    cpu->data[0x004au] = 0x0fu;
+    cpu->data[0x004bu] = 0x00u;
+    expect(state, dspic33_internal_modulo_address(cpu, 0u, 0x1234, 1, false) == 0x1234u,
+           "inverted modulo bounds preserve the requested address");
+}
+
 static void soft_trap_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     dspic33_internal_schedule_soft_trap(cpu, 1u, 0x10u, 1u, 5u);
@@ -204,6 +293,33 @@ static void soft_trap_cases(TestState* state, Dspic33* cpu) {
            "full soft-trap queue ignores an additional source");
 }
 
+static void reserved_page_register_cases(TestState* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    expect(state, dspic33_internal_execute(cpu, 0xfecc00u) && cpu->illegal_reset,
+           "reserved literal page-register selector resets the processor");
+    dspic33_reset(cpu, 0u);
+    expect(state, dspic33_internal_execute(cpu, 0xfedc00u) && cpu->illegal_reset,
+           "reserved register page-register selector resets the processor");
+}
+
+static void literal_control_boundary_cases(TestState* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    expect(state, dspic33_load_program_word(cpu, 0u, 6u), "load literal control extension");
+    cpu->pc = 0u;
+    expect(state, dspic33_internal_execute(cpu, 0x040000u) && cpu->address_error,
+           "literal branch raises an address error for an unimplemented target");
+
+    dspic33_reset(cpu, 0u);
+    cpu->pc = DSPIC33_AUXILIARY_PROGRAM_LIMIT + 0x60000u;
+    expect(state, !dspic33_internal_execute(cpu, 0x040000u) && cpu->pc == 0x60000u,
+           "literal branch normalizes an out-of-range auxiliary extension address");
+
+    dspic33_reset(cpu, 0u);
+    cpu->pc = 0x60000u;
+    expect(state, !dspic33_internal_execute(cpu, 0x080000u),
+           "DO rejects an unimplemented extension address");
+}
+
 int main(void) {
     TestState state = {0u, 0u, 0u};
     Dspic33 cpu;
@@ -215,8 +331,12 @@ int main(void) {
         divide_flag_case(&state, &cpu);
         addressing_guard_cases(&state, &cpu);
         range_cases(&state, &cpu);
+        rmw_admission_cases(&state, &cpu);
         operand_resolution_cases(&state, &cpu);
+        indirect_address_boundary_cases(&state, &cpu);
         soft_trap_cases(&state, &cpu);
+        reserved_page_register_cases(&state, &cpu);
+        literal_control_boundary_cases(&state, &cpu);
         dspic33_release(&cpu);
     }
     return test_finish(&state);

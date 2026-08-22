@@ -167,6 +167,38 @@ static void event_queue_boundary_cases(TestState* state, Dspic33* cpu) {
            "DCI frame output rejects impossible event phase");
 
     cpu->events.count = 0u;
+    expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_DCI, DCI_TEST_EVENT_SAMPLE, 2u, 0u),
+           "schedule non-phase DCI event");
+    expect(state, dspic33_device_internal_dci_frame_output(cpu, &high) && !high,
+           "DCI frame output ignores a non-phase event");
+
+    cpu->events.count = 0u;
+    expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_DCI, DCI_TEST_EVENT_INTERNAL, 1u, 0u),
+           "schedule stale DCI phase event");
+    expect(state, dspic33_device_internal_dci_frame_output(cpu, &high) && !high,
+           "DCI frame output ignores a stale phase event");
+
+    cpu->events.items[0].value = 2u;
+    cpu->events.items[0].paused = true;
+    cpu->events.items[0].paused_remaining = 0u;
+    expect(state, dspic33_device_internal_dci_frame_output(cpu, &high),
+           "DCI frame output accepts a paused current phase event");
+
+    cpu->events.count = 0u;
+    expect(state,
+           dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 0u, 0u, 0u) &&
+               dspic33_schedule(cpu, DSPIC33_EVENT_DCI, DCI_TEST_EVENT_SAMPLE, 2u, 0u) &&
+               dspic33_schedule(cpu, DSPIC33_EVENT_DCI, DCI_TEST_EVENT_INTERNAL, 1u, 0u) &&
+               dspic33_schedule(cpu, DSPIC33_EVENT_DCI, DCI_TEST_EVENT_INTERNAL, 2u, 8u),
+           "schedule mixed DCI disable events");
+    cpu->io.dci.initialized = true;
+    cpu->io.dci.started = true;
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL1, DCI_ENABLE);
+    dspic33_write_word(cpu, DCI_CONTROL1, 0u);
+    expect(state, cpu->io.dci.disable_pending,
+           "DCI disable finds its current internal phase among unrelated events");
+
+    cpu->events.count = 0u;
     expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 0u, 0u, 0u),
            "schedule unrelated event before DCI disable");
     cpu->io.dci.initialized = true;
@@ -200,6 +232,20 @@ static void output_boundary_cases(TestState* state, Dspic33* cpu) {
     dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL1, 0u);
     expect(state, !dspic33_device_internal_dci_internal_clock_high(cpu, &high),
            "PMD-disabled DCI does not own its clock");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_byte(cpu, DCI_PPS_CLOCK_FRAME_OUTPUT, 12u);
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL1, 0u);
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL2, 3u);
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL3, 0u);
+    expect(state, !dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high),
+           "unclocked DCI does not drive its mapped clock pin");
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL1, DCI_EXTERNAL_CLOCK);
+    expect(state, !dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high),
+           "disabled external DCI does not drive its mapped clock pin");
+    cpu->io.dci.disable_pending = true;
+    expect(state, !dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high),
+           "deferred DCI disable does not assign an external clock output");
 }
 
 static void register_boundary_cases(TestState* state, Dspic33* cpu) {
@@ -246,6 +292,35 @@ static void direct_event_cases(TestState* state, Dspic33* cpu) {
     dspic33_device_internal_run_dci(cpu, DCI_TEST_EVENT_EXTERNAL_FRAME, 0x1234u);
     expect(state, cpu->io.dci.started && cpu->io.dci.internal_scheduled,
            "external frame starts an internally clocked word");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL1, DCI_ENABLE);
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL2,
+                                           dspic33_dci_test_configuration(16u, 1u, 1u));
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL3, 1u);
+    cpu->io.dci.generation = 2u;
+    cpu->io.dci.initialized = true;
+    cpu->io.dci.internal_scheduled = true;
+    cpu->io.dci.pps_input_configured = true;
+    dspic33_device_internal_run_dci(cpu, DCI_TEST_EVENT_INTERNAL, 2u);
+    expect(state, cpu->io.dci.internal_scheduled,
+           "DCI reuses an existing internal event while adding its input sample");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL1, DCI_ENABLE | DCI_MODE_AC_LINK_16);
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL2,
+                                           dspic33_dci_test_configuration(20u, 1u, 1u));
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL3, 1u);
+    cpu->io.dci.generation = 3u;
+    cpu->io.dci.initialized = true;
+    cpu->io.dci.started = true;
+    cpu->io.dci.slot = 1u;
+    cpu->io.dci.input = UINT16_MAX;
+    for (uint8_t bit = 0u; bit < 20u; bit++) {
+        dspic33_device_internal_run_dci(cpu, DCI_TEST_EVENT_SAMPLE, 3u);
+    }
+    expect(state, cpu->io.dci.serial_bits == 20u && cpu->io.dci.serial_input == UINT16_MAX,
+           "20-bit DCI sampling retains all available input bits");
 }
 
 static void frame_output_cases(TestState* state, Dspic33* cpu) {
@@ -286,9 +361,67 @@ static void frame_output_cases(TestState* state, Dspic33* cpu) {
     cpu->io.dci.serial_delay = false;
     expect(state, dspic33_device_internal_dci_frame_output(cpu, &high) && high,
            "immediate external frame is high at the first slot boundary");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL1, DCI_ENABLE | DCI_MODE_I2S);
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL2,
+                                           dspic33_dci_test_configuration(16u, 2u, 1u));
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL3, 1u);
+    cpu->io.dci.generation = 1u;
+    cpu->io.dci.initialized = true;
+    cpu->io.dci.started = true;
+    cpu->io.dci.slot = 1u;
+    cpu->io.dci.output_frame_high = true;
+    expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_DCI, DCI_TEST_EVENT_INTERNAL, 1u, 0u),
+           "schedule final I2S slot phase");
+    expect(state, dspic33_device_internal_dci_frame_output(cpu, &high) && !high,
+           "final internal I2S slot previews the next frame polarity");
+}
+
+static void internal_output_phase_cases(TestState* state, Dspic33* cpu) {
+    uint32_t high_count = 0u;
+    uint32_t driven_count = 0u;
+    for (uint8_t mode = 0u; mode < 4u; mode++) {
+        for (uint8_t immediate = 0u; immediate < 2u; immediate++) {
+            for (uint8_t source = DCI_TEST_EVENT_START; source <= DCI_TEST_EVENT_INTERNAL;
+                 source++) {
+                for (uint8_t phase = 0u; phase < 4u; phase++) {
+                    bool high = false;
+                    dspic33_reset(cpu, 0u);
+                    dspic33_device_internal_raw_write_word(
+                        cpu, DCI_CONTROL1,
+                        (uint16_t)(DCI_ENABLE | mode | (immediate != 0u ? DCI_DATA_JUSTIFY : 0u) |
+                                   (phase & 1u ? DCI_SAMPLE_RISING : 0u)));
+                    dspic33_device_internal_raw_write_word(
+                        cpu, DCI_CONTROL2, dspic33_dci_test_configuration(16u, 2u, mode));
+                    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL3, 1u);
+                    cpu->io.dci.generation = 3u;
+                    cpu->io.dci.initialized = true;
+                    cpu->io.dci.started = true;
+                    cpu->io.dci.slot = phase >= 2u ? 1u : 0u;
+                    cpu->io.dci.buffer = 0u;
+                    cpu->io.dci.transmit[0] = 0xa55au;
+                    cpu->io.dci.output_frame_high = (phase & 1u) != 0u;
+                    dspic33_device_internal_raw_write_word(cpu, DCI_TRANSMIT_SLOTS, 3u);
+                    const uint64_t delay = source == DCI_TEST_EVENT_START ? (uint64_t)phase * 4u
+                                                                          : (uint64_t)phase * 16u;
+                    expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_DCI, source, 3u, delay),
+                           "schedule internal DCI output phase");
+                    expect(state, dspic33_device_internal_dci_frame_output(cpu, &high),
+                           "internal DCI frame output is available");
+                    high_count += high;
+                    driven_count += dspic33_device_internal_dci_data_output(cpu, &high);
+                    high_count += high;
+                }
+            }
+        }
+    }
+    expect(state, high_count == 62u && driven_count == 64u,
+           "internal DCI output phase census matches");
 }
 
 void dspic33_dci_test_boundary_cases(TestState* state, Dspic33* cpu) {
+    dspic33_dci_test_state_matrix_cases(state, cpu);
     stale_event_cases(state, cpu);
     scheduling_failure_cases(state, cpu);
     external_event_cases(state, cpu);
@@ -297,4 +430,5 @@ void dspic33_dci_test_boundary_cases(TestState* state, Dspic33* cpu) {
     register_boundary_cases(state, cpu);
     direct_event_cases(state, cpu);
     frame_output_cases(state, cpu);
+    internal_output_phase_cases(state, cpu);
 }

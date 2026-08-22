@@ -1,5 +1,7 @@
 #include "device/dspic33ep_mu/communication/i2c/internal.h"
 
+void dspic33_device_internal_raw_write_word(Dspic33* cpu, uint16_t address, uint16_t value);
+
 bool dspic33_i2c_test_interrupt_flag(Dspic33* cpu, uint8_t irq) {
     uint16_t address = (uint16_t)(0x0800u + (irq / 16u) * 2u);
     return (dspic33_read_word(cpu, address) & (uint16_t)(1u << (irq % 16u))) != 0u;
@@ -633,12 +635,49 @@ void dspic33_i2c_test_slave_acknowledgement_cases(TestState* state, Dspic33* cpu
                "disabled general call negative acknowledgement output");
 
         dspic33_reset(cpu, 0u);
-        dspic33_i2c_test_enable(cpu, channel, 0x0800u, 0u);
+        dspic33_i2c_test_enable(cpu, channel, 0u, 0u);
+        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(base + 6u), 0x9800u);
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0u, false, false, 0u) &&
                    dspic33_device_advance(cpu, 0u) &&
                    dspic33_i2c_test_pop_slave_acknowledgement(cpu, channel, true),
                "IPMI general call acknowledgement output");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_i2c_test_enable(cpu, channel, 0u, 0u);
+        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(base + 6u), 0x9800u);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   dspic33_i2c_test_pop_slave_acknowledgement(cpu, channel, true),
+               "IPMI accepts a ten-bit high address");
+        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(base + 6u), 0x9800u);
+        bool ipmi_advanced = dspic33_device_advance(cpu, 1u);
+        expect(state,
+               ipmi_advanced && cpu->io.i2c_tx[channel].count == 1u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0142u) == 0x0142u,
+               "IPMI ten-bit continuation records unread overflow");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_i2c_test_enable(cpu, channel, 0u, 0u);
+        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(base + 6u), 0x9800u);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x52u, true, false, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   dspic33_i2c_test_pop_slave_acknowledgement(cpu, channel, true) &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) != 0u,
+               "IPMI read releases the slave clock");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
+        dspic33_i2c_test_enable(cpu, channel, 0u, 0u);
+        expect(state,
+               dspic33_i2c_slave_start(cpu, channel, 0x52u, false, false, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   dspic33_i2c_slave_start(cpu, channel, 0x52u, false, false, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0040u) != 0u,
+               "repeated unread slave address sets overflow");
 
         dspic33_reset(cpu, 0u);
         dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x02abu);
