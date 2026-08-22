@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdlib.h>
 
 #include "architecture/dspic33/execution/internal.h"
 #include "test.h"
@@ -31,37 +32,59 @@ static void prepare_cpu(Dspic33* cpu, uint8_t state) {
     cpu->accumulator[1] = state == 3u ? -INT64_C(0x8000000000) : 0;
 }
 
-static Census census_encodings(Dspic33* cpu) {
-    static const uint8_t low_bytes[] = {0x00u, 0x3cu, 0xa5u, 0xffu};
+static Census census_encodings(Dspic33* cpu, uint8_t shard) {
     Census census = {0u, 0u, UINT64_C(14695981039346656037)};
-    for (uint8_t state = 0u; state < 4u; state++) {
-        for (uint32_t high = 0u; high <= UINT16_MAX; high++) {
-            const uint32_t opcode = (high << 8u) | low_bytes[state];
-            prepare_cpu(cpu, state);
-            const bool executed = dspic33_internal_execute(cpu, opcode);
-            census.examined++;
-            census.executed += executed;
-            census.fingerprint = mix(census.fingerprint, opcode);
-            census.fingerprint = mix(census.fingerprint, executed);
-            census.fingerprint = mix(census.fingerprint, cpu->w[0]);
-            census.fingerprint = mix(census.fingerprint, cpu->w[15]);
-            census.fingerprint = mix(census.fingerprint, cpu->sr);
-            census.fingerprint = mix(census.fingerprint, (uint32_t)cpu->accumulator[0]);
-        }
+    const uint32_t first = (uint32_t)shard << 20u;
+    const uint32_t last = first | 0x000fffffu;
+    for (uint32_t opcode = first; opcode <= last; opcode++) {
+        const uint8_t state = (uint8_t)((opcode ^ (opcode >> 8u) ^ (opcode >> 16u)) & 3u);
+        prepare_cpu(cpu, state);
+        const bool executed = dspic33_internal_execute(cpu, opcode);
+        census.examined++;
+        census.executed += executed;
+        census.fingerprint = mix(census.fingerprint, opcode);
+        census.fingerprint = mix(census.fingerprint, executed);
+        census.fingerprint = mix(census.fingerprint, cpu->w[0]);
+        census.fingerprint = mix(census.fingerprint, cpu->w[15]);
+        census.fingerprint = mix(census.fingerprint, cpu->sr);
+        census.fingerprint = mix(census.fingerprint, (uint32_t)cpu->accumulator[0]);
     }
     return census;
 }
 
-int main(void) {
+int main(int argc, char** argv) {
+    char* end = NULL;
+    const unsigned long parsed = argc == 2 ? strtoul(argv[1], &end, 10) : 0u;
     TestState state = {0};
+    const bool valid_shard =
+        argc == 1 || (argc == 2 && end != argv[1] && *end == '\0' && parsed < 16u);
+    expect(&state, valid_shard, "encoding census shard is valid");
+    if (!valid_shard) {
+        return test_finish(&state);
+    }
+    const uint8_t shard = (uint8_t)parsed;
+    static const uint64_t expected_executed[16] = {
+        753678u,  1048576u, 1048576u, 1048576u, 1048576u, 1048576u, 1048576u, 1048576u,
+        1048576u, 1048576u, 1048576u, 966656u,  809990u,  851968u,  917504u,  761856u,
+    };
+    static const uint64_t expected_fingerprints[16] = {
+        UINT64_C(14964596877420212897), UINT64_C(16725181896822591465),
+        UINT64_C(17321065357767263013), UINT64_C(4091026983387374373),
+        UINT64_C(3221232769131753183),  UINT64_C(12576375436086507549),
+        UINT64_C(12291876438187873379), UINT64_C(4888425759874588143),
+        UINT64_C(5492311514045076926),  UINT64_C(17553851555242393381),
+        UINT64_C(17381637338125438433), UINT64_C(3814139495123522791),
+        UINT64_C(12991544788716398853), UINT64_C(9055134474333162009),
+        UINT64_C(4562474805774009176),  UINT64_C(3251569668013103597),
+    };
     Dspic33 cpu;
     const bool initialized = dspic33_initialize(&cpu);
     expect(&state, initialized, "cpu initialized");
     if (initialized) {
-        const Census census = census_encodings(&cpu);
+        const Census census = census_encodings(&cpu, shard);
         expect(&state,
-               census.examined == 262144u && census.executed == 243589u &&
-                   census.fingerprint == UINT64_C(10547362093158882567),
+               census.examined == 1048576u && census.executed == expected_executed[shard] &&
+                   census.fingerprint == expected_fingerprints[shard],
                "instruction encoding census matches");
         dspic33_release(&cpu);
     }

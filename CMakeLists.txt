@@ -154,6 +154,14 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     processor_encoding_census
     tests/architecture/dspic33/execution/encoding_census_test.c
     "core;unit;integration")
+  foreach(shard RANGE 1 15)
+    add_test(
+      NAME dspic33ep_mu_processor_encoding_census_test_shard_${shard}
+      COMMAND dspic33ep_mu_processor_encoding_census_test ${shard})
+    set_tests_properties(
+      dspic33ep_mu_processor_encoding_census_test_shard_${shard}
+      PROPERTIES LABELS "core;unit;integration")
+  endforeach()
   dspic33ep_mu_add_test(
     processor_state_census
     tests/architecture/dspic33/execution/state_census_test.c

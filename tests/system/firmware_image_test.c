@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "dspic33_firmware_image.h"
@@ -11,6 +12,8 @@ enum {
     SYMBOL_OFFSET = ELF_HEADER_SIZE + 3 * ELF_SECTION_SIZE,
     STRING_OFFSET = SYMBOL_OFFSET + 16,
     SYMBOL_IMAGE_SIZE = STRING_OFFSET + 7,
+    MALFORMED_STRING_OFFSET = SYMBOL_OFFSET + 24,
+    MALFORMED_SYMBOL_IMAGE_SIZE = MALFORMED_STRING_OFFSET + 6,
 };
 
 static void write16(uint8_t* data, size_t offset, uint16_t value) {
@@ -78,6 +81,50 @@ static void initialize_symbol_image(uint8_t* image) {
     memcpy(image + STRING_OFFSET, "\0_test", 7u);
 }
 
+static bool write_file(const char* path, const void* data, size_t size) {
+    FILE* file = fopen(path, "wb");
+    if (file == NULL) {
+        return false;
+    }
+    const bool written = fwrite(data, 1u, size, file) == size;
+    return fclose(file) == 0 && written;
+}
+
+static void test_files(TestState* state, Dspic33* cpu) {
+    static const char elf_path[] = "dspic33_firmware_image_test.elf";
+    static const char binary_path[] = "dspic33_firmware_image_test.bin";
+    static const char missing_path[] = "dspic33_missing_firmware_image.bin";
+    uint8_t elf[IMAGE_SIZE];
+    const uint8_t binary[] = {0x56u, 0x34u, 0x12u, 0u};
+    char error[160] = {0};
+    FirmwareImage image;
+    initialize_image(elf);
+    expect(state, write_file(elf_path, elf, sizeof(elf)), "write ELF file");
+    expect(state, firmware_image_open(&image, elf_path, error, sizeof(error)),
+           "firmware_image_open ELF");
+    expect(state, image.type == FIRMWARE_IMAGE_ELF, "file image type is ELF");
+    expect(state, firmware_image_load_program(&image, cpu, error, sizeof(error)),
+           "firmware_image_load_program ELF");
+    firmware_image_close(&image);
+    expect(state, write_file(binary_path, binary, sizeof(binary)), "write binary file");
+    expect(state, firmware_image_open(&image, binary_path, error, sizeof(error)),
+           "firmware_image_open binary");
+    expect(state, image.type == FIRMWARE_IMAGE_BINARY, "file image type is binary");
+    expect(state, firmware_image_load_program(&image, cpu, error, sizeof(error)),
+           "firmware_image_load_program binary");
+    uint32_t address = 0u;
+    expect(state, !firmware_image_symbol(&image, "missing", &address, error, sizeof(error)),
+           "binary firmware symbol is rejected");
+    firmware_image_close(&image);
+    expect(state, write_file(elf_path, elf, 4u), "write truncated ELF file");
+    expect(state, !firmware_image_open(&image, elf_path, error, sizeof(error)),
+           "truncated file ELF is rejected");
+    expect(state, !firmware_image_open(&image, missing_path, error, sizeof(error)),
+           "missing firmware image is rejected");
+    (void)remove(elf_path);
+    (void)remove(binary_path);
+}
+
 static void test_binary(TestState* state, Dspic33* cpu) {
     const uint8_t image[] = {0x56u, 0x34u, 0x12u, 0u};
     uint32_t entry = UINT32_MAX;
@@ -109,6 +156,24 @@ static void test_elf(TestState* state, Dspic33* cpu) {
     initialize_image(image);
     expect(state, dspic33_load_elf_data(cpu, image, sizeof(image), NULL),
            "dspic33_load_elf_data(cpu, image, sizeof(image), NULL)");
+    expect(state, !dspic33_load_elf_data(cpu, image, ELF_HEADER_SIZE - 1u, &entry),
+           "truncated ELF header is rejected");
+    initialize_image(image);
+    image[4] = 2u;
+    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry),
+           "ELF64 image is rejected");
+    initialize_image(image);
+    write16(image, 46u, ELF_SECTION_SIZE - 1u);
+    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry),
+           "short section header is rejected");
+    initialize_image(image);
+    write32(image, 32u, UINT32_MAX);
+    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry),
+           "out-of-range section table is rejected");
+    initialize_image(image);
+    write32(image, ELF_HEADER_SIZE + ELF_SECTION_SIZE + 20u, 3u);
+    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry),
+           "unaligned program section is rejected");
 }
 
 static void test_symbol(TestState* state) {
@@ -122,6 +187,16 @@ static void test_symbol(TestState* state) {
            "!dspic33_elf_symbol_data(image, sizeof(image), missing, &address)");
     expect(state, !dspic33_elf_symbol_data(image, sizeof(image), NULL, &address),
            "!dspic33_elf_symbol_data(image, sizeof(image), NULL, &address)");
+    uint8_t malformed[MALFORMED_SYMBOL_IMAGE_SIZE] = {0};
+    initialize_symbol_image(malformed);
+    write32(malformed, ELF_HEADER_SIZE + ELF_SECTION_SIZE + 20u, 17u);
+    write32(malformed, ELF_HEADER_SIZE + 2u * ELF_SECTION_SIZE + 16u, MALFORMED_STRING_OFFSET);
+    write32(malformed, ELF_HEADER_SIZE + 2u * ELF_SECTION_SIZE + 20u, 6u);
+    write32(malformed, SYMBOL_OFFSET + 16u, 1u);
+    write32(malformed, SYMBOL_OFFSET + 20u, 0xdeadu);
+    memcpy(malformed + MALFORMED_STRING_OFFSET, "\0test", 6u);
+    expect(state, !dspic33_elf_symbol_data(malformed, sizeof(malformed), "test", &address),
+           "partial symbol entry is rejected");
 }
 
 int main(void) {
@@ -131,6 +206,7 @@ int main(void) {
     test_binary(&state, cpu);
     test_elf(&state, cpu);
     test_symbol(&state);
+    test_files(&state, cpu);
     dspic33_destroy(cpu);
     return test_finish(&state);
 }

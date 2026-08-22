@@ -207,7 +207,8 @@ bool elf_image_symbol(const ElfImage* image, const char* name, uint32_t* address
         Section strings;
         uint32_t position;
         if (symbols.type != ELF_SECTION_SYMTAB || symbols.entry_size != ELF_SYMBOL_SIZE ||
-            symbols.link >= count || !range_valid(image->size, symbols.offset, symbols.size)) {
+            (symbols.size % ELF_SYMBOL_SIZE) != 0u || symbols.link >= count ||
+            !range_valid(image->size, symbols.offset, symbols.size)) {
             continue;
         }
         strings = read_section(image, table, (uint16_t)symbols.link);
