@@ -13,8 +13,47 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 set(dspic33ep_mu_simulator_sources
-    src/core/dspic33.c src/device/device.c src/device/dspic33ep_mu_data.c
-    src/device/i2c.c)
+    src/architecture/dspic33/execution/addressing.c
+    src/architecture/dspic33/execution/instructions.c
+    src/architecture/dspic33/execution/reset.c
+    src/architecture/dspic33/execution/run.c
+    src/architecture/dspic33/execution/state.c
+    src/architecture/dspic33/execution/traps.c
+    src/device/dspic33ep_mu/analog/adc.c
+    src/device/dspic33ep_mu/analog/comparator.c
+    src/device/dspic33ep_mu/communication/can/bus.c
+    src/device/dspic33ep_mu/communication/can/controller.c
+    src/device/dspic33ep_mu/communication/can/registers.c
+    src/device/dspic33ep_mu/communication/dci.c
+    src/device/dspic33ep_mu/communication/i2c/controller.c
+    src/device/dspic33ep_mu/communication/i2c/slave.c
+    src/device/dspic33ep_mu/communication/pmp.c
+    src/device/dspic33ep_mu/communication/serial/dma.c
+    src/device/dspic33ep_mu/communication/serial/read_completion.c
+    src/device/dspic33ep_mu/communication/spi.c
+    src/device/dspic33ep_mu/communication/uart.c
+    src/device/dspic33ep_mu/communication/usb/runtime.c
+    src/device/dspic33ep_mu/communication/usb/registers.c
+    src/device/dspic33ep_mu/control/input_capture.c
+    src/device/dspic33ep_mu/control/output_compare/runtime.c
+    src/device/dspic33ep_mu/control/output_compare/state.c
+    src/device/dspic33ep_mu/control/pwm.c
+    src/device/dspic33ep_mu/control/qei.c
+    src/device/dspic33ep_mu/memory/crc.c
+    src/device/dspic33ep_mu/memory/dma/runtime.c
+    src/device/dspic33ep_mu/memory/dma/registers.c
+    src/device/dspic33ep_mu/memory/registers.c
+    src/device/dspic33ep_mu/platform/gpio/runtime.c
+    src/device/dspic33ep_mu/platform/gpio/inputs.c
+    src/device/dspic33ep_mu/platform/register_updates.c
+    src/device/dspic33ep_mu/platform/write_access.c
+    src/device/dspic33ep_mu/timing/rtcc.c
+    src/device/dspic33ep_mu/timing/timers.c
+    src/device/dspic33ep_mu/timing/oscillator/registers.c
+    src/device/dspic33ep_mu/common.c
+    src/device/dspic33ep_mu/data.c
+    src/device/dspic33ep_mu/peripherals.c
+    src/device/dspic33ep_mu/runtime.c)
 
 add_library(dspic33ep_mu_simulator STATIC ${dspic33ep_mu_simulator_sources})
 add_library(dspic33ep_mu::simulator ALIAS dspic33ep_mu_simulator)
@@ -29,7 +68,7 @@ add_executable(dspic33ep_mu::firmware_runner ALIAS dspic33ep_mu_firmware_runner)
 target_include_directories(
   dspic33ep_mu_simulator
   PUBLIC include
-  PRIVATE src/core src/device)
+  PRIVATE src)
 target_include_directories(dspic33ep_mu_firmware_image PUBLIC include)
 target_compile_features(dspic33ep_mu_simulator PUBLIC c_std_11)
 target_compile_features(dspic33ep_mu_firmware_image PUBLIC c_std_11)
@@ -58,8 +97,8 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     set(target "dspic33ep_mu_${name}_test")
     add_executable(${target} ${source} ${ARGN})
     target_compile_features(${target} PRIVATE c_std_11)
-    target_include_directories(${target} PRIVATE tests/support src/core
-                                                 src/device src/image)
+    target_include_directories(${target} PRIVATE tests tests/support src
+                                                 src/image)
     target_link_libraries(${target} PRIVATE dspic33ep_mu_simulator)
     if(MSVC)
       target_compile_options(${target} PRIVATE /W4 /WX)
@@ -70,89 +109,164 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     set_tests_properties(${target} PROPERTIES LABELS "${labels}")
   endfunction()
 
-  dspic33ep_mu_add_test(event_scheduler tests/core/event_scheduler_test.c
-                        "core;integration")
-  dspic33ep_mu_add_test(core_api tests/core/api_test.c "core;unit;integration")
-  dspic33ep_mu_add_test(processor_fault tests/core/processor_fault_test.c
-                        "core;integration")
-  dspic33ep_mu_add_test(processor_timing tests/core/processor_timing_test.c
-                        "core;integration")
-  dspic33ep_mu_add_test(processor_data tests/core/processor_data_test.c
-                        "core;integration")
-  dspic33ep_mu_add_test(processor_control tests/core/processor_control_test.c
-                        "core;integration")
+  dspic33ep_mu_add_test(
+    event_scheduler tests/architecture/dspic33/timing/events_test.c
+    "core;integration")
+  dspic33ep_mu_add_test(core_api tests/architecture/dspic33/api/api_test.c
+                        "core;unit;integration")
+  dspic33ep_mu_add_test(
+    processor_fault
+    tests/architecture/dspic33/exceptions/fault/address.c
+    "core;integration"
+    tests/architecture/dspic33/exceptions/fault/exceptions.c
+    tests/architecture/dspic33/exceptions/fault/traps.c
+    tests/architecture/dspic33/exceptions/fault/main.c)
+  dspic33ep_mu_add_test(
+    processor_timing tests/architecture/dspic33/timing/instructions/cycles.c
+    "core;integration" tests/architecture/dspic33/timing/instructions/errata.c
+    tests/architecture/dspic33/timing/instructions/main.c)
+  dspic33ep_mu_add_test(
+    processor_data
+    tests/architecture/dspic33/execution/data/loops.c
+    "core;integration"
+    tests/architecture/dspic33/execution/data/arithmetic.c
+    tests/architecture/dspic33/execution/data/memory.c
+    tests/architecture/dspic33/execution/data/dsp.c
+    tests/architecture/dspic33/execution/data/edge.c
+    tests/architecture/dspic33/execution/data/main.c)
+  dspic33ep_mu_add_test(
+    processor_control
+    tests/architecture/dspic33/execution/control/branches.c
+    "core;integration"
+    tests/architecture/dspic33/execution/control/flow.c
+    tests/architecture/dspic33/execution/control/system.c
+    tests/architecture/dspic33/execution/control/main.c)
 
-  dspic33ep_mu_add_test(adc tests/device/analog/adc_test.c "device;integration")
-  dspic33ep_mu_add_test(
-    auxiliary_clock tests/device/timing/auxiliary_clock_test.c
-    "device;integration")
-  dspic33ep_mu_add_test(can tests/device/communication/can_test.c
-                        "device;integration")
-  dspic33ep_mu_add_test(comparator tests/device/analog/comparator_test.c
-                        "device;integration")
-  dspic33ep_mu_add_test(core_sfr tests/device/platform/core_sfr_test.c
-                        "device;integration")
-  dspic33ep_mu_add_test(crc tests/device/memory/crc_test.c "device;integration")
-  dspic33ep_mu_add_test(dci tests/device/communication/dci_test.c
-                        "device;integration")
-  dspic33ep_mu_add_test(device_data tests/device/memory/device_data_test.c
-                        "device;unit")
-  dspic33ep_mu_add_test(dma tests/device/memory/dma_test.c "device;integration")
-  dspic33ep_mu_add_test(gpio tests/device/platform/gpio_test.c
-                        "device;integration")
-  dspic33ep_mu_add_test(i2c tests/device/communication/i2c_test.c
-                        "device;integration")
-  dspic33ep_mu_add_test(input_capture tests/device/control/input_capture_test.c
+  dspic33ep_mu_add_test(adc tests/device/dspic33ep_mu/analog/adc_test.c
                         "device;integration")
   dspic33ep_mu_add_test(
-    interrupt_control tests/device/platform/interrupt_control_test.c
+    auxiliary_clock tests/device/dspic33ep_mu/timing/auxiliary_clock_test.c
     "device;integration")
-  dspic33ep_mu_add_test(nvm tests/device/memory/nvm_test.c "device;integration")
+  dspic33ep_mu_add_test(
+    can
+    tests/device/dspic33ep_mu/communication/can/registers.c
+    "device;integration"
+    tests/device/dspic33ep_mu/communication/can/receive.c
+    tests/device/dspic33ep_mu/communication/can/bus.c
+    tests/device/dspic33ep_mu/communication/can/errors.c
+    tests/device/dspic33ep_mu/communication/can/main.c)
+  dspic33ep_mu_add_test(
+    comparator tests/device/dspic33ep_mu/analog/comparator/registers.c
+    "device;integration" tests/device/dspic33ep_mu/analog/comparator/behavior.c)
+  dspic33ep_mu_add_test(
+    core_sfr tests/device/dspic33ep_mu/platform/core_sfr_test.c
+    "device;integration")
+  dspic33ep_mu_add_test(crc tests/device/dspic33ep_mu/memory/crc_test.c
+                        "device;integration")
+  dspic33ep_mu_add_test(
+    dci
+    tests/device/dspic33ep_mu/communication/dci/registers.c
+    "device;integration"
+    tests/device/dspic33ep_mu/communication/dci/transfer.c
+    tests/device/dspic33ep_mu/communication/dci/clock.c
+    tests/device/dspic33ep_mu/communication/dci/main.c)
+  dspic33ep_mu_add_test(
+    device_data tests/device/dspic33ep_mu/memory/device_data_test.c
+    "device;unit")
+  dspic33ep_mu_add_test(dma tests/device/dspic33ep_mu/memory/dma_test.c
+                        "device;integration")
+  dspic33ep_mu_add_test(gpio tests/device/dspic33ep_mu/platform/gpio_test.c
+                        "device;integration")
+  dspic33ep_mu_add_test(
+    i2c
+    tests/device/dspic33ep_mu/communication/i2c/registers.c
+    "device;integration"
+    tests/device/dspic33ep_mu/communication/i2c/master.c
+    tests/device/dspic33ep_mu/communication/i2c/slave.c
+    tests/device/dspic33ep_mu/communication/i2c/pins.c)
+  dspic33ep_mu_add_test(
+    input_capture tests/device/dspic33ep_mu/control/input_capture/registers.c
+    "device;integration"
+    tests/device/dspic33ep_mu/control/input_capture/events.c)
+  dspic33ep_mu_add_test(
+    interrupt_control
+    tests/device/dspic33ep_mu/platform/interrupt_control_test.c
+    "device;integration")
+  dspic33ep_mu_add_test(
+    nvm
+    tests/device/dspic33ep_mu/memory/nvm/registers.c
+    "device;integration"
+    tests/device/dspic33ep_mu/memory/nvm/commands.c
+    tests/device/dspic33ep_mu/memory/nvm/flash.c
+    tests/device/dspic33ep_mu/memory/nvm/main.c)
   target_link_libraries(dspic33ep_mu_nvm_test
                         PRIVATE dspic33ep_mu_firmware_image)
-  dspic33ep_mu_add_test(oscillator tests/device/timing/oscillator_test.c
-                        "device;integration")
   dspic33ep_mu_add_test(
-    output_compare_basic tests/device/control/output_compare_basic_test.c
+    oscillator
+    tests/device/dspic33ep_mu/timing/oscillator/configuration.c
+    "device;integration"
+    tests/device/dspic33ep_mu/timing/oscillator/switching.c
+    tests/device/dspic33ep_mu/timing/oscillator/main.c)
+  dspic33ep_mu_add_test(
+    output_compare_basic
+    tests/device/dspic33ep_mu/control/output_compare_basic_test.c
     "device;integration")
   dspic33ep_mu_add_test(
-    output_compare_fault tests/device/control/output_compare_fault_test.c
+    output_compare_fault
+    tests/device/dspic33ep_mu/control/output_compare_fault_test.c
     "device;integration")
   dspic33ep_mu_add_test(
-    output_compare_cascade tests/device/control/output_compare_cascade_test.c
+    output_compare_cascade
+    tests/device/dspic33ep_mu/control/output_compare_cascade_test.c
     "device;integration")
   dspic33ep_mu_add_test(
-    output_compare_power tests/device/control/output_compare_power_test.c
+    output_compare_power
+    tests/device/dspic33ep_mu/control/output_compare_power_test.c
     "device;integration")
   dspic33ep_mu_add_test(
-    output_compare_sync tests/device/control/output_compare_sync_test.c
+    output_compare_sync
+    tests/device/dspic33ep_mu/control/output_compare_sync/source.c
+    "device;integration"
+    tests/device/dspic33ep_mu/control/output_compare_sync/synchronization.c
+    tests/device/dspic33ep_mu/control/output_compare_sync/main.c)
+  dspic33ep_mu_add_test(
+    pmp tests/device/dspic33ep_mu/communication/pmp/registers.c
+    "device;integration" tests/device/dspic33ep_mu/communication/pmp/master.c
+    tests/device/dspic33ep_mu/communication/pmp/slave.c)
+  dspic33ep_mu_add_test(pps tests/device/dspic33ep_mu/platform/pps_test.c
+                        "device;integration")
+  dspic33ep_mu_add_test(
+    pwm tests/device/dspic33ep_mu/control/pwm/configuration.c
+    "device;integration" tests/device/dspic33ep_mu/control/pwm/waveforms.c)
+  dspic33ep_mu_add_test(
+    qei tests/device/dspic33ep_mu/control/qei/registers.c "device;integration"
+    tests/device/dspic33ep_mu/control/qei/events.c)
+  dspic33ep_mu_add_test(reset tests/device/dspic33ep_mu/platform/reset_test.c
+                        "device;integration")
+  dspic33ep_mu_add_test(rtcc tests/device/dspic33ep_mu/timing/rtcc_test.c
+                        "device;integration")
+  dspic33ep_mu_add_test(
+    sfr_access tests/device/dspic33ep_mu/platform/sfr_access_test.c
     "device;integration")
-  dspic33ep_mu_add_test(pmp tests/device/communication/pmp_test.c
+  dspic33ep_mu_add_test(
+    sfr_reset tests/device/dspic33ep_mu/platform/sfr_reset_test.c
+    "device;integration")
+  dspic33ep_mu_add_test(
+    spi tests/device/dspic33ep_mu/communication/spi/registers.c
+    "device;integration" tests/device/dspic33ep_mu/communication/spi/master.c
+    tests/device/dspic33ep_mu/communication/spi/slave.c)
+  dspic33ep_mu_add_test(timer tests/device/dspic33ep_mu/timing/timer_test.c
                         "device;integration")
-  dspic33ep_mu_add_test(pps tests/device/platform/pps_test.c
-                        "device;integration")
-  dspic33ep_mu_add_test(pwm tests/device/control/pwm_test.c
-                        "device;integration")
-  dspic33ep_mu_add_test(qei tests/device/control/qei_test.c
-                        "device;integration")
-  dspic33ep_mu_add_test(reset tests/device/platform/reset_test.c
-                        "device;integration")
-  dspic33ep_mu_add_test(rtcc tests/device/timing/rtcc_test.c
-                        "device;integration")
-  dspic33ep_mu_add_test(sfr_access tests/device/platform/sfr_access_test.c
-                        "device;integration")
-  dspic33ep_mu_add_test(sfr_reset tests/device/platform/sfr_reset_test.c
-                        "device;integration")
-  dspic33ep_mu_add_test(spi tests/device/communication/spi_test.c
-                        "device;integration")
-  dspic33ep_mu_add_test(timer tests/device/timing/timer_test.c
-                        "device;integration")
-  dspic33ep_mu_add_test(uart tests/device/communication/uart_test.c
-                        "device;integration")
-  dspic33ep_mu_add_test(usb tests/device/communication/usb_test.c
-                        "device;integration")
-  dspic33ep_mu_add_test(watchdog tests/device/timing/watchdog_test.c
-                        "device;integration")
+  dspic33ep_mu_add_test(
+    uart tests/device/dspic33ep_mu/communication/uart_test.c
+    "device;integration")
+  dspic33ep_mu_add_test(
+    usb tests/device/dspic33ep_mu/communication/usb/registers.c
+    "device;integration"
+    tests/device/dspic33ep_mu/communication/usb/transactions.c)
+  dspic33ep_mu_add_test(
+    watchdog tests/device/dspic33ep_mu/timing/watchdog_test.c
+    "device;integration")
   dspic33ep_mu_add_test(firmware_image tests/system/firmware_image_test.c
                         "runner;system")
   target_link_libraries(dspic33ep_mu_firmware_image_test

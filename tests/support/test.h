@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include "dspic33_internal.h"
+#include "architecture/dspic33/internal.h"
 
 typedef struct {
     uint32_t cases;
