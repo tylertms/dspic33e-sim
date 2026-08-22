@@ -845,6 +845,9 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value);
 void dspic33_write_word(Dspic33* cpu, uint32_t address, uint16_t value);
 uint8_t dspic33_read_byte(Dspic33* cpu, uint32_t address);
 uint16_t dspic33_read_word(Dspic33* cpu, uint32_t address);
+uint64_t dspic33_get_uninitialized_data_read_count(const Dspic33* cpu);
+uint32_t dspic33_get_first_uninitialized_data_read(const Dspic33* cpu);
+void dspic33_clear_uninitialized_data_reads(Dspic33* cpu);
 bool dspic33_schedule(Dspic33* cpu, Dspic33EventType type, uint16_t source, uint32_t value,
                       uint64_t delay);
 bool dspic33_schedule_external(Dspic33* cpu, Dspic33EventType type, uint16_t source, uint32_t value,

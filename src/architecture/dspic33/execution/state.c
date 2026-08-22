@@ -530,6 +530,50 @@ uint16_t dspic33_internal_read_data_word(Dspic33* cpu, uint32_t address) {
     return dspic33_read_word(cpu, address);
 }
 
+void dspic33_internal_mark_data_write(Dspic33* cpu, uint32_t address, uint8_t width) {
+    if (address < 0x1000u || address + width > DSPIC33_DATA_SIZE) {
+        return;
+    }
+    memset(&cpu->initialized_data[address], 1, width);
+}
+
+void dspic33_internal_record_data_read(Dspic33* cpu, uint32_t address, uint8_t width) {
+    if ((!cpu->instruction_active && !cpu->io.dma_transfer_active) || address < 0x1000u ||
+        address + width > DSPIC33_DATA_SIZE) {
+        return;
+    }
+    for (uint8_t offset = 0u; offset < width; offset++) {
+        if (!dspic33_internal_data_byte_is_implemented(cpu, address + offset)) {
+            return;
+        }
+        if (cpu->initialized_data[address + offset] == 0u) {
+            if (cpu->uninitialized_data_read_count == 0u) {
+                cpu->first_uninitialized_data_read = address + offset;
+            }
+            cpu->uninitialized_data_read_count++;
+            return;
+        }
+    }
+}
+
+uint64_t dspic33_get_uninitialized_data_read_count(const Dspic33* cpu) {
+    return cpu == NULL ? 0u : cpu->uninitialized_data_read_count;
+}
+
+uint32_t dspic33_get_first_uninitialized_data_read(const Dspic33* cpu) {
+    return cpu == NULL || cpu->uninitialized_data_read_count == 0u
+               ? UINT32_MAX
+               : cpu->first_uninitialized_data_read;
+}
+
+void dspic33_clear_uninitialized_data_reads(Dspic33* cpu) {
+    if (cpu == NULL) {
+        return;
+    }
+    cpu->uninitialized_data_read_count = 0u;
+    cpu->first_uninitialized_data_read = UINT32_MAX;
+}
+
 uint16_t dspic33_internal_read_file_word(Dspic33* cpu, uint16_t address) {
     uint16_t value;
     if ((address & 1u) == 0u) {

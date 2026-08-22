@@ -10,6 +10,7 @@ struct Dspic33 {
     uint32_t* persistent_program;
     uint32_t write_latches[DSPIC33_WRITE_LATCH_WORDS];
     uint8_t* data;
+    uint8_t* initialized_data;
     uint8_t configuration[DSPIC33_CONFIGURATION_SIZE];
     uint16_t w[16];
     uint16_t shadow_w[4];
@@ -56,6 +57,8 @@ struct Dspic33 {
     uint32_t instruction_rmw_read_address;
     uint8_t instruction_rmw_read_width;
     uint8_t* var_write_domains;
+    uint64_t uninitialized_data_read_count;
+    uint32_t first_uninitialized_data_read;
     uint64_t instructions;
     uint64_t cycles;
     uint64_t device_cycles;

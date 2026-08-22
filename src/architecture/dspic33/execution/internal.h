@@ -127,6 +127,8 @@ bool dspic33_internal_instruction_changes_program_flow(const Dspic33* cpu, uint3
                                                        uint32_t instruction_pc);
 bool dspic33_internal_instruction_rmw_write_matches(const Dspic33* cpu, uint32_t address,
                                                     uint8_t width);
+void dspic33_internal_mark_data_write(Dspic33* cpu, uint32_t address, uint8_t width);
+void dspic33_internal_record_data_read(Dspic33* cpu, uint32_t address, uint8_t width);
 bool dspic33_internal_literal_control_extension_valid(uint32_t extension);
 bool dspic33_internal_literal_control_first_word_valid(uint32_t opcode);
 bool dspic33_internal_long_control_transfer(uint32_t opcode, uint8_t* source, bool* call);

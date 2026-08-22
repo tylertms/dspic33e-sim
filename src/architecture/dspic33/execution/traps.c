@@ -883,9 +883,10 @@ bool dspic33_initialize_for_device(Dspic33* cpu, Dspic33epMuDevice device) {
     cpu->persistent_program =
         calloc(DSPIC33_PERSISTENT_PROGRAM_WORDS, sizeof(*cpu->persistent_program));
     cpu->data = calloc(DSPIC33_DATA_SIZE, sizeof(*cpu->data));
+    cpu->initialized_data = calloc(DSPIC33_DATA_SIZE, sizeof(*cpu->initialized_data));
     cpu->var_write_domains = calloc(DSPIC33_DATA_SIZE / 4u, sizeof(*cpu->var_write_domains));
     if (cpu->program == NULL || cpu->auxiliary_program == NULL || cpu->persistent_program == NULL ||
-        cpu->data == NULL || cpu->var_write_domains == NULL) {
+        cpu->data == NULL || cpu->initialized_data == NULL || cpu->var_write_domains == NULL) {
         dspic33_release(cpu);
         return false;
     }
@@ -919,12 +920,14 @@ void dspic33_release(Dspic33* cpu) {
     free(cpu->auxiliary_program);
     free(cpu->persistent_program);
     free(cpu->data);
+    free(cpu->initialized_data);
     free(cpu->var_write_domains);
     free(cpu->events.items);
     cpu->program = NULL;
     cpu->auxiliary_program = NULL;
     cpu->persistent_program = NULL;
     cpu->data = NULL;
+    cpu->initialized_data = NULL;
     cpu->var_write_domains = NULL;
     cpu->events.items = NULL;
     cpu->events.count = 0u;
@@ -961,6 +964,7 @@ bool dspic33_copy(Dspic33* destination, const Dspic33* source) {
     uint32_t* auxiliary_program = destination->auxiliary_program;
     uint32_t* persistent_program = destination->persistent_program;
     uint8_t* data = destination->data;
+    uint8_t* initialized_data = destination->initialized_data;
     uint8_t* var_write_domains = destination->var_write_domains;
     if (event_capacity < source->events.count) {
         Dspic33Event* resized =
@@ -977,6 +981,7 @@ bool dspic33_copy(Dspic33* destination, const Dspic33* source) {
     memcpy(persistent_program, source->persistent_program,
            DSPIC33_PERSISTENT_PROGRAM_WORDS * sizeof(*persistent_program));
     memcpy(data, source->data, DSPIC33_DATA_SIZE);
+    memcpy(initialized_data, source->initialized_data, DSPIC33_DATA_SIZE);
     memcpy(var_write_domains, source->var_write_domains, DSPIC33_DATA_SIZE / 4u);
     if (source->events.count != 0u) {
         memcpy(events, source->events.items, source->events.count * sizeof(*source->events.items));
@@ -986,6 +991,7 @@ bool dspic33_copy(Dspic33* destination, const Dspic33* source) {
     destination->auxiliary_program = auxiliary_program;
     destination->persistent_program = persistent_program;
     destination->data = data;
+    destination->initialized_data = initialized_data;
     destination->var_write_domains = var_write_domains;
     destination->events.items = events;
     destination->events.capacity = event_capacity;
@@ -994,6 +1000,11 @@ bool dspic33_copy(Dspic33* destination, const Dspic33* source) {
 
 void dspic33_internal_reset_processor(Dspic33* cpu, uint32_t entry, bool clear_memory) {
     memset(cpu->data, 0, clear_memory ? DSPIC33_DATA_SIZE : 0x1000u);
+    if (clear_memory) {
+        memset(cpu->initialized_data, 0, DSPIC33_DATA_SIZE);
+    }
+    memset(cpu->initialized_data, 1, 0x1000u);
+    dspic33_clear_uninitialized_data_reads(cpu);
     memset(cpu->w, 0, sizeof(cpu->w));
     memset(cpu->shadow_w, 0, sizeof(cpu->shadow_w));
     cpu->initialized_working_registers = 0x8000u;

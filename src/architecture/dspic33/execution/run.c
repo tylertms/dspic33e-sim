@@ -2,6 +2,7 @@
 
 uint8_t dspic33_read_byte(Dspic33* cpu, uint32_t address) {
     uint8_t value;
+    dspic33_internal_record_data_read(cpu, address, 1u);
     cpu->io.cpu_read_address = address;
     cpu->io.cpu_read_width = 1u;
     cpu->io.cpu_read_valid = true;
@@ -18,6 +19,7 @@ uint16_t dspic33_read_word(Dspic33* cpu, uint32_t address) {
         (cpu->address_error && !cpu->address_error_access_allowed)) {
         return 0u;
     }
+    dspic33_internal_record_data_read(cpu, address, 2u);
     cpu->io.cpu_read_address = address;
     cpu->io.cpu_read_width = 2u;
     cpu->io.cpu_read_valid = true;

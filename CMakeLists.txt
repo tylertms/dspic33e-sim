@@ -226,6 +226,10 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     tests/architecture/dspic33/execution/state_census_test.c
     "core;unit;integration")
   dspic33ep_mu_add_test(
+    uninitialized_data
+    tests/architecture/dspic33/execution/uninitialized_data_test.c
+    "core;unit;integration")
+  dspic33ep_mu_add_test(
     peripheral_state_census
     tests/device/dspic33ep_mu/state_census_test.c
     "device;unit;integration")
