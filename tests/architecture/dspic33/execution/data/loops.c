@@ -312,6 +312,13 @@ static void nested_zero_do_erratum_cases(TestState* state, Dspic33* cpu) {
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x20cu && cpu->do_depth == 2u &&
                cpu->do_count[1] == 0u,
            "nested zero-count DO accepts the documented NOP workaround");
+    for (uint8_t step = 0u; step < 3u && cpu->do_depth == 2u; step++) {
+        dspic33_step(cpu);
+    }
+    expect(state,
+           cpu->do_depth == 1u && cpu->dostart == cpu->do_start[0] &&
+               cpu->doend == cpu->do_end[0] && cpu->dcount == cpu->do_count[0],
+           "completed inner DO restores the outer loop registers");
 
     prepare_nested_zero_do_case(state, cpu, 0u, true, true, true);
     load_instruction(state, cpu, 0x208u, OPCODE_DO_W0);

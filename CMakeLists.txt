@@ -154,6 +154,9 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     processor_encoding_census
     tests/architecture/dspic33/execution/encoding_census_test.c
     "core;unit;integration")
+  dspic33ep_mu_add_test(
+    processor_boundary tests/architecture/dspic33/execution/boundary.c
+    "core;unit")
 
   dspic33ep_mu_add_test(adc tests/device/dspic33ep_mu/analog/adc_test.c
                         "device;integration")

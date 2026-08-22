@@ -226,13 +226,11 @@ bool dspic33_internal_execute_binary(Dspic33* cpu, uint32_t opcode, uint32_t ope
     left = byte_mode ? (uint8_t)left : left;
     if ((opcode & 0x0060u) == 0x0060u) {
         right = (uint16_t)(opcode & 0x001fu);
-    } else if ((opcode & 0x0070u) <= 0x0050u) {
+    } else {
         uint8_t mode = (uint8_t)((opcode >> 4u) & 0x07u);
         right = byte_mode
                     ? dspic33_internal_read_operand_byte(cpu, mode, (uint8_t)(opcode & 0x0fu), 0u)
                     : dspic33_internal_read_operand_word(cpu, mode, (uint8_t)(opcode & 0x0fu), 0u);
-    } else {
-        return false;
     }
     if (cpu->illegal_reset) {
         return true;
@@ -645,11 +643,9 @@ bool dspic33_internal_execute_file_binary(Dspic33* cpu, uint32_t opcode) {
     } else if (family == 2u) {
         value = alternate ? (uint16_t)(left ^ right) : (uint16_t)(left & right);
         dspic33_internal_update_logic_flags(cpu, value, byte_mode);
-    } else if (!alternate) {
+    } else {
         value = (uint16_t)(left | right);
         dspic33_internal_update_logic_flags(cpu, value, byte_mode);
-    } else {
-        return false;
     }
     if (file_destination) {
         if (byte_mode) {

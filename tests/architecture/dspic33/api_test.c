@@ -50,6 +50,37 @@ static void test_execution(TestState* state) {
            "dspic33_run_with_limits(NULL, limits).stop == DSPIC33_HALTED");
 }
 
+static void test_execution_boundaries(TestState* state) {
+    Dspic33* cpu = dspic33_create();
+    expect(state, cpu != NULL, "boundary cpu != NULL");
+    if (cpu == NULL) {
+        return;
+    }
+
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    expect(state, dspic33_step(cpu) == DSPIC33_SLEEPING, "sleeping CPU remains stopped");
+    cpu->power_state = DSPIC33_POWER_IDLE;
+    expect(state, dspic33_step(cpu) == DSPIC33_IDLING, "idling CPU remains stopped");
+
+    dspic33_reset(cpu, 0u);
+    expect(state, dspic33_load_program_word(cpu, 0u, 0x060000u), "load boundary return opcode");
+    expect(state, dspic33_run(cpu, 0u) == DSPIC33_RETURNED, "run returns at an empty call stack");
+
+    dspic33_reset(cpu, 0u);
+    Dspic33Result returned = dspic33_run_with_limits(cpu, (Dspic33RunLimits){0u, 0u});
+    expect(state, returned.stop == DSPIC33_RETURNED, "limited runner reports a completed return");
+
+    cpu->stop_reason = DSPIC33_TRAPPED;
+    cpu->address_error_return = 0x120u;
+    expect(state, dspic33_get_fault_address(cpu) == 0x120u,
+           "fault getter prefers the address-error return");
+    cpu->address_error_return = 0u;
+    cpu->current_instruction_pc = 0x220u;
+    expect(state, dspic33_get_fault_address(cpu) == 0x220u,
+           "fault getter falls back to the current instruction");
+    dspic33_destroy(cpu);
+}
+
 static void test_host_operations(TestState* state) {
     Dspic33* cpu = dspic33_create();
     expect(state, cpu != NULL, "cpu != NULL");
@@ -198,6 +229,7 @@ int main(void) {
     TestState state = {0};
     test_lifecycle(&state);
     test_execution(&state);
+    test_execution_boundaries(&state);
     test_host_operations(&state);
     test_null_getters(&state);
     test_memory_guards(&state);
