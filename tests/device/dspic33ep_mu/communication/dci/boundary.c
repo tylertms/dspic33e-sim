@@ -16,6 +16,7 @@ bool dspic33_device_internal_dci_data_output(const Dspic33* cpu, bool* high);
 bool dspic33_device_internal_dci_frame_output(const Dspic33* cpu, bool* high);
 bool dspic33_device_internal_dci_internal_clock_high(const Dspic33* cpu, bool* high);
 bool dspic33_device_internal_dci_read_register(Dspic33* cpu, uint16_t address, uint8_t* value);
+bool dspic33_device_internal_dci_configuration_supported(const Dspic33* cpu);
 void dspic33_device_internal_dci_discard_internal_events(Dspic33* cpu);
 
 #ifdef DSPIC33_TEST_ALLOCATION_FAILURE
@@ -219,6 +220,72 @@ static void register_boundary_cases(TestState* state, Dspic33* cpu) {
            "DCI read rejects reserved transmit slot address");
     expect(state, !dspic33_device_internal_dci_read_register(cpu, 0x028eu, &value),
            "DCI read rejects reserved receive slot address");
+
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL1, UINT16_MAX);
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL2, 3u);
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL3, 1u);
+    expect(state, !dspic33_device_internal_dci_configuration_supported(cpu),
+           "DCI rejects unsupported control bits");
+}
+
+static void direct_event_cases(TestState* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL1, DCI_ENABLE);
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL2, 3u);
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL3, 1u);
+    cpu->io.dci.generation = 4u;
+    dspic33_device_internal_run_dci(cpu, DCI_TEST_EVENT_START, 4u);
+    expect(state, cpu->io.dci.initialized && cpu->io.dci.internal_scheduled,
+           "DCI start event initializes and schedules an internal word");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL1, DCI_ENABLE | DCI_EXTERNAL_FRAME);
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL2, 3u);
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL3, 1u);
+    cpu->io.dci.initialized = true;
+    dspic33_device_internal_run_dci(cpu, DCI_TEST_EVENT_EXTERNAL_FRAME, 0x1234u);
+    expect(state, cpu->io.dci.started && cpu->io.dci.internal_scheduled,
+           "external frame starts an internally clocked word");
+}
+
+static void frame_output_cases(TestState* state, Dspic33* cpu) {
+    bool high = false;
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL1,
+                                           DCI_ENABLE | DCI_EXTERNAL_CLOCK | DCI_DATA_JUSTIFY);
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL3, 0u);
+    cpu->io.dci.initialized = true;
+    cpu->io.dci.started = true;
+
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL2,
+                                           dspic33_dci_test_configuration(16u, 1u, 0u));
+    dspic33_device_internal_raw_write_word(
+        cpu, DCI_CONTROL1, DCI_ENABLE | DCI_EXTERNAL_CLOCK | DCI_DATA_JUSTIFY | DCI_MODE_I2S);
+    cpu->io.dci.output_frame_high = true;
+    expect(state, dspic33_device_internal_dci_frame_output(cpu, &high) && high,
+           "external I2S frame reports its stored level");
+
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL2,
+                                           dspic33_dci_test_configuration(16u, 1u, 2u));
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL1,
+                                           DCI_ENABLE | DCI_EXTERNAL_CLOCK | DCI_DATA_JUSTIFY |
+                                               DCI_MODE_AC_LINK_16);
+    cpu->io.dci.serial_frame_bits = 15u;
+    expect(state, dspic33_device_internal_dci_frame_output(cpu, &high) && high,
+           "external AC-link frame remains high for its first word");
+    cpu->io.dci.serial_frame_bits = 16u;
+    expect(state, dspic33_device_internal_dci_frame_output(cpu, &high) && !high,
+           "external AC-link frame falls after its first word");
+
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL2,
+                                           dspic33_dci_test_configuration(16u, 1u, 1u));
+    dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL1,
+                                           DCI_ENABLE | DCI_EXTERNAL_CLOCK | DCI_DATA_JUSTIFY);
+    cpu->io.dci.slot = 0u;
+    cpu->io.dci.serial_bits = 0u;
+    cpu->io.dci.serial_delay = false;
+    expect(state, dspic33_device_internal_dci_frame_output(cpu, &high) && high,
+           "immediate external frame is high at the first slot boundary");
 }
 
 void dspic33_dci_test_boundary_cases(TestState* state, Dspic33* cpu) {
@@ -228,4 +295,6 @@ void dspic33_dci_test_boundary_cases(TestState* state, Dspic33* cpu) {
     event_queue_boundary_cases(state, cpu);
     output_boundary_cases(state, cpu);
     register_boundary_cases(state, cpu);
+    direct_event_cases(state, cpu);
+    frame_output_cases(state, cpu);
 }

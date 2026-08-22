@@ -88,7 +88,7 @@ static uint64_t dci_bit_cycles(const Dspic33* cpu) {
 static uint64_t dci_word_cycles(const Dspic33* cpu) {
     uint64_t bit_cycles = dci_bit_cycles(cpu);
     uint8_t width = dci_slot_width(cpu, cpu->io.dci.slot);
-    return bit_cycles > UINT64_MAX / width ? UINT64_MAX : bit_cycles * width;
+    return bit_cycles * width;
 }
 
 static bool dci_bcg_running(const Dspic33* cpu) {
