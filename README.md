@@ -10,6 +10,14 @@ C simulator for the Microchip dsPIC33EP-MU microcontroller family and its dsPIC3
 
 Device memory maps and reset values are based on Microchip's dsPIC33E Device Family Pack 1.7.401.
 
+## Layout
+
+- `include/` contains the public simulator and firmware-image APIs.
+- `src/core/` contains the dsPIC33E processor and instruction execution domains.
+- `src/device/` contains dsPIC33EP-MU profiles and peripheral domains.
+- `src/image/` and `src/runner/` contain firmware loading and the command-line runner.
+- `tests/` mirrors the core, device, and system boundaries.
+
 ## Build
 
 ```
