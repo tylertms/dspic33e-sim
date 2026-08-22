@@ -421,10 +421,6 @@ bool dspic33_internal_execute(Dspic33* cpu, uint32_t opcode) {
         uint32_t target;
         dspic33_internal_push_program_counter(cpu, cpu->pc);
         target = cpu->w[opcode & 0x0fu] & 0xfffeu;
-        if (dspic33_internal_program_target_requires_address_error(cpu, target)) {
-            dspic33_internal_raise_program_target_error(cpu, cpu->pc);
-            return true;
-        }
         cpu->pc = target;
         return true;
     }
@@ -441,10 +437,6 @@ bool dspic33_internal_execute(Dspic33* cpu, uint32_t opcode) {
     }
     if ((opcode & 0xfffff0u) == 0x010400u) {
         uint32_t target = cpu->w[opcode & 0x0fu] & 0xfffeu;
-        if (dspic33_internal_program_target_requires_address_error(cpu, target)) {
-            dspic33_internal_raise_program_target_error(cpu, cpu->pc);
-            return true;
-        }
         cpu->pc = target;
         return true;
     }
@@ -543,9 +535,6 @@ bool dspic33_internal_execute(Dspic33* cpu, uint32_t opcode) {
         case 2u:
             cpu->tblpag = value & 0x00ffu;
             break;
-        case 3u:
-            dspic33_internal_perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
-            break;
         }
         return true;
     }
@@ -560,9 +549,6 @@ bool dspic33_internal_execute(Dspic33* cpu, uint32_t opcode) {
             break;
         case 2u:
             cpu->tblpag = value & 0x00ffu;
-            break;
-        case 3u:
-            dspic33_internal_perform_warm_reset(cpu, 0x4000u, DSPIC33_RESET_ILLEGAL);
             break;
         }
         return true;

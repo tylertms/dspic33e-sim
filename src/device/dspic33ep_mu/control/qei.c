@@ -199,9 +199,6 @@ static bool qei_path_hits_range(uint32_t start, int8_t direction, uint64_t ticks
                                 uint32_t high) {
     uint32_t distance;
     uint32_t end;
-    if (ticks == 0u) {
-        return false;
-    }
     if (ticks > UINT32_MAX) {
         return true;
     }
@@ -229,9 +226,6 @@ static bool qei_path_crosses_value(uint32_t start, int8_t direction, uint64_t ti
 static bool qei_path_crosses_word(uint16_t start, int8_t direction, uint64_t ticks,
                                   uint16_t value) {
     uint16_t end;
-    if (ticks == 0u) {
-        return false;
-    }
     if (ticks > UINT16_MAX) {
         return true;
     }

@@ -165,6 +165,10 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
   dspic33ep_mu_add_test(
     processor_boundary tests/architecture/dspic33/execution/boundary.c
     "core;unit")
+  dspic33ep_mu_add_test(
+    processor_addressing_boundary
+    tests/architecture/dspic33/execution/data/addressing_boundary_test.c
+    "core;unit")
 
   dspic33ep_mu_add_test(adc tests/device/dspic33ep_mu/analog/adc_test.c
                         "device;integration")
