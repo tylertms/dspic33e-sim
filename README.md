@@ -13,8 +13,8 @@ Device memory maps and reset values are based on Microchip's dsPIC33E Device Fam
 ## Layout
 
 - `include/` contains the public simulator and firmware-image APIs.
-- `src/core/` contains the dsPIC33E processor and instruction execution domains.
-- `src/device/` contains dsPIC33EP-MU profiles and peripheral domains.
+- `src/core/` contains the dsPIC33E processor implementation.
+- `src/device/` contains the dsPIC33EP-MU device model and profiles.
 - `src/image/` and `src/runner/` contain firmware loading and the command-line runner.
 - `tests/` mirrors the core, device, and system boundaries.
 

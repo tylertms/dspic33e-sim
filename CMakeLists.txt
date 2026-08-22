@@ -13,9 +13,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 set(dspic33ep_mu_simulator_sources
-    src/core/dspic33.c
-    src/device/device.c
-    src/device/dspic33ep_mu_data.c
+    src/core/dspic33.c src/device/device.c src/device/dspic33ep_mu_data.c
     src/device/i2c.c)
 
 add_library(dspic33ep_mu_simulator STATIC ${dspic33ep_mu_simulator_sources})
@@ -61,7 +59,7 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     add_executable(${target} ${source} ${ARGN})
     target_compile_features(${target} PRIVATE c_std_11)
     target_include_directories(${target} PRIVATE tests/support src/core
-                                                   src/device src/image)
+                                                 src/device src/image)
     target_link_libraries(${target} PRIVATE dspic33ep_mu_simulator)
     if(MSVC)
       target_compile_options(${target} PRIVATE /W4 /WX)
@@ -85,34 +83,31 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
                         "core;integration")
 
   dspic33ep_mu_add_test(adc tests/device/analog/adc_test.c "device;integration")
-  dspic33ep_mu_add_test(auxiliary_clock
-                        tests/device/timing/auxiliary_clock_test.c
-                        "device;integration")
+  dspic33ep_mu_add_test(
+    auxiliary_clock tests/device/timing/auxiliary_clock_test.c
+    "device;integration")
   dspic33ep_mu_add_test(can tests/device/communication/can_test.c
                         "device;integration")
   dspic33ep_mu_add_test(comparator tests/device/analog/comparator_test.c
                         "device;integration")
   dspic33ep_mu_add_test(core_sfr tests/device/platform/core_sfr_test.c
                         "device;integration")
-  dspic33ep_mu_add_test(crc tests/device/memory/crc_test.c
-                        "device;integration")
+  dspic33ep_mu_add_test(crc tests/device/memory/crc_test.c "device;integration")
   dspic33ep_mu_add_test(dci tests/device/communication/dci_test.c
                         "device;integration")
   dspic33ep_mu_add_test(device_data tests/device/memory/device_data_test.c
                         "device;unit")
-  dspic33ep_mu_add_test(dma tests/device/memory/dma_test.c
-                        "device;integration")
+  dspic33ep_mu_add_test(dma tests/device/memory/dma_test.c "device;integration")
   dspic33ep_mu_add_test(gpio tests/device/platform/gpio_test.c
                         "device;integration")
   dspic33ep_mu_add_test(i2c tests/device/communication/i2c_test.c
                         "device;integration")
   dspic33ep_mu_add_test(input_capture tests/device/control/input_capture_test.c
                         "device;integration")
-  dspic33ep_mu_add_test(interrupt_control
-                        tests/device/platform/interrupt_control_test.c
-                        "device;integration")
-  dspic33ep_mu_add_test(nvm tests/device/memory/nvm_test.c
-                        "device;integration")
+  dspic33ep_mu_add_test(
+    interrupt_control tests/device/platform/interrupt_control_test.c
+    "device;integration")
+  dspic33ep_mu_add_test(nvm tests/device/memory/nvm_test.c "device;integration")
   target_link_libraries(dspic33ep_mu_nvm_test
                         PRIVATE dspic33ep_mu_firmware_image)
   dspic33ep_mu_add_test(oscillator tests/device/timing/oscillator_test.c
