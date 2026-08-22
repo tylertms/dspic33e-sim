@@ -1,4 +1,4 @@
-#include "architecture/dspic33/exceptions/fault/internal.h"
+#include "architecture/dspic33/exceptions/internal.h"
 
 static void compare_skip_truth_case(TestState* state, Dspic33* cpu, uint32_t opcode, uint16_t left,
                                     uint16_t right, bool taken, const char* name) {

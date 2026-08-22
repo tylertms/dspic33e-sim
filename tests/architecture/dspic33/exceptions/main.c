@@ -1,4 +1,4 @@
-#include "architecture/dspic33/exceptions/fault/internal.h"
+#include "architecture/dspic33/exceptions/internal.h"
 
 static void prepare_nested_do_interrupt_case(TestState* state, Dspic33* cpu, uint32_t entry,
                                              bool nesting_disabled) {

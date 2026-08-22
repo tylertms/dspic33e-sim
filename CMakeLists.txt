@@ -49,7 +49,7 @@ set(dspic33ep_mu_simulator_sources
     src/device/dspic33ep_mu/platform/write_access.c
     src/device/dspic33ep_mu/timing/rtcc.c
     src/device/dspic33ep_mu/timing/timers.c
-    src/device/dspic33ep_mu/timing/oscillator/registers.c
+    src/device/dspic33ep_mu/timing/oscillator.c
     src/device/dspic33ep_mu/common.c
     src/device/dspic33ep_mu/data.c
     src/device/dspic33ep_mu/peripherals.c
@@ -112,15 +112,15 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
   dspic33ep_mu_add_test(
     event_scheduler tests/architecture/dspic33/timing/events_test.c
     "core;integration")
-  dspic33ep_mu_add_test(core_api tests/architecture/dspic33/api/api_test.c
+  dspic33ep_mu_add_test(core_api tests/architecture/dspic33/api_test.c
                         "core;unit;integration")
   dspic33ep_mu_add_test(
     processor_fault
-    tests/architecture/dspic33/exceptions/fault/address.c
+    tests/architecture/dspic33/exceptions/address.c
     "core;integration"
-    tests/architecture/dspic33/exceptions/fault/exceptions.c
-    tests/architecture/dspic33/exceptions/fault/traps.c
-    tests/architecture/dspic33/exceptions/fault/main.c)
+    tests/architecture/dspic33/exceptions/exceptions.c
+    tests/architecture/dspic33/exceptions/traps.c
+    tests/architecture/dspic33/exceptions/main.c)
   dspic33ep_mu_add_test(
     processor_timing tests/architecture/dspic33/timing/instructions/cycles.c
     "core;integration" tests/architecture/dspic33/timing/instructions/errata.c

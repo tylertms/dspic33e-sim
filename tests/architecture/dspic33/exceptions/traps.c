@@ -1,4 +1,4 @@
-#include "architecture/dspic33/exceptions/fault/internal.h"
+#include "architecture/dspic33/exceptions/internal.h"
 
 void dspic33_fault_test_page_zero_address_error_cases(TestState* state, Dspic33* cpu) {
     reset_processor_test(cpu, 0u);
