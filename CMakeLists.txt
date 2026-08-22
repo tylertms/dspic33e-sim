@@ -176,6 +176,8 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
   dspic33ep_mu_add_test(
     core_sfr tests/device/dspic33ep_mu/platform/core_sfr_test.c
     "device;integration")
+  dspic33ep_mu_add_test(common tests/device/dspic33ep_mu/common/boundary.c
+                        "device;unit")
   dspic33ep_mu_add_test(crc tests/device/dspic33ep_mu/memory/crc_test.c
                         "device;integration")
   dspic33ep_mu_add_test(
@@ -208,7 +210,8 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
   dspic33ep_mu_add_test(
     input_capture tests/device/dspic33ep_mu/control/input_capture/registers.c
     "device;integration"
-    tests/device/dspic33ep_mu/control/input_capture/events.c)
+    tests/device/dspic33ep_mu/control/input_capture/events.c
+    tests/device/dspic33ep_mu/control/input_capture/boundary.c)
   dspic33ep_mu_add_test(
     interrupt_control
     tests/device/dspic33ep_mu/platform/interrupt_control_test.c
@@ -257,7 +260,8 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
   dspic33ep_mu_add_test(
     pmp tests/device/dspic33ep_mu/communication/pmp/registers.c
     "device;integration" tests/device/dspic33ep_mu/communication/pmp/master.c
-    tests/device/dspic33ep_mu/communication/pmp/slave.c)
+    tests/device/dspic33ep_mu/communication/pmp/slave.c
+    tests/device/dspic33ep_mu/communication/pmp/boundary.c)
   dspic33ep_mu_add_test(pps tests/device/dspic33ep_mu/platform/pps_test.c
                         "device;integration")
   dspic33ep_mu_add_test(
@@ -286,7 +290,8 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
                         "device;integration")
   dspic33ep_mu_add_test(
     uart tests/device/dspic33ep_mu/communication/uart_test.c
-    "device;integration")
+    "device;integration" tests/device/dspic33ep_mu/communication/uart/boundary.c)
+  dspic33ep_mu_enable_allocation_failure(dspic33ep_mu_uart_test)
   dspic33ep_mu_add_test(
     usb tests/device/dspic33ep_mu/communication/usb/registers.c
     "device;integration"

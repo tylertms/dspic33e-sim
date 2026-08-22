@@ -7,6 +7,11 @@
 #include "dspic33.h"
 #include "test.h"
 
+void dspic33_device_internal_adc_begin_sampling(Dspic33* cpu, uint8_t module);
+void dspic33_device_internal_adc_update_power_state(Dspic33* cpu);
+void dspic33_device_internal_raw_write_word(Dspic33* cpu, uint16_t address, uint16_t value);
+void dspic33_device_internal_run_adc(Dspic33* cpu, uint8_t module, uint32_t event_value);
+
 static const uint16_t buffers[DSPIC33_ADC_COUNT] = {0x0300u, 0x0340u};
 static const uint16_t controls[DSPIC33_ADC_COUNT] = {0x0320u, 0x0360u};
 static const uint16_t dma_controls[DSPIC33_ADC_COUNT] = {0x0332u, 0x0372u};
@@ -752,6 +757,40 @@ static void power_cases(TestState* state, Dspic33* cpu) {
 
 static void boundary_cases(TestState* state, Dspic33* cpu) {
     uint8_t sample;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_adc_begin_sampling(cpu, 0u);
+    dspic33_device_internal_run_adc(cpu, DSPIC33_ADC_COUNT, 0u);
+    expect(state, cpu->stop_reason == DSPIC33_RUNNING,
+           "disabled and invalid ADC operations are ignored");
+
+    dspic33_reset(cpu, 0u);
+    cpu->io.adc_pmd_disabled = 1u;
+    dspic33_write_word(cpu, 0x0320u, 0x8000u);
+    dspic33_device_internal_adc_begin_sampling(cpu, 0u);
+    dspic33_device_internal_run_adc(cpu, 0u, 0x0100u);
+    expect(state, cpu->io.adc_latched_count[0] == 0u, "ADC PMD blocks sampling and completion");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_run_adc(cpu, 0u, 0x0100u);
+    dspic33_write_word(cpu, 0x0320u, 0x8000u);
+    dspic33_device_internal_run_adc(cpu, 0u, 0x0100u);
+    expect(state, dspic33_read_word(cpu, 0x0300u) == 0u,
+           "ADC ignores completion without a latched conversion");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, 0x0320u, 0x8004u);
+    dspic33_device_internal_adc_update_power_state(cpu);
+    expect(state, (dspic33_read_word(cpu, 0x0320u) & 2u) != 0u,
+           "active ADC power starts automatic sampling");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, 0x0320u, 0x8002u);
+    dspic33_device_internal_raw_write_word(cpu, 0x0322u, 0x0400u);
+    dspic33_device_internal_run_adc(cpu, 0u, 0u);
+    expect(state, cpu->io.adc_latched_channel[0][0] == 0u,
+           "ADC scan with no selections uses the configured channel");
+
     dspic33_reset(cpu, 0u);
     set_input(cpu, 0u, 0xffffu);
     configure_manual(cpu, 0u, 0x0400u, 0u, 0u);

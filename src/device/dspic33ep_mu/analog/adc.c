@@ -39,7 +39,7 @@ static uint8_t adc_channel_count(const Dspic33* cpu, uint8_t module) {
 
 static uint8_t adc_next_scan_channel(Dspic33* cpu, uint8_t module) {
     uint8_t limit = module == 0u ? 32u : 16u;
-    uint8_t offset;
+    uint8_t channel = cpu->io.adc_scan_index[module];
     uint32_t selected = module == 0u
                             ? ((uint32_t)dspic33_device_internal_raw_word(cpu, 0x032eu) << 16u) |
                                   dspic33_device_internal_raw_word(cpu, 0x0330u)
@@ -47,14 +47,11 @@ static uint8_t adc_next_scan_channel(Dspic33* cpu, uint8_t module) {
     if (selected == 0u) {
         return (uint8_t)(dspic33_device_internal_adc_register(cpu, module, 8u) & 0x001fu);
     }
-    for (offset = 0u; offset < limit; offset++) {
-        uint8_t channel = (uint8_t)((cpu->io.adc_scan_index[module] + offset) % limit);
-        if ((selected & ((uint32_t)1u << channel)) != 0u) {
-            cpu->io.adc_scan_index[module] = (uint8_t)((channel + 1u) % limit);
-            return channel;
-        }
+    while ((selected & ((uint32_t)1u << channel)) == 0u) {
+        channel = (uint8_t)((channel + 1u) % limit);
     }
-    return 0u;
+    cpu->io.adc_scan_index[module] = (uint8_t)((channel + 1u) % limit);
+    return channel;
 }
 
 static uint8_t adc_positive_channel(Dspic33* cpu, uint8_t module, uint8_t lane, bool mux_b) {

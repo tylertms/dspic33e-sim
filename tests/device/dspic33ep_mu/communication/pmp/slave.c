@@ -312,6 +312,7 @@ int main(void) {
         dspic33_pmp_test_slave_mode_matrix_cases(&state, &cpu);
         dspic33_pmp_test_slave_dma_isolation_cases(&state, &cpu);
         dspic33_pmp_test_pmp_extended_lifecycle_cases(&state, &cpu);
+        dspic33_pmp_test_boundary_cases(&state, &cpu);
         pmp_power_wake_matrix_cases(&state, &cpu);
         dspic33_release(&cpu);
     }

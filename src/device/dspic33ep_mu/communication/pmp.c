@@ -84,9 +84,6 @@ static void pmp_pause_master_events(Dspic33* cpu) {
 static void pmp_resume_master_events(Dspic33* cpu) {
     size_t index;
     bool changed = false;
-    if (!pmp_master_clock_available(cpu)) {
-        return;
-    }
     for (index = 0u; index < cpu->events.count; index++) {
         Dspic33Event* event = &cpu->events.items[index];
         if (!pmp_master_event(event) || !event->paused) {
@@ -144,18 +141,12 @@ static void pmp_update_address(Dspic33* cpu, uint16_t control, uint16_t mode) {
     if (increment != PMP_INCREMENT_ADDRESS && increment != PMP_DECREMENT_ADDRESS) {
         return;
     }
-    switch (control & PMP_CHIP_SELECT_FUNCTION_MASK) {
-    case 0x0000u:
-        counter_mask = 0xffffu;
-        break;
-    case 0x0040u:
-        counter_mask = 0x7fffu;
-        break;
-    case 0x0080u:
+    if ((control & 0x0080u) != 0u) {
         counter_mask = 0x3fffu;
-        break;
-    default:
-        return;
+    } else if ((control & 0x0040u) != 0u) {
+        counter_mask = 0x7fffu;
+    } else {
+        counter_mask = 0xffffu;
     }
     address = dspic33_device_internal_raw_word(cpu, PMP_ADDRESS);
     dspic33_device_internal_raw_write_word(

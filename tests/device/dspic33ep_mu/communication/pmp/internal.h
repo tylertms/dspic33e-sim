@@ -64,6 +64,7 @@ enum {
 
 uint16_t dspic33_pmp_test_raw_data_word(const Dspic33* cpu, uint16_t address);
 void dspic33_pmp_test_access_cases(TestState* state, Dspic33* cpu);
+void dspic33_pmp_test_boundary_cases(TestState* state, Dspic33* cpu);
 void dspic33_pmp_test_access_lane_cases(TestState* state, Dspic33* cpu);
 void dspic33_pmp_test_address_update_cases(TestState* state, Dspic33* cpu);
 void dspic33_pmp_test_addressable_slave_cases(TestState* state, Dspic33* cpu);

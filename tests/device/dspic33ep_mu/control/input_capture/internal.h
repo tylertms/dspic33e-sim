@@ -38,6 +38,7 @@ static const uint16_t capture_timer_sources[5] = {0x1000u, 0x0400u, 0x0000u, 0x0
 bool dspic33_input_capture_test_rising_edge(Dspic33* cpu, uint8_t channel);
 uint16_t dspic33_input_capture_test_capture_base(uint8_t channel);
 void dspic33_input_capture_test_access_cases(TestState* state, Dspic33* cpu);
+void dspic33_input_capture_test_boundary_cases(TestState* state, Dspic33* cpu);
 void dspic33_input_capture_test_configure_capture_source(Dspic33* cpu, uint8_t channel,
                                                          uint16_t timer_source, bool triggered,
                                                          bool running, uint8_t sync_source,

@@ -8,6 +8,8 @@
 #include "dspic33.h"
 #include "test.h"
 
+void dspic33_uart_test_boundary_cases(TestState* state, Dspic33* cpu);
+
 static const uint16_t bases[DSPIC33_UART_COUNT] = {0x0220u, 0x0230u, 0x0250u, 0x02b0u};
 static const uint8_t receive_irqs[DSPIC33_UART_COUNT] = {11u, 30u, 82u, 88u};
 static const uint8_t transmit_irqs[DSPIC33_UART_COUNT] = {12u, 31u, 83u, 89u};
@@ -994,6 +996,7 @@ int main(void) {
         physical_pps_cases(&state, &cpu);
         physical_lifecycle_cases(&state, &cpu);
         physical_auto_baud_cases(&state, &cpu);
+        dspic33_uart_test_boundary_cases(&state, &cpu);
         break_rmw_erratum_cases(&state, &cpu);
         disable_copy_and_api_cases(&state, &cpu);
         dspic33_release(&cpu);

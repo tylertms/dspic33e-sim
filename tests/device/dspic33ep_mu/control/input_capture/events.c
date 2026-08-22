@@ -345,6 +345,7 @@ int main(void) {
         dspic33_input_capture_test_lifecycle_cases(&state, &cpu);
         dspic33_input_capture_test_pmd_channel_cases(&state, &cpu);
         dspic33_input_capture_test_pmd_lifecycle_cases(&state, &cpu);
+        dspic33_input_capture_test_boundary_cases(&state, &cpu);
         timer_source_cases(&state, &cpu);
         sync_trigger_cases(&state, &cpu);
         dspic33_release(&cpu);

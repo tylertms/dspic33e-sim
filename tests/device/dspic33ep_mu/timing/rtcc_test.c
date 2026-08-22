@@ -411,6 +411,12 @@ static void calendar_cases(TestState* state, Dspic33* cpu) {
 }
 
 static void alarm_cases(TestState* state, Dspic33* cpu) {
+    static const uint16_t mismatch_minute_second[] = {0x3413u, 0x3422u, 0x3512u, 0x4412u,
+                                                      0x3412u, 0x3412u, 0x3412u, 0x3412u};
+    static const uint16_t mismatch_weekday_hour[] = {0x0212u, 0x0212u, 0x0212u, 0x0212u,
+                                                     0x0213u, 0x0312u, 0x0212u, 0x0212u};
+    static const uint16_t mismatch_month_day[] = {0x0810u, 0x0810u, 0x0810u, 0x0810u,
+                                                  0x0810u, 0x0810u, 0x0811u, 0x0910u};
     uint8_t mask;
     for (mask = 0u; mask < 10u; mask++) {
         dspic33_reset(cpu, 0u);
@@ -456,6 +462,29 @@ static void alarm_cases(TestState* state, Dspic33* cpu) {
         expect(state, !interrupt_flag(cpu) && !cpu->io.rtcc.alarm_output,
                "reserved AMASK has deterministic inactive behavior");
     }
+
+    for (mask = 2u; mask < 10u; mask++) {
+        uint8_t index = (uint8_t)(mask - 2u);
+        dspic33_reset(cpu, 0u);
+        enable_clock(cpu);
+        set_calendar(cpu, 0x3411u, 0x0212u, 0x0810u, 0x0026u);
+        set_alarm(cpu, mismatch_minute_second[index], mismatch_weekday_hour[index],
+                  mismatch_month_day[index]);
+        cpu->io.rtcc.prescaler = 32767u;
+        dspic33_write_word(cpu, RTCC_ALARM_CONTROL,
+                           (uint16_t)(RTCC_ALARM_ENABLE | ((uint16_t)mask << 10u)));
+        expect(state, clock_edges(cpu, 1u), "advance mismatched alarm comparison");
+        expect(state, !interrupt_flag(cpu) && !cpu->io.rtcc.alarm_output,
+               "mismatched alarm field does not trigger");
+    }
+
+    dspic33_reset(cpu, 0u);
+    enable_clock(cpu);
+    set_calendar(cpu, 0x0000u, 0x0000u, 0x0101u, 0x0000u);
+    dspic33_write_word(cpu, RTCC_ALARM_CONTROL, RTCC_ALARM_ENABLE | 1u);
+    expect(state, clock_edges(cpu, 16384u), "advance repeating non-chime alarm");
+    expect(state, (dspic33_read_word(cpu, RTCC_ALARM_CONTROL) & 0x80ffu) == 0x8000u,
+           "non-chime alarm decrements a nonzero repeat count");
 }
 
 static void calibration_cases(TestState* state, Dspic33* cpu) {
@@ -603,6 +632,10 @@ static void calibration_cases(TestState* state, Dspic33* cpu) {
            dspic33_device_advance(cpu, 1u) && cpu->io.rtcc.pmd_disabled &&
                cpu->io.rtcc.calibration_pending,
            "RTCC PMD disable preserves pending calibration");
+    uint16_t disabled_value = dspic33_read_word(cpu, RTCC_VALUE);
+    dspic33_write_word(cpu, RTCC_VALUE, 0xffffu);
+    expect(state, dspic33_read_word(cpu, RTCC_VALUE) == disabled_value,
+           "RTCC PMD blocks calendar writes");
     expect(state,
            clock_edges(cpu, 412u) && cpu->io.rtcc.prescaler == 100u &&
                cpu->io.rtcc.calibration_pending,
