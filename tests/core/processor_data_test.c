@@ -1799,7 +1799,7 @@ static void arithmetic_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
 }
 
 static bool direct_file_address_implemented(uint16_t address) {
-    return dspic33ep512mu810_address_implemented(address);
+    return dspic33ep_mu_address_implemented(DSPIC33EP_MU_DEVICE_512MU810, address);
 }
 
 static bool direct_file_reads_source(DirectFileOperation operation) {

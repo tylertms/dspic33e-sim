@@ -35,7 +35,7 @@ int main(void) {
         cpu.data[address + 1u] = 0xffu;
     }
     dspic33_mclr_reset(&cpu);
-    expect(&state, snapshot_hash(&cpu) == UINT64_C(0x2106aea681db4041),
+    expect(&state, snapshot_hash(&cpu) == UINT64_C(0xcc90b842f144bc01),
            "master-clear SFR snapshot");
     printf("[sfr-reset] cases=%" PRIu32 " passed=%" PRIu32 " failed=%" PRIu32 "\n", state.cases,
            state.passed, state.failed);

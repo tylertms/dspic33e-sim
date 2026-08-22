@@ -1,5 +1,5 @@
-#ifndef DSPIC33E_PROCESSOR_TEST_SUPPORT_H
-#define DSPIC33E_PROCESSOR_TEST_SUPPORT_H
+#ifndef DSPIC33EP_MU_PROCESSOR_TEST_SUPPORT_H
+#define DSPIC33EP_MU_PROCESSOR_TEST_SUPPORT_H
 
 #include <inttypes.h>
 #include <limits.h>
@@ -10,7 +10,7 @@
 
 #include "device.h"
 #include "dspic33.h"
-#include "dspic33ep512mu810_data.h"
+#include "dspic33ep_mu_data.h"
 #include "test.h"
 
 enum {

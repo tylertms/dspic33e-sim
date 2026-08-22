@@ -1,9 +1,10 @@
-#ifndef DSPIC33E_SIM_DSPIC33_INTERNAL_H
-#define DSPIC33E_SIM_DSPIC33_INTERNAL_H
+#ifndef DSPIC33EP_MU_SIM_DSPIC33_INTERNAL_H
+#define DSPIC33EP_MU_SIM_DSPIC33_INTERNAL_H
 
 #include "dspic33.h"
 
 struct Dspic33 {
+    Dspic33epMuDevice device;
     uint32_t* program;
     uint32_t* auxiliary_program;
     uint32_t* persistent_program;
@@ -112,6 +113,7 @@ struct Dspic33 {
 };
 
 bool dspic33_initialize(Dspic33* cpu);
+bool dspic33_initialize_for_device(Dspic33* cpu, Dspic33epMuDevice device);
 void dspic33_release(Dspic33* cpu);
 
 #endif

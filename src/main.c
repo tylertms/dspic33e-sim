@@ -18,6 +18,7 @@ typedef struct {
     const char* image_path;
     const char* reset_location;
     const char* stop_location;
+    Dspic33epMuDevice device;
     Dspic33RunLimits limits;
     ProgramWord program_words[PROGRAM_WORD_LIMIT];
     uint8_t program_word_count;
@@ -40,11 +41,16 @@ static bool parse_arguments(int argc, char** argv, Arguments* arguments) {
     }
     *arguments = (Arguments){0};
     arguments->image_path = argv[1];
+    arguments->device = DSPIC33EP_MU_DEVICE_512MU810;
     arguments->limits = (Dspic33RunLimits){1000000u, 10000000u};
     for (int index = 2; index < argc; index++) {
         uint64_t value;
         if (strcmp(argv[index], "--reset-address") == 0 && index + 1 < argc) {
             arguments->reset_location = argv[++index];
+        } else if (strcmp(argv[index], "--device") == 0 && index + 1 < argc) {
+            if (!dspic33ep_mu_device_from_name(argv[++index], &arguments->device)) {
+                return false;
+            }
         } else if (strcmp(argv[index], "--stop-address") == 0 && index + 1 < argc) {
             arguments->stop_location = argv[++index];
         } else if (strcmp(argv[index], "--max-instructions") == 0 && index + 1 < argc) {
@@ -81,7 +87,7 @@ static bool parse_arguments(int argc, char** argv, Arguments* arguments) {
 static void print_usage(const char* program) {
     fprintf(stderr,
             "usage: %s IMAGE --reset-address ADDRESS "
-            "[--max-instructions COUNT] [--max-cycles COUNT] "
+            "[--device DEVICE] [--max-instructions COUNT] [--max-cycles COUNT] "
             "[--stop-address ADDRESS] [--program-word ADDRESS VALUE]\n",
             program);
 }
@@ -140,7 +146,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "failed to open the firmware image: %s\n", error);
         return EXIT_FAILURE;
     }
-    Dspic33* cpu = dspic33_create();
+    Dspic33* cpu = dspic33_create_for_device(arguments.device);
     if (cpu == NULL) {
         fprintf(stderr, "failed to create the device\n");
         firmware_image_close(&image);

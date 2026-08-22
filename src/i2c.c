@@ -638,7 +638,7 @@ static void begin_control(Dspic33* cpu, uint8_t channel, uint16_t operation) {
     control = (uint16_t)((control & ~I2C_MASTER_MASK) | selected);
     raw_write_word(cpu, (uint16_t)(bases[channel] + I2C_CON), control);
     if (selected != 0u) {
-        uint64_t periods = 2u;
+        uint8_t periods = 2u;
         bool condition = selected == I2C_SEN || selected == I2C_RSEN || selected == I2C_PEN;
         if (selected == I2C_RCEN) {
             periods = 16u;

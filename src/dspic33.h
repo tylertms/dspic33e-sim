@@ -1,5 +1,5 @@
-#ifndef DSPIC33E_SIM_DSPIC33_H
-#define DSPIC33E_SIM_DSPIC33_H
+#ifndef DSPIC33EP_MU_SIM_DSPIC33_H
+#define DSPIC33EP_MU_SIM_DSPIC33_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -37,7 +37,9 @@ typedef struct Dspic33 Dspic33;
 #define DSPIC33_ADC_COUNT 2u
 #define DSPIC33_ADC_CHANNEL_COUNT 32u
 #define DSPIC33_PWM_COUNT 6u
+#define DSPIC33_PWM_MAX_COUNT 7u
 #define DSPIC33_PWM_OUTPUT_COUNT (DSPIC33_PWM_COUNT * 2u)
+#define DSPIC33_PWM_MAX_OUTPUT_COUNT (DSPIC33_PWM_MAX_COUNT * 2u)
 #define DSPIC33_PWM_INPUT_COUNT 32u
 #define DSPIC33_GPIO_PORT_COUNT 7u
 #define DSPIC33_EXTERNAL_INTERRUPT_COUNT 5u
@@ -55,6 +57,27 @@ typedef struct Dspic33 Dspic33;
 #define DSPIC33_QEI_COUNT 2u
 #define DSPIC33_DCI_BUFFER_COUNT 4u
 #define DSPIC33_DCI_QUEUE_SIZE 64u
+
+typedef enum {
+    DSPIC33EP_MU_DEVICE_256MU806,
+    DSPIC33EP_MU_DEVICE_256MU810,
+    DSPIC33EP_MU_DEVICE_256MU814,
+    DSPIC33EP_MU_DEVICE_512MU810,
+    DSPIC33EP_MU_DEVICE_512MU814,
+    DSPIC33EP_MU_DEVICE_COUNT,
+} Dspic33epMuDevice;
+
+typedef struct {
+    Dspic33epMuDevice device;
+    const char* name;
+    uint32_t program_limit;
+    uint32_t data_limit;
+    uint32_t device_id;
+    uint16_t pin_count;
+    uint16_t io_pin_count;
+    uint8_t pwm_generator_count;
+    uint8_t adc_channel_count;
+} Dspic33epMuProfile;
 
 typedef enum {
     DSPIC33_EVENT_INTERRUPT,
@@ -603,18 +626,18 @@ typedef struct {
     uint8_t external_interrupt_selection[DSPIC33_EXTERNAL_INTERRUPT_COUNT];
     uint8_t external_interrupt_levels;
     uint8_t external_interrupt_qualified;
-    uint16_t pwm[DSPIC33_PWM_OUTPUT_COUNT];
+    uint16_t pwm[DSPIC33_PWM_MAX_OUTPUT_COUNT];
     uint16_t pwm_master_counter[2];
-    uint16_t pwm_counter[DSPIC33_PWM_COUNT][2];
+    uint16_t pwm_counter[DSPIC33_PWM_MAX_COUNT][2];
     uint16_t pwm_active_period[2];
-    uint16_t pwm_active_duty[DSPIC33_PWM_COUNT][2];
-    uint16_t pwm_active_phase[DSPIC33_PWM_COUNT][2];
-    uint16_t pwm_active_dead_time[DSPIC33_PWM_COUNT][2];
-    uint16_t pwm_active_io[DSPIC33_PWM_COUNT];
-    uint16_t pwm_leb_ticks[DSPIC33_PWM_COUNT];
+    uint16_t pwm_active_duty[DSPIC33_PWM_MAX_COUNT][2];
+    uint16_t pwm_active_phase[DSPIC33_PWM_MAX_COUNT][2];
+    uint16_t pwm_active_dead_time[DSPIC33_PWM_MAX_COUNT][2];
+    uint16_t pwm_active_io[DSPIC33_PWM_MAX_COUNT];
+    uint16_t pwm_leb_ticks[DSPIC33_PWM_MAX_COUNT];
     uint16_t pwm_chop_counter;
-    uint8_t pwm_cycle_count[DSPIC33_PWM_COUNT];
-    uint8_t pwm_trigger_count[DSPIC33_PWM_COUNT];
+    uint8_t pwm_cycle_count[DSPIC33_PWM_MAX_COUNT];
+    uint8_t pwm_trigger_count[DSPIC33_PWM_MAX_COUNT];
     uint8_t pwm_special_count[2];
     uint8_t pwm_direction[2];
     uint8_t pwm_push_pull;
@@ -634,7 +657,7 @@ typedef struct {
     uint8_t pwm_sync_direct;
     bool pwm_batch_updating;
     bool pwm_refreshing_inputs;
-    uint16_t pwm_pmd_generation[DSPIC33_PWM_COUNT + 1u];
+    uint16_t pwm_pmd_generation[DSPIC33_PWM_MAX_COUNT + 1u];
     uint32_t pwm_fault_inputs;
     uint32_t pwm_current_limit_inputs;
     uint32_t pwm_fraction[2];
@@ -793,6 +816,10 @@ typedef struct {
 } Dspic33Watchdog;
 
 Dspic33* dspic33_create(void);
+Dspic33* dspic33_create_for_device(Dspic33epMuDevice device);
+const Dspic33epMuProfile* dspic33ep_mu_profile(Dspic33epMuDevice device);
+const Dspic33epMuProfile* dspic33_device_profile(const Dspic33* cpu);
+bool dspic33ep_mu_device_from_name(const char* name, Dspic33epMuDevice* device);
 void dspic33_set_working_register(Dspic33* cpu, uint8_t reg, uint16_t value);
 void dspic33_destroy(Dspic33* cpu);
 bool dspic33_copy(Dspic33* destination, const Dspic33* source);
@@ -802,6 +829,9 @@ void dspic33_brown_out_reset(Dspic33* cpu);
 void dspic33_watchdog_advance_lprc(Dspic33* cpu, uint64_t ticks);
 bool dspic33_load_program_word(Dspic33* cpu, uint32_t address, uint32_t word);
 bool dspic33_program_range_implemented(uint32_t address, uint32_t size);
+bool dspic33_device_program_range_implemented(const Dspic33* cpu, uint32_t address, uint32_t size);
+bool dspic33_data_range_valid(uint32_t address, uint32_t size);
+bool dspic33_device_data_range_implemented(const Dspic33* cpu, uint32_t address, uint32_t size);
 bool dspic33_codeguard_admit_program_flow(Dspic33* cpu, uint32_t origin, uint32_t target);
 void dspic33_cancel_flash_read_sequence(Dspic33* cpu);
 void dspic33_raise_program_vector_error(Dspic33* cpu, uint32_t return_pc);

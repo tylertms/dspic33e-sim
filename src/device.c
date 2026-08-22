@@ -88,7 +88,12 @@ static const uint8_t output_compare_irqs[DSPIC33_OUTPUT_COMPARE_COUNT] = {
     2u, 6u, 25u, 26u, 41u, 42u, 43u, 44u, 92u, 124u, 126u, 128u, 134u, 136u, 138u, 140u};
 static const uint8_t external_interrupt_irqs[DSPIC33_EXTERNAL_INTERRUPT_COUNT] = {0u, 20u, 29u, 53u,
                                                                                   54u};
-static const uint8_t pwm_irqs[DSPIC33_PWM_COUNT] = {94u, 95u, 96u, 97u, 98u, 99u};
+static const uint8_t pwm_irqs[DSPIC33_PWM_MAX_COUNT] = {94u, 95u, 96u, 97u, 98u, 99u, 100u};
+
+static uint8_t pwm_generator_count(const Dspic33* cpu) {
+    const Dspic33epMuProfile* profile = dspic33_device_profile(cpu);
+    return profile == NULL ? 0u : profile->pwm_generator_count;
+}
 static const uint16_t qei_bases[DSPIC33_QEI_COUNT] = {0x01c0u, 0x05c0u};
 static const uint8_t qei_irqs[DSPIC33_QEI_COUNT] = {58u, 75u};
 static const uint16_t qei_pps_registers[DSPIC33_QEI_COUNT][2] = {{0x06bcu, 0x06beu},
@@ -1295,7 +1300,7 @@ static bool usb_register_write_mask(const Dspic33* cpu, uint16_t address, uint16
     return true;
 }
 
-static bool pwm_register_write_mask(uint16_t address, uint16_t* writable) {
+static bool pwm_register_write_mask(const Dspic33* cpu, uint16_t address, uint16_t* writable) {
     static const uint16_t global_masks[16] = {0xafffu, 0x0007u, 0xffffu, 0xffffu, 0x0000u, 0xffffu,
                                               0x0000u, 0x0fffu, 0x0007u, 0xffffu, 0xffffu, 0x0000u,
                                               0x0000u, 0x83ffu, 0x0000u, 0x0000u};
@@ -1307,7 +1312,7 @@ static bool pwm_register_write_mask(uint16_t address, uint16_t* writable) {
         return true;
     }
     if (address >= PWM_GENERATOR_BASE &&
-        address < PWM_GENERATOR_BASE + DSPIC33_PWM_COUNT * PWM_GENERATOR_STRIDE) {
+        address < PWM_GENERATOR_BASE + pwm_generator_count(cpu) * PWM_GENERATOR_STRIDE) {
         *writable = generator_masks[((address - PWM_GENERATOR_BASE) & 0x001fu) / 2u];
         return true;
     }
@@ -3887,10 +3892,10 @@ static void run_output_compare(Dspic33* cpu, uint16_t source, uint32_t value) {
     channel = (uint8_t)source;
     kind = value & OUTPUT_COMPARE_EVENT_KIND_MASK;
     if (kind == OUTPUT_COMPARE_EVENT_PMD) {
-        uint16_t generation = (uint16_t)((value & ~OUTPUT_COMPARE_EVENT_PMD_DISABLED) >>
-                                         OUTPUT_COMPARE_EVENT_PMD_GENERATION_SHIFT);
+        uint16_t pmd_generation = (uint16_t)((value & ~OUTPUT_COMPARE_EVENT_PMD_DISABLED) >>
+                                             OUTPUT_COMPARE_EVENT_PMD_GENERATION_SHIFT);
         uint16_t bit = (uint16_t)(1u << channel);
-        if (generation != cpu->io.output_compare.pmd_generation[channel]) {
+        if (pmd_generation != cpu->io.output_compare.pmd_generation[channel]) {
             return;
         }
         if ((value & OUTPUT_COMPARE_EVENT_PMD_DISABLED) != 0u) {
@@ -7419,7 +7424,7 @@ static bool service_interrupt(Dspic33* cpu) {
                                                 ? 0x007ffffau
                                                 : 0x0014u + best_irq * 2u) &
              0x007ffffeu;
-    if (!dspic33_program_range_implemented(target, 2u)) {
+    if (!dspic33_device_program_range_implemented(cpu, target, 2u)) {
         dspic33_raise_program_vector_error(cpu, origin);
         return true;
     }
@@ -7457,7 +7462,7 @@ static bool service_interrupt(Dspic33* cpu) {
     dspic33_write_word(cpu, cpu->w[15],
                        (uint16_t)((cpu->pc & 0xfffeu) | ((cpu->corcon >> 2u) & 1u)));
     dspic33_set_working_register(cpu, 15u, (uint16_t)(cpu->w[15] + 2u));
-    cpu->corcon &= (uint16_t)~0x0004u;
+    cpu->corcon &= 0xfffbu;
     cpu->sr = (uint16_t)((cpu->sr & ~0x00e0u) | next_priority);
     if (!dspic33_device_advance_instruction(cpu, 3u,
                                             entry_device_cycles - first_entry_device_cycles)) {
@@ -7483,7 +7488,7 @@ static bool service_interrupt(Dspic33* cpu) {
     dspic33_device_latch_interrupt(cpu, (uint8_t)(best_irq + 8u), best_priority);
     cpu->repeat_active = 0u;
     cpu->repeat_pc = 0u;
-    cpu->sr &= (uint16_t)~0x0010u;
+    cpu->sr &= 0xffefu;
     return true;
 }
 
@@ -7532,7 +7537,7 @@ void dspic33_device_return_interrupt(Dspic33* cpu) {
     if ((high & 0x0080u) != 0u) {
         cpu->corcon |= 0x0008u;
     } else {
-        cpu->corcon &= (uint16_t)~0x0008u;
+        cpu->corcon &= 0xfff7u;
     }
     cpu->corcon = (uint16_t)((cpu->corcon & ~0x0004u) | ((low & 1u) << 2u));
     cpu->repeat_active = (cpu->sr & 0x0010u) != 0u;
@@ -7618,7 +7623,7 @@ static uint32_t dma_transfer_address(const Dspic33* cpu, uint8_t channel, uint16
 }
 
 static bool dma_memory_address_valid(uint32_t address, uint8_t width) {
-    return address < DSPIC33_DATA_SIZE && (width == 1u || address + 1u < DSPIC33_DATA_SIZE);
+    return dspic33_data_range_valid(address, width);
 }
 
 static bool dma_write_cycle_matches(const Dspic33* cpu) {
@@ -9156,9 +9161,10 @@ static void run_spi(Dspic33* cpu, uint8_t channel, uint32_t event_value) {
             uint16_t control = raw_word(cpu, (uint16_t)(base + 2u));
             uint8_t bits = (control & SPI_MODE_16) != 0u ? 16u : 8u;
             uint64_t period = spi_transfer_cycles(cpu, channel) / bits;
-            uint32_t value =
+            uint32_t frame_value =
                 SPI_EVENT_FRAME_START | ((uint32_t)generation << SPI_EVENT_GENERATION_SHIFT);
-            if (!dspic33_schedule(cpu, DSPIC33_EVENT_SPI, channel, value, period - period / 2u)) {
+            if (!dspic33_schedule(cpu, DSPIC33_EVENT_SPI, channel, frame_value,
+                                  period - period / 2u)) {
                 cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
             }
         }
@@ -9691,7 +9697,7 @@ static bool pwm_address_pmd_disabled(const Dspic33* cpu, uint16_t address) {
         return pwm_global_pmd_disabled(cpu);
     }
     if (address >= PWM_GENERATOR_BASE &&
-        address < PWM_GENERATOR_BASE + DSPIC33_PWM_COUNT * PWM_GENERATOR_STRIDE) {
+        address < PWM_GENERATOR_BASE + pwm_generator_count(cpu) * PWM_GENERATOR_STRIDE) {
         uint8_t generator = (uint8_t)((address - PWM_GENERATOR_BASE) / PWM_GENERATOR_STRIDE);
         return pwm_generator_pmd_disabled(cpu, generator);
     }
@@ -9702,7 +9708,7 @@ static bool pwm_address_inaccessible(const Dspic33* cpu, uint16_t address) {
     return pwm_address_pmd_disabled(cpu, address) ||
            (cpu->power_state == DSPIC33_POWER_IDLE &&
             (raw_word(cpu, PWM_GLOBAL_BASE) & PWM_STOP_IDLE) != 0u && address >= PWM_GLOBAL_BASE &&
-            address < PWM_GENERATOR_BASE + DSPIC33_PWM_COUNT * PWM_GENERATOR_STRIDE);
+            address < PWM_GENERATOR_BASE + pwm_generator_count(cpu) * PWM_GENERATOR_STRIDE);
 }
 
 static bool pwm_power_enabled(const Dspic33* cpu) {
@@ -9789,7 +9795,7 @@ static bool pwm_state_blanked(const Dspic33* cpu, uint8_t generator, bool curren
     bool low = cpu->io.pwm[generator * 2u + 1u] != 0u;
     uint8_t source = (uint8_t)((auxiliary >> 8u) & 0x0fu);
     bool blank_source = false;
-    if (source != 0u && source <= DSPIC33_PWM_COUNT) {
+    if (source != 0u && source <= pwm_generator_count(cpu)) {
         bool blank_low;
         pwm_waveform_pair(cpu, (uint8_t)(source - 1u), &blank_source, &blank_low);
     }
@@ -10004,7 +10010,7 @@ static void pwm_update_output(Dspic33* cpu, uint8_t generator) {
         if (chop_source == 0u) {
             chop_high = (raw_word(cpu, PWM_GLOBAL_BASE + 0x1au) & 0x8000u) != 0u &&
                         cpu->io.pwm_chop_counter < (uint16_t)((chop_period + 1u) / 2u);
-        } else if (chop_source <= DSPIC33_PWM_COUNT) {
+        } else if (chop_source <= pwm_generator_count(cpu)) {
             bool chop_low;
             pwm_logical_output(cpu, (uint8_t)(chop_source - 1u), &chop_high, &chop_low);
         }
@@ -10193,7 +10199,7 @@ static void pwm_tick(Dspic33* cpu, uint8_t time_base, uint64_t cycle) {
         pwm_special_match(cpu, time_base);
     }
     cpu->io.pwm_batch_updating = true;
-    for (generator = 0u; generator < DSPIC33_PWM_COUNT; generator++) {
+    for (generator = 0u; generator < pwm_generator_count(cpu); generator++) {
         uint16_t control = pwm_register(cpu, generator, 0u);
         bool independent = (control & PWM_INDEPENDENT_TIME_BASE) != 0u;
         bool boundary;
@@ -10222,7 +10228,7 @@ static void pwm_tick(Dspic33* cpu, uint8_t time_base, uint64_t cycle) {
             pwm_generator_match(cpu, generator);
         }
     }
-    for (generator = 0u; generator < DSPIC33_PWM_COUNT; generator++) {
+    for (generator = 0u; generator < pwm_generator_count(cpu); generator++) {
         uint16_t control = pwm_register(cpu, generator, 0u);
         uint8_t master = (control & 0x0008u) != 0u ? 1u : 0u;
         if (master != time_base || pwm_generator_pmd_disabled(cpu, generator)) {
@@ -10244,7 +10250,7 @@ static void advance_pwm(Dspic33* cpu, uint64_t cycles) {
         return;
     }
     subcycles = cycles * 2u;
-    for (generator = 0u; generator < DSPIC33_PWM_COUNT; generator++) {
+    for (generator = 0u; generator < pwm_generator_count(cpu); generator++) {
         if (pwm_generator_pmd_disabled(cpu, generator)) {
             continue;
         }
@@ -10286,7 +10292,7 @@ static void pwm_start(Dspic33* cpu) {
     cpu->io.pwm_period_update = 0u;
     cpu->io.pwm_timing_update = 0u;
     pwm_latch_periods(cpu);
-    for (generator = 0u; generator < DSPIC33_PWM_COUNT; generator++) {
+    for (generator = 0u; generator < pwm_generator_count(cpu); generator++) {
         uint8_t bit = (uint8_t)(1u << generator);
         uint16_t fault = pwm_register(cpu, generator, 4u);
         if (pwm_generator_pmd_disabled(cpu, generator)) {
@@ -10314,7 +10320,7 @@ static void pwm_start(Dspic33* cpu) {
         pwm_refresh_status(cpu, generator);
     }
     cpu->io.pwm_batch_updating = true;
-    for (generator = 0u; generator < DSPIC33_PWM_COUNT; generator++) {
+    for (generator = 0u; generator < pwm_generator_count(cpu); generator++) {
         if (pwm_generator_pmd_disabled(cpu, generator)) {
             continue;
         }
@@ -10347,7 +10353,7 @@ static void pwm_input_event(Dspic33* cpu, uint8_t source, bool high, bool curren
     if (!current_limit && (source == 1u || source == 3u)) {
         comparator_evaluate_all(cpu);
     }
-    for (generator = 0u; generator < DSPIC33_PWM_COUNT; generator++) {
+    for (generator = 0u; generator < pwm_generator_count(cpu); generator++) {
         uint16_t base = pwm_generator_base(generator);
         uint16_t control = raw_word(cpu, base);
         uint16_t fault = raw_word(cpu, (uint16_t)(base + 4u));
@@ -10454,9 +10460,9 @@ static void refresh_pwm_inputs(Dspic33* cpu) {
     static const uint16_t fault_addresses[7] = {0x06b8u, 0x06b8u, 0x06bau, 0x06bau,
                                                 0x06f4u, 0x06f4u, 0x06f6u};
     static const uint8_t fault_shifts[7] = {0u, 8u, 0u, 8u, 0u, 8u, 0u};
-    static const uint16_t dead_time_addresses[DSPIC33_PWM_COUNT] = {0x06ecu, 0x06eeu, 0x06eeu,
-                                                                    0x06f0u, 0x06f0u, 0x06f2u};
-    static const uint8_t dead_time_shifts[DSPIC33_PWM_COUNT] = {8u, 0u, 8u, 0u, 8u, 0u};
+    static const uint16_t dead_time_addresses[DSPIC33_PWM_MAX_COUNT] = {
+        0x06ecu, 0x06eeu, 0x06eeu, 0x06f0u, 0x06f0u, 0x06f2u, 0x06f2u};
+    static const uint8_t dead_time_shifts[DSPIC33_PWM_MAX_COUNT] = {8u, 0u, 8u, 0u, 8u, 0u, 8u};
     static const uint16_t sync_addresses[2] = {0x06eau, 0x06ecu};
     static const uint8_t sync_shifts[2] = {8u, 0u};
     uint8_t source;
@@ -10475,7 +10481,7 @@ static void refresh_pwm_inputs(Dspic33* cpu) {
         pwm_refresh_input(cpu, (uint8_t)(8u + source), high, false);
         pwm_refresh_input(cpu, (uint8_t)(8u + source), high, true);
     }
-    for (source = 0u; source < DSPIC33_PWM_COUNT; source++) {
+    for (source = 0u; source < pwm_generator_count(cpu); source++) {
         uint8_t bit = (uint8_t)(1u << source);
         bool high = pwm_pps_input_high(
             cpu, pwm_pps_selection(cpu, dead_time_addresses[source], dead_time_shifts[source]));
@@ -10502,7 +10508,7 @@ static void run_pwm_pmd(Dspic33* cpu, uint16_t source, uint32_t value) {
     uint16_t generation;
     uint8_t bit;
     uint8_t generator;
-    if (source > DSPIC33_PWM_COUNT) {
+    if (source > pwm_generator_count(cpu)) {
         return;
     }
     generation = (uint16_t)(value >> PWM_PMD_EVENT_GENERATION_SHIFT);
@@ -10517,7 +10523,7 @@ static void run_pwm_pmd(Dspic33* cpu, uint16_t source, uint32_t value) {
     }
     if ((raw_word(cpu, PWM_GLOBAL_BASE) & PWM_ENABLE) != 0u) {
         cpu->io.pwm_batch_updating = true;
-        for (generator = 0u; generator < DSPIC33_PWM_COUNT; generator++) {
+        for (generator = 0u; generator < pwm_generator_count(cpu); generator++) {
             if (!pwm_generator_pmd_disabled(cpu, generator)) {
                 pwm_refresh_status(cpu, generator);
                 pwm_update_output(cpu, generator);
@@ -12399,7 +12405,7 @@ static uint32_t usb_descriptor_address(const Dspic33* cpu, uint8_t endpoint, uin
 }
 
 static bool usb_memory_word(const Dspic33* cpu, uint32_t address, uint16_t* value) {
-    if (address > DSPIC33_DATA_SIZE - 2u) {
+    if (!dspic33_data_range_valid(address, 2u)) {
         return false;
     }
     *value = (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[address + 1u] << 8u));
@@ -12407,7 +12413,7 @@ static bool usb_memory_word(const Dspic33* cpu, uint32_t address, uint16_t* valu
 }
 
 static bool usb_write_memory_word(Dspic33* cpu, uint32_t address, uint16_t value) {
-    if (address > DSPIC33_DATA_SIZE - 2u) {
+    if (!dspic33_data_range_valid(address, 2u)) {
         return false;
     }
     cpu->data[address] = (uint8_t)value;
@@ -12601,7 +12607,7 @@ static bool usb_read_memory(const Dspic33* cpu, uint32_t address, uint8_t* data,
     uint16_t index;
     for (index = 0u; index < size; index++) {
         uint32_t current = address + (increment ? index : 0u);
-        if (current >= DSPIC33_DATA_SIZE) {
+        if (!dspic33_data_range_valid(current, 1u)) {
             return false;
         }
         data[index] = cpu->data[current];
@@ -12614,7 +12620,7 @@ static bool usb_write_memory(Dspic33* cpu, uint32_t address, const uint8_t* data
     uint16_t index;
     for (index = 0u; index < size; index++) {
         uint32_t current = address + (increment ? index : 0u);
-        if (current >= DSPIC33_DATA_SIZE) {
+        if (!dspic33_data_range_valid(current, 1u)) {
             return false;
         }
         cpu->data[current] = data[index];
@@ -13670,9 +13676,10 @@ static void update_pwm_pmd(Dspic33* cpu, uint16_t address, uint16_t previous) {
         count = 1u;
     } else if (address == 0x076au) {
         current = raw_word(cpu, address);
-        changed = (uint16_t)((current ^ previous) & 0x3f00u);
+        uint16_t available = (uint16_t)(((1u << pwm_generator_count(cpu)) - 1u) << 8u);
+        changed = (uint16_t)((current ^ previous) & available);
         first = 1u;
-        count = DSPIC33_PWM_COUNT;
+        count = pwm_generator_count(cpu);
     } else {
         return;
     }
@@ -13726,7 +13733,7 @@ static void update_pwm_register(Dspic33* cpu, uint16_t address, uint16_t previou
     if (address == PWM_GLOBAL_BASE + 4u) {
         if (!enabled || (primary & 0x0400u) != 0u) {
             cpu->io.pwm_active_period[0] = raw_word(cpu, address);
-            cpu->io.pwm_period_update &= (uint8_t)~1u;
+            cpu->io.pwm_period_update &= 0xfeu;
         } else {
             cpu->io.pwm_period_update |= 1u;
         }
@@ -13747,14 +13754,14 @@ static void update_pwm_register(Dspic33* cpu, uint16_t address, uint16_t previou
         uint16_t secondary = raw_word(cpu, PWM_GLOBAL_BASE + 0x0eu);
         if (!enabled || (secondary & 0x0400u) != 0u) {
             cpu->io.pwm_active_period[1] = raw_word(cpu, address);
-            cpu->io.pwm_period_update &= (uint8_t)~2u;
+            cpu->io.pwm_period_update &= 0xfdu;
         } else {
             cpu->io.pwm_period_update |= 2u;
         }
         return;
     }
     if (address == PWM_GLOBAL_BASE + 0x0au) {
-        for (generator = 0u; generator < DSPIC33_PWM_COUNT; generator++) {
+        for (generator = 0u; generator < pwm_generator_count(cpu); generator++) {
             uint8_t bit = (uint8_t)(1u << generator);
             if (!enabled || (pwm_register(cpu, generator, 0u) & PWM_IMMEDIATE_UPDATE) != 0u) {
                 pwm_latch_generator(cpu, generator);
@@ -13769,7 +13776,7 @@ static void update_pwm_register(Dspic33* cpu, uint16_t address, uint16_t previou
         return;
     }
     if (address < PWM_GENERATOR_BASE ||
-        address >= PWM_GENERATOR_BASE + DSPIC33_PWM_COUNT * PWM_GENERATOR_STRIDE) {
+        address >= PWM_GENERATOR_BASE + pwm_generator_count(cpu) * PWM_GENERATOR_STRIDE) {
         return;
     }
     generator = (uint8_t)((address - PWM_GENERATOR_BASE) / PWM_GENERATOR_STRIDE);
@@ -14177,7 +14184,7 @@ static void update_main_clock_configuration(Dspic33* cpu, uint16_t address, uint
             current = (uint16_t)((current & ~0x7000u) | (previous & 0x7000u));
         }
         if ((current & 0x7000u) == 0u) {
-            current &= (uint16_t)~0x0800u;
+            current &= 0xf7ffu;
         }
         raw_write_word(cpu, address, current);
     }
@@ -15095,11 +15102,7 @@ static void fail_nvm_write(Dspic33* cpu) {
     raw_write_word(cpu, NVM_CONTROL, (uint16_t)((control & ~NVM_WRITE) | NVM_WRITE_ERROR));
 }
 
-static bool nvm_program_range_valid(uint32_t address, uint32_t size) {
-    return dspic33_program_range_implemented(address, size);
-}
-
-static bool nvm_target_valid(uint16_t control, uint32_t address) {
+static bool nvm_target_valid(const Dspic33* cpu, uint16_t control, uint32_t address) {
     switch (control & 0x000fu) {
     case 0u:
         return address == 0xf80004u || address == 0xf80006u || address == 0xf80008u ||
@@ -15107,13 +15110,14 @@ static bool nvm_target_valid(uint16_t control, uint32_t address) {
                address == 0xf80010u || address == 0xf80012u;
     case 1u:
         address &= 0x00fffffcu;
-        return nvm_program_range_valid(address, 4u);
+        return dspic33_device_program_range_implemented(cpu, address, 4u);
     case 2u:
         address &= 0x00ffff00u;
-        return nvm_program_range_valid(address, DSPIC33_WRITE_LATCH_WORDS * 2u);
+        return dspic33_device_program_range_implemented(cpu, address,
+                                                        DSPIC33_WRITE_LATCH_WORDS * 2u);
     case 3u:
         address &= 0x00fff800u;
-        return nvm_program_range_valid(address, 0x800u);
+        return dspic33_device_program_range_implemented(cpu, address, 0x800u);
     case 0x0au:
     case 0x0du:
         return true;
@@ -15136,7 +15140,7 @@ static void update_nvm_control(Dspic33* cpu, uint16_t requested) {
         return;
     }
     if ((control & NVM_WRITE_ENABLE) == 0u || !nvm_key_authorized(cpu) ||
-        cpu->cycles > UINT64_MAX - completion_delay || !nvm_target_valid(control, target)) {
+        cpu->cycles > UINT64_MAX - completion_delay || !nvm_target_valid(cpu, control, target)) {
         fail_nvm_write(cpu);
         return;
     }
@@ -15196,7 +15200,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
         input_capture_register_write_mask(base, &writable) ||
         output_compare_register_write_mask(base, &writable) ||
         comparator_register_write_mask(base, &writable) ||
-        adc_register_write_mask(base, &writable) || pwm_register_write_mask(base, &writable) ||
+        adc_register_write_mask(base, &writable) || pwm_register_write_mask(cpu, base, &writable) ||
         uart_register_write_mask(cpu, base, &writable) ||
         spi_register_write_mask(base, &writable) || can_register_write_mask(cpu, base, &writable) ||
         usb_register_write_mask(cpu, base, previous, &writable) ||
@@ -15789,14 +15793,15 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
         return cpu->disicnt != 0u ? (uint8_t)(value | 0x40u) : (uint8_t)(value & ~0x40u);
     }
     for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-        uint16_t base = can_bases[channel];
+        uint16_t channel_base = can_bases[channel];
         uint16_t word_address = (uint16_t)(address & 0xfffeu);
-        uint16_t offset = (uint16_t)(word_address - base);
-        if (offset <= 0x7eu && (raw_word(cpu, base) & CAN_WINDOW) != 0u && offset >= 0x20u) {
+        uint16_t offset = (uint16_t)(word_address - channel_base);
+        if (offset <= 0x7eu && (raw_word(cpu, channel_base) & CAN_WINDOW) != 0u &&
+            offset >= 0x20u) {
             uint16_t word = can_filter_word(cpu, channel, offset);
             return (uint8_t)(word >> ((address & 1u) * 8u));
         }
-        if (offset == 0x40u && (raw_word(cpu, base) & CAN_WINDOW) == 0u &&
+        if (offset == 0x40u && (raw_word(cpu, channel_base) & CAN_WINDOW) == 0u &&
             (cpu->io.can_rx_busy & (uint8_t)(1u << channel)) != 0u &&
             cpu->io.can_rx_word[channel] != 0u) {
             uint16_t word = cpu->io.can_rx_words[channel][cpu->io.can_rx_word[channel] - 1u];
@@ -15820,27 +15825,28 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
         }
     }
     for (channel = 0u; channel < DSPIC33_UART_COUNT; channel++) {
-        uint16_t base = uart_bases[channel];
+        uint16_t channel_base = uart_bases[channel];
         bool high_byte = (address & 1u) != 0u;
-        bool nine_bit = (raw_word(cpu, base) & UART_MODE_DATA_MASK) == UART_MODE_DATA_MASK;
-        if ((address & 0xfffeu) == base + 6u && high_byte == nine_bit) {
+        bool nine_bit = (raw_word(cpu, channel_base) & UART_MODE_DATA_MASK) == UART_MODE_DATA_MASK;
+        if ((address & 0xfffeu) == channel_base + 6u && high_byte == nine_bit) {
             uart_read_complete(cpu, channel);
         }
     }
     for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-        uint16_t base = spi_bases[channel];
-        if ((address & 0xfffeu) == base + 8u && spi_read_complete(cpu, address)) {
+        uint16_t channel_base = spi_bases[channel];
+        if ((address & 0xfffeu) == channel_base + 8u && spi_read_complete(cpu, address)) {
             uint16_t discarded;
             if (word_queue_pop(&cpu->io.spi_rx_fifo[channel], &discarded)) {
                 if (word_queue_front(&cpu->io.spi_rx_fifo[channel], &discarded)) {
-                    raw_write_word(cpu, (uint16_t)(base + 8u), discarded);
+                    raw_write_word(cpu, (uint16_t)(channel_base + 8u), discarded);
                 }
                 spi_refresh_status(cpu, channel);
                 if (spi_enhanced(cpu, channel) && cpu->io.spi_rx_fifo[channel].count == 0u) {
                     spi_raise_mode(cpu, channel, 0u);
                 }
             } else {
-                raw_write_word(cpu, base, (uint16_t)(raw_word(cpu, base) & ~SPI_RX_FULL));
+                raw_write_word(cpu, channel_base,
+                               (uint16_t)(raw_word(cpu, channel_base) & ~SPI_RX_FULL));
             }
         }
     }
@@ -16433,7 +16439,7 @@ bool dspic33_pwm_current_limit(Dspic33* cpu, uint8_t source, bool high, uint64_t
 }
 
 bool dspic33_pwm_dead_time(Dspic33* cpu, uint8_t generator, bool high, uint64_t delay) {
-    return generator < DSPIC33_PWM_COUNT &&
+    return generator < pwm_generator_count(cpu) &&
            dspic33_schedule_external(cpu, DSPIC33_EVENT_PWM_DEAD_TIME, generator,
                                      high ? PWM_INPUT_HIGH : 0u, delay);
 }
@@ -16492,7 +16498,7 @@ bool dspic33_pwm_sync_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
 
 bool dspic33_pwm_output(const Dspic33* cpu, uint8_t generator, bool high) {
     uint8_t output = (uint8_t)(generator * 2u + (high ? 0u : 1u));
-    return generator < DSPIC33_PWM_COUNT && !pwm_generator_pmd_disabled(cpu, generator) &&
+    return generator < pwm_generator_count(cpu) && !pwm_generator_pmd_disabled(cpu, generator) &&
            cpu->io.pwm[output] != 0u;
 }
 

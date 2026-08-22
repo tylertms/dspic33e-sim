@@ -4,8 +4,8 @@
 #include <stdio.h>
 
 #include "dspic33_internal.h"
-#include "dspic33ep512mu810_data.h"
 #include "dspic33ep512mu810_sfr_cases.h"
+#include "dspic33ep_mu_data.h"
 
 typedef struct {
     uint16_t initial;
@@ -86,7 +86,8 @@ typedef struct {
 } SfrMapCensus;
 
 static bool map_word_is_implemented(uint32_t slot) {
-    return (dspic33_sfr_implementation_bitmap[slot >> 3u] & (uint8_t)(1u << (slot & 7u))) != 0u;
+    const uint8_t* bitmap = dspic33ep_mu_implementation_bitmap(DSPIC33EP_MU_DEVICE_512MU810);
+    return (bitmap[slot >> 3u] & (uint8_t)(1u << (slot & 7u))) != 0u;
 }
 
 static void inspect_map_condition(SfrMapCensus* census, bool condition, uint16_t address,
@@ -635,9 +636,6 @@ int main(void) {
                            sizeof(dspic33_sfr_conditional_access_expectations[0]) ==
                        DSPIC33_SFR_ACCESS_CONDITIONAL_COUNT,
                    "SFR conditional access expectation count");
-    _Static_assert(sizeof(dspic33_sfr_implementation_bitmap) ==
-                       DSPIC33_SFR_IMPLEMENTATION_BITMAP_SIZE,
-                   "SFR implementation bitmap size");
     if (!dspic33_initialize(&cpu)) {
         fprintf(stderr, "failed to initialize simulator\n");
         return 2;
