@@ -502,37 +502,41 @@ void dspic33_device_internal_input_capture_level(Dspic33* cpu, uint8_t channel, 
 }
 
 uint8_t dspic33_device_internal_input_capture_pps_pin(const Dspic33* cpu, uint8_t channel) {
-    uint16_t mapping = dspic33_device_internal_raw_word(
+    const uint16_t pps_mapping = dspic33_device_internal_raw_word(
         cpu, dspic33_device_input_capture_pps_registers[channel / 2u]);
-    return (channel & 1u) == 0u ? (uint8_t)(mapping & 0x007fu)
-                                : (uint8_t)((mapping >> 8u) & 0x007fu);
+
+    return (channel & 1u) == 0u ? (uint8_t)(pps_mapping & 0x007fu)
+                                : (uint8_t)((pps_mapping >> 8u) & 0x007fu);
 }
 
 const Dspic33PpsPin* dspic33_device_internal_pps_pin(uint8_t pin) {
-    size_t first = 0u;
-    size_t count = sizeof(dspic33_device_pps_pins) / sizeof(dspic33_device_pps_pins[0]);
-    while (count != 0u) {
-        size_t step = count / 2u;
-        size_t index = first + step;
-        if (dspic33_device_pps_pins[index].pin < pin) {
-            first = index + 1u;
-            count -= step + 1u;
+    size_t search_start = 0u;
+    size_t search_count = sizeof(dspic33_device_pps_pins) / sizeof(dspic33_device_pps_pins[0]);
+
+    while (search_count != 0u) {
+        const size_t search_step = search_count / 2u;
+        const size_t candidate_index = search_start + search_step;
+
+        if (dspic33_device_pps_pins[candidate_index].pin < pin) {
+            search_start = candidate_index + 1u;
+            search_count -= search_step + 1u;
         } else {
-            count = step;
+            search_count = search_step;
         }
     }
-    if (first == sizeof(dspic33_device_pps_pins) / sizeof(dspic33_device_pps_pins[0]) ||
-        dspic33_device_pps_pins[first].pin != pin) {
+    if (search_start == sizeof(dspic33_device_pps_pins) / sizeof(dspic33_device_pps_pins[0]) ||
+        dspic33_device_pps_pins[search_start].pin != pin) {
         return NULL;
     }
-    return &dspic33_device_pps_pins[first];
+    return &dspic33_device_pps_pins[search_start];
 }
 
 bool dspic33_device_internal_pps_pin_bonded(const Dspic33* cpu, uint8_t pin) {
-    const Dspic33PpsPin* mapping = dspic33_device_internal_pps_pin(pin);
-    return cpu != NULL && mapping != NULL &&
-           (dspic33_device_internal_gpio_port_mask(cpu, mapping->port) &
-            (uint16_t)(1u << mapping->bit)) != 0u;
+    const Dspic33PpsPin* pps_pin = dspic33_device_internal_pps_pin(pin);
+
+    return cpu != NULL && pps_pin != NULL &&
+           (dspic33_device_internal_gpio_port_mask(cpu, pps_pin->port) &
+            (uint16_t)(1u << pps_pin->bit)) != 0u;
 }
 
 static bool pps_output_capable(uint8_t pin) {
@@ -564,35 +568,40 @@ uint8_t dspic33_device_internal_pps_output_function(const Dspic33* cpu, uint8_t 
 }
 
 bool dspic33_device_internal_pps_physical_input_enabled(const Dspic33* cpu, uint8_t pin) {
-    const Dspic33PpsPin* mapping = dspic33_device_internal_pps_pin(pin);
-    uint16_t bit;
-    if (mapping == NULL) {
+    const Dspic33PpsPin* pps_pin = dspic33_device_internal_pps_pin(pin);
+    uint16_t pin_mask;
+
+    if (pps_pin == NULL) {
         return false;
     }
-    bit = (uint16_t)(1u << mapping->bit);
-    bool input =
-        (dspic33_device_internal_raw_word(cpu, dspic33_device_gpio_tris_addresses[mapping->port]) &
-         bit) != 0u;
-    bool analog_capable = (dspic33_device_gpio_analog_masks[mapping->port] & bit) != 0u;
-    bool analog = dspic33_device_gpio_analog_addresses[mapping->port] != 0u &&
-                  (dspic33_device_internal_raw_word(
-                       cpu, dspic33_device_gpio_analog_addresses[mapping->port]) &
-                   bit) != 0u;
-    return input && (!analog_capable || (pps_output_capable(pin) ? !analog : analog));
+    pin_mask = (uint16_t)(1u << pps_pin->bit);
+    const bool is_input =
+        (dspic33_device_internal_raw_word(cpu, dspic33_device_gpio_tris_addresses[pps_pin->port]) &
+         pin_mask) != 0u;
+    const bool is_analog_capable =
+        (dspic33_device_gpio_analog_masks[pps_pin->port] & pin_mask) != 0u;
+    const bool is_analog = dspic33_device_gpio_analog_addresses[pps_pin->port] != 0u &&
+                           (dspic33_device_internal_raw_word(
+                                cpu, dspic33_device_gpio_analog_addresses[pps_pin->port]) &
+                            pin_mask) != 0u;
+
+    return is_input && (!is_analog_capable || (pps_output_capable(pin) ? !is_analog : is_analog));
 }
 
 bool dspic33_device_internal_pps_physical_input_high(const Dspic33* cpu, uint8_t pin, bool* high) {
-    const Dspic33PpsPin* mapping = dspic33_device_internal_pps_pin(pin);
-    uint16_t bit;
-    if (mapping == NULL || high == NULL ||
+    const Dspic33PpsPin* pps_pin = dspic33_device_internal_pps_pin(pin);
+    uint16_t pin_mask;
+
+    if (pps_pin == NULL || high == NULL ||
         !dspic33_device_internal_pps_physical_input_enabled(cpu, pin)) {
         return false;
     }
-    bit = (uint16_t)(1u << mapping->bit);
-    if (!pps_output_capable(pin) && (dspic33_device_gpio_analog_masks[mapping->port] & bit) != 0u) {
-        *high = (cpu->io.gpio[mapping->port] & cpu->io.gpio_driven[mapping->port] & bit) != 0u;
+    pin_mask = (uint16_t)(1u << pps_pin->bit);
+    if (!pps_output_capable(pin) &&
+        (dspic33_device_gpio_analog_masks[pps_pin->port] & pin_mask) != 0u) {
+        *high = (cpu->io.gpio[pps_pin->port] & cpu->io.gpio_driven[pps_pin->port] & pin_mask) != 0u;
     } else {
-        *high = (dspic33_device_internal_gpio_pin_values(cpu, mapping->port) & bit) != 0u;
+        *high = (dspic33_device_internal_gpio_pin_values(cpu, pps_pin->port) & pin_mask) != 0u;
     }
     return true;
 }
@@ -608,8 +617,9 @@ bool dspic33_device_internal_can_capture_enabled(const Dspic33* cpu) {
 }
 
 void dspic33_device_internal_run_input_capture(Dspic33* cpu, uint16_t source, uint32_t value) {
-    uint32_t kind = value & INPUT_CAPTURE_EVENT_KIND_MASK;
-    if (kind == INPUT_CAPTURE_EVENT_PIN) {
+    const uint32_t event_kind = value & INPUT_CAPTURE_EVENT_KIND_MASK;
+
+    if (event_kind == INPUT_CAPTURE_EVENT_PIN) {
         dspic33_device_internal_apply_physical_pin_level(cpu, (uint8_t)source,
                                                          (value & INPUT_CAPTURE_EVENT_HIGH) != 0u);
         return;
@@ -617,26 +627,27 @@ void dspic33_device_internal_run_input_capture(Dspic33* cpu, uint16_t source, ui
     if (source >= DSPIC33_INPUT_CAPTURE_COUNT) {
         return;
     }
-    if (kind == INPUT_CAPTURE_EVENT_PMD) {
-        uint16_t generation = (uint16_t)(value >> INPUT_CAPTURE_EVENT_GENERATION_SHIFT);
-        uint16_t bit = (uint16_t)(1u << source);
-        if (generation != cpu->io.input_capture.pmd_generation[source]) {
+    if (event_kind == INPUT_CAPTURE_EVENT_PMD) {
+        const uint16_t event_generation = (uint16_t)(value >> INPUT_CAPTURE_EVENT_GENERATION_SHIFT);
+        const uint16_t channel_mask = (uint16_t)(1u << source);
+
+        if (event_generation != cpu->io.input_capture.pmd_generation[source]) {
             return;
         }
         if ((value & INPUT_CAPTURE_EVENT_PMD_DISABLED) != 0u) {
-            cpu->io.input_capture.pmd_disabled |= bit;
+            cpu->io.input_capture.pmd_disabled |= channel_mask;
             input_capture_pause_events(cpu, (uint8_t)source);
         } else {
-            cpu->io.input_capture.pmd_disabled &= (uint16_t)~bit;
+            cpu->io.input_capture.pmd_disabled &= (uint16_t)~channel_mask;
             input_capture_resume_events(cpu, (uint8_t)source);
         }
         input_capture_refresh_sync_outputs(cpu);
-    } else if (kind == INPUT_CAPTURE_EVENT_INPUT) {
+    } else if (event_kind == INPUT_CAPTURE_EVENT_INPUT) {
         dspic33_device_internal_input_capture_level(cpu, (uint8_t)source,
                                                     (value & INPUT_CAPTURE_EVENT_HIGH) != 0u);
-    } else if (kind == INPUT_CAPTURE_EVENT_CAPTURE) {
+    } else if (event_kind == INPUT_CAPTURE_EVENT_CAPTURE) {
         input_capture_snapshot(cpu, (uint8_t)source, value);
-    } else if (kind == INPUT_CAPTURE_EVENT_INTERRUPT &&
+    } else if (event_kind == INPUT_CAPTURE_EVENT_INTERRUPT &&
                (uint16_t)(value >> INPUT_CAPTURE_EVENT_GENERATION_SHIFT) ==
                    cpu->io.input_capture.generation[source] &&
                (input_capture_operating(cpu, (uint8_t)source) ||
@@ -650,42 +661,43 @@ void dspic33_device_internal_run_input_capture(Dspic33* cpu, uint16_t source, ui
 }
 
 void dspic33_device_internal_update_input_capture_register(Dspic33* cpu, uint16_t address,
-                                                           uint16_t previous) {
-    uint16_t base;
-    uint16_t offset;
-    uint16_t current;
+                                                           uint16_t previous_value) {
+    uint16_t register_base;
+    uint16_t register_offset;
+    uint16_t current_value;
     uint8_t channel;
     if (address < INPUT_CAPTURE_BASE ||
         address >= INPUT_CAPTURE_BASE + DSPIC33_INPUT_CAPTURE_COUNT * INPUT_CAPTURE_STRIDE) {
         return;
     }
     channel = (uint8_t)((address - INPUT_CAPTURE_BASE) / INPUT_CAPTURE_STRIDE);
-    base = input_capture_base(channel);
-    offset = (uint16_t)(address - base);
-    current = dspic33_device_internal_raw_word(cpu, base + offset);
+    register_base = input_capture_base(channel);
+    register_offset = (uint16_t)(address - register_base);
+    current_value = dspic33_device_internal_raw_word(cpu, register_base + register_offset);
     if (dspic33_device_internal_input_capture_pmd_disabled(cpu, channel)) {
-        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(base + offset), previous);
+        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(register_base + register_offset),
+                                               previous_value);
         return;
     }
-    if (offset == 0u) {
-        if ((previous & INPUT_CAPTURE_MODE_MASK) != 0u &&
-            (current & INPUT_CAPTURE_MODE_MASK) == 0u) {
+    if (register_offset == 0u) {
+        if ((previous_value & INPUT_CAPTURE_MODE_MASK) != 0u &&
+            (current_value & INPUT_CAPTURE_MODE_MASK) == 0u) {
             input_capture_flush(cpu, channel);
-        } else if ((previous & INPUT_CAPTURE_CON1_WRITABLE) !=
-                   (current & INPUT_CAPTURE_CON1_WRITABLE)) {
+        } else if ((previous_value & INPUT_CAPTURE_CON1_WRITABLE) !=
+                   (current_value & INPUT_CAPTURE_CON1_WRITABLE)) {
             cpu->io.input_capture.generation[channel]++;
         }
         input_capture_refresh_sync_outputs(cpu);
         return;
     }
-    if (offset == 2u &&
-        (previous & INPUT_CAPTURE_CON2_WRITABLE) != (current & INPUT_CAPTURE_CON2_WRITABLE)) {
-        if ((previous & (INPUT_CAPTURE_CON2_WRITABLE & ~INPUT_CAPTURE_TRIGGER_STATUS)) !=
-            (current & (INPUT_CAPTURE_CON2_WRITABLE & ~INPUT_CAPTURE_TRIGGER_STATUS))) {
+    if (register_offset == 2u && (previous_value & INPUT_CAPTURE_CON2_WRITABLE) !=
+                                     (current_value & INPUT_CAPTURE_CON2_WRITABLE)) {
+        if ((previous_value & (INPUT_CAPTURE_CON2_WRITABLE & ~INPUT_CAPTURE_TRIGGER_STATUS)) !=
+            (current_value & (INPUT_CAPTURE_CON2_WRITABLE & ~INPUT_CAPTURE_TRIGGER_STATUS))) {
             cpu->io.input_capture.generation[channel]++;
             cpu->io.input_capture.sync_reset_pending &= (uint16_t)~(uint16_t)(1u << channel);
         }
-        if ((current & (INPUT_CAPTURE_TRIGGER | INPUT_CAPTURE_TRIGGER_STATUS)) ==
+        if ((current_value & (INPUT_CAPTURE_TRIGGER | INPUT_CAPTURE_TRIGGER_STATUS)) ==
             INPUT_CAPTURE_TRIGGER) {
             input_capture_reset_timer(cpu, channel);
         }
@@ -694,11 +706,11 @@ void dspic33_device_internal_update_input_capture_register(Dspic33* cpu, uint16_
 }
 
 void dspic33_device_internal_update_input_capture_pmd(Dspic33* cpu, uint16_t address,
-                                                      uint16_t previous) {
+                                                      uint16_t previous_value) {
     uint8_t first_channel;
     uint8_t channel;
-    uint16_t changed;
-    uint16_t current;
+    uint16_t changed_mask;
+    uint16_t current_value;
     if (address == 0x0762u) {
         first_channel = 0u;
     } else if (address == 0x0768u) {
@@ -706,25 +718,26 @@ void dspic33_device_internal_update_input_capture_pmd(Dspic33* cpu, uint16_t add
     } else {
         return;
     }
-    current = dspic33_device_internal_raw_word(cpu, address);
-    changed = (uint16_t)((previous ^ current) & 0xff00u);
+    current_value = dspic33_device_internal_raw_word(cpu, address);
+    changed_mask = (uint16_t)((previous_value ^ current_value) & 0xff00u);
     for (channel = first_channel; channel < first_channel + 8u; channel++) {
-        uint16_t register_mask = (uint16_t)(1u << (8u + channel - first_channel));
-        if ((changed & register_mask) == 0u) {
+        const uint16_t register_mask = (uint16_t)(1u << (8u + channel - first_channel));
+        if ((changed_mask & register_mask) == 0u) {
             continue;
         }
         cpu->io.input_capture.pmd_generation[channel]++;
-        if (!dspic33_schedule(
-                cpu, DSPIC33_EVENT_INPUT_CAPTURE, channel,
-                INPUT_CAPTURE_EVENT_PMD |
-                    ((current & register_mask) != 0u ? INPUT_CAPTURE_EVENT_PMD_DISABLED : 0u) |
-                    ((uint32_t)cpu->io.input_capture.pmd_generation[channel]
-                     << INPUT_CAPTURE_EVENT_GENERATION_SHIFT),
-                dspic33_device_instruction_cycles(cpu, 1u))) {
+        if (!dspic33_schedule(cpu, DSPIC33_EVENT_INPUT_CAPTURE, channel,
+                              INPUT_CAPTURE_EVENT_PMD |
+                                  ((current_value & register_mask) != 0u
+                                       ? INPUT_CAPTURE_EVENT_PMD_DISABLED
+                                       : 0u) |
+                                  ((uint32_t)cpu->io.input_capture.pmd_generation[channel]
+                                   << INPUT_CAPTURE_EVENT_GENERATION_SHIFT),
+                              dspic33_device_instruction_cycles(cpu, 1u))) {
             uint8_t invalidate;
-            dspic33_device_internal_raw_write_word(cpu, address, previous);
+            dspic33_device_internal_raw_write_word(cpu, address, previous_value);
             for (invalidate = first_channel; invalidate < first_channel + 8u; invalidate++) {
-                if ((changed & (uint16_t)(1u << (8u + invalidate - first_channel))) != 0u) {
+                if ((changed_mask & (uint16_t)(1u << (8u + invalidate - first_channel))) != 0u) {
                     cpu->io.input_capture.pmd_generation[invalidate]++;
                 }
             }
