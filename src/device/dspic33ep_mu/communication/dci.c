@@ -638,116 +638,128 @@ void dspic33_device_internal_dci_refresh_pps_inputs(Dspic33* cpu) {
                  cpu, dspic33_device_internal_dci_pps_selection(cpu, DCI_PPS_INPUTS, 0u)));
 }
 
-static bool dci_internal_event_phase(const Dspic33* cpu, uint16_t* source, uint64_t* elapsed) {
-    size_t index;
-    for (index = 0u; index < cpu->events.count; index++) {
-        const Dspic33Event* event = &cpu->events.items[index];
-        uint64_t total;
-        uint64_t remaining;
+static bool dci_internal_event_phase(const Dspic33* cpu, uint16_t* event_source,
+                                     uint64_t* elapsed_cycles) {
+    for (size_t event_index = 0u; event_index < cpu->events.count; event_index++) {
+        const Dspic33Event* event = &cpu->events.items[event_index];
+        uint64_t total_event_cycles;
+        uint64_t remaining_event_cycles;
+
         if (event->type != DSPIC33_EVENT_DCI ||
             (event->source != DCI_EVENT_START && event->source != DCI_EVENT_INTERNAL) ||
             (uint16_t)event->value != cpu->io.dci.generation) {
             continue;
         }
-        total = event->source == DCI_EVENT_START ? dci_bit_cycles(cpu) * 3u : dci_word_cycles(cpu);
-        remaining = event->paused ? event->paused_remaining : event->cycle - cpu->device_cycles;
-        if (remaining > total) {
+        total_event_cycles =
+            event->source == DCI_EVENT_START ? dci_bit_cycles(cpu) * 3u : dci_word_cycles(cpu);
+        remaining_event_cycles =
+            event->paused ? event->paused_remaining : event->cycle - cpu->device_cycles;
+        if (remaining_event_cycles > total_event_cycles) {
             return false;
         }
-        *source = event->source;
-        *elapsed = total - remaining;
+        *event_source = event->source;
+        *elapsed_cycles = total_event_cycles - remaining_event_cycles;
         return true;
     }
     return false;
 }
 
 bool dspic33_device_internal_dci_internal_clock_high(const Dspic33* cpu, bool* high) {
-    uint64_t half_period = dci_bit_cycles(cpu) / 2u;
+    uint64_t half_bit_cycle = dci_bit_cycles(cpu) / 2u;
+
     if (dspic33_device_internal_raw_word(cpu, DCI_CONTROL3) == 0u || cpu->io.dci.pmd_disabled ||
         (dspic33_device_internal_raw_word(cpu, DCI_CONTROL1) & DCI_CONTROL_EXTERNAL_CLOCK) != 0u ||
-        half_period == 0u) {
+        half_bit_cycle == 0u) {
         return false;
     }
-    *high = dci_bcg_phase(cpu) < half_period;
+    *high = dci_bcg_phase(cpu) < half_bit_cycle;
     return true;
 }
 
 bool dspic33_device_internal_dci_data_output(const Dspic33* cpu, bool* high) {
     const Dspic33Dci* dci = &cpu->io.dci;
-    uint16_t control = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
+    uint16_t control_word = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
     uint16_t slot_bit = (uint16_t)(1u << dci->slot);
-    bool transmit = (dspic33_device_internal_raw_word(cpu, DCI_TRANSMIT_SLOTS) & slot_bit) != 0u;
-    bool driven = transmit || (control & DCI_CONTROL_TRISTATE) == 0u;
-    uint8_t bit = dci->serial_bits;
-    uint16_t output = transmit ? dci->transmit[dci->buffer] : 0u;
-    if ((control & DCI_CONTROL_EXTERNAL_CLOCK) != 0u) {
+    bool is_transmit_slot =
+        (dspic33_device_internal_raw_word(cpu, DCI_TRANSMIT_SLOTS) & slot_bit) != 0u;
+    bool output_driven = is_transmit_slot || (control_word & DCI_CONTROL_TRISTATE) == 0u;
+    uint8_t serial_bit_index = dci->serial_bits;
+    uint16_t output_word = is_transmit_slot ? dci->transmit[dci->buffer] : 0u;
+
+    if ((control_word & DCI_CONTROL_EXTERNAL_CLOCK) != 0u) {
         *high = dci->serial_output_high;
         return dci->serial_output_driven;
     }
-    if (!driven) {
+    if (!output_driven) {
         return false;
     }
     {
-        uint16_t source;
-        uint64_t elapsed;
-        if (dci_internal_event_phase(cpu, &source, &elapsed) && source == DCI_EVENT_INTERNAL) {
-            if ((control & DCI_CONTROL_SAMPLE_RISING) != 0u) {
-                elapsed += dci_bit_cycles(cpu) / 2u;
+        uint16_t event_source;
+        uint64_t elapsed_cycles;
+
+        if (dci_internal_event_phase(cpu, &event_source, &elapsed_cycles) &&
+            event_source == DCI_EVENT_INTERNAL) {
+            if ((control_word & DCI_CONTROL_SAMPLE_RISING) != 0u) {
+                elapsed_cycles += dci_bit_cycles(cpu) / 2u;
             }
-            bit = (uint8_t)(elapsed / dci_bit_cycles(cpu));
+            serial_bit_index = (uint8_t)(elapsed_cycles / dci_bit_cycles(cpu));
         }
     }
-    *high = dci->initialized && dci->started && bit < 16u &&
-            (output & (uint16_t)(0x8000u >> bit)) != 0u;
+    *high = dci->initialized && dci->started && serial_bit_index < 16u &&
+            (output_word & (uint16_t)(0x8000u >> serial_bit_index)) != 0u;
     return true;
 }
 
 bool dspic33_device_internal_dci_frame_output(const Dspic33* cpu, bool* high) {
-    uint8_t mode = dci_mode(cpu);
-    uint16_t control = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
-    uint16_t source;
-    uint64_t elapsed;
-    uint64_t bit_cycles = dci_bit_cycles(cpu);
-    bool immediate = (control & DCI_CONTROL_DATA_JUSTIFY) != 0u;
-    if ((control & DCI_CONTROL_EXTERNAL_CLOCK) != 0u) {
+    uint8_t dci_mode_value = dci_mode(cpu);
+    uint16_t control_word = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
+    uint16_t event_source;
+    uint64_t elapsed_cycles;
+    uint64_t bit_cycle_count = dci_bit_cycles(cpu);
+    bool immediate_data = (control_word & DCI_CONTROL_DATA_JUSTIFY) != 0u;
+
+    if ((control_word & DCI_CONTROL_EXTERNAL_CLOCK) != 0u) {
         if (!cpu->io.dci.initialized || !cpu->io.dci.started) {
             *high = false;
-        } else if (mode == DCI_MODE_I2S) {
+        } else if (dci_mode_value == DCI_MODE_I2S) {
             *high = cpu->io.dci.output_frame_high;
-        } else if (mode >= DCI_MODE_AC_LINK_16) {
+        } else if (dci_mode_value >= DCI_MODE_AC_LINK_16) {
             *high = cpu->io.dci.serial_frame_bits < 16u;
         } else {
             *high = cpu->io.dci.serial_delay ||
-                    (immediate && cpu->io.dci.slot == 0u && cpu->io.dci.serial_bits == 0u);
+                    (immediate_data && cpu->io.dci.slot == 0u && cpu->io.dci.serial_bits == 0u);
         }
         return true;
     }
-    if (!dci_internal_event_phase(cpu, &source, &elapsed)) {
+    if (!dci_internal_event_phase(cpu, &event_source, &elapsed_cycles)) {
         *high = false;
         return true;
     }
-    if (mode == DCI_MODE_I2S) {
-        *high = source == DCI_EVENT_START ? !immediate && elapsed >= bit_cycles * 2u
-                                          : cpu->io.dci.output_frame_high;
-        if (!immediate && source == DCI_EVENT_INTERNAL &&
+    if (dci_mode_value == DCI_MODE_I2S) {
+        *high = event_source == DCI_EVENT_START
+                    ? !immediate_data && elapsed_cycles >= bit_cycle_count * 2u
+                    : cpu->io.dci.output_frame_high;
+        if (!immediate_data && event_source == DCI_EVENT_INTERNAL &&
             cpu->io.dci.slot + 1u == dci_frame_count(cpu) &&
-            elapsed + bit_cycles >= dci_word_cycles(cpu)) {
+            elapsed_cycles + bit_cycle_count >= dci_word_cycles(cpu)) {
             *high = !*high;
         }
         return true;
     }
-    if (mode >= DCI_MODE_AC_LINK_16) {
-        *high =
-            (source == DCI_EVENT_START && elapsed >= bit_cycles * 2u) ||
-            (source == DCI_EVENT_INTERNAL && cpu->io.dci.slot == 0u && elapsed < bit_cycles * 15u);
+    if (dci_mode_value >= DCI_MODE_AC_LINK_16) {
+        *high = (event_source == DCI_EVENT_START && elapsed_cycles >= bit_cycle_count * 2u) ||
+                (event_source == DCI_EVENT_INTERNAL && cpu->io.dci.slot == 0u &&
+                 elapsed_cycles < bit_cycle_count * 15u);
         return true;
     }
-    if (immediate) {
-        *high = source == DCI_EVENT_INTERNAL && cpu->io.dci.slot == 0u && elapsed < bit_cycles;
+    if (immediate_data) {
+        *high = event_source == DCI_EVENT_INTERNAL && cpu->io.dci.slot == 0u &&
+                elapsed_cycles < bit_cycle_count;
     } else {
-        *high = (source == DCI_EVENT_START && elapsed >= bit_cycles * 2u) ||
-                (source == DCI_EVENT_INTERNAL && cpu->io.dci.slot + 1u == dci_frame_count(cpu) &&
-                 elapsed + bit_cycles >= dci_word_cycles(cpu));
+        *high =
+            (event_source == DCI_EVENT_START && elapsed_cycles >= bit_cycle_count * 2u) ||
+            (event_source == DCI_EVENT_INTERNAL && cpu->io.dci.slot + 1u == dci_frame_count(cpu) &&
+             elapsed_cycles + bit_cycle_count >= dci_word_cycles(cpu));
     }
     return true;
 }
