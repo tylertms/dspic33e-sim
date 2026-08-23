@@ -172,22 +172,25 @@ static void pmd_cases(TestState* state, Dspic33* cpu) {
 }
 
 static void dma_cases(TestState* state, Dspic33* cpu) {
-    uint8_t channel;
-    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-        uint16_t base = bases[channel];
-        uint16_t control = 0x043bu;
-        uint64_t cycles = dspic33_spi_test_transfer_cycles(control);
-        uint16_t rx_memory = (uint16_t)(0x5000u + channel * 0x20u);
-        uint16_t tx_memory = (uint16_t)(rx_memory + 0x10u);
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_SPI_COUNT; channel_index++) {
+        const uint16_t spi_base = bases[channel_index];
+        const uint16_t spi_control = 0x043bu;
+        const uint64_t transfer_cycles = dspic33_spi_test_transfer_cycles(spi_control);
+        const uint16_t receive_memory = (uint16_t)(0x5000u + channel_index * 0x20u);
+        const uint16_t transmit_memory = (uint16_t)(receive_memory + 0x10u);
+
         dspic33_reset(cpu, 0u);
-        dspic33_spi_test_configure_spi(cpu, channel, control, 0u, 0u);
-        dspic33_spi_test_configure_dma(cpu, 0u, 0x0001u, requests[channel], rx_memory,
-                                       (uint16_t)(base + 8u), 0u);
-        expect(state, dspic33_spi_receive(cpu, channel, 0x6a00u + channel, cycles),
+        dspic33_spi_test_configure_spi(cpu, channel_index, spi_control, 0u, 0u);
+        dspic33_spi_test_configure_dma(cpu, 0u, 0x0001u, requests[channel_index], receive_memory,
+                                       (uint16_t)(spi_base + 8u), 0u);
+        expect(state,
+               dspic33_spi_receive(cpu, channel_index, 0x6a00u + channel_index, transfer_cycles),
                "schedule dma receive response");
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), 0x1000u + channel);
-        expect(state, dspic33_device_advance(cpu, cycles), "dma receive completion advance");
-        expect(state, dspic33_read_word(cpu, rx_memory) == 0x6a00u + channel, "dma receive value");
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0x1000u + channel_index);
+        expect(state, dspic33_device_advance(cpu, transfer_cycles),
+               "dma receive completion advance");
+        expect(state, dspic33_read_word(cpu, receive_memory) == 0x6a00u + channel_index,
+               "dma receive value");
         expect(state,
                (dspic33_read_word(cpu, dspic33_spi_test_dma_base(0u)) & 0x8000u) != 0u &&
                    !dspic33_spi_test_interrupt_flag(cpu, 4u) && cpu->io.dma_index[0] == 0u,
@@ -199,13 +202,13 @@ static void dma_cases(TestState* state, Dspic33* cpu) {
                "dma receive one shot complete");
 
         dspic33_reset(cpu, 0u);
-        dspic33_spi_test_configure_spi(cpu, channel, control, 0u, 0u);
-        dspic33_write_word(cpu, tx_memory, 0x7b00u + channel);
-        dspic33_spi_test_configure_dma(cpu, 1u, 0x2001u, requests[channel], tx_memory,
-                                       (uint16_t)(base + 8u), 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), 0x2000u + channel);
-        expect(state, dspic33_device_advance(cpu, cycles), "dma transmit request advance");
-        expect(state, cpu->io.spi_shift[channel] == 0x7b00u + channel,
+        dspic33_spi_test_configure_spi(cpu, channel_index, spi_control, 0u, 0u);
+        dspic33_write_word(cpu, transmit_memory, 0x7b00u + channel_index);
+        dspic33_spi_test_configure_dma(cpu, 1u, 0x2001u, requests[channel_index], transmit_memory,
+                                       (uint16_t)(spi_base + 8u), 0u);
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0x2000u + channel_index);
+        expect(state, dspic33_device_advance(cpu, transfer_cycles), "dma transmit request advance");
+        expect(state, cpu->io.spi_shift[channel_index] == 0x7b00u + channel_index,
                "dma transmit loads next shift");
         expect(state,
                (dspic33_read_word(cpu, dspic33_spi_test_dma_base(1u)) & 0x8000u) != 0u &&
@@ -217,46 +220,54 @@ static void dma_cases(TestState* state, Dspic33* cpu) {
                (dspic33_read_word(cpu, dspic33_spi_test_dma_base(1u)) & 0x8000u) == 0u &&
                    dspic33_spi_test_interrupt_flag(cpu, 14u),
                "dma transmit one shot complete");
-        expect(state, dspic33_device_advance(cpu, cycles), "dma transmitted word completion");
-        expect(state, cpu->io.spi_tx[channel].count == 4u, "dma transmit trace contains two words");
+        expect(state, dspic33_device_advance(cpu, transfer_cycles),
+               "dma transmitted word completion");
+        expect(state, cpu->io.spi_tx[channel_index].count == 4u,
+               "dma transmit trace contains two words");
 
         dspic33_reset(cpu, 0u);
-        dspic33_spi_test_configure_spi(cpu, channel, control, 0u, 0u);
-        dspic33_write_word(cpu, tx_memory, 0x8c00u + channel);
-        dspic33_spi_test_configure_dma(cpu, 0u, 0x0001u, requests[channel], rx_memory,
-                                       (uint16_t)(base + 8u), 0u);
-        dspic33_spi_test_configure_dma(cpu, 1u, 0x2001u, requests[channel], tx_memory,
-                                       (uint16_t)(base + 8u), 0u);
-        expect(state, dspic33_spi_receive(cpu, channel, 0x9d00u + channel, cycles),
+        dspic33_spi_test_configure_spi(cpu, channel_index, spi_control, 0u, 0u);
+        dspic33_write_word(cpu, transmit_memory, 0x8c00u + channel_index);
+        dspic33_spi_test_configure_dma(cpu, 0u, 0x0001u, requests[channel_index], receive_memory,
+                                       (uint16_t)(spi_base + 8u), 0u);
+        dspic33_spi_test_configure_dma(cpu, 1u, 0x2001u, requests[channel_index], transmit_memory,
+                                       (uint16_t)(spi_base + 8u), 0u);
+        expect(state,
+               dspic33_spi_receive(cpu, channel_index, 0x9d00u + channel_index, transfer_cycles),
                "schedule duplex dma response");
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), 0x3000u + channel);
-        expect(state, dspic33_device_advance(cpu, cycles), "duplex dma completion advance");
-        expect(state, dspic33_read_word(cpu, rx_memory) == 0x9d00u + channel,
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0x3000u + channel_index);
+        expect(state, dspic33_device_advance(cpu, transfer_cycles),
+               "duplex dma completion advance");
+        expect(state, dspic33_read_word(cpu, receive_memory) == 0x9d00u + channel_index,
                "duplex dma receive value");
-        expect(state, cpu->io.spi_shift[channel] == 0x3000u + channel && cpu->io.dma_active == 1u,
+        expect(state,
+               cpu->io.spi_shift[channel_index] == 0x3000u + channel_index &&
+                   cpu->io.dma_active == 1u,
                "duplex DMA receive channel has controller priority");
         expect(state, dspic33_device_advance(cpu, 1u),
                "duplex DMA receive completion and transmit start");
-        expect(state, cpu->io.spi_shift[channel] == 0x8c00u + channel, "duplex dma transmit value");
+        expect(state, cpu->io.spi_shift[channel_index] == 0x8c00u + channel_index,
+               "duplex dma transmit value");
 
         dspic33_reset(cpu, 0u);
-        dspic33_spi_test_configure_spi(cpu, channel, 0x0080u, 0u, 0u);
-        dspic33_spi_test_configure_dma(cpu, 0u, 0x4000u, requests[channel], rx_memory,
-                                       (uint16_t)(base + 8u), 2u);
+        dspic33_spi_test_configure_spi(cpu, channel_index, 0x0080u, 0u, 0u);
+        dspic33_spi_test_configure_dma(cpu, 0u, 0x4000u, requests[channel_index], receive_memory,
+                                       (uint16_t)(spi_base + 8u), 2u);
         expect(state,
-               dspic33_spi_select(cpu, channel, true, 0u) &&
-                   dspic33_spi_receive(cpu, channel, 0xa1u, 1u) &&
-                   dspic33_spi_receive(cpu, channel, 0xb2u, 4u) &&
-                   dspic33_spi_receive(cpu, channel, 0xc3u, 7u) && dspic33_device_advance(cpu, 10u),
+               dspic33_spi_select(cpu, channel_index, true, 0u) &&
+                   dspic33_spi_receive(cpu, channel_index, 0xa1u, 1u) &&
+                   dspic33_spi_receive(cpu, channel_index, 0xb2u, 4u) &&
+                   dspic33_spi_receive(cpu, channel_index, 0xc3u, 7u) &&
+                   dspic33_device_advance(cpu, 10u),
                "schedule byte dma receive block");
         expect(state,
-               dspic33_read_byte(cpu, rx_memory) == 0xa1u &&
-                   dspic33_read_byte(cpu, (uint16_t)(rx_memory + 1u)) == 0xb2u &&
-                   dspic33_read_byte(cpu, (uint16_t)(rx_memory + 2u)) == 0xc3u,
+               dspic33_read_byte(cpu, receive_memory) == 0xa1u &&
+                   dspic33_read_byte(cpu, (uint16_t)(receive_memory + 1u)) == 0xb2u &&
+                   dspic33_read_byte(cpu, (uint16_t)(receive_memory + 2u)) == 0xc3u,
                "byte dma receive preserves each SPI byte");
         expect(state,
-               cpu->io.spi_rx_fifo[channel].count == 0u &&
-                   (dspic33_read_word(cpu, base) & 0x0041u) == 0u,
+               cpu->io.spi_rx_fifo[channel_index].count == 0u &&
+                   (dspic33_read_word(cpu, spi_base) & 0x0041u) == 0u,
                "byte dma receive drains SPI input");
         expect(state,
                dspic33_spi_test_interrupt_flag(cpu, 4u) && cpu->io.dma_index[0] == 0u &&
