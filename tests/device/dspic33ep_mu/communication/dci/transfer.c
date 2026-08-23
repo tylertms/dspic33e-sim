@@ -332,13 +332,14 @@ void dspic33_dci_test_pps_internal_frame_cases(TestState* state, Dspic33* cpu) {
 void dspic33_dci_test_pps_external_frame_output_cases(TestState* state, Dspic33* cpu) {
     bool is_high;
     uint8_t data_justified;
+
     for (data_justified = 0u; data_justified < 2u; data_justified++) {
-        uint16_t justify = data_justified != 0u ? DCI_DATA_JUSTIFY : 0u;
+        uint16_t data_justify = data_justified != 0u ? DCI_DATA_JUSTIFY : 0u;
         dspic33_reset(cpu, 0u);
         dspic33_dci_test_configure_serial_pins(cpu);
         dspic33_write_word(cpu, DCI_PPS_CLOCK_FRAME_OUTPUT, 0x0d00u);
-        dspic33_dci_test_configure_external(cpu, (uint16_t)(DCI_SAMPLE_RISING | justify), 4u, 1u,
-                                            1u, 0u, 0u);
+        dspic33_dci_test_configure_external(cpu, (uint16_t)(DCI_SAMPLE_RISING | data_justify), 4u,
+                                            1u, 1u, 0u, 0u);
         dspic33_dci_test_activate_serial_clock(cpu, true, GPIO_CLOCK_MASK);
         expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high) && is_high,
                "external CSCK multi-channel master asserts COFS");
@@ -351,7 +352,7 @@ void dspic33_dci_test_pps_external_frame_output_cases(TestState* state, Dspic33*
         dspic33_dci_test_configure_serial_pins(cpu);
         dspic33_write_word(cpu, DCI_PPS_CLOCK_FRAME_OUTPUT, 0x0d00u);
         dspic33_dci_test_configure_external(
-            cpu, (uint16_t)(DCI_MODE_I2S | DCI_SAMPLE_RISING | justify), 4u, 1u, 1u, 0u, 0u);
+            cpu, (uint16_t)(DCI_MODE_I2S | DCI_SAMPLE_RISING | data_justify), 4u, 1u, 1u, 0u, 0u);
         dspic33_dci_test_activate_serial_clock(cpu, true, GPIO_CLOCK_MASK);
         expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high) && is_high,
                "external CSCK I2S master starts with right-channel COFS");
@@ -366,6 +367,7 @@ void dspic33_dci_test_pps_external_frame_output_cases(TestState* state, Dspic33*
 
     {
         uint8_t dci_mode;
+
         for (dci_mode = DCI_MODE_AC_LINK_16; dci_mode <= DCI_MODE_AC_LINK_20; dci_mode++) {
             for (data_justified = 0u; data_justified < 2u; data_justified++) {
                 uint16_t control_word = (uint16_t)(dci_mode | DCI_SAMPLE_RISING |
