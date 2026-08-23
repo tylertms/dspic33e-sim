@@ -191,47 +191,51 @@ void dspic33_can_test_fifo_interrupt_boundary_cases(TestState* state, Dspic33* c
 }
 
 static void receive_flag_hardware_event_case(TestState* state, Dspic33* cpu, uint8_t channel_index,
-                                             uint8_t target_buffer) {
+                                             uint8_t target_buffer_index) {
     uint16_t can_base = bases[channel_index];
     uint16_t fifo_address = (uint16_t)(can_base + 8u);
     uint16_t interrupt_address = (uint16_t)(can_base + 0x0au);
-    uint16_t overflow_address = (uint16_t)(can_base + 0x28u + (target_buffer >= 16u ? 2u : 0u));
-    uint16_t target_bit_mask = (uint16_t)(1u << (target_buffer & 15u));
+    uint16_t overflow_address =
+        (uint16_t)(can_base + 0x28u + (target_buffer_index >= 16u ? 2u : 0u));
+    uint16_t target_bit_mask = (uint16_t)(1u << (target_buffer_index & 15u));
     uint32_t receive_memory = (uint32_t)(0xf000u + channel_index * 0x400u);
-    uint16_t preserved_words[8];
-    uint8_t buffer_index;
+    uint16_t preserved_message_words[8];
+    uint8_t receive_buffer_index;
     uint8_t word_index;
 
     dspic33_reset(cpu, 0u);
-    dspic33_can_test_configure_receive(cpu, channel_index, receive_memory, 6u, target_buffer);
+    dspic33_can_test_configure_receive(cpu, channel_index, receive_memory, 6u, target_buffer_index);
     dspic33_can_test_configure_filter(cpu, channel_index, 0u, 0x456u, false, 0x7ffu, true, 15u, 0u);
     dspic33_can_test_enable_filter(cpu, channel_index, 1u);
     dspic33_can_test_select_window(cpu, channel_index, false);
     dspic33_can_test_set_mode(cpu, channel_index, 0u);
-    for (buffer_index = target_buffer; buffer_index < 32u; buffer_index++) {
-        Dspic33CanFrame input_frame =
-            dspic33_can_test_frame(0x456u, false, false, 1u, (uint8_t)(0x20u + buffer_index));
-        uint8_t expected_write_pointer =
-            buffer_index == 31u ? target_buffer : (uint8_t)(buffer_index + 1u);
+    for (receive_buffer_index = target_buffer_index; receive_buffer_index < 32u;
+         receive_buffer_index++) {
+        Dspic33CanFrame input_frame = dspic33_can_test_frame(
+            0x456u, false, false, 1u, (uint8_t)(0x20u + receive_buffer_index));
+        uint8_t expected_write_pointer = receive_buffer_index == 31u
+                                             ? target_buffer_index
+                                             : (uint8_t)(receive_buffer_index + 1u);
+
         expect(state,
                dspic33_can_receive(cpu, channel_index, &input_frame, 0u) &&
                    dspic33_device_advance(cpu, 32u),
                "receive flag hardware fill event");
-        expect(state, dspic33_can_test_receive_full(cpu, channel_index, buffer_index),
+        expect(state, dspic33_can_test_receive_full(cpu, channel_index, receive_buffer_index),
                "receive flag hardware sets RXFUL");
         expect(state,
-               dspic33_can_test_memory_word(cpu, receive_memory + buffer_index * 16u + 6u) ==
-                   (uint8_t)(0x20u + buffer_index),
+               dspic33_can_test_memory_word(cpu, receive_memory + receive_buffer_index * 16u +
+                                                     6u) == (uint8_t)(0x20u + receive_buffer_index),
                "receive flag hardware stores message");
         expect(state,
                ((dspic33_read_word(cpu, fifo_address) >> 8u) & 0x003fu) == expected_write_pointer,
                "receive flag hardware advances write pointer");
-        expect(state, (dspic33_read_word(cpu, fifo_address) & 0x003fu) == target_buffer,
+        expect(state, (dspic33_read_word(cpu, fifo_address) & 0x003fu) == target_buffer_index,
                "receive flag hardware preserves read pointer");
     }
     for (word_index = 0u; word_index < 8u; word_index++) {
-        preserved_words[word_index] = dspic33_can_test_memory_word(
-            cpu, receive_memory + target_buffer * 16u + word_index * 2u);
+        preserved_message_words[word_index] = dspic33_can_test_memory_word(
+            cpu, receive_memory + target_buffer_index * 16u + word_index * 2u);
     }
     expect(state, (dspic33_read_word(cpu, overflow_address) & target_bit_mask) == 0u,
            "receive overflow flag initially clear");
@@ -240,12 +244,13 @@ static void receive_flag_hardware_event_case(TestState* state, Dspic33* cpu, uin
     {
         Dspic33CanFrame overflow_frame = dspic33_can_test_frame(0x456u, false, false, 1u, 0xe0u);
         uint8_t expected_write_pointer =
-            target_buffer == 31u ? target_buffer : (uint8_t)(target_buffer + 1u);
+            target_buffer_index == 31u ? target_buffer_index : (uint8_t)(target_buffer_index + 1u);
+
         expect(state,
                dspic33_can_receive(cpu, channel_index, &overflow_frame, 0u) &&
                    dspic33_device_advance(cpu, 2u),
                "receive overflow hardware event");
-        expect(state, dspic33_can_test_receive_full(cpu, channel_index, target_buffer),
+        expect(state, dspic33_can_test_receive_full(cpu, channel_index, target_buffer_index),
                "receive overflow preserves RXFUL");
         expect(state, (dspic33_read_word(cpu, overflow_address) & target_bit_mask) != 0u,
                "receive overflow hardware sets RXOVF");
@@ -254,13 +259,13 @@ static void receive_flag_hardware_event_case(TestState* state, Dspic33* cpu, uin
         expect(state,
                ((dspic33_read_word(cpu, fifo_address) >> 8u) & 0x003fu) == expected_write_pointer,
                "receive overflow advances write pointer");
-        expect(state, (dspic33_read_word(cpu, fifo_address) & 0x003fu) == target_buffer,
+        expect(state, (dspic33_read_word(cpu, fifo_address) & 0x003fu) == target_buffer_index,
                "receive overflow preserves read pointer");
         for (word_index = 0u; word_index < 8u; word_index++) {
             expect(state,
-                   dspic33_can_test_memory_word(cpu, receive_memory + target_buffer * 16u +
+                   dspic33_can_test_memory_word(cpu, receive_memory + target_buffer_index * 16u +
                                                          word_index * 2u) ==
-                       preserved_words[word_index],
+                       preserved_message_words[word_index],
                    "receive overflow loses complete message");
         }
     }
@@ -270,9 +275,10 @@ void dspic33_can_test_receive_flag_hardware_event_cases(TestState* state, Dspic3
     uint8_t channel_index;
 
     for (channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
-        uint8_t target_buffer;
-        for (target_buffer = 0u; target_buffer < 32u; target_buffer++) {
-            receive_flag_hardware_event_case(state, cpu, channel_index, target_buffer);
+        uint8_t target_buffer_index;
+
+        for (target_buffer_index = 0u; target_buffer_index < 32u; target_buffer_index++) {
+            receive_flag_hardware_event_case(state, cpu, channel_index, target_buffer_index);
         }
     }
 }
