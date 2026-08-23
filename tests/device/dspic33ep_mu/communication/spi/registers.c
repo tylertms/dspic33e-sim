@@ -138,68 +138,77 @@ void dspic33_spi_test_split_buffer_cases(TestState* state, Dspic33* cpu) {
 }
 
 void dspic33_spi_test_transmit_output_cases(TestState* state, Dspic33* cpu) {
-    uint8_t channel;
-    uint8_t value;
-    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-        uint16_t base = bases[channel];
-        uint16_t transmitted = (uint16_t)(0xa500u + channel);
+    uint8_t output_byte;
+
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_SPI_COUNT; channel_index++) {
+        const uint16_t spi_base = bases[channel_index];
+        const uint16_t transmitted_value = (uint16_t)(0xa500u + channel_index);
+
         dspic33_reset(cpu, 0u);
-        dspic33_spi_test_configure_spi(cpu, channel, 0x043bu, 0u, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), transmitted);
-        expect(state, dspic33_spi_transmit(cpu, channel, &value) && value == (uint8_t)transmitted,
+        dspic33_spi_test_configure_spi(cpu, channel_index, 0x043bu, 0u, 0u);
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), transmitted_value);
+
+        expect(state,
+               dspic33_spi_transmit(cpu, channel_index, &output_byte) &&
+                   output_byte == (uint8_t)transmitted_value,
                "transmit output low byte");
         expect(state,
-               dspic33_spi_transmit(cpu, channel, &value) &&
-                   value == (uint8_t)(transmitted >> 8u) &&
-                   !dspic33_spi_transmit(cpu, channel, &value),
+               dspic33_spi_transmit(cpu, channel_index, &output_byte) &&
+                   output_byte == (uint8_t)(transmitted_value >> 8u) &&
+                   !dspic33_spi_transmit(cpu, channel_index, &output_byte),
                "transmit output high byte and empty state");
     }
     expect(state,
-           !dspic33_spi_transmit(cpu, DSPIC33_SPI_COUNT, &value) &&
+           !dspic33_spi_transmit(cpu, DSPIC33_SPI_COUNT, &output_byte) &&
                !dspic33_spi_transmit(cpu, 0u, NULL),
            "transmit output rejects invalid requests");
 }
 
 void dspic33_spi_test_receive_only_cases(TestState* state, Dspic33* cpu) {
-    uint8_t channel;
-    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-        uint8_t master;
-        for (master = 0u; master < 2u; master++) {
-            uint8_t mode16;
-            for (mode16 = 0u; mode16 < 2u; mode16++) {
-                uint16_t base = bases[channel];
-                uint16_t control =
-                    (uint16_t)(0x081bu | ((uint16_t)master << 5u) | ((uint16_t)mode16 << 10u));
-                uint16_t received = (uint16_t)(0xd500u | ((uint16_t)channel << 4u) |
-                                               ((uint16_t)master << 3u) | mode16);
-                uint16_t expected = mode16 != 0u ? received : received & 0x00ffu;
-                uint64_t cycles = master != 0u ? dspic33_spi_test_transfer_cycles(control) : 1u;
-                uint8_t value;
-                bool scheduled;
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_SPI_COUNT; channel_index++) {
+        for (uint8_t master_mode = 0u; master_mode < 2u; master_mode++) {
+            for (uint8_t word_mode = 0u; word_mode < 2u; word_mode++) {
+                const uint16_t spi_base = bases[channel_index];
+                const uint16_t spi_control = (uint16_t)(0x081bu | ((uint16_t)master_mode << 5u) |
+                                                        ((uint16_t)word_mode << 10u));
+                const uint16_t received_value =
+                    (uint16_t)(0xd500u | ((uint16_t)channel_index << 4u) |
+                               ((uint16_t)master_mode << 3u) | word_mode);
+                const uint16_t expected_value =
+                    word_mode != 0u ? received_value : received_value & 0x00ffu;
+                const uint64_t transfer_cycles =
+                    master_mode != 0u ? dspic33_spi_test_transfer_cycles(spi_control) : 1u;
+                uint8_t output_byte;
+                bool response_scheduled;
 
                 dspic33_reset(cpu, 0u);
-                dspic33_spi_test_configure_spi(cpu, channel, control, 0u, 0u);
-                scheduled = dspic33_spi_receive(cpu, channel, received, cycles);
-                dspic33_write_word(cpu, (uint16_t)(base + 8u), 0xa55au);
+                dspic33_spi_test_configure_spi(cpu, channel_index, spi_control, 0u, 0u);
+                response_scheduled =
+                    dspic33_spi_receive(cpu, channel_index, received_value, transfer_cycles);
+                dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0xa55au);
+
                 expect(state,
-                       cpu->io.spi_tx[channel].count == 0u &&
-                           !dspic33_spi_transmit(cpu, channel, &value),
+                       cpu->io.spi_tx[channel_index].count == 0u &&
+                           !dspic33_spi_transmit(cpu, channel_index, &output_byte),
                        "receive-only suppresses serial output");
-                expect(state, scheduled && dspic33_device_advance(cpu, cycles),
+                expect(state, response_scheduled && dspic33_device_advance(cpu, transfer_cycles),
                        "receive-only transfer completes");
-                expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == expected,
+                expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) == expected_value,
                        "receive-only retains input");
-                expect(state, dspic33_spi_test_transfer_interrupt_after_cycle(cpu, irqs[channel]),
+                expect(state,
+                       dspic33_spi_test_transfer_interrupt_after_cycle(cpu, irqs[channel_index]),
                        "receive-only raises transfer interrupt");
-                expect(state, cpu->io.spi_tx[channel].count == 0u,
+                expect(state, cpu->io.spi_tx[channel_index].count == 0u,
                        "receive-only transfer emits no output");
 
-                dspic33_spi_test_clear_interrupt(cpu, irqs[channel]);
-                dspic33_write_word(cpu, (uint16_t)(base + 2u), (uint16_t)(control & ~0x0800u));
-                dspic33_write_word(cpu, (uint16_t)(base + 8u), 0x5aa5u);
+                dspic33_spi_test_clear_interrupt(cpu, irqs[channel_index]);
+                dspic33_write_word(cpu, (uint16_t)(spi_base + 2u),
+                                   (uint16_t)(spi_control & ~0x0800u));
+                dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0x5aa5u);
                 expect(state,
-                       dspic33_spi_transmit(cpu, channel, &value) && value == 0xa5u &&
-                           cpu->io.spi_tx[channel].count == (mode16 != 0u ? 1u : 0u),
+                       dspic33_spi_transmit(cpu, channel_index, &output_byte) &&
+                           output_byte == 0xa5u &&
+                           cpu->io.spi_tx[channel_index].count == (word_mode != 0u ? 1u : 0u),
                        "serial output resumes after receive-only mode");
             }
         }
