@@ -23,11 +23,11 @@ static void power_matrix(TestState* state, Dspic33* cpu) {
         {SPI_MASTER, SPI_STOP_IDLE, DSPIC33_POWER_IDLE, false},
         {SPI_MASTER, 0u, DSPIC33_POWER_SLEEP, false},
     };
-    size_t index;
-    for (index = 0u; index < sizeof(cases) / sizeof(cases[0]); index++) {
-        configure(cpu, cases[index].status, cases[index].control, 0u);
-        cpu->power_state = cases[index].power;
-        expect(state, dspic33_device_internal_spi_power_enabled(cpu, 0u) == cases[index].enabled,
+    for (size_t case_index = 0u; case_index < sizeof(cases) / sizeof(cases[0]); case_index++) {
+        configure(cpu, cases[case_index].status, cases[case_index].control, 0u);
+        cpu->power_state = cases[case_index].power;
+        expect(state,
+               dspic33_device_internal_spi_power_enabled(cpu, 0u) == cases[case_index].enabled,
                "SPI power admission matrix");
     }
 }
@@ -79,35 +79,35 @@ static void scheduling_admission_matrix(TestState* state, Dspic33* cpu) {
     static const Dspic33PowerState powers[] = {DSPIC33_POWER_ACTIVE, DSPIC33_POWER_ACTIVE,
                                                DSPIC33_POWER_SLEEP, DSPIC33_POWER_ACTIVE};
     static const bool busy[] = {true, true, true, false};
-    size_t index;
-    for (index = 0u; index < sizeof(controls) / sizeof(controls[0]); index++) {
-        configure(cpu, SPI_ENABLE, controls[index], 0u);
-        cpu->power_state = powers[index];
-        cpu->io.spi_busy = busy[index] ? 1u : 0u;
+    for (size_t case_index = 0u; case_index < sizeof(controls) / sizeof(controls[0]);
+         case_index++) {
+        configure(cpu, SPI_ENABLE, controls[case_index], 0u);
+        cpu->power_state = powers[case_index];
+        cpu->io.spi_busy = busy[case_index] ? 1u : 0u;
         dspic33_device_internal_spi_schedule_current(cpu, 0u);
         expect(state, cpu->events.count == 0u, "SPI scheduling admission rejects inactive state");
     }
 }
 
 static void run_admission_matrix(TestState* state, Dspic33* cpu) {
-    uint32_t generation;
+    uint32_t generation_bits;
     configure(cpu, SPI_ENABLE, SPI_MASTER, (uint16_t)(SPI_FRAME_ENABLE | SPI_FRAME_ACTIVE_HIGH));
-    generation = (uint32_t)cpu->io.spi_generation[0] << SPI_EVENT_GENERATION_SHIFT;
-    dspic33_device_internal_run_spi(cpu, 0u, SPI_EVENT_FRAME | generation);
+    generation_bits = (uint32_t)cpu->io.spi_generation[0] << SPI_EVENT_GENERATION_SHIFT;
+    dspic33_device_internal_run_spi(cpu, 0u, SPI_EVENT_FRAME | generation_bits);
     cpu->io.spi_busy = 1u;
     cpu->power_state = DSPIC33_POWER_SLEEP;
-    dspic33_device_internal_run_spi(cpu, 0u, SPI_EVENT_FRAME | generation);
+    dspic33_device_internal_run_spi(cpu, 0u, SPI_EVENT_FRAME | generation_bits);
     cpu->power_state = DSPIC33_POWER_ACTIVE;
     dspic33_device_internal_raw_write_word(cpu, (uint16_t)(bases[0] + 4u), 0u);
-    dspic33_device_internal_run_spi(cpu, 0u, SPI_EVENT_FRAME | generation);
+    dspic33_device_internal_run_spi(cpu, 0u, SPI_EVENT_FRAME | generation_bits);
 
     dspic33_device_internal_run_spi(
-        cpu, 0u, SPI_EVENT_SAMPLE | (generation + (1u << SPI_EVENT_GENERATION_SHIFT)));
+        cpu, 0u, SPI_EVENT_SAMPLE | (generation_bits + (1u << SPI_EVENT_GENERATION_SHIFT)));
     cpu->io.spi_busy = 0u;
-    dspic33_device_internal_run_spi(cpu, 0u, SPI_EVENT_SAMPLE | generation);
+    dspic33_device_internal_run_spi(cpu, 0u, SPI_EVENT_SAMPLE | generation_bits);
     cpu->io.spi_busy = 1u;
     cpu->power_state = DSPIC33_POWER_SLEEP;
-    dspic33_device_internal_run_spi(cpu, 0u, SPI_EVENT_SAMPLE | generation);
+    dspic33_device_internal_run_spi(cpu, 0u, SPI_EVENT_SAMPLE | generation_bits);
     expect(state, cpu->io.spi_pin_bits[0] == 0u, "SPI event admission rejects invalid samples");
 }
 
