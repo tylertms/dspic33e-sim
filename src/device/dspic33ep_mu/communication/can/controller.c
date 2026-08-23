@@ -120,19 +120,21 @@ void dspic33_device_internal_can_raise_event(Dspic33* cpu, uint8_t channel_index
     dspic33_device_internal_can_update_vector(cpu, channel_index);
 }
 
-bool dspic33_device_internal_can_dma_ready(const Dspic33* cpu, uint8_t request, uint16_t pad,
-                                           bool transmit) {
-    uint8_t dma;
-    for (dma = 0u; dma < DSPIC33_DMA_COUNT; dma++) {
-        uint16_t base = dspic33_device_internal_dma_channel_base(dma);
-        uint16_t control = dspic33_device_internal_raw_word(cpu, base);
-        if ((control & DMA_CON_CHEN) != 0u &&
-            (dspic33_device_internal_raw_word(cpu, (uint16_t)(base + 2u)) & DMA_REQ_SOURCE_MASK) ==
-                request &&
-            dspic33_device_internal_raw_word(cpu, (uint16_t)(base + 0x0cu)) == pad &&
-            (control & DMA_CON_SIZE_BYTE) == 0u &&
-            (control & DMA_CON_AMODE_MASK) == DMA_CON_AMODE_PERIPHERAL &&
-            ((control & DMA_CON_RAM_TO_PERIPHERAL) != 0u) == transmit) {
+bool dspic33_device_internal_can_dma_ready(const Dspic33* cpu, uint8_t dma_request,
+                                           uint16_t peripheral_address, bool transmit_direction) {
+    for (uint8_t dma_channel_index = 0u; dma_channel_index < DSPIC33_DMA_COUNT;
+         dma_channel_index++) {
+        const uint16_t dma_base = dspic33_device_internal_dma_channel_base(dma_channel_index);
+        const uint16_t dma_control = dspic33_device_internal_raw_word(cpu, dma_base);
+
+        if ((dma_control & DMA_CON_CHEN) != 0u &&
+            (dspic33_device_internal_raw_word(cpu, (uint16_t)(dma_base + 2u)) &
+             DMA_REQ_SOURCE_MASK) == dma_request &&
+            dspic33_device_internal_raw_word(cpu, (uint16_t)(dma_base + 0x0cu)) ==
+                peripheral_address &&
+            (dma_control & DMA_CON_SIZE_BYTE) == 0u &&
+            (dma_control & DMA_CON_AMODE_MASK) == DMA_CON_AMODE_PERIPHERAL &&
+            ((dma_control & DMA_CON_RAM_TO_PERIPHERAL) != 0u) == transmit_direction) {
             return true;
         }
     }
