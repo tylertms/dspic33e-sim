@@ -261,19 +261,22 @@ void dspic33_can_test_arbitration_cases(TestState* state, Dspic33* cpu) {
     dspic33_release(&winner);
 }
 
-static bool drive_unacknowledged_can_frame(Dspic33* cpu, uint8_t channel, uint8_t transmit_pin,
-                                           uint8_t receive_pin, uint64_t bit_cycles) {
-    uint16_t count = 0u;
-    while ((cpu->io.can_tx_on_bus & (uint8_t)(1u << channel)) != 0u && count < 160u) {
-        bool high;
-        if (!dspic33_can_pin(cpu, transmit_pin, &high) ||
-            !dspic33_can_input_pin(cpu, receive_pin, high, 0u) ||
-            !dspic33_device_advance(cpu, bit_cycles)) {
+static bool drive_unacknowledged_can_frame(Dspic33* cpu, uint8_t channel_index,
+                                           uint8_t transmit_pin_index, uint8_t receive_pin_index,
+                                           uint64_t bit_duration) {
+    uint16_t bit_count = 0u;
+
+    while ((cpu->io.can_tx_on_bus & (uint8_t)(1u << channel_index)) != 0u && bit_count < 160u) {
+        bool bus_level;
+
+        if (!dspic33_can_pin(cpu, transmit_pin_index, &bus_level) ||
+            !dspic33_can_input_pin(cpu, receive_pin_index, bus_level, 0u) ||
+            !dspic33_device_advance(cpu, bit_duration)) {
             return false;
         }
-        count++;
+        bit_count++;
     }
-    return count != 0u && count < 160u;
+    return bit_count != 0u && bit_count < 160u;
 }
 
 void dspic33_can_test_acknowledge_error_cases(TestState* state, Dspic33* cpu) {
