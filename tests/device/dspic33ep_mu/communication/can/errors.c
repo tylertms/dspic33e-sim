@@ -321,28 +321,28 @@ void dspic33_can_test_capture_timestamp_cases(TestState* state, Dspic33* cpu) {
     }
 }
 
-static uint16_t expected_error_status(bool transmit, uint16_t count, bool bus_off) {
-    uint16_t status = 0u;
-    if (count >= 96u) {
-        status |= CAN_ERROR_WARNING;
+static uint16_t expected_error_status(bool transmit, uint16_t error_count, bool bus_off) {
+    uint16_t error_status = 0u;
+    if (error_count >= 96u) {
+        error_status |= CAN_ERROR_WARNING;
         if (transmit) {
-            if (count < 128u) {
-                status |= CAN_TRANSMIT_WARNING;
+            if (error_count < 128u) {
+                error_status |= CAN_TRANSMIT_WARNING;
             } else if (!bus_off) {
-                status |= CAN_TRANSMIT_PASSIVE;
+                error_status |= CAN_TRANSMIT_PASSIVE;
             }
         } else {
-            if (count < 128u) {
-                status |= CAN_RECEIVE_WARNING;
+            if (error_count < 128u) {
+                error_status |= CAN_RECEIVE_WARNING;
             } else {
-                status |= CAN_RECEIVE_PASSIVE;
+                error_status |= CAN_RECEIVE_PASSIVE;
             }
         }
     }
     if (bus_off) {
-        status |= CAN_BUS_OFF;
+        error_status |= CAN_BUS_OFF;
     }
-    return status;
+    return error_status;
 }
 
 static void configure_error_test(Dspic33* cpu, uint8_t channel) {
@@ -352,19 +352,22 @@ static void configure_error_test(Dspic33* cpu, uint8_t channel) {
 }
 
 static void expect_error_step(TestState* state, Dspic33* cpu, uint8_t channel, bool transmit,
-                              uint8_t increment, uint16_t expected_counts,
-                              uint16_t expected_status) {
+                              uint8_t increment, uint16_t expected_error_count,
+                              uint16_t expected_error_status_value) {
     uint16_t status_address = (uint16_t)(bases[channel] + 0x0au);
-    uint16_t status;
+    uint16_t error_status;
     expect(state,
            dspic33_can_error(cpu, channel, transmit, increment, 0u) &&
                dspic33_device_advance(cpu, 1u),
            "error counter event schedule");
-    status = dspic33_read_word(cpu, status_address);
-    expect(state, dspic33_read_word(cpu, (uint16_t)(bases[channel] + 0x0eu)) == expected_counts,
+    error_status = dspic33_read_word(cpu, status_address);
+    expect(state,
+           dspic33_read_word(cpu, (uint16_t)(bases[channel] + 0x0eu)) == expected_error_count,
            "error counter result");
-    expect(state, (status & CAN_ERROR_STATUS_MASK) == expected_status, "error state result");
-    expect(state, (status & CAN_INTERRUPT_ERROR) == 0u, "B1 error transition leaves ERRIF clear");
+    expect(state, (error_status & CAN_ERROR_STATUS_MASK) == expected_error_status_value,
+           "error state result");
+    expect(state, (error_status & CAN_INTERRUPT_ERROR) == 0u,
+           "B1 error transition leaves ERRIF clear");
     expect(state, !dspic33_can_test_interrupt_flag(cpu, event_irqs[channel]),
            "B1 error transition does not interrupt");
     expect(state, (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 4u)) & 0x007fu) == 0x40u,
