@@ -99,11 +99,12 @@ bool dspic33_device_internal_spi_read_complete(const Dspic33* cpu, uint16_t addr
 bool dspic33_device_internal_spi_register_write_mask(uint16_t address, uint16_t* writable);
 bool dspic33_device_internal_spi_selected(const Dspic33* cpu, uint8_t channel);
 bool dspic33_device_internal_spi_slave_frame_master(const Dspic33* cpu, uint8_t channel);
-bool dspic33_device_internal_timer_is_paired_high(const Dspic33* cpu, uint8_t timer);
+bool dspic33_device_internal_timer_is_paired_high(const Dspic33* cpu, uint8_t timer_index);
 bool dspic33_device_internal_timer_is_type_b(uint8_t timer);
-bool dspic33_device_internal_timer_pair_enabled(const Dspic33* cpu, uint8_t timer);
-bool dspic33_device_internal_timer_pmd_disabled(const Dspic33* cpu, uint8_t timer);
-bool dspic33_device_internal_timer_power_enabled(const Dspic33* cpu, uint8_t timer, bool external);
+bool dspic33_device_internal_timer_pair_enabled(const Dspic33* cpu, uint8_t timer_index);
+bool dspic33_device_internal_timer_pmd_disabled(const Dspic33* cpu, uint8_t timer_index);
+bool dspic33_device_internal_timer_power_enabled(const Dspic33* cpu, uint8_t timer_index,
+                                                 bool is_external_clock);
 bool dspic33_device_internal_uart_fifo_front(const Dspic33UartFifo* fifo,
                                              Dspic33UartFrame* output_frame);
 bool dspic33_device_internal_uart_fifo_pop(Dspic33UartFifo* fifo, Dspic33UartFrame* output_frame);
@@ -161,7 +162,7 @@ uint64_t dspic33_device_internal_output_compare_clock_boundary_ticks(const Dspic
                                                                      uint8_t timer);
 uint64_t dspic33_device_internal_qei_boundary_cycles(const Dspic33* cpu, uint64_t limit);
 uint64_t dspic33_device_internal_spi_transfer_cycles(const Dspic33* cpu, uint8_t channel);
-uint64_t dspic33_device_internal_timer_ticks_until_period(const Dspic33* cpu, uint8_t timer);
+uint64_t dspic33_device_internal_timer_ticks_until_period(const Dspic33* cpu, uint8_t timer_index);
 uint8_t dspic33_device_internal_auxiliary_pll_input(uint16_t control);
 uint8_t dspic33_device_internal_can_mode(const Dspic33* cpu, uint8_t channel);
 uint8_t dspic33_device_internal_can_next_fifo_buffer(const Dspic33* cpu, uint8_t channel,
@@ -195,8 +196,9 @@ void dspic33_device_internal_can_remove_transmit_events(Dspic33* cpu, uint8_t ch
 void dspic33_device_internal_can_set_buffer_control(Dspic33* cpu, uint8_t channel, uint8_t buffer,
                                                     uint16_t value);
 void dspic33_device_internal_can_update_vector(Dspic33* cpu, uint8_t channel);
-void dspic33_device_internal_clock_timer(Dspic33* cpu, uint8_t timer, uint64_t clocks,
-                                         uint16_t* synchronization_sources, bool flush_sources);
+void dspic33_device_internal_clock_timer(Dspic33* cpu, uint8_t timer_index, uint64_t clock_count,
+                                         uint16_t* synchronization_sources,
+                                         bool flush_synchronization_sources);
 void dspic33_device_internal_comparator_evaluate_all(Dspic33* cpu);
 void dspic33_device_internal_comparator_filter_clock(Dspic33* cpu, uint8_t source, uint64_t clocks);
 void dspic33_device_internal_comparator_update_filter_power(Dspic33* cpu);
@@ -235,7 +237,8 @@ void dspic33_device_internal_pmp_slave_read_event(Dspic33* cpu, uint8_t address)
 void dspic33_device_internal_pmp_slave_write_event(Dspic33* cpu, uint8_t address, uint8_t value);
 void dspic33_device_internal_pps_capture_shadow(Dspic33* cpu);
 void dspic33_device_internal_pps_update_shadow(Dspic33* cpu, uint16_t address);
-void dspic33_device_internal_pulse_timer_synchronization_sources(Dspic33* cpu, uint16_t* pending);
+void dspic33_device_internal_pulse_timer_synchronization_sources(Dspic33* cpu,
+                                                                 uint16_t* pending_sources);
 void dspic33_device_internal_pulse_timer(Dspic33* cpu, uint8_t timer, uint32_t pulses);
 void dspic33_device_internal_pwm_dead_time_event(Dspic33* cpu, uint8_t generator, bool high);
 void dspic33_device_internal_pwm_input_event(Dspic33* cpu, uint8_t source, bool high,
@@ -281,7 +284,7 @@ void dspic33_device_internal_run_timer_pmd(Dspic33* cpu, uint16_t timer, uint32_
 void dspic33_device_internal_run_uart(Dspic33* cpu, uint8_t channel, uint32_t event_value);
 void dspic33_device_internal_run_usb_pmd(Dspic33* cpu, uint32_t value);
 void dspic33_device_internal_run_usb(Dspic33* cpu, uint16_t slot);
-void dspic33_device_internal_set_timer_gate(Dspic33* cpu, uint8_t timer, bool high);
+void dspic33_device_internal_set_timer_gate(Dspic33* cpu, uint8_t timer_index, bool is_gate_high);
 void dspic33_device_internal_spi_clear_buffers(Dspic33* cpu, uint8_t channel);
 void dspic33_device_internal_spi_complete_transfer(Dspic33* cpu, uint8_t channel, uint16_t value);
 void dspic33_device_internal_spi_raise_mode(Dspic33* cpu, uint8_t channel, uint8_t mode);
