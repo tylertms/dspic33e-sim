@@ -1,28 +1,31 @@
 #include "device/dspic33ep_mu/internal.h"
 
 void dspic33_device_internal_uart_read_complete(Dspic33* cpu, uint8_t channel) {
-    uint8_t bit = (uint8_t)(1u << channel);
-    Dspic33UartFrame discarded;
-    if (!dspic33_device_internal_uart_fifo_pop(&cpu->io.uart_rx_fifo[channel], &discarded)) {
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+    Dspic33UartFrame discarded_frame;
+
+    if (!dspic33_device_internal_uart_fifo_pop(&cpu->io.uart_rx_fifo[channel], &discarded_frame)) {
         return;
     }
-    if ((cpu->io.uart_rx_hold_valid & bit) != 0u &&
+    if ((cpu->io.uart_rx_hold_valid & channel_mask) != 0u &&
         dspic33_device_internal_uart_fifo_push(&cpu->io.uart_rx_fifo[channel],
                                                &cpu->io.uart_rx_hold[channel])) {
         memset(&cpu->io.uart_rx_hold[channel], 0, sizeof(cpu->io.uart_rx_hold[channel]));
-        cpu->io.uart_rx_hold_valid &= (uint8_t)~bit;
+        cpu->io.uart_rx_hold_valid &= (uint8_t)~channel_mask;
     }
     dspic33_device_internal_uart_refresh_status(cpu, channel);
     dspic33_device_internal_refresh_physical_pin_inputs(cpu);
 }
 
-static void spi_restore_buffer(Dspic33* cpu, uint8_t channel, uint16_t fallback) {
-    uint16_t value;
-    if (!dspic33_device_internal_word_queue_front(&cpu->io.spi_rx_fifo[channel], &value)) {
-        value = fallback;
+static void spi_restore_buffer(Dspic33* cpu, uint8_t channel, uint16_t fallback_word) {
+    uint16_t restored_word;
+
+    if (!dspic33_device_internal_word_queue_front(&cpu->io.spi_rx_fifo[channel], &restored_word)) {
+        restored_word = fallback_word;
     }
+
     dspic33_device_internal_raw_write_word(cpu, (uint16_t)(dspic33_device_spi_bases[channel] + 8u),
-                                           value);
+                                           restored_word);
 }
 
 bool dspic33_device_internal_spi_read_complete(const Dspic33* cpu, uint16_t address) {
