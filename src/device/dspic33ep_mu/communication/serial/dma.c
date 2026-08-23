@@ -372,22 +372,26 @@ bool dspic33_pmp_transmit(Dspic33* cpu, Dspic33PmpTransfer* transfer) {
            dspic33_device_internal_pmp_output_pop(&cpu->io.pmp.output, transfer);
 }
 
-bool dspic33_pmp_respond(Dspic33* cpu, uint16_t value, uint64_t delay) {
+bool dspic33_pmp_respond(Dspic33* cpu, uint16_t response_value, uint64_t event_delay) {
     Dspic33PmpResponse response;
-    if (delay > UINT64_MAX - cpu->device_cycles) {
+
+    if (event_delay > UINT64_MAX - cpu->device_cycles) {
         return false;
     }
-    response.cycle = cpu->device_cycles + delay;
-    response.value = value;
+    response.cycle = cpu->device_cycles + event_delay;
+    response.value = response_value;
     return dspic33_device_internal_pmp_response_push(&cpu->io.pmp.input, &response);
 }
 
-bool dspic33_pmp_slave_read(Dspic33* cpu, uint8_t address, uint64_t delay) {
-    return address < 4u &&
-           dspic33_schedule_external(cpu, DSPIC33_EVENT_PMP, PMP_EVENT_SLAVE_READ, address, delay);
+bool dspic33_pmp_slave_read(Dspic33* cpu, uint8_t slave_address, uint64_t event_delay) {
+    return slave_address < 4u &&
+           dspic33_schedule_external(cpu, DSPIC33_EVENT_PMP, PMP_EVENT_SLAVE_READ, slave_address,
+                                     event_delay);
 }
 
-bool dspic33_pmp_slave_write(Dspic33* cpu, uint8_t address, uint8_t value, uint64_t delay) {
-    return address < 4u && dspic33_schedule_external(cpu, DSPIC33_EVENT_PMP, PMP_EVENT_SLAVE_WRITE,
-                                                     ((uint32_t)address << 8u) | value, delay);
+bool dspic33_pmp_slave_write(Dspic33* cpu, uint8_t slave_address, uint8_t write_value,
+                             uint64_t event_delay) {
+    return slave_address < 4u &&
+           dspic33_schedule_external(cpu, DSPIC33_EVENT_PMP, PMP_EVENT_SLAVE_WRITE,
+                                     ((uint32_t)slave_address << 8u) | write_value, event_delay);
 }

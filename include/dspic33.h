@@ -889,10 +889,11 @@ bool dspic33_i2c_pin(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* high);
 bool dspic33_dma_request(Dspic33* cpu, uint8_t request_source, uint16_t peripheral_offset,
                          uint64_t event_delay);
 bool dspic33_cpu_rmw_matches(const Dspic33* cpu, uint32_t address, uint8_t width);
-bool dspic33_pmp_respond(Dspic33* cpu, uint16_t value, uint64_t delay);
+bool dspic33_pmp_respond(Dspic33* cpu, uint16_t response_value, uint64_t event_delay);
 bool dspic33_pmp_transmit(Dspic33* cpu, Dspic33PmpTransfer* transfer);
-bool dspic33_pmp_slave_read(Dspic33* cpu, uint8_t address, uint64_t delay);
-bool dspic33_pmp_slave_write(Dspic33* cpu, uint8_t address, uint8_t value, uint64_t delay);
+bool dspic33_pmp_slave_read(Dspic33* cpu, uint8_t slave_address, uint64_t event_delay);
+bool dspic33_pmp_slave_write(Dspic33* cpu, uint8_t slave_address, uint8_t write_value,
+                             uint64_t event_delay);
 void dspic33_device_power_state_changed(Dspic33* cpu);
 bool dspic33_input_capture_input(Dspic33* cpu, uint8_t channel, bool high, uint64_t delay);
 bool dspic33_input_capture_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t delay);
