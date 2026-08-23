@@ -19,38 +19,43 @@ bool dspic33_device_internal_output_compare_cascade_requested(const Dspic33* cpu
 }
 
 static bool output_compare_clock_supported(uint16_t control1) {
-    uint16_t source = control1 & OUTPUT_COMPARE_TIMER_SOURCE_MASK;
-    return source <= OUTPUT_COMPARE_TIMER_SOURCE_TIMER1 || source == OUTPUT_COMPARE_TIMER_SOURCE_FP;
+    uint16_t timer_source = control1 & OUTPUT_COMPARE_TIMER_SOURCE_MASK;
+    return timer_source <= OUTPUT_COMPARE_TIMER_SOURCE_TIMER1 ||
+           timer_source == OUTPUT_COMPARE_TIMER_SOURCE_FP;
 }
 
 bool dspic33_device_internal_output_compare_configuration_supported(uint8_t channel,
                                                                     uint16_t control1,
                                                                     uint16_t control2) {
-    uint16_t mode = control1 & OUTPUT_COMPARE_MODE_MASK;
-    uint16_t synchronization = control2 & OUTPUT_COMPARE_SYNC_MASK;
-    bool trigger = (control2 & OUTPUT_COMPARE_TRIGGER) != 0u;
-    bool own_source = synchronization == OUTPUT_COMPARE_SYNC_SELF ||
-                      (channel < 9u && synchronization == OUTPUT_COMPARE_SYNC_OC_FIRST + channel);
+    uint16_t output_mode = control1 & OUTPUT_COMPARE_MODE_MASK;
+    uint16_t synchronization_source = control2 & OUTPUT_COMPARE_SYNC_MASK;
+    bool trigger_enabled = (control2 & OUTPUT_COMPARE_TRIGGER) != 0u;
+    bool owns_source =
+        synchronization_source == OUTPUT_COMPARE_SYNC_SELF ||
+        (channel < 9u && synchronization_source == OUTPUT_COMPARE_SYNC_OC_FIRST + channel);
     return output_compare_clock_supported(control1) &&
-           (control1 & OUTPUT_COMPARE_CON1_UNSUPPORTED) == 0u && mode != 0u &&
+           (control1 & OUTPUT_COMPARE_CON1_UNSUPPORTED) == 0u && output_mode != 0u &&
            (control2 & OUTPUT_COMPARE_CON2_UNSUPPORTED) == 0u &&
            (control2 & OUTPUT_COMPARE_32_BIT) == 0u &&
-           synchronization != OUTPUT_COMPARE_SYNC_RESERVED && !(trigger && own_source);
+           synchronization_source != OUTPUT_COMPARE_SYNC_RESERVED &&
+           !(trigger_enabled && owns_source);
 }
 
 bool dspic33_device_internal_output_compare_cascade_controls_supported(uint8_t channel,
                                                                        uint16_t control1,
                                                                        uint16_t control2) {
-    uint16_t synchronization = control2 & OUTPUT_COMPARE_SYNC_MASK;
-    bool trigger = (control2 & OUTPUT_COMPARE_TRIGGER) != 0u;
-    bool own_source = synchronization == OUTPUT_COMPARE_SYNC_SELF ||
-                      (channel < 9u && synchronization == OUTPUT_COMPARE_SYNC_OC_FIRST + channel);
+    uint16_t synchronization_source = control2 & OUTPUT_COMPARE_SYNC_MASK;
+    bool trigger_enabled = (control2 & OUTPUT_COMPARE_TRIGGER) != 0u;
+    bool owns_source =
+        synchronization_source == OUTPUT_COMPARE_SYNC_SELF ||
+        (channel < 9u && synchronization_source == OUTPUT_COMPARE_SYNC_OC_FIRST + channel);
     return output_compare_clock_supported(control1) &&
            (control1 & OUTPUT_COMPARE_CON1_UNSUPPORTED) == 0u &&
            (control1 & OUTPUT_COMPARE_MODE_MASK) != 0u &&
            (control2 & OUTPUT_COMPARE_CON2_UNSUPPORTED) == 0u &&
            (control2 & OUTPUT_COMPARE_32_BIT) != 0u &&
-           synchronization != OUTPUT_COMPARE_SYNC_RESERVED && !(trigger && own_source);
+           synchronization_source != OUTPUT_COMPARE_SYNC_RESERVED &&
+           !(trigger_enabled && owns_source);
 }
 
 bool dspic33_device_internal_output_compare_cascade_supported(const Dspic33* cpu, uint8_t channel) {
@@ -75,13 +80,13 @@ bool dspic33_device_internal_output_compare_cascade_supported(const Dspic33* cpu
 }
 
 bool dspic33_device_internal_output_compare_supported(const Dspic33* cpu, uint8_t channel) {
-    uint16_t base = dspic33_device_internal_output_compare_base(channel);
+    uint16_t register_base = dspic33_device_internal_output_compare_base(channel);
     if (dspic33_device_internal_output_compare_cascade_requested(cpu, channel)) {
         return dspic33_device_internal_output_compare_cascade_supported(cpu, channel);
     }
     return dspic33_device_internal_output_compare_configuration_supported(
-        channel, dspic33_device_internal_raw_word(cpu, base),
-        dspic33_device_internal_raw_word(cpu, (uint16_t)(base + 2u)));
+        channel, dspic33_device_internal_raw_word(cpu, register_base),
+        dspic33_device_internal_raw_word(cpu, (uint16_t)(register_base + 2u)));
 }
 
 bool dspic33_device_internal_output_compare_cascade_owner(const Dspic33* cpu, uint8_t channel) {
@@ -133,9 +138,8 @@ static bool output_compare_internal_event(const Dspic33Event* event, uint8_t cha
 }
 
 static void output_compare_pause_events(Dspic33* cpu, uint8_t channel) {
-    size_t index;
     bool changed = false;
-    for (index = 0u; index < cpu->events.count; index++) {
+    for (size_t index = 0u; index < cpu->events.count; index++) {
         Dspic33Event* event = &cpu->events.items[index];
         if (!output_compare_internal_event(event, channel) || event->paused) {
             continue;
@@ -150,12 +154,11 @@ static void output_compare_pause_events(Dspic33* cpu, uint8_t channel) {
 }
 
 static void output_compare_resume_events(Dspic33* cpu, uint8_t channel) {
-    size_t index;
     bool changed = false;
     if (!dspic33_device_internal_output_compare_operating(cpu, channel)) {
         return;
     }
-    for (index = 0u; index < cpu->events.count; index++) {
+    for (size_t index = 0u; index < cpu->events.count; index++) {
         Dspic33Event* event = &cpu->events.items[index];
         if (!output_compare_internal_event(event, channel) || !event->paused) {
             continue;
@@ -209,11 +212,11 @@ uint8_t dspic33_device_internal_output_compare_timer_source(const Dspic33* cpu, 
 }
 
 void dspic33_device_internal_output_compare_set_high(Dspic33* cpu, uint8_t channel, bool high) {
-    uint16_t bit = (uint16_t)(1u << channel);
+    uint16_t channel_bit = (uint16_t)(1u << channel);
     if (high) {
-        cpu->io.output_compare.output_high |= bit;
+        cpu->io.output_compare.output_high |= channel_bit;
     } else {
-        cpu->io.output_compare.output_high &= (uint16_t)~bit;
+        cpu->io.output_compare.output_high &= (uint16_t)~channel_bit;
     }
 }
 

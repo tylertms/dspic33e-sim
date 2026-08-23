@@ -1,16 +1,16 @@
 #include "device/dspic33ep_mu/internal.h"
 
 void dspic33_device_internal_run_output_compare(Dspic33* cpu, uint16_t source, uint32_t value) {
-    uint16_t generation;
+    uint16_t event_generation;
     uint8_t channel;
-    uint32_t kind;
-    bool timer_event;
+    uint32_t event_kind;
+    bool is_timer_event;
     if (source >= DSPIC33_OUTPUT_COMPARE_COUNT) {
         return;
     }
     channel = (uint8_t)source;
-    kind = value & OUTPUT_COMPARE_EVENT_KIND_MASK;
-    if (kind == OUTPUT_COMPARE_EVENT_PMD) {
+    event_kind = value & OUTPUT_COMPARE_EVENT_KIND_MASK;
+    if (event_kind == OUTPUT_COMPARE_EVENT_PMD) {
         uint16_t pmd_generation = (uint16_t)((value & ~OUTPUT_COMPARE_EVENT_PMD_DISABLED) >>
                                              OUTPUT_COMPARE_EVENT_PMD_GENERATION_SHIFT);
         uint16_t bit = (uint16_t)(1u << channel);
@@ -32,49 +32,52 @@ void dspic33_device_internal_run_output_compare(Dspic33* cpu, uint16_t source, u
         dspic33_device_internal_output_compare_update_power_state(cpu);
         return;
     }
-    timer_event = kind == OUTPUT_COMPARE_EVENT_PRIMARY || kind == OUTPUT_COMPARE_EVENT_SECONDARY ||
-                  kind == OUTPUT_COMPARE_EVENT_BOUNDARY || kind == OUTPUT_COMPARE_EVENT_SYNC ||
-                  kind == OUTPUT_COMPARE_EVENT_SYNC_BOUNDARY ||
-                  kind == OUTPUT_COMPARE_EVENT_SYNC_PRIMARY ||
-                  kind == OUTPUT_COMPARE_EVENT_EXTERNAL_SYNC;
-    generation = (uint16_t)(value >> OUTPUT_COMPARE_EVENT_GENERATION_SHIFT);
-    if (generation != (timer_event ? cpu->io.output_compare.timer_generation[channel]
-                                   : cpu->io.output_compare.generation[channel]) ||
+    is_timer_event = event_kind == OUTPUT_COMPARE_EVENT_PRIMARY ||
+                     event_kind == OUTPUT_COMPARE_EVENT_SECONDARY ||
+                     event_kind == OUTPUT_COMPARE_EVENT_BOUNDARY ||
+                     event_kind == OUTPUT_COMPARE_EVENT_SYNC ||
+                     event_kind == OUTPUT_COMPARE_EVENT_SYNC_BOUNDARY ||
+                     event_kind == OUTPUT_COMPARE_EVENT_SYNC_PRIMARY ||
+                     event_kind == OUTPUT_COMPARE_EVENT_EXTERNAL_SYNC;
+    event_generation = (uint16_t)(value >> OUTPUT_COMPARE_EVENT_GENERATION_SHIFT);
+    if (event_generation != (is_timer_event ? cpu->io.output_compare.timer_generation[channel]
+                                            : cpu->io.output_compare.generation[channel]) ||
         !dspic33_device_internal_output_compare_operating(cpu, channel)) {
         return;
     }
     {
-        uint16_t base = dspic33_device_internal_output_compare_base(channel);
-        uint16_t mode = dspic33_device_internal_raw_word(cpu, base) & OUTPUT_COMPARE_MODE_MASK;
-        if (kind == OUTPUT_COMPARE_EVENT_PRIMARY) {
+        uint16_t register_base = dspic33_device_internal_output_compare_base(channel);
+        uint16_t mode =
+            dspic33_device_internal_raw_word(cpu, register_base) & OUTPUT_COMPARE_MODE_MASK;
+        if (event_kind == OUTPUT_COMPARE_EVENT_PRIMARY) {
             if (!dspic33_device_internal_output_compare_primary_match(cpu, channel, mode)) {
                 return;
             }
-        } else if (kind == OUTPUT_COMPARE_EVENT_SECONDARY) {
+        } else if (event_kind == OUTPUT_COMPARE_EVENT_SECONDARY) {
             if (!dspic33_device_internal_output_compare_secondary_match(cpu, channel, mode)) {
                 return;
             }
-        } else if (kind == OUTPUT_COMPARE_EVENT_BOUNDARY) {
+        } else if (event_kind == OUTPUT_COMPARE_EVENT_BOUNDARY) {
             if (!dspic33_device_internal_output_compare_boundary(cpu, channel, mode)) {
                 return;
             }
-        } else if (kind == OUTPUT_COMPARE_EVENT_SYNC) {
+        } else if (event_kind == OUTPUT_COMPARE_EVENT_SYNC) {
             cpu->io.output_compare.sync_emitted[channel] = true;
             dspic33_device_internal_output_compare_pulse_sync_source(cpu, channel);
-        } else if (kind == OUTPUT_COMPARE_EVENT_SYNC_BOUNDARY) {
+        } else if (event_kind == OUTPUT_COMPARE_EVENT_SYNC_BOUNDARY) {
             if (!dspic33_device_internal_output_compare_boundary(cpu, channel, mode)) {
                 return;
             }
             dspic33_device_internal_output_compare_pulse_sync_source(cpu, channel);
-        } else if (kind == OUTPUT_COMPARE_EVENT_SYNC_PRIMARY) {
+        } else if (event_kind == OUTPUT_COMPARE_EVENT_SYNC_PRIMARY) {
             cpu->io.output_compare.sync_emitted[channel] = true;
             dspic33_device_internal_output_compare_pulse_sync_source(cpu, channel);
             if (!dspic33_device_internal_output_compare_primary_match(cpu, channel, mode)) {
                 return;
             }
-        } else if (kind == OUTPUT_COMPARE_EVENT_EXTERNAL_SYNC) {
+        } else if (event_kind == OUTPUT_COMPARE_EVENT_EXTERNAL_SYNC) {
             uint8_t synchronization =
-                (uint8_t)(dspic33_device_internal_raw_word(cpu, (uint16_t)(base + 2u)) &
+                (uint8_t)(dspic33_device_internal_raw_word(cpu, (uint16_t)(register_base + 2u)) &
                           OUTPUT_COMPARE_SYNC_MASK);
             cpu->io.output_compare.sync_reset_pending &= (uint16_t)~(uint16_t)(1u << channel);
             if (!dspic33_device_internal_output_compare_boundary(cpu, channel, mode)) {
@@ -85,17 +88,19 @@ void dspic33_device_internal_run_output_compare(Dspic33* cpu, uint16_t source, u
                 dspic33_device_internal_output_compare_adopt_input_capture_timer(cpu, channel,
                                                                                  synchronization);
             }
-        } else if (kind == OUTPUT_COMPARE_EVENT_APPLY_PRIMARY) {
-            uint8_t output = dspic33_device_internal_output_compare_output_channel(cpu, channel);
+        } else if (event_kind == OUTPUT_COMPARE_EVENT_APPLY_PRIMARY) {
+            uint8_t output_channel =
+                dspic33_device_internal_output_compare_output_channel(cpu, channel);
             if (mode == OUTPUT_COMPARE_MODE_SINGLE_TOGGLE) {
                 dspic33_device_internal_output_compare_set_high(
-                    cpu, output, !dspic33_device_internal_output_compare_high(cpu, output));
+                    cpu, output_channel,
+                    !dspic33_device_internal_output_compare_high(cpu, output_channel));
             } else {
                 dspic33_device_internal_output_compare_set_high(
-                    cpu, output, mode != OUTPUT_COMPARE_MODE_SINGLE_LOW);
+                    cpu, output_channel, mode != OUTPUT_COMPARE_MODE_SINGLE_LOW);
             }
             return;
-        } else if (kind == OUTPUT_COMPARE_EVENT_APPLY_SECONDARY) {
+        } else if (event_kind == OUTPUT_COMPARE_EVENT_APPLY_SECONDARY) {
             dspic33_device_internal_output_compare_set_high(
                 cpu, dspic33_device_internal_output_compare_output_channel(cpu, channel), false);
             return;
