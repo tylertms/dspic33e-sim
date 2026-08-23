@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static bool is_elf(const char* path) {
+static bool is_elf_file(const char* path) {
     unsigned char magic[4];
     FILE* file = fopen(path, "rb");
     bool is_elf_file = false;
@@ -40,7 +40,7 @@ static bool read_file(const char* path, uint8_t** bytes, size_t* size) {
 
 bool firmware_image_open(FirmwareImage* image, const char* path, char* error, size_t error_size) {
     memset(image, 0, sizeof(*image));
-    if (is_elf(path)) {
+    if (is_elf_file(path)) {
         image->type = FIRMWARE_IMAGE_ELF;
         return elf_image_open(&image->elf, path, error, error_size);
     }
