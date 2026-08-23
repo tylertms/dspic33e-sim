@@ -251,22 +251,26 @@ static void output_boundary_cases(TestState* state, Dspic33* cpu) {
 }
 
 static void register_boundary_cases(TestState* state, Dspic33* cpu) {
-    uint8_t value = UINT8_MAX;
+    uint8_t register_value = UINT8_MAX;
+
     dspic33_reset(cpu, 0u);
     cpu->io.dci.pmd_disabled = true;
     dspic33_write_word(cpu, DCI_CONTROL2, UINT16_MAX);
     expect(state, dspic33_read_word(cpu, DCI_CONTROL2) == 0u,
            "PMD-disabled DCI rejects register writes");
     expect(state,
-           dspic33_device_internal_dci_read_register(cpu, DCI_CONTROL1, &value) && value == 0u,
+           dspic33_device_internal_dci_read_register(cpu, DCI_CONTROL1, &register_value) &&
+               register_value == 0u,
            "PMD-disabled DCI reads zero");
-    expect(state, !dspic33_device_internal_dci_read_register(cpu, DCI_CONTROL1 - 2u, &value),
+    expect(state,
+           !dspic33_device_internal_dci_read_register(cpu, DCI_CONTROL1 - 2u, &register_value),
            "DCI read rejects address below block");
-    expect(state, !dspic33_device_internal_dci_read_register(cpu, DCI_TRANSMIT_BASE + 8u, &value),
+    expect(state,
+           !dspic33_device_internal_dci_read_register(cpu, DCI_TRANSMIT_BASE + 8u, &register_value),
            "DCI read rejects address above block");
-    expect(state, !dspic33_device_internal_dci_read_register(cpu, 0x028au, &value),
+    expect(state, !dspic33_device_internal_dci_read_register(cpu, 0x028au, &register_value),
            "DCI read rejects reserved transmit slot address");
-    expect(state, !dspic33_device_internal_dci_read_register(cpu, 0x028eu, &value),
+    expect(state, !dspic33_device_internal_dci_read_register(cpu, 0x028eu, &register_value),
            "DCI read rejects reserved receive slot address");
 
     dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL1, UINT16_MAX);
