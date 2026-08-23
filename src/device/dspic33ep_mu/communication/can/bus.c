@@ -475,67 +475,73 @@ static void can_transmit_finish(Dspic33* cpu, uint8_t channel_index) {
     }
 }
 
-static void can_transmit_sample(Dspic33* cpu, uint8_t channel, bool bus_high) {
-    uint8_t bit = (uint8_t)(1u << channel);
-    if ((cpu->io.can_tx_on_bus & bit) == 0u) {
+static void can_transmit_sample(Dspic33* cpu, uint8_t channel_index, bool bus_level) {
+    const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+
+    if ((cpu->io.can_tx_on_bus & channel_bit) == 0u) {
         return;
     }
-    if ((cpu->io.can_rx_physical_active & bit) != 0u) {
-        dspic33_device_internal_can_monitor_transmit_sample(cpu, channel, bus_high);
+    if ((cpu->io.can_rx_physical_active & channel_bit) != 0u) {
+        dspic33_device_internal_can_monitor_transmit_sample(cpu, channel_index, bus_level);
     }
-    uint64_t delay = dspic33_device_internal_can_bit_cycles(cpu, channel);
-    if (dspic33_device_internal_can_triple_sample(cpu, channel)) {
-        delay -= 2u * dspic33_device_internal_can_time_quantum(cpu, channel);
+    uint64_t sample_delay_cycles = dspic33_device_internal_can_bit_cycles(cpu, channel_index);
+    if (dspic33_device_internal_can_triple_sample(cpu, channel_index)) {
+        sample_delay_cycles -= 2u * dspic33_device_internal_can_time_quantum(cpu, channel_index);
     }
-    if ((cpu->io.can_tx_on_bus & bit) != 0u &&
-        !dspic33_device_internal_can_schedule_transmit_sample(cpu, channel, delay)) {
-        dspic33_device_internal_can_remove_transmit_events(cpu, channel);
-        cpu->io.can_tx_on_bus &= (uint8_t)~bit;
-        cpu->io.can_tx_busy &= (uint8_t)~bit;
+    if ((cpu->io.can_tx_on_bus & channel_bit) != 0u &&
+        !dspic33_device_internal_can_schedule_transmit_sample(cpu, channel_index,
+                                                              sample_delay_cycles)) {
+        dspic33_device_internal_can_remove_transmit_events(cpu, channel_index);
+        cpu->io.can_tx_on_bus &= (uint8_t)~channel_bit;
+        cpu->io.can_tx_busy &= (uint8_t)~channel_bit;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
 }
 
-static void can_transmit_sample_first(Dspic33* cpu, uint8_t channel) {
-    uint8_t bit = (uint8_t)(1u << channel);
-    if ((cpu->io.can_tx_on_bus & bit) == 0u) {
+static void can_transmit_sample_first(Dspic33* cpu, uint8_t channel_index) {
+    const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+
+    if ((cpu->io.can_tx_on_bus & channel_bit) == 0u) {
         return;
     }
-    cpu->io.can_tx_sample_high[channel] = (cpu->io.can_rx_pin_high & bit) != 0u ? 1u : 0u;
-    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_SAMPLE_SECOND,
-                          dspic33_device_internal_can_time_quantum(cpu, channel))) {
-        dspic33_device_internal_can_remove_transmit_events(cpu, channel);
-        cpu->io.can_tx_on_bus &= (uint8_t)~bit;
-        cpu->io.can_tx_busy &= (uint8_t)~bit;
+    cpu->io.can_tx_sample_high[channel_index] =
+        (cpu->io.can_rx_pin_high & channel_bit) != 0u ? 1u : 0u;
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_TRANSMIT_SAMPLE_SECOND,
+                          dspic33_device_internal_can_time_quantum(cpu, channel_index))) {
+        dspic33_device_internal_can_remove_transmit_events(cpu, channel_index);
+        cpu->io.can_tx_on_bus &= (uint8_t)~channel_bit;
+        cpu->io.can_tx_busy &= (uint8_t)~channel_bit;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
 }
 
-static void can_transmit_sample_second(Dspic33* cpu, uint8_t channel) {
-    uint8_t bit = (uint8_t)(1u << channel);
-    if ((cpu->io.can_tx_on_bus & bit) == 0u) {
+static void can_transmit_sample_second(Dspic33* cpu, uint8_t channel_index) {
+    const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+
+    if ((cpu->io.can_tx_on_bus & channel_bit) == 0u) {
         return;
     }
-    if ((cpu->io.can_rx_pin_high & bit) != 0u) {
-        cpu->io.can_tx_sample_high[channel]++;
+    if ((cpu->io.can_rx_pin_high & channel_bit) != 0u) {
+        cpu->io.can_tx_sample_high[channel_index]++;
     }
-    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_SAMPLE,
-                          dspic33_device_internal_can_time_quantum(cpu, channel))) {
-        dspic33_device_internal_can_remove_transmit_events(cpu, channel);
-        cpu->io.can_tx_on_bus &= (uint8_t)~bit;
-        cpu->io.can_tx_busy &= (uint8_t)~bit;
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_TRANSMIT_SAMPLE,
+                          dspic33_device_internal_can_time_quantum(cpu, channel_index))) {
+        dspic33_device_internal_can_remove_transmit_events(cpu, channel_index);
+        cpu->io.can_tx_on_bus &= (uint8_t)~channel_bit;
+        cpu->io.can_tx_busy &= (uint8_t)~channel_bit;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
 }
 
-static void can_transmit_sample_final(Dspic33* cpu, uint8_t channel) {
-    uint8_t bit = (uint8_t)(1u << channel);
-    uint8_t high = cpu->io.can_tx_sample_high[channel];
-    if ((cpu->io.can_rx_pin_high & bit) != 0u) {
-        high++;
+static void can_transmit_sample_final(Dspic33* cpu, uint8_t channel_index) {
+    const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+    uint8_t sample_count = cpu->io.can_tx_sample_high[channel_index];
+
+    if ((cpu->io.can_rx_pin_high & channel_bit) != 0u) {
+        sample_count++;
     }
-    cpu->io.can_tx_sample_high[channel] = 0u;
-    can_transmit_sample(cpu, channel, high >= 2u);
+    cpu->io.can_tx_sample_high[channel_index] = 0u;
+    can_transmit_sample(cpu, channel_index, sample_count >= 2u);
 }
 
 static void can_transmit_retry(Dspic33* cpu, uint8_t channel) {
