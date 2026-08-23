@@ -519,12 +519,13 @@ static void transmit_error_descending_entry_cases(TestState* state, Dspic33* cpu
 }
 
 void dspic33_can_test_interrupt_and_error_cases(TestState* state, Dspic33* cpu) {
-    uint8_t channel;
+    uint8_t channel_index;
+
     error_threshold_domain(state, cpu);
-    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-        receive_error_transition_cases(state, cpu, channel);
-        transmit_error_transition_cases(state, cpu, channel);
-        transmit_error_descending_entry_cases(state, cpu, channel);
+    for (channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
+        receive_error_transition_cases(state, cpu, channel_index);
+        transmit_error_transition_cases(state, cpu, channel_index);
+        transmit_error_descending_entry_cases(state, cpu, channel_index);
     }
 }
 
@@ -606,8 +607,8 @@ void dspic33_can_test_copy_and_reset_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0680u, 14u);
     dspic33_can_test_configure_transmit(cpu, 0u, 0xd100u);
     dspic33_can_test_write_memory_word(cpu, 0xd100u, 2u);
-    for (uint8_t word = 1u; word < 8u; word++) {
-        dspic33_can_test_write_memory_word(cpu, 0xd100u + word * 2u, 0u);
+    for (uint8_t word_index = 1u; word_index < 8u; word_index++) {
+        dspic33_can_test_write_memory_word(cpu, 0xd100u + word_index * 2u, 0u);
     }
     dspic33_can_test_select_window(cpu, 0u, false);
     dspic33_can_test_set_mode(cpu, 0u, 0u);
