@@ -668,38 +668,43 @@ void dspic33_i2c_test_isolation_and_power_cases(TestState* state, Dspic33* cpu) 
 void dspic33_i2c_test_pmd_transition_cases(TestState* state, Dspic33* cpu) {
     static const uint16_t pmd_addresses[DSPIC33_I2C_COUNT] = {0x0760u, 0x0764u};
     static const uint16_t pmd_masks[DSPIC33_I2C_COUNT] = {0x0080u, 0x0002u};
-    Dspic33 copy;
+    Dspic33 copied_cpu;
     uint8_t channel;
-    bool initialized;
+    bool copy_initialized;
 
     for (channel = 0u; channel < DSPIC33_I2C_COUNT; channel++) {
-        uint16_t baud = (uint16_t)(bases[channel] + 4u);
-        uint8_t bit = (uint8_t)(1u << channel);
+        uint16_t baud_register = (uint16_t)(bases[channel] + 4u);
+        uint8_t channel_mask = (uint8_t)(1u << channel);
 
         dspic33_reset(cpu, 0u);
         dspic33_write_word(cpu, pmd_addresses[channel], pmd_masks[channel]);
         expect(state,
-               (cpu->io.i2c_pmd_disabled & bit) == 0u && cpu->io.i2c_pmd_generation[channel] == 1u,
+               (cpu->io.i2c_pmd_disabled & channel_mask) == 0u &&
+                   cpu->io.i2c_pmd_generation[channel] == 1u,
                "PMD disable is delayed");
-        dspic33_write_word(cpu, baud, 0x0055u);
-        expect(state, dspic33_read_word(cpu, baud) == 0x0055u,
+        dspic33_write_word(cpu, baud_register, 0x0055u);
+        expect(state, dspic33_read_word(cpu, baud_register) == 0x0055u,
                "PMD disable permits current cycle access");
-        expect(state, dspic33_device_advance(cpu, 1u) && (cpu->io.i2c_pmd_disabled & bit) != 0u,
+        expect(state,
+               dspic33_device_advance(cpu, 1u) && (cpu->io.i2c_pmd_disabled & channel_mask) != 0u,
                "PMD disable applies after one cycle");
-        dspic33_write_word(cpu, baud, 0x00aau);
-        expect(state, dspic33_i2c_test_stored_word(cpu, baud) == 0x0055u,
+        dspic33_write_word(cpu, baud_register, 0x00aau);
+        expect(state, dspic33_i2c_test_stored_word(cpu, baud_register) == 0x0055u,
                "PMD disabled module ignores writes");
         dspic33_write_word(cpu, pmd_addresses[channel], 0u);
         expect(state,
-               (cpu->io.i2c_pmd_disabled & bit) != 0u && cpu->io.i2c_pmd_generation[channel] == 2u,
+               (cpu->io.i2c_pmd_disabled & channel_mask) != 0u &&
+                   cpu->io.i2c_pmd_generation[channel] == 2u,
                "PMD enable is delayed");
-        dspic33_write_word(cpu, baud, 0x00bbu);
-        expect(state, dspic33_i2c_test_stored_word(cpu, baud) == 0x0055u,
+        dspic33_write_word(cpu, baud_register, 0x00bbu);
+        expect(state, dspic33_i2c_test_stored_word(cpu, baud_register) == 0x0055u,
                "PMD enable blocks access until transition");
-        expect(state, dspic33_device_advance(cpu, 1u) && (cpu->io.i2c_pmd_disabled & bit) == 0u,
+        expect(state,
+               dspic33_device_advance(cpu, 1u) && (cpu->io.i2c_pmd_disabled & channel_mask) == 0u,
                "PMD enable applies after one cycle");
-        dspic33_write_word(cpu, baud, 0x00ccu);
-        expect(state, dspic33_read_word(cpu, baud) == 0x00ccu, "PMD enabled module accepts writes");
+        dspic33_write_word(cpu, baud_register, 0x00ccu);
+        expect(state, dspic33_read_word(cpu, baud_register) == 0x00ccu,
+               "PMD enabled module accepts writes");
 
         dspic33_reset(cpu, 0u);
         dspic33_write_word(cpu, pmd_addresses[channel], pmd_masks[channel]);
@@ -707,7 +712,7 @@ void dspic33_i2c_test_pmd_transition_cases(TestState* state, Dspic33* cpu) {
         expect(state, cpu->io.i2c_pmd_generation[channel] == 2u && cpu->events.count == 2u,
                "rapid PMD toggle queues generations");
         expect(state,
-               dspic33_device_advance(cpu, 1u) && (cpu->io.i2c_pmd_disabled & bit) == 0u &&
+               dspic33_device_advance(cpu, 1u) && (cpu->io.i2c_pmd_disabled & channel_mask) == 0u &&
                    (dspic33_read_word(cpu, pmd_addresses[channel]) & pmd_masks[channel]) == 0u,
                "stale PMD event cannot override latest state");
 
@@ -717,29 +722,29 @@ void dspic33_i2c_test_pmd_transition_cases(TestState* state, Dspic33* cpu) {
         expect(state,
                (dspic33_read_word(cpu, pmd_addresses[channel]) & pmd_masks[channel]) == 0u &&
                    cpu->io.i2c_pmd_generation[channel] == 2u &&
-                   (cpu->io.i2c_pmd_disabled & bit) == 0u && cpu->events.count == 0u,
+                   (cpu->io.i2c_pmd_disabled & channel_mask) == 0u && cpu->events.count == 0u,
                "failed PMD transition rolls back and invalidates generation");
         expect(state, cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR,
                "failed PMD transition reports queue error");
     }
 
     dspic33_reset(cpu, 0u);
-    initialized = dspic33_initialize(&copy);
-    expect(state, initialized, "initialize pending PMD copy");
-    if (!initialized) {
+    copy_initialized = dspic33_initialize(&copied_cpu);
+    expect(state, copy_initialized, "initialize pending PMD copy");
+    if (!copy_initialized) {
         return;
     }
     dspic33_write_word(cpu, pmd_addresses[0], pmd_masks[0]);
-    expect(state, dspic33_copy(&copy, cpu), "copy pending PMD transition");
+    expect(state, dspic33_copy(&copied_cpu, cpu), "copy pending PMD transition");
     expect(state,
-           copy.io.i2c_pmd_generation[0] == 1u && copy.io.i2c_pmd_disabled == 0u &&
-               copy.events.count == 1u && copy.events.items != cpu->events.items,
+           copied_cpu.io.i2c_pmd_generation[0] == 1u && copied_cpu.io.i2c_pmd_disabled == 0u &&
+               copied_cpu.events.count == 1u && copied_cpu.events.items != cpu->events.items,
            "copy retains independent pending PMD state");
     expect(state,
-           dspic33_device_advance(cpu, 1u) && dspic33_device_advance(&copy, 1u) &&
-               cpu->io.i2c_pmd_disabled == 1u && copy.io.i2c_pmd_disabled == 1u,
+           dspic33_device_advance(cpu, 1u) && dspic33_device_advance(&copied_cpu, 1u) &&
+               cpu->io.i2c_pmd_disabled == 1u && copied_cpu.io.i2c_pmd_disabled == 1u,
            "copied PMD transitions complete equally");
-    dspic33_release(&copy);
+    dspic33_release(&copied_cpu);
 
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, pmd_addresses[0], pmd_masks[0]);
