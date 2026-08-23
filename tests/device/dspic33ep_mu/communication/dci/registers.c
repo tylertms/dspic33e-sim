@@ -5,8 +5,8 @@ uint16_t dspic33_dci_test_configuration(uint8_t width, uint8_t slots, uint8_t bu
                       (width - 1u));
 }
 
-bool dspic33_dci_test_clock_word(Dspic33* cpu, uint16_t value, bool frame_sync) {
-    return dspic33_dci_clock(cpu, value, frame_sync, 0u) && dspic33_device_advance(cpu, 0u);
+bool dspic33_dci_test_clock_word(Dspic33* cpu, uint16_t word_value, bool frame_sync) {
+    return dspic33_dci_clock(cpu, word_value, frame_sync, 0u) && dspic33_device_advance(cpu, 0u);
 }
 
 void dspic33_dci_test_configure_serial_pins(Dspic33* cpu) {
@@ -18,56 +18,61 @@ void dspic33_dci_test_configure_serial_pins(Dspic33* cpu) {
     dspic33_gpio_drive(cpu, GPIO_PORT_D, 0u, 0x0007u);
 }
 
-bool dspic33_dci_test_drive_serial_edge(Dspic33* cpu, bool high, bool rising, uint16_t clock_mask) {
-    uint16_t data = high ? GPIO_DATA_MASK : 0u;
-    uint16_t initial_clock = rising ? 0u : clock_mask;
-    uint16_t sample_clock = rising ? clock_mask : 0u;
-    return dspic33_gpio_drive(cpu, GPIO_PORT_D, data, GPIO_DATA_MASK) &&
+bool dspic33_dci_test_drive_serial_edge(Dspic33* cpu, bool data_is_high, bool sample_on_rising,
+                                        uint16_t clock_mask) {
+    uint16_t data_value = data_is_high ? GPIO_DATA_MASK : 0u;
+    uint16_t initial_clock = sample_on_rising ? 0u : clock_mask;
+    uint16_t sample_clock = sample_on_rising ? clock_mask : 0u;
+    return dspic33_gpio_drive(cpu, GPIO_PORT_D, data_value, GPIO_DATA_MASK) &&
            dspic33_gpio_drive(cpu, GPIO_PORT_D, initial_clock, clock_mask) &&
            dspic33_gpio_drive(cpu, GPIO_PORT_D, sample_clock, clock_mask);
 }
 
-bool dspic33_dci_test_activate_serial_clock(Dspic33* cpu, bool rising, uint16_t clock_mask) {
-    uint8_t edges = cpu->io.dci.serial_startup_bits;
-    while (edges-- != 0u) {
-        if (!dspic33_dci_test_drive_serial_edge(cpu, false, rising, clock_mask)) {
+bool dspic33_dci_test_activate_serial_clock(Dspic33* cpu, bool sample_on_rising,
+                                            uint16_t clock_mask) {
+    uint8_t startup_edges = cpu->io.dci.serial_startup_bits;
+    while (startup_edges-- != 0u) {
+        if (!dspic33_dci_test_drive_serial_edge(cpu, false, sample_on_rising, clock_mask)) {
             return false;
         }
     }
     return true;
 }
 
-static bool prepare_serial_data(Dspic33* cpu, bool rising, uint16_t clock_mask) {
-    uint16_t control;
-    if (!dspic33_dci_test_activate_serial_clock(cpu, rising, clock_mask)) {
+static bool prepare_serial_data(Dspic33* cpu, bool sample_on_rising, uint16_t clock_mask) {
+    uint16_t control_word;
+    if (!dspic33_dci_test_activate_serial_clock(cpu, sample_on_rising, clock_mask)) {
         return false;
     }
-    control = dspic33_read_word(cpu, DCI_CONTROL1);
-    if (cpu->io.dci.serial_delay ||
-        (cpu->io.dci.pps_frame_pending && !cpu->io.dci.started &&
-         (control & 0x0003u) < DCI_MODE_AC_LINK_16 && (control & DCI_DATA_JUSTIFY) == 0u)) {
-        return dspic33_dci_test_drive_serial_edge(cpu, false, rising, clock_mask);
+    control_word = dspic33_read_word(cpu, DCI_CONTROL1);
+    if (cpu->io.dci.serial_delay || (cpu->io.dci.pps_frame_pending && !cpu->io.dci.started &&
+                                     (control_word & 0x0003u) < DCI_MODE_AC_LINK_16 &&
+                                     (control_word & DCI_DATA_JUSTIFY) == 0u)) {
+        return dspic33_dci_test_drive_serial_edge(cpu, false, sample_on_rising, clock_mask);
     }
     return true;
 }
 
-static bool drive_serial_pin_bit(Dspic33* cpu, bool high, bool rising, uint16_t clock_mask) {
-    return prepare_serial_data(cpu, rising, clock_mask) &&
-           dspic33_dci_test_drive_serial_edge(cpu, high, rising, clock_mask);
+static bool drive_serial_pin_bit(Dspic33* cpu, bool data_is_high, bool sample_on_rising,
+                                 uint16_t clock_mask) {
+    return prepare_serial_data(cpu, sample_on_rising, clock_mask) &&
+           dspic33_dci_test_drive_serial_edge(cpu, data_is_high, sample_on_rising, clock_mask);
 }
 
-bool dspic33_dci_test_drive_mapped_serial_word(Dspic33* cpu, uint16_t value, uint8_t width,
-                                               bool rising, uint16_t data_mask,
+bool dspic33_dci_test_drive_mapped_serial_word(Dspic33* cpu, uint16_t serial_word, uint8_t width,
+                                               bool sample_on_rising, uint16_t data_mask,
                                                uint16_t clock_mask) {
-    uint8_t bit;
-    if (!prepare_serial_data(cpu, rising, clock_mask)) {
+    uint8_t bit_index;
+    if (!prepare_serial_data(cpu, sample_on_rising, clock_mask)) {
         return false;
     }
-    for (bit = 0u; bit < width; bit++) {
-        uint16_t data = bit < 16u && (value & (uint16_t)(0x8000u >> bit)) != 0u ? data_mask : 0u;
-        uint16_t initial_clock = rising ? 0u : clock_mask;
-        uint16_t sample_clock = rising ? clock_mask : 0u;
-        if (!dspic33_gpio_drive(cpu, GPIO_PORT_D, data, data_mask) ||
+    for (bit_index = 0u; bit_index < width; bit_index++) {
+        uint16_t data_value =
+            bit_index < 16u && (serial_word & (uint16_t)(0x8000u >> bit_index)) != 0u ? data_mask
+                                                                                      : 0u;
+        uint16_t initial_clock = sample_on_rising ? 0u : clock_mask;
+        uint16_t sample_clock = sample_on_rising ? clock_mask : 0u;
+        if (!dspic33_gpio_drive(cpu, GPIO_PORT_D, data_value, data_mask) ||
             !dspic33_gpio_drive(cpu, GPIO_PORT_D, initial_clock, clock_mask) ||
             !dspic33_gpio_drive(cpu, GPIO_PORT_D, sample_clock, clock_mask)) {
             return false;
@@ -76,31 +81,33 @@ bool dspic33_dci_test_drive_mapped_serial_word(Dspic33* cpu, uint16_t value, uin
     return true;
 }
 
-static bool drive_serial_pin_word(Dspic33* cpu, uint16_t value, uint8_t width, bool rising,
-                                  uint16_t clock_mask) {
-    uint8_t bit;
-    for (bit = 0u; bit < width; bit++) {
-        bool high = bit < 16u && (value & (uint16_t)(0x8000u >> bit)) != 0u;
-        if (!drive_serial_pin_bit(cpu, high, rising, clock_mask)) {
+static bool drive_serial_pin_word(Dspic33* cpu, uint16_t serial_word, uint8_t width,
+                                  bool sample_on_rising, uint16_t clock_mask) {
+    uint8_t bit_index;
+    for (bit_index = 0u; bit_index < width; bit_index++) {
+        bool data_is_high =
+            bit_index < 16u && (serial_word & (uint16_t)(0x8000u >> bit_index)) != 0u;
+        if (!drive_serial_pin_bit(cpu, data_is_high, sample_on_rising, clock_mask)) {
             return false;
         }
     }
     return true;
 }
 
-bool dspic33_dci_test_drive_serial_bit(Dspic33* cpu, bool high, bool rising) {
-    return drive_serial_pin_bit(cpu, high, rising, GPIO_CLOCK_MASK);
+bool dspic33_dci_test_drive_serial_bit(Dspic33* cpu, bool data_is_high, bool sample_on_rising) {
+    return drive_serial_pin_bit(cpu, data_is_high, sample_on_rising, GPIO_CLOCK_MASK);
 }
 
-bool dspic33_dci_test_drive_serial_word(Dspic33* cpu, uint16_t value, uint8_t width, bool rising) {
-    return drive_serial_pin_word(cpu, value, width, rising, GPIO_CLOCK_MASK);
+bool dspic33_dci_test_drive_serial_word(Dspic33* cpu, uint16_t serial_word, uint8_t width,
+                                        bool sample_on_rising) {
+    return drive_serial_pin_word(cpu, serial_word, width, sample_on_rising, GPIO_CLOCK_MASK);
 }
 
 uint16_t dspic33_dci_test_serial_word_mask(uint8_t width) {
     return width == 16u ? UINT16_MAX : (uint16_t)(UINT16_MAX << (16u - width));
 }
 
-void dspic33_dci_test_configure_external(Dspic33* cpu, uint16_t control, uint8_t width,
+void dspic33_dci_test_configure_external(Dspic33* cpu, uint16_t control_flags, uint8_t width,
                                          uint8_t slots, uint8_t buffers, uint16_t transmit,
                                          uint16_t receive) {
     dspic33_write_word(cpu, DCI_CONTROL1, 0u);
@@ -108,10 +115,11 @@ void dspic33_dci_test_configure_external(Dspic33* cpu, uint16_t control, uint8_t
     dspic33_write_word(cpu, DCI_CONTROL3, 0u);
     dspic33_write_word(cpu, DCI_TRANSMIT_SLOTS, transmit);
     dspic33_write_word(cpu, DCI_RECEIVE_SLOTS, receive);
-    dspic33_write_word(cpu, DCI_CONTROL1, (uint16_t)(DCI_ENABLE | DCI_EXTERNAL_CLOCK | control));
+    dspic33_write_word(cpu, DCI_CONTROL1,
+                       (uint16_t)(DCI_ENABLE | DCI_EXTERNAL_CLOCK | control_flags));
 }
 
-void dspic33_dci_test_configure_internal(Dspic33* cpu, uint16_t control, uint8_t width,
+void dspic33_dci_test_configure_internal(Dspic33* cpu, uint16_t control_flags, uint8_t width,
                                          uint8_t slots, uint8_t buffers, uint16_t transmit,
                                          uint16_t receive) {
     dspic33_write_word(cpu, DCI_CONTROL1, 0u);
@@ -119,28 +127,32 @@ void dspic33_dci_test_configure_internal(Dspic33* cpu, uint16_t control, uint8_t
     dspic33_write_word(cpu, DCI_CONTROL3, 1u);
     dspic33_write_word(cpu, DCI_TRANSMIT_SLOTS, transmit);
     dspic33_write_word(cpu, DCI_RECEIVE_SLOTS, receive);
-    dspic33_write_word(cpu, DCI_CONTROL1, (uint16_t)(DCI_ENABLE | control));
+    dspic33_write_word(cpu, DCI_CONTROL1, (uint16_t)(DCI_ENABLE | control_flags));
 }
 
 bool dspic33_dci_test_drive_internal_pin_slot(Dspic33* cpu, uint16_t value, uint8_t width,
                                               uint64_t start_delay) {
-    uint64_t bit_cycles = ((uint64_t)(dspic33_read_word(cpu, DCI_CONTROL3) & 0x0fffu) + 1u) * 2u;
-    uint64_t sample_offset =
-        (dspic33_read_word(cpu, DCI_CONTROL1) & DCI_SAMPLE_RISING) != 0u ? 0u : bit_cycles / 2u;
-    uint8_t bit;
-    for (bit = 0u; bit < width; bit++) {
-        uint16_t high =
-            bit < 16u && (value & (uint16_t)(0x8000u >> bit)) != 0u ? GPIO_DATA_MASK : 0u;
-        if (!dspic33_gpio_drive(cpu, GPIO_PORT_D, high, GPIO_DATA_MASK) ||
-            !dspic33_device_advance(cpu, bit == 0u ? start_delay + sample_offset : bit_cycles)) {
+    uint64_t bit_cycle_period =
+        ((uint64_t)(dspic33_read_word(cpu, DCI_CONTROL3) & 0x0fffu) + 1u) * 2u;
+    uint64_t sample_delay = (dspic33_read_word(cpu, DCI_CONTROL1) & DCI_SAMPLE_RISING) != 0u
+                                ? 0u
+                                : bit_cycle_period / 2u;
+    uint8_t bit_index;
+    for (bit_index = 0u; bit_index < width; bit_index++) {
+        uint16_t data_value = bit_index < 16u && (value & (uint16_t)(0x8000u >> bit_index)) != 0u
+                                  ? GPIO_DATA_MASK
+                                  : 0u;
+        if (!dspic33_gpio_drive(cpu, GPIO_PORT_D, data_value, GPIO_DATA_MASK) ||
+            !dspic33_device_advance(cpu, bit_index == 0u ? start_delay + sample_delay
+                                                         : bit_cycle_period)) {
             return false;
         }
     }
-    return dspic33_device_advance(cpu, bit_cycles - sample_offset);
+    return dspic33_device_advance(cpu, bit_cycle_period - sample_delay);
 }
 
-static uint16_t interrupt_word(uint8_t irq, uint16_t base) {
-    return (uint16_t)(base + (irq / 16u) * 2u);
+static uint16_t interrupt_word(uint8_t irq, uint16_t register_base) {
+    return (uint16_t)(register_base + (irq / 16u) * 2u);
 }
 
 static uint16_t interrupt_mask(uint8_t irq) { return (uint16_t)(1u << (irq % 16u)); }
@@ -170,16 +182,16 @@ void dspic33_dci_test_enable_interrupt(Dspic33* cpu, uint8_t irq, uint8_t priori
 void dspic33_dci_test_configure_dma(Dspic33* cpu, uint8_t channel, uint16_t control,
                                     uint32_t memory, uint16_t pad, uint16_t count,
                                     uint8_t request) {
-    uint16_t base = (uint16_t)(0x0b00u + channel * 0x10u);
-    dspic33_write_word(cpu, base, 0u);
-    dspic33_write_word(cpu, (uint16_t)(base + 2u), request);
-    dspic33_write_word(cpu, (uint16_t)(base + 4u), (uint16_t)memory);
-    dspic33_write_word(cpu, (uint16_t)(base + 6u), (uint16_t)(memory >> 16u));
-    dspic33_write_word(cpu, (uint16_t)(base + 8u), 0u);
-    dspic33_write_word(cpu, (uint16_t)(base + 0x0au), 0u);
-    dspic33_write_word(cpu, (uint16_t)(base + 0x0cu), pad);
-    dspic33_write_word(cpu, (uint16_t)(base + 0x0eu), count);
-    dspic33_write_word(cpu, base, (uint16_t)(control | 0x8000u));
+    uint16_t channel_base = (uint16_t)(0x0b00u + channel * 0x10u);
+    dspic33_write_word(cpu, channel_base, 0u);
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 2u), request);
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 4u), (uint16_t)memory);
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 6u), (uint16_t)(memory >> 16u));
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 8u), 0u);
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 0x0au), 0u);
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 0x0cu), pad);
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 0x0eu), count);
+    dspic33_write_word(cpu, channel_base, (uint16_t)(control | 0x8000u));
 }
 
 void dspic33_dci_test_access_cases(TestState* state, Dspic33* cpu) {
