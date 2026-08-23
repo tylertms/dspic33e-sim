@@ -1,58 +1,59 @@
 #include "device/dspic33ep_mu/communication/spi/internal.h"
 
 static void master_frame_slave_cases(TestState* state, Dspic33* cpu) {
-    uint8_t channel;
-    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-        uint8_t polarity;
-        for (polarity = 0u; polarity < 2u; polarity++) {
-            bool active = polarity != 0u;
-            uint8_t mode16;
-            for (mode16 = 0u; mode16 < 2u; mode16++) {
-                uint16_t control = (uint16_t)(0x003bu | ((uint16_t)mode16 << 10u));
-                uint16_t control2 = (uint16_t)(0xc000u | ((uint16_t)polarity << 13u));
-                uint16_t transmitted = mode16 != 0u ? 0xa55au : 0x005au;
-                uint64_t cycles = dspic33_spi_test_transfer_cycles(control);
-                bool clock;
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_SPI_COUNT; channel_index++) {
+        for (uint8_t polarity_index = 0u; polarity_index < 2u; polarity_index++) {
+            const bool frame_active = polarity_index != 0u;
+
+            for (uint8_t word_mode = 0u; word_mode < 2u; word_mode++) {
+                const uint16_t spi_control = (uint16_t)(0x003bu | ((uint16_t)word_mode << 10u));
+                const uint16_t frame_control =
+                    (uint16_t)(0xc000u | ((uint16_t)polarity_index << 13u));
+                const uint16_t transmitted_value = word_mode != 0u ? 0xa55au : 0x005au;
+                const uint64_t transfer_cycles = dspic33_spi_test_transfer_cycles(spi_control);
+                bool clock_high;
 
                 dspic33_reset(cpu, 0u);
-                dspic33_spi_test_configure_spi(cpu, channel, control, control2, 0u);
-                dspic33_spi_pin_input(cpu, channel, false, false, !active);
-                dspic33_write_word(cpu, (uint16_t)(bases[channel] + 8u), transmitted);
+                dspic33_spi_test_configure_spi(cpu, channel_index, spi_control, frame_control, 0u);
+                dspic33_spi_pin_input(cpu, channel_index, false, false, !frame_active);
+                dspic33_write_word(cpu, (uint16_t)(bases[channel_index] + 8u), transmitted_value);
                 expect(state,
-                       (cpu->io.spi_busy & (uint8_t)(1u << channel)) == 0u &&
-                           cpu->io.spi_tx_fifo[channel].count == 1u &&
-                           dspic33_spi_clock_output(cpu, channel, &clock),
+                       (cpu->io.spi_busy & (uint8_t)(1u << channel_index)) == 0u &&
+                           cpu->io.spi_tx_fifo[channel_index].count == 1u &&
+                           dspic33_spi_clock_output(cpu, channel_index, &clock_high),
                        "master framed slave waits with free-running clock");
-                dspic33_spi_pin_input(cpu, channel, false, false, active);
+                dspic33_spi_pin_input(cpu, channel_index, false, false, frame_active);
                 expect(state,
                        dspic33_device_advance(cpu, 1u) &&
-                           (cpu->io.spi_busy & (uint8_t)(1u << channel)) == 0u,
+                           (cpu->io.spi_busy & (uint8_t)(1u << channel_index)) == 0u,
                        "master framed slave samples pulse before transmitting");
-                dspic33_spi_pin_input(cpu, channel, false, false, !active);
+                dspic33_spi_pin_input(cpu, channel_index, false, false, !frame_active);
                 expect(state,
                        dspic33_device_advance(cpu, 1u) &&
-                           (cpu->io.spi_busy & (uint8_t)(1u << channel)) != 0u,
+                           (cpu->io.spi_busy & (uint8_t)(1u << channel_index)) != 0u,
                        "sampled frame pulse starts transfer on next transmit edge");
                 expect(state,
-                       dspic33_device_advance(cpu, cycles) &&
-                           dspic33_read_word(cpu, (uint16_t)(bases[channel] + 8u)) == 0u &&
-                           !dspic33_spi_test_interrupt_flag(cpu, irqs[channel]),
+                       dspic33_device_advance(cpu, transfer_cycles) &&
+                           dspic33_read_word(cpu, (uint16_t)(bases[channel_index] + 8u)) == 0u &&
+                           !dspic33_spi_test_interrupt_flag(cpu, irqs[channel_index]),
                        "master framed slave completes after full data frame");
-                expect(state, dspic33_spi_test_transfer_interrupt_after_cycle(cpu, irqs[channel]),
+                expect(state,
+                       dspic33_spi_test_transfer_interrupt_after_cycle(cpu, irqs[channel_index]),
                        "master framed slave retains interrupt latency");
             }
 
             dspic33_reset(cpu, 0u);
-            dspic33_spi_test_configure_spi(cpu, channel, 0x003bu,
-                                           (uint16_t)(0xc000u | ((uint16_t)polarity << 13u)), 0u);
-            dspic33_spi_pin_input(cpu, channel, false, false, !active);
-            dspic33_write_word(cpu, (uint16_t)(bases[channel] + 8u), 0x00a5u);
-            dspic33_spi_pin_input(cpu, channel, false, false, active);
-            dspic33_spi_pin_input(cpu, channel, false, false, !active);
+            dspic33_spi_test_configure_spi(cpu, channel_index, 0x003bu,
+                                           (uint16_t)(0xc000u | ((uint16_t)polarity_index << 13u)),
+                                           0u);
+            dspic33_spi_pin_input(cpu, channel_index, false, false, !frame_active);
+            dspic33_write_word(cpu, (uint16_t)(bases[channel_index] + 8u), 0x00a5u);
+            dspic33_spi_pin_input(cpu, channel_index, false, false, frame_active);
+            dspic33_spi_pin_input(cpu, channel_index, false, false, !frame_active);
             expect(state,
                    dspic33_device_advance(cpu, 2u) &&
-                       (cpu->io.spi_busy & (uint8_t)(1u << channel)) == 0u &&
-                       cpu->io.spi_tx_fifo[channel].count == 1u,
+                       (cpu->io.spi_busy & (uint8_t)(1u << channel_index)) == 0u &&
+                       cpu->io.spi_tx_fifo[channel_index].count == 1u,
                    "frame pulse released before sample edge is ignored");
         }
     }
