@@ -71,7 +71,7 @@ bool dspic33_device_internal_pps_register_write_mask(const Dspic33* cpu, uint16_
                                                      uint16_t* writable);
 bool dspic33_device_internal_pps_shadow_matches(const Dspic33* cpu);
 bool dspic33_device_internal_protect_oscillator_write(Dspic33* cpu, uint16_t address,
-                                                      uint16_t previous);
+                                                      uint16_t previous_control);
 bool dspic33_device_internal_pwm_address_inaccessible(const Dspic33* cpu, uint16_t address);
 bool dspic33_device_internal_pwm_fault_active(const Dspic33* cpu, uint8_t generator);
 bool dspic33_device_internal_pwm_generator_pmd_disabled(const Dspic33* cpu, uint8_t generator);
@@ -171,7 +171,7 @@ uint8_t dspic33_device_internal_crc_data_width(const Dspic33* cpu);
 uint8_t dspic33_device_internal_dci_pps_selection(const Dspic33* cpu, uint16_t address,
                                                   uint8_t shift);
 uint8_t dspic33_device_internal_input_capture_pps_pin(const Dspic33* cpu, uint8_t channel);
-uint8_t dspic33_device_internal_oscillator_current_source(uint16_t control);
+uint8_t dspic33_device_internal_oscillator_current_source(uint16_t oscillator_control);
 uint8_t dspic33_device_internal_output_compare_pair_high(uint8_t channel);
 uint8_t dspic33_device_internal_output_compare_pair_low(uint8_t channel);
 uint8_t dspic33_device_internal_pps_output_function(const Dspic33* cpu, uint8_t pin);
@@ -337,7 +337,7 @@ void dspic33_device_internal_update_input_capture_pmd(Dspic33* cpu, uint16_t add
 void dspic33_device_internal_update_input_capture_register(Dspic33* cpu, uint16_t address,
                                                            uint16_t previous);
 void dspic33_device_internal_update_main_clock_configuration(Dspic33* cpu, uint16_t address,
-                                                             uint16_t previous);
+                                                             uint16_t previous_value);
 void dspic33_device_internal_update_nvm_control(Dspic33* cpu, uint16_t requested_control);
 void dspic33_device_internal_update_nvm_key(Dspic33* cpu, uint16_t key_word);
 void dspic33_device_internal_update_output_compare_pmd(Dspic33* cpu, uint16_t address,
