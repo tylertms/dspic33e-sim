@@ -423,31 +423,35 @@ static void can_transmit_word(Dspic33* cpu, uint8_t channel_index) {
     dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_TRANSMIT_WORD, 1u);
 }
 
-static void can_transmit_bus_finish(Dspic33* cpu, uint8_t channel) {
-    uint8_t buffer = cpu->io.can_tx_buffer[channel];
-    uint8_t bit = (uint8_t)(1u << channel);
-    uint16_t control = dspic33_device_internal_can_buffer_control(cpu, channel, buffer);
-    uint16_t counts = dspic33_device_internal_raw_word(
-        cpu, (uint16_t)(dspic33_device_can_bases[channel] + 0x0eu));
-    Dspic33CanFrame frame = dspic33_device_internal_can_decode_frame(cpu->io.can_tx_words[channel]);
-    dspic33_device_internal_can_set_buffer_control(cpu, channel, buffer,
-                                                   (uint16_t)(control & ~CAN_BUFFER_REQUEST));
-    if ((counts >> 8u) != 0u) {
-        counts = (uint16_t)(counts - 0x0100u);
+static void can_transmit_bus_finish(Dspic33* cpu, uint8_t channel_index) {
+    const uint8_t transmit_buffer = cpu->io.can_tx_buffer[channel_index];
+    const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+    const uint16_t buffer_control =
+        dspic33_device_internal_can_buffer_control(cpu, channel_index, transmit_buffer);
+    uint16_t error_counters = dspic33_device_internal_raw_word(
+        cpu, (uint16_t)(dspic33_device_can_bases[channel_index] + 0x0eu));
+    const Dspic33CanFrame transmitted_frame =
+        dspic33_device_internal_can_decode_frame(cpu->io.can_tx_words[channel_index]);
+
+    dspic33_device_internal_can_set_buffer_control(
+        cpu, channel_index, transmit_buffer, (uint16_t)(buffer_control & ~CAN_BUFFER_REQUEST));
+    if ((error_counters >> 8u) != 0u) {
+        error_counters = (uint16_t)(error_counters - 0x0100u);
         dspic33_device_internal_raw_write_word(
-            cpu, (uint16_t)(dspic33_device_can_bases[channel] + 0x0eu), counts);
-        dspic33_device_internal_can_refresh_error_status(cpu, channel);
+            cpu, (uint16_t)(dspic33_device_can_bases[channel_index] + 0x0eu), error_counters);
+        dspic33_device_internal_can_refresh_error_status(cpu, channel_index);
     }
-    dspic33_device_internal_can_raise_event(cpu, channel, CAN_INTERRUPT_TRANSMIT, buffer, 0u);
-    if (dspic33_device_internal_can_mode(cpu, channel) == CAN_MODE_LOOPBACK) {
-        dspic33_device_internal_can_queue_push(&cpu->io.can_rx[channel], &frame);
-        dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_START, 0u);
+    dspic33_device_internal_can_raise_event(cpu, channel_index, CAN_INTERRUPT_TRANSMIT,
+                                            transmit_buffer, 0u);
+    if (dspic33_device_internal_can_mode(cpu, channel_index) == CAN_MODE_LOOPBACK) {
+        dspic33_device_internal_can_queue_push(&cpu->io.can_rx[channel_index], &transmitted_frame);
+        dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_RECEIVE_START, 0u);
     } else {
-        dspic33_device_internal_can_queue_push(&cpu->io.can_tx[channel], &frame);
+        dspic33_device_internal_can_queue_push(&cpu->io.can_tx[channel_index], &transmitted_frame);
     }
-    cpu->io.can_tx_on_bus &= (uint8_t)~bit;
-    cpu->io.can_tx_busy &= (uint8_t)~bit;
-    dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_START, 0u);
+    cpu->io.can_tx_on_bus &= (uint8_t)~channel_bit;
+    cpu->io.can_tx_busy &= (uint8_t)~channel_bit;
+    dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_TRANSMIT_START, 0u);
 }
 
 static void can_transmit_finish(Dspic33* cpu, uint8_t channel) {
