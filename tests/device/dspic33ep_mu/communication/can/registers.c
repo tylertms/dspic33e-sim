@@ -737,18 +737,18 @@ void dspic33_can_test_fifo_overflow_advancement_cases(TestState* state, Dspic33*
 
 void dspic33_can_test_receive_flag_write_zero_domain(TestState* state, Dspic33* cpu) {
     static const uint8_t offsets[] = {0x20u, 0x22u, 0x28u, 0x2au};
-    uint8_t channel;
-    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-        uint8_t index;
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
         dspic33_reset(cpu, 0u);
-        dspic33_can_test_select_window(cpu, channel, false);
-        for (index = 0u; index < sizeof(offsets); index++) {
-            uint16_t address = (uint16_t)(bases[channel] + offsets[index]);
-            uint32_t requested;
-            for (requested = 0u; requested <= UINT16_MAX; requested += 257u) {
-                dspic33_can_test_write_memory_word(cpu, address, UINT16_MAX);
-                dspic33_write_word(cpu, address, (uint16_t)requested);
-                expect(state, dspic33_read_word(cpu, address) == requested,
+        dspic33_can_test_select_window(cpu, channel_index, false);
+        for (size_t offset_index = 0u; offset_index < sizeof(offsets); offset_index++) {
+            const uint16_t register_address =
+                (uint16_t)(bases[channel_index] + offsets[offset_index]);
+
+            for (uint32_t requested_value = 0u; requested_value <= UINT16_MAX;
+                 requested_value += 257u) {
+                dspic33_can_test_write_memory_word(cpu, register_address, UINT16_MAX);
+                dspic33_write_word(cpu, register_address, (uint16_t)requested_value);
+                expect(state, dspic33_read_word(cpu, register_address) == requested_value,
                        "receive flag write-zero domain");
             }
         }
