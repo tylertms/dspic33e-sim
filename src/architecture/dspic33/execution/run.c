@@ -1,14 +1,14 @@
 #include "internal.h"
 
 uint8_t dspic33_read_byte(Dspic33* cpu, uint32_t address) {
-    uint8_t value;
+    uint8_t read_value;
     dspic33_internal_record_data_read(cpu, address, 1u);
     cpu->io.cpu_read_address = address;
     cpu->io.cpu_read_width = 1u;
     cpu->io.cpu_read_valid = true;
-    value = dspic33_internal_read_byte_value(cpu, address);
+    read_value = dspic33_internal_read_byte_value(cpu, address);
     cpu->io.cpu_read_valid = false;
-    return value;
+    return read_value;
 }
 
 uint16_t dspic33_read_word(Dspic33* cpu, uint32_t address) {
@@ -462,7 +462,7 @@ Dspic33StopReason dspic33_run_until(Dspic33* cpu, uint32_t stop_address,
     return run(cpu, instruction_limit, stop_address, true);
 }
 
-static Dspic33Result result(const Dspic33* cpu) {
+static Dspic33Result make_result(const Dspic33* cpu) {
     if (cpu == NULL) {
         return (Dspic33Result){DSPIC33_HALTED, 0u, 0u, 0u, 0u};
     }
@@ -472,15 +472,15 @@ static Dspic33Result result(const Dspic33* cpu) {
 
 Dspic33Result dspic33_step_result(Dspic33* cpu) {
     if (cpu == NULL) {
-        return result(cpu);
+        return make_result(cpu);
     }
     dspic33_step(cpu);
-    return result(cpu);
+    return make_result(cpu);
 }
 
 Dspic33Result dspic33_run_with_limits(Dspic33* cpu, Dspic33RunLimits limits) {
     if (cpu == NULL) {
-        return result(cpu);
+        return make_result(cpu);
     }
     const uint64_t start_instructions = cpu->instructions;
     const uint64_t start_cycles = cpu->cycles;
@@ -489,13 +489,13 @@ Dspic33Result dspic33_run_with_limits(Dspic33* cpu, Dspic33RunLimits limits) {
         if ((limits.instruction_limit != 0u &&
              cpu->instructions - start_instructions >= limits.instruction_limit) ||
             (limits.cycle_limit != 0u && cpu->cycles - start_cycles >= limits.cycle_limit)) {
-            Dspic33Result limited = result(cpu);
+            Dspic33Result limited = make_result(cpu);
             limited.stop = DSPIC33_INSTRUCTION_LIMIT;
             return limited;
         }
         dspic33_step(cpu);
     }
-    return result(cpu);
+    return make_result(cpu);
 }
 
 uint32_t dspic33_get_register(const Dspic33* cpu, uint8_t reg) {
