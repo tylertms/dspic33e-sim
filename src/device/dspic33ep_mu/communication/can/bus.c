@@ -608,14 +608,15 @@ void dspic33_device_internal_can_error_event(Dspic33* cpu, uint8_t channel_index
     dspic33_device_internal_can_refresh_error_status(cpu, channel_index);
 }
 
-void dspic33_device_internal_can_invalid_event(Dspic33* cpu, uint8_t channel) {
-    uint8_t mode = dspic33_device_internal_can_mode(cpu, channel);
-    if (!dspic33_device_internal_can_power_enabled(cpu, channel) ||
-        cpu->power_state == DSPIC33_POWER_SLEEP || mode == CAN_MODE_DISABLE ||
-        mode == CAN_MODE_CONFIGURATION) {
+void dspic33_device_internal_can_invalid_event(Dspic33* cpu, uint8_t channel_index) {
+    const uint8_t current_mode = dspic33_device_internal_can_mode(cpu, channel_index);
+
+    if (!dspic33_device_internal_can_power_enabled(cpu, channel_index) ||
+        cpu->power_state == DSPIC33_POWER_SLEEP || current_mode == CAN_MODE_DISABLE ||
+        current_mode == CAN_MODE_CONFIGURATION) {
         return;
     }
-    dspic33_device_internal_can_raise_event(cpu, channel, CAN_INTERRUPT_INVALID, 0u, 0u);
+    dspic33_device_internal_can_raise_event(cpu, channel_index, CAN_INTERRUPT_INVALID, 0u, 0u);
 }
 
 void dspic33_device_internal_run_can(Dspic33* cpu, uint8_t channel, uint32_t value) {
