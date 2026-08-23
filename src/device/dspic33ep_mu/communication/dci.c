@@ -12,11 +12,12 @@ static uint8_t dci_mode(const Dspic33* cpu) {
 }
 
 static uint8_t dci_frame_count(const Dspic33* cpu) {
-    uint8_t mode = dci_mode(cpu);
-    if (mode == 2u) {
+    uint8_t dci_mode_value = dci_mode(cpu);
+
+    if (dci_mode_value == 2u) {
         return 13u;
     }
-    if (mode == 3u) {
+    if (dci_mode_value == 3u) {
         return 16u;
     }
     return (
@@ -34,8 +35,8 @@ static uint8_t dci_word_width(const Dspic33* cpu) {
                  1u);
 }
 
-static uint8_t dci_slot_width(const Dspic33* cpu, uint8_t slot) {
-    return dci_mode(cpu) == 2u && slot != 0u ? 20u : dci_word_width(cpu);
+static uint8_t dci_slot_width(const Dspic33* cpu, uint8_t slot_index) {
+    return dci_mode(cpu) == 2u && slot_index != 0u ? 20u : dci_word_width(cpu);
 }
 
 static uint16_t dci_slot_mask(const Dspic33* cpu) {
@@ -54,23 +55,23 @@ static uint8_t dci_active_transmit_buffers(const Dspic33* cpu) {
     uint16_t active_slots =
         (uint16_t)(transmit_slots |
                    (dspic33_device_internal_raw_word(cpu, DCI_RECEIVE_SLOTS) & slot_mask));
-    uint8_t count = dci_buffer_count(cpu);
-    uint8_t buffer = 0u;
-    uint8_t active = 0u;
-    uint8_t frame;
-    for (frame = 0u; frame < count; frame++) {
-        uint8_t slot;
-        for (slot = 0u; slot < dci_frame_count(cpu); slot++) {
-            uint16_t bit = (uint16_t)(1u << slot);
-            if ((transmit_slots & bit) != 0u) {
-                active |= (uint8_t)(1u << buffer);
+    uint8_t buffer_count = dci_buffer_count(cpu);
+    uint8_t buffer_index = 0u;
+    uint8_t active_buffer_mask = 0u;
+
+    for (uint8_t frame_index = 0u; frame_index < buffer_count; frame_index++) {
+        for (uint8_t slot_index = 0u; slot_index < dci_frame_count(cpu); slot_index++) {
+            uint16_t slot_bit = (uint16_t)(1u << slot_index);
+
+            if ((transmit_slots & slot_bit) != 0u) {
+                active_buffer_mask |= (uint8_t)(1u << buffer_index);
             }
-            if ((active_slots & bit) != 0u) {
-                buffer = (uint8_t)((buffer + 1u) % count);
+            if ((active_slots & slot_bit) != 0u) {
+                buffer_index = (uint8_t)((buffer_index + 1u) % buffer_count);
             }
         }
     }
-    return active;
+    return active_buffer_mask;
 }
 
 bool dspic33_device_internal_dci_configuration_supported(const Dspic33* cpu) {
@@ -86,9 +87,9 @@ static uint64_t dci_bit_cycles(const Dspic33* cpu) {
 }
 
 static uint64_t dci_word_cycles(const Dspic33* cpu) {
-    uint64_t bit_cycles = dci_bit_cycles(cpu);
-    uint8_t width = dci_slot_width(cpu, cpu->io.dci.slot);
-    return bit_cycles * width;
+    uint64_t bit_cycle_count = dci_bit_cycles(cpu);
+    uint8_t slot_width = dci_slot_width(cpu, cpu->io.dci.slot);
+    return bit_cycle_count * slot_width;
 }
 
 static bool dci_bcg_running(const Dspic33* cpu) {
@@ -99,12 +100,15 @@ static bool dci_bcg_running(const Dspic33* cpu) {
 }
 
 static uint64_t dci_bcg_phase(const Dspic33* cpu) {
-    uint64_t period = dci_bit_cycles(cpu);
-    uint64_t phase = cpu->io.dci.bcg_phase % period;
+    uint64_t bit_cycle_period = dci_bit_cycles(cpu);
+    uint64_t phase_offset = cpu->io.dci.bcg_phase % bit_cycle_period;
+
     if (!cpu->io.dci.bcg_paused) {
-        phase = (phase + (cpu->device_cycles - cpu->io.dci.bcg_cycle) % period) % period;
+        phase_offset =
+            (phase_offset + (cpu->device_cycles - cpu->io.dci.bcg_cycle) % bit_cycle_period) %
+            bit_cycle_period;
     }
-    return phase;
+    return phase_offset;
 }
 
 static void dci_update_bcg(Dspic33* cpu, bool reset) {
