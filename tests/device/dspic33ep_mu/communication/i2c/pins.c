@@ -2,26 +2,26 @@
 
 static void slave_pin_ten_bit_cases(TestState* state, Dspic33* cpu) {
     const I2cPinRoute* route = &pin_routes[2];
-    const uint16_t base = bases[1];
-    const uint16_t pins = 0x000cu;
+    const uint16_t register_base = bases[1];
+    const uint16_t pin_mask = 0x000cu;
 
     dspic33_load_configuration_word(cpu, 0xf8000cu, route->configuration);
     dspic33_reset(cpu, 0u);
-    dspic33_gpio_drive(cpu, route->port, pins, pins);
-    dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x02abu);
+    dspic33_gpio_drive(cpu, route->port, pin_mask, pin_mask);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 10u), 0x02abu);
     dspic33_i2c_test_enable(cpu, 1u, 0x0400u, 0u);
     dspic33_i2c_test_drive_pin(route, cpu, false, false);
     dspic33_i2c_test_drive_byte(route, cpu, 0xf4u);
     expect(state,
-           dspic33_read_word(cpu, base) == 0x00f4u &&
+           dspic33_read_word(cpu, register_base) == 0x00f4u &&
                dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, false,
                                            false) &&
                dspic33_i2c_test_pop_slave_acknowledgement(cpu, 1u, true),
            "physical 10-bit high address matches and stretches for ACK");
     dspic33_i2c_test_drive_pin(route, cpu, true, true);
     dspic33_i2c_test_drive_pin(route, cpu, true, false);
-    dspic33_read_word(cpu, base);
-    dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+    dspic33_read_word(cpu, register_base);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0x9400u);
     dspic33_i2c_test_drive_pin(route, cpu, false, true);
     expect(state, cpu->io.i2c_slave_pin_state[1] == 7u,
            "physical 10-bit ACK advances to second address phase");
@@ -29,8 +29,8 @@ static void slave_pin_ten_bit_cases(TestState* state, Dspic33* cpu) {
     dspic33_i2c_test_clear_interrupt(cpu, slave_irqs[1]);
     dspic33_i2c_test_drive_byte(route, cpu, 0xabu);
     expect(state,
-           dspic33_read_word(cpu, base) == 0x00abu &&
-               (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0100u) != 0u &&
+           dspic33_read_word(cpu, register_base) == 0x00abu &&
+               (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 0x0100u) != 0u &&
                !dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[1]) &&
                dspic33_i2c_test_pop_slave_acknowledgement(cpu, 1u, true),
            "physical 10-bit second address matches and sets ADD10");
@@ -38,8 +38,8 @@ static void slave_pin_ten_bit_cases(TestState* state, Dspic33* cpu) {
     dspic33_i2c_test_drive_pin(route, cpu, true, false);
     expect(state, dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[1]),
            "physical 10-bit second address interrupts on ninth falling edge");
-    dspic33_read_word(cpu, base);
-    dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+    dspic33_read_word(cpu, register_base);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0x9400u);
     dspic33_i2c_test_drive_pin(route, cpu, false, true);
     expect(state, cpu->io.i2c_slave_pin_state[1] == 2u,
            "physical 10-bit write enters receive data phase");
@@ -50,14 +50,14 @@ static void slave_pin_ten_bit_cases(TestState* state, Dspic33* cpu) {
            "physical repeated Start returns to address phase");
     dspic33_i2c_test_drive_byte(route, cpu, 0xf5u);
     expect(state,
-           dspic33_read_word(cpu, base) == 0x00f5u &&
-               (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0104u) == 0x0104u &&
+           dspic33_read_word(cpu, register_base) == 0x00f5u &&
+               (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 0x0104u) == 0x0104u &&
                dspic33_i2c_test_pop_slave_acknowledgement(cpu, 1u, true),
            "physical 10-bit repeated-read address is accepted");
     dspic33_i2c_test_drive_pin(route, cpu, true, false);
-    dspic33_read_word(cpu, base);
-    dspic33_write_word(cpu, (uint16_t)(base + 2u), 0x00c3u);
-    dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+    dspic33_read_word(cpu, register_base);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 2u), 0x00c3u);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0x9400u);
     dspic33_i2c_test_drive_pin(route, cpu, true, true);
     dspic33_i2c_test_drive_pin(route, cpu, true, false);
     expect(
@@ -67,8 +67,8 @@ static void slave_pin_ten_bit_cases(TestState* state, Dspic33* cpu) {
         "physical 10-bit repeated-read ACK enters transmit phase");
 
     dspic33_reset(cpu, 0u);
-    dspic33_gpio_drive(cpu, route->port, pins, pins);
-    dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x02abu);
+    dspic33_gpio_drive(cpu, route->port, pin_mask, pin_mask);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 10u), 0x02abu);
     dspic33_i2c_test_enable(cpu, 1u, 0x0400u, 0u);
     dspic33_i2c_test_drive_pin(route, cpu, false, false);
     dspic33_i2c_test_drive_byte(route, cpu, 0xf2u);
@@ -82,15 +82,15 @@ static void slave_pin_ten_bit_cases(TestState* state, Dspic33* cpu) {
            "physical 10-bit high mismatch produces NACK");
 
     dspic33_reset(cpu, 0u);
-    dspic33_gpio_drive(cpu, route->port, pins, pins);
-    dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x02abu);
+    dspic33_gpio_drive(cpu, route->port, pin_mask, pin_mask);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 10u), 0x02abu);
     dspic33_i2c_test_enable(cpu, 1u, 0x0400u, 0u);
     dspic33_i2c_test_drive_pin(route, cpu, false, false);
     dspic33_i2c_test_drive_byte(route, cpu, 0xf4u);
     dspic33_i2c_test_drive_pin(route, cpu, true, true);
     dspic33_i2c_test_drive_pin(route, cpu, true, false);
-    dspic33_read_word(cpu, base);
-    dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+    dspic33_read_word(cpu, register_base);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0x9400u);
     dspic33_i2c_test_drive_pin(route, cpu, false, true);
     dspic33_i2c_test_drive_byte(route, cpu, 0xacu);
     dspic33_i2c_test_drive_pin(route, cpu, false, true);
