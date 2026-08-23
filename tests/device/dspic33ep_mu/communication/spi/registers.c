@@ -462,77 +462,80 @@ void dspic33_spi_test_pps_slave_input_cases(TestState* state, Dspic33* cpu) {
 
 void dspic33_spi_test_master_output_cases(TestState* state, Dspic33* cpu, Dspic33* copy) {
     static const uint16_t mappings[DSPIC33_SPI_COUNT] = {0x0605u, 0u, 0x201fu, 0x2322u};
-    uint8_t channel;
-    bool clock;
-    bool data;
-    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-        uint8_t mode16;
-        for (mode16 = 0u; mode16 < 2u; mode16++) {
-            uint8_t polarity;
-            for (polarity = 0u; polarity < 2u; polarity++) {
-                uint8_t edge;
-                for (edge = 0u; edge < 2u; edge++) {
-                    uint16_t control =
-                        (uint16_t)(0x003bu | ((uint16_t)mode16 << 10u) | ((uint16_t)edge << 8u) |
-                                   ((uint16_t)polarity << 6u));
-                    uint16_t value = mode16 != 0u ? 0xa55bu : 0x00a5u;
-                    uint64_t cycles = dspic33_spi_test_transfer_cycles(control);
+    bool clock_level;
+    bool data_level;
+
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_SPI_COUNT; channel_index++) {
+        for (uint8_t word_mode = 0u; word_mode < 2u; word_mode++) {
+            for (uint8_t clock_polarity = 0u; clock_polarity < 2u; clock_polarity++) {
+                for (uint8_t clock_edge = 0u; clock_edge < 2u; clock_edge++) {
+                    const uint16_t spi_control =
+                        (uint16_t)(0x003bu | ((uint16_t)word_mode << 10u) |
+                                   ((uint16_t)clock_edge << 8u) | ((uint16_t)clock_polarity << 6u));
+                    const uint16_t transmit_value = word_mode != 0u ? 0xa55bu : 0x00a5u;
+                    const uint64_t transfer_cycles = dspic33_spi_test_transfer_cycles(spi_control);
 
                     dspic33_reset(cpu, 0u);
-                    if (mappings[channel] != 0u) {
-                        dspic33_write_word(cpu, 0x0680u, mappings[channel]);
+                    if (mappings[channel_index] != 0u) {
+                        dspic33_write_word(cpu, 0x0680u, mappings[channel_index]);
                     }
-                    dspic33_spi_test_configure_spi(cpu, channel, control, 0u, 0u);
-                    dspic33_write_word(cpu, (uint16_t)(bases[channel] + 8u), value);
+                    dspic33_spi_test_configure_spi(cpu, channel_index, spi_control, 0u, 0u);
+                    dspic33_write_word(cpu, (uint16_t)(bases[channel_index] + 8u), transmit_value);
+
                     expect(state,
-                           dspic33_spi_clock_output(cpu, channel, &clock) &&
-                               clock == (polarity == 0u) &&
-                               dspic33_spi_data_output(cpu, channel, &data) && data &&
-                               (mappings[channel] == 0u ||
-                                (dspic33_spi_pin(cpu, 64u, &data) && data &&
-                                 dspic33_spi_pin(cpu, 65u, &clock) && clock == (polarity == 0u))),
+                           dspic33_spi_clock_output(cpu, channel_index, &clock_level) &&
+                               clock_level == (clock_polarity == 0u) &&
+                               dspic33_spi_data_output(cpu, channel_index, &data_level) &&
+                               data_level &&
+                               (mappings[channel_index] == 0u ||
+                                (dspic33_spi_pin(cpu, 64u, &data_level) && data_level &&
+                                 dspic33_spi_pin(cpu, 65u, &clock_level) &&
+                                 clock_level == (clock_polarity == 0u))),
                            "master output starts on active clock with first data bit");
                     expect(state,
                            dspic33_device_advance(cpu, 1u) &&
-                               dspic33_spi_clock_output(cpu, channel, &clock) &&
-                               clock == (polarity != 0u) &&
-                               dspic33_spi_data_output(cpu, channel, &data) && data == (edge == 0u),
+                               dspic33_spi_clock_output(cpu, channel_index, &clock_level) &&
+                               clock_level == (clock_polarity != 0u) &&
+                               dspic33_spi_data_output(cpu, channel_index, &data_level) &&
+                               data_level == (clock_edge == 0u),
                            "master output reaches half-clock data phase");
                     expect(state,
                            dspic33_device_advance(cpu, 1u) &&
-                               dspic33_spi_clock_output(cpu, channel, &clock) &&
-                               clock == (polarity == 0u) &&
-                               dspic33_spi_data_output(cpu, channel, &data) && !data,
+                               dspic33_spi_clock_output(cpu, channel_index, &clock_level) &&
+                               clock_level == (clock_polarity == 0u) &&
+                               dspic33_spi_data_output(cpu, channel_index, &data_level) &&
+                               !data_level,
                            "master output advances to second data bit");
                     expect(state,
-                           dspic33_device_advance(cpu, cycles - 2u) &&
-                               dspic33_spi_clock_output(cpu, channel, &clock) &&
-                               clock == (polarity != 0u) &&
-                               dspic33_spi_data_output(cpu, channel, &data) && data,
+                           dspic33_device_advance(cpu, transfer_cycles - 2u) &&
+                               dspic33_spi_clock_output(cpu, channel_index, &clock_level) &&
+                               clock_level == (clock_polarity != 0u) &&
+                               dspic33_spi_data_output(cpu, channel_index, &data_level) &&
+                               data_level,
                            "master output returns to idle clock with final data bit");
                 }
             }
         }
 
         dspic33_reset(cpu, 0u);
-        dspic33_spi_test_configure_spi(cpu, channel, 0x183bu, 0u, 0u);
-        dspic33_write_word(cpu, (uint16_t)(bases[channel] + 8u), 0x00a5u);
+        dspic33_spi_test_configure_spi(cpu, channel_index, 0x183bu, 0u, 0u);
+        dspic33_write_word(cpu, (uint16_t)(bases[channel_index] + 8u), 0x00a5u);
         expect(state,
-               !dspic33_spi_clock_output(cpu, channel, &clock) &&
-                   !dspic33_spi_data_output(cpu, channel, &data),
+               !dspic33_spi_clock_output(cpu, channel_index, &clock_level) &&
+                   !dspic33_spi_data_output(cpu, channel_index, &data_level),
                "disabled master pins release clock and data outputs");
 
         dspic33_reset(cpu, 0u);
         dspic33_device_advance(cpu, 1u);
-        dspic33_spi_test_configure_spi(cpu, channel, 0x003bu, 0x8000u, 0u);
-        expect(state, dspic33_spi_clock_output(cpu, channel, &clock) && clock,
+        dspic33_spi_test_configure_spi(cpu, channel_index, 0x003bu, 0x8000u, 0u);
+        expect(state, dspic33_spi_clock_output(cpu, channel_index, &clock_level) && clock_level,
                "framed master clock starts from its enable cycle");
         expect(state,
-               dspic33_device_advance(cpu, 1u) && dspic33_spi_clock_output(cpu, channel, &clock) &&
-                   !clock,
+               dspic33_device_advance(cpu, 1u) &&
+                   dspic33_spi_clock_output(cpu, channel_index, &clock_level) && !clock_level,
                "framed master clock reaches continuous half-cycle");
-        dspic33_write_word(cpu, (uint16_t)(bases[channel] + 8u), 0x00a5u);
-        expect(state, dspic33_spi_clock_output(cpu, channel, &clock) && !clock,
+        dspic33_write_word(cpu, (uint16_t)(bases[channel_index] + 8u), 0x00a5u);
+        expect(state, dspic33_spi_clock_output(cpu, channel_index, &clock_level) && !clock_level,
                "framed transmit does not restart continuous clock phase");
     }
 
@@ -542,13 +545,13 @@ void dspic33_spi_test_master_output_cases(TestState* state, Dspic33* cpu, Dspic3
     dspic33_write_word(cpu, 0x0248u, 0x00a5u);
     dspic33_write_word(cpu, 0x0680u, 0u);
     expect(state,
-           !dspic33_spi_pin(cpu, 64u, &data) && !dspic33_spi_pin(cpu, 65u, &clock) &&
-               dspic33_spi_data_output(cpu, 0u, &data) && data,
+           !dspic33_spi_pin(cpu, 64u, &data_level) && !dspic33_spi_pin(cpu, 65u, &clock_level) &&
+               dspic33_spi_data_output(cpu, 0u, &data_level) && data_level,
            "live remap releases master outputs without stopping transfer");
     expect(state,
-           !dspic33_spi_clock_output(cpu, DSPIC33_SPI_COUNT, &clock) &&
-               !dspic33_spi_data_output(cpu, DSPIC33_SPI_COUNT, &data) &&
-               !dspic33_spi_pin(cpu, 0u, &data) && !dspic33_spi_pin(cpu, 64u, NULL),
+           !dspic33_spi_clock_output(cpu, DSPIC33_SPI_COUNT, &clock_level) &&
+               !dspic33_spi_data_output(cpu, DSPIC33_SPI_COUNT, &data_level) &&
+               !dspic33_spi_pin(cpu, 0u, &data_level) && !dspic33_spi_pin(cpu, 64u, NULL),
            "master output rejects invalid requests");
 
     dspic33_reset(cpu, 0u);
@@ -557,13 +560,13 @@ void dspic33_spi_test_master_output_cases(TestState* state, Dspic33* cpu, Dspic3
     dspic33_device_advance(cpu, 1u);
     expect(state, dspic33_copy(copy, cpu), "copy active master output phase");
     expect(state,
-           dspic33_spi_clock_output(cpu, 0u, &clock) && !clock &&
-               dspic33_spi_clock_output(copy, 0u, &data) && !data,
+           dspic33_spi_clock_output(cpu, 0u, &clock_level) && !clock_level &&
+               dspic33_spi_clock_output(copy, 0u, &data_level) && !data_level,
            "copied master output retains half-clock phase");
     dspic33_device_advance(cpu, 1u);
     expect(state,
-           dspic33_spi_clock_output(cpu, 0u, &clock) && clock &&
-               dspic33_spi_clock_output(copy, 0u, &data) && !data,
+           dspic33_spi_clock_output(cpu, 0u, &clock_level) && clock_level &&
+               dspic33_spi_clock_output(copy, 0u, &data_level) && !data_level,
            "copied master output advances independently");
 }
 
