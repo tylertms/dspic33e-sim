@@ -764,15 +764,16 @@ bool dspic33_device_internal_dci_frame_output(const Dspic33* cpu, bool* high) {
     return true;
 }
 
-static void dci_run_internal(Dspic33* cpu, uint16_t generation) {
+static void dci_run_internal(Dspic33* cpu, uint16_t event_generation) {
     Dspic33Dci* dci = &cpu->io.dci;
-    uint16_t control = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
-    if (generation != dci->generation) {
+    uint16_t control_word = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
+
+    if (event_generation != dci->generation) {
         return;
     }
     dci->internal_scheduled = false;
-    if (((control & DCI_CONTROL_ENABLE) == 0u && !dci->disable_pending) ||
-        (control & DCI_CONTROL_EXTERNAL_CLOCK) != 0u) {
+    if (((control_word & DCI_CONTROL_ENABLE) == 0u && !dci->disable_pending) ||
+        (control_word & DCI_CONTROL_EXTERNAL_CLOCK) != 0u) {
         return;
     }
     if (!dspic33_device_internal_dci_configuration_supported(cpu) || !dci_clock_running(cpu) ||
@@ -789,50 +790,52 @@ static void dci_run_internal(Dspic33* cpu, uint16_t generation) {
     }
 }
 
-static void dci_run_sample(Dspic33* cpu, uint16_t generation) {
+static void dci_run_sample(Dspic33* cpu, uint16_t event_generation) {
     Dspic33Dci* dci = &cpu->io.dci;
-    uint16_t control = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
-    uint8_t width = dci_slot_width(cpu, dci->slot);
-    uint8_t selection;
-    bool high;
-    if (generation != dci->generation ||
-        ((control & DCI_CONTROL_ENABLE) == 0u && !dci->disable_pending) ||
-        (control & DCI_CONTROL_EXTERNAL_CLOCK) != 0u ||
+    uint16_t control_word = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
+    uint8_t slot_width = dci_slot_width(cpu, dci->slot);
+    uint8_t pps_selection;
+    bool sampled_high;
+
+    if (event_generation != dci->generation ||
+        ((control_word & DCI_CONTROL_ENABLE) == 0u && !dci->disable_pending) ||
+        (control_word & DCI_CONTROL_EXTERNAL_CLOCK) != 0u ||
         !dspic33_device_internal_dci_configuration_supported(cpu) || !dci_clock_running(cpu) ||
-        !dci->started || dci->serial_bits >= width) {
+        !dci->started || dci->serial_bits >= slot_width) {
         return;
     }
-    selection = dspic33_device_internal_dci_pps_selection(cpu, DCI_PPS_INPUTS, 0u);
-    high =
+    pps_selection = dspic33_device_internal_dci_pps_selection(cpu, DCI_PPS_INPUTS, 0u);
+    sampled_high =
         !dci->pps_input_configured
             ? dci->serial_bits < 16u && (dci->input & (uint16_t)(0x8000u >> dci->serial_bits)) != 0u
-            : dspic33_device_internal_dci_pps_input_high(cpu, selection);
-    if (dci->serial_bits < 16u && high) {
+            : dspic33_device_internal_dci_pps_input_high(cpu, pps_selection);
+    if (dci->serial_bits < 16u && sampled_high) {
         dci->serial_input |= (uint16_t)(0x8000u >> dci->serial_bits);
     }
     dci->serial_bits++;
-    if (dci->serial_bits < width) {
+    if (dci->serial_bits < slot_width) {
         dci_schedule_sample(cpu, dci_bit_cycles(cpu));
     }
 }
 
-static void dci_run_external(Dspic33* cpu, uint16_t value, bool frame_sync) {
+static void dci_run_external(Dspic33* cpu, uint16_t input_word, bool frame_sync) {
     Dspic33Dci* dci = &cpu->io.dci;
-    uint16_t control = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
-    if ((control & DCI_CONTROL_ENABLE) == 0u && !dci->disable_pending) {
+    uint16_t control_word = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
+
+    if ((control_word & DCI_CONTROL_ENABLE) == 0u && !dci->disable_pending) {
         return;
     }
     if (!dspic33_device_internal_dci_configuration_supported(cpu) || dci->pmd_disabled ||
-        (cpu->power_state == DSPIC33_POWER_IDLE && (control & DCI_CONTROL_STOP_IDLE) != 0u)) {
+        (cpu->power_state == DSPIC33_POWER_IDLE && (control_word & DCI_CONTROL_STOP_IDLE) != 0u)) {
         return;
     }
-    dci->input = value;
-    frame_sync = frame_sync && (control & DCI_CONTROL_EXTERNAL_FRAME) != 0u;
-    if ((control & DCI_CONTROL_EXTERNAL_CLOCK) == 0u && !frame_sync) {
+    dci->input = input_word;
+    frame_sync = frame_sync && (control_word & DCI_CONTROL_EXTERNAL_FRAME) != 0u;
+    if ((control_word & DCI_CONTROL_EXTERNAL_CLOCK) == 0u && !frame_sync) {
         return;
     }
     if (!dci->initialized) {
-        if ((control & DCI_CONTROL_EXTERNAL_CLOCK) == 0u) {
+        if ((control_word & DCI_CONTROL_EXTERNAL_CLOCK) == 0u) {
             return;
         }
         dci->serial_startup_bits = 0u;
@@ -840,21 +843,21 @@ static void dci_run_external(Dspic33* cpu, uint16_t value, bool frame_sync) {
             return;
         }
     }
-    if ((control & DCI_CONTROL_EXTERNAL_FRAME) != 0u && !frame_sync && dci->slot == 0u) {
+    if ((control_word & DCI_CONTROL_EXTERNAL_FRAME) != 0u && !frame_sync && dci->slot == 0u) {
         dci->started = false;
     }
-    if ((control & DCI_CONTROL_EXTERNAL_FRAME) != 0u && frame_sync && !dci->started) {
+    if ((control_word & DCI_CONTROL_EXTERNAL_FRAME) != 0u && frame_sync && !dci->started) {
         dci->slot = 0u;
         dci->started = true;
     }
     if (!dci->started) {
-        if ((control & DCI_CONTROL_EXTERNAL_FRAME) != 0u) {
+        if ((control_word & DCI_CONTROL_EXTERNAL_FRAME) != 0u) {
             return;
         }
         dci->started = true;
     }
-    if ((control & DCI_CONTROL_EXTERNAL_CLOCK) != 0u) {
-        if (dci_process_word(cpu, value)) {
+    if ((control_word & DCI_CONTROL_EXTERNAL_CLOCK) != 0u) {
+        if (dci_process_word(cpu, input_word)) {
             dci_refresh_serial_output(cpu);
         }
     } else if (frame_sync && !dci->internal_scheduled) {
@@ -862,18 +865,19 @@ static void dci_run_external(Dspic33* cpu, uint16_t value, bool frame_sync) {
     }
 }
 
-void dspic33_device_internal_run_dci(Dspic33* cpu, uint16_t source, uint32_t value) {
+void dspic33_device_internal_run_dci(Dspic33* cpu, uint16_t event_source, uint32_t event_value) {
     Dspic33Dci* dci = &cpu->io.dci;
-    if (source == DCI_EVENT_PMD) {
-        uint16_t generation = (uint16_t)(value >> DCI_EVENT_GENERATION_SHIFT);
-        if (generation == dci->pmd_generation) {
-            dci->pmd_disabled = (value & DCI_EVENT_DISABLED) != 0u;
+    if (event_source == DCI_EVENT_PMD) {
+        uint16_t event_generation = (uint16_t)(event_value >> DCI_EVENT_GENERATION_SHIFT);
+
+        if (event_generation == dci->pmd_generation) {
+            dci->pmd_disabled = (event_value & DCI_EVENT_DISABLED) != 0u;
             dspic33_device_internal_dci_update_power_state(cpu);
         }
         return;
     }
-    if (source == DCI_EVENT_START) {
-        if ((uint16_t)value != dci->generation) {
+    if (event_source == DCI_EVENT_START) {
+        if ((uint16_t)event_value != dci->generation) {
             return;
         }
         dci->internal_scheduled = false;
@@ -891,16 +895,16 @@ void dspic33_device_internal_run_dci(Dspic33* cpu, uint16_t source, uint32_t val
         }
         return;
     }
-    if (source == DCI_EVENT_INTERNAL) {
-        dci_run_internal(cpu, (uint16_t)value);
+    if (event_source == DCI_EVENT_INTERNAL) {
+        dci_run_internal(cpu, (uint16_t)event_value);
         return;
     }
-    if (source == DCI_EVENT_SAMPLE) {
-        dci_run_sample(cpu, (uint16_t)value);
+    if (event_source == DCI_EVENT_SAMPLE) {
+        dci_run_sample(cpu, (uint16_t)event_value);
         return;
     }
-    if (source == DCI_EVENT_FRAME_START) {
-        if ((uint16_t)value != dci->generation) {
+    if (event_source == DCI_EVENT_FRAME_START) {
+        if ((uint16_t)event_value != dci->generation) {
             return;
         }
         dci->internal_scheduled = false;
@@ -913,8 +917,8 @@ void dspic33_device_internal_run_dci(Dspic33* cpu, uint16_t source, uint32_t val
         dci_begin_internal_word(cpu);
         return;
     }
-    if (source == DCI_EVENT_EXTERNAL || source == DCI_EVENT_EXTERNAL_FRAME) {
-        dci_run_external(cpu, (uint16_t)value, source == DCI_EVENT_EXTERNAL_FRAME);
+    if (event_source == DCI_EVENT_EXTERNAL || event_source == DCI_EVENT_EXTERNAL_FRAME) {
+        dci_run_external(cpu, (uint16_t)event_value, event_source == DCI_EVENT_EXTERNAL_FRAME);
     }
 }
 
