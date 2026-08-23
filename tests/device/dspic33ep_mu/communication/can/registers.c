@@ -252,128 +252,136 @@ void dspic33_can_test_write_memory_word(Dspic33* cpu, uint32_t memory_address,
 }
 
 void dspic33_can_test_register_cases(TestState* state, Dspic33* cpu) {
-    uint8_t channel;
     dspic33_reset(cpu, 0u);
-    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-        uint16_t base = bases[channel];
-        expect(state, dspic33_read_word(cpu, base) == 0x0480u, "control reset");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 4u)) == 0x0040u, "vector reset");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x14u)) == 0x003fu,
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
+        const uint16_t can_base = bases[channel_index];
+
+        expect(state, dspic33_read_word(cpu, can_base) == 0x0480u, "control reset");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(can_base + 4u)) == 0x0040u, "vector reset");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(can_base + 0x14u)) == 0x003fu,
                "filter enable reset");
-        dspic33_write_word(cpu, (uint16_t)(base + 2u), 0xffffu);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 2u)) == 0x001fu, "control two mask");
-        dspic33_write_byte(cpu, (uint16_t)(base + 6u), 0xffu);
-        dspic33_write_byte(cpu, (uint16_t)(base + 7u), 0xffu);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 6u)) == 0xe01fu,
+        dspic33_write_word(cpu, (uint16_t)(can_base + 2u), 0xffffu);
+        expect(state, dspic33_read_word(cpu, (uint16_t)(can_base + 2u)) == 0x001fu,
+               "control two mask");
+        dspic33_write_byte(cpu, (uint16_t)(can_base + 6u), 0xffu);
+        dspic33_write_byte(cpu, (uint16_t)(can_base + 7u), 0xffu);
+        expect(state, dspic33_read_word(cpu, (uint16_t)(can_base + 6u)) == 0xe01fu,
                "fifo control byte masks");
-        dspic33_write_word(cpu, (uint16_t)(base + 0x0cu), 0xffffu);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x0cu)) == 0x00efu,
+        dspic33_write_word(cpu, (uint16_t)(can_base + 0x0cu), 0xffffu);
+        expect(state, dspic33_read_word(cpu, (uint16_t)(can_base + 0x0cu)) == 0x00efu,
                "interrupt enable mask");
-        dspic33_write_word(cpu, (uint16_t)(base + 0x10u), 0xffffu);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x10u)) == 0x00ffu, "baud one mask");
-        dspic33_write_word(cpu, (uint16_t)(base + 0x12u), 0xffffu);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x12u)) == 0x47ffu, "baud two mask");
-        dspic33_can_test_select_window(cpu, channel, true);
-        dspic33_write_word(cpu, (uint16_t)(base + 0x40u), 0xffffu);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x40u)) == 0xffebu,
+        dspic33_write_word(cpu, (uint16_t)(can_base + 0x10u), 0xffffu);
+        expect(state, dspic33_read_word(cpu, (uint16_t)(can_base + 0x10u)) == 0x00ffu,
+               "baud one mask");
+        dspic33_write_word(cpu, (uint16_t)(can_base + 0x12u), 0xffffu);
+        expect(state, dspic33_read_word(cpu, (uint16_t)(can_base + 0x12u)) == 0x47ffu,
+               "baud two mask");
+        dspic33_can_test_select_window(cpu, channel_index, true);
+        dspic33_write_word(cpu, (uint16_t)(can_base + 0x40u), 0xffffu);
+        expect(state, dspic33_read_word(cpu, (uint16_t)(can_base + 0x40u)) == 0xffebu,
                "filter SID mask");
-        dspic33_write_word(cpu, (uint16_t)(base + 0x42u), 0xa55au);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x42u)) == 0xa55au,
+        dspic33_write_word(cpu, (uint16_t)(can_base + 0x42u), 0xa55au);
+        expect(state, dspic33_read_word(cpu, (uint16_t)(can_base + 0x42u)) == 0xa55au,
                "filter EID write");
-        dspic33_can_test_select_window(cpu, channel, false);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x40u)) == 0u, "window isolation");
-        dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0xffffu);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) == 0x8f8fu,
+        dspic33_can_test_select_window(cpu, channel_index, false);
+        expect(state, dspic33_read_word(cpu, (uint16_t)(can_base + 0x40u)) == 0u,
+               "window isolation");
+        dspic33_write_word(cpu, (uint16_t)(can_base + 0x30u), 0xffffu);
+        expect(state, dspic33_read_word(cpu, (uint16_t)(can_base + 0x30u)) == 0x8f8fu,
                "buffer control mask");
-        dspic33_can_test_set_mode(cpu, channel, 0u);
-        expect(state, (dspic33_read_word(cpu, base) & 0x00e0u) == 0u,
+        dspic33_can_test_set_mode(cpu, channel_index, 0u);
+        expect(state, (dspic33_read_word(cpu, can_base) & 0x00e0u) == 0u,
                "normal mode acknowledgement");
-        dspic33_write_word(cpu, (uint16_t)(base + 0x10u), 0u);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 0x10u)) == 0x00ffu,
+        dspic33_write_word(cpu, (uint16_t)(can_base + 0x10u), 0u);
+        expect(state, dspic33_read_word(cpu, (uint16_t)(can_base + 0x10u)) == 0x00ffu,
                "baud locked outside configuration");
-        dspic33_can_test_set_mode(cpu, channel, 4u);
+        dspic33_can_test_set_mode(cpu, channel_index, 4u);
     }
 }
 
 void dspic33_can_test_register_access_cases(TestState* state, Dspic33* cpu) {
     static const uint16_t received_words[] = {0x0c84u, 0x0000u, 0x0004u, 0x5140u,
                                               0x7362u, 0x0000u, 0x0000u, 0x0000u};
-    uint8_t channel;
-    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-        uint16_t base = bases[channel];
-        uint16_t receive_data = (uint16_t)(base + 0x40u);
-        uint32_t memory = (uint32_t)(0xf600u + channel * 0x100u);
-        Dspic33CanFrame input = dspic33_can_test_frame(0x321u, false, false, 4u, 0x40u);
-        uint8_t index;
-        bool preserved;
-        bool active;
-        bool exact;
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
+        const uint16_t can_base = bases[channel_index];
+        const uint16_t receive_data_address = (uint16_t)(can_base + 0x40u);
+        const uint32_t memory_address = (uint32_t)(0xf600u + channel_index * 0x100u);
+        const Dspic33CanFrame received_frame =
+            dspic33_can_test_frame(0x321u, false, false, 4u, 0x40u);
+        bool error_counters_preserved;
+        bool transfer_started;
+        bool dma_words_match;
 
         dspic33_reset(cpu, 0u);
-        dspic33_can_test_write_memory_word(cpu, (uint16_t)(base + 0x0eu), 0x5aa5u);
-        dspic33_write_word(cpu, (uint16_t)(base + 0x0eu), 0u);
-        preserved = dspic33_read_word(cpu, (uint16_t)(base + 0x0eu)) == 0x5aa5u;
-        dspic33_write_word(cpu, (uint16_t)(base + 0x0eu), 0xffffu);
-        expect(state, preserved && dspic33_read_word(cpu, (uint16_t)(base + 0x0eu)) == 0x5aa5u,
+        dspic33_can_test_write_memory_word(cpu, (uint16_t)(can_base + 0x0eu), 0x5aa5u);
+        dspic33_write_word(cpu, (uint16_t)(can_base + 0x0eu), 0u);
+        error_counters_preserved = dspic33_read_word(cpu, (uint16_t)(can_base + 0x0eu)) == 0x5aa5u;
+        dspic33_write_word(cpu, (uint16_t)(can_base + 0x0eu), 0xffffu);
+        expect(state,
+               error_counters_preserved &&
+                   dspic33_read_word(cpu, (uint16_t)(can_base + 0x0eu)) == 0x5aa5u,
                "error counters reject CPU writes");
 
-        dspic33_write_word(cpu, base,
-                           (uint16_t)((dspic33_read_word(cpu, base) & ~0x07e0u) | 0x02e0u));
+        dspic33_write_word(cpu, can_base,
+                           (uint16_t)((dspic33_read_word(cpu, can_base) & ~0x07e0u) | 0x02e0u));
         expect(state,
-               (dspic33_read_word(cpu, base) & 0x07e0u) == 0x0280u &&
-                   dspic33_device_advance(cpu,
-                                          dspic33_can_test_mode_transition_cycles(cpu, channel)) &&
-                   (dspic33_read_word(cpu, base) & 0x07e0u) == 0x0240u,
+               (dspic33_read_word(cpu, can_base) & 0x07e0u) == 0x0280u &&
+                   dspic33_device_advance(
+                       cpu, dspic33_can_test_mode_transition_cycles(cpu, channel_index)) &&
+                   (dspic33_read_word(cpu, can_base) & 0x07e0u) == 0x0240u,
                "requested mode controls operating mode");
-        dspic33_write_word(cpu, base, (uint16_t)(dspic33_read_word(cpu, base) | 0x00a0u));
-        expect(state, (dspic33_read_word(cpu, base) & 0x07e0u) == 0x0240u,
+        dspic33_write_word(cpu, can_base, (uint16_t)(dspic33_read_word(cpu, can_base) | 0x00a0u));
+        expect(state, (dspic33_read_word(cpu, can_base) & 0x07e0u) == 0x0240u,
                "operating mode rejects direct writes");
 
         dspic33_reset(cpu, 0u);
-        dspic33_can_test_select_window(cpu, channel, false);
-        dspic33_write_word(cpu, (uint16_t)(base + 0x0cu), 1u);
-        dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x8989u);
-        dspic33_write_word(cpu, base, (uint16_t)(dspic33_read_word(cpu, base) | 0x1000u));
-        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) & 0x4848u) == 0x4040u,
+        dspic33_can_test_select_window(cpu, channel_index, false);
+        dspic33_write_word(cpu, (uint16_t)(can_base + 0x0cu), 1u);
+        dspic33_write_word(cpu, (uint16_t)(can_base + 0x30u), 0x8989u);
+        dspic33_write_word(cpu, can_base, (uint16_t)(dspic33_read_word(cpu, can_base) | 0x1000u));
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(can_base + 0x30u)) & 0x4848u) == 0x4040u,
                "abort all marks pending transmissions aborted");
         expect(state,
-               (dspic33_read_word(cpu, base) & 0x1000u) == 0u &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 1u) != 0u &&
-                   dspic33_can_test_interrupt_flag(cpu, event_irqs[channel]),
+               (dspic33_read_word(cpu, can_base) & 0x1000u) == 0u &&
+                   (dspic33_read_word(cpu, (uint16_t)(can_base + 0x0au)) & 1u) != 0u &&
+                   dspic33_can_test_interrupt_flag(cpu, event_irqs[channel_index]),
                "abort all self clears and raises transmit event");
 
         dspic33_reset(cpu, 0u);
-        dspic33_can_test_configure_receive(cpu, channel, memory, 4u, 0u);
-        dspic33_can_test_configure_filter(cpu, channel, 0u, 0x321u, false, 0x7ffu, true, 0u, 0u);
-        dspic33_can_test_enable_filter(cpu, channel, 1u);
-        dspic33_can_test_select_window(cpu, channel, false);
-        dspic33_can_test_set_mode(cpu, channel, 0u);
-        dspic33_write_word(cpu, receive_data, 0xa55au);
-        expect(state, dspic33_read_word(cpu, receive_data) == 0xa55au,
+        dspic33_can_test_configure_receive(cpu, channel_index, memory_address, 4u, 0u);
+        dspic33_can_test_configure_filter(cpu, channel_index, 0u, 0x321u, false, 0x7ffu, true, 0u,
+                                          0u);
+        dspic33_can_test_enable_filter(cpu, channel_index, 1u);
+        dspic33_can_test_select_window(cpu, channel_index, false);
+        dspic33_can_test_set_mode(cpu, channel_index, 0u);
+        dspic33_write_word(cpu, receive_data_address, 0xa55au);
+        expect(state, dspic33_read_word(cpu, receive_data_address) == 0xa55au,
                "receive data CPU word access");
-        dspic33_write_byte(cpu, receive_data, 0x3cu);
-        dspic33_write_byte(cpu, (uint16_t)(receive_data + 1u), 0xc3u);
-        expect(state, dspic33_read_word(cpu, receive_data) == 0xc33cu,
+        dspic33_write_byte(cpu, receive_data_address, 0x3cu);
+        dspic33_write_byte(cpu, (uint16_t)(receive_data_address + 1u), 0xc3u);
+        expect(state, dspic33_read_word(cpu, receive_data_address) == 0xc33cu,
                "receive data CPU byte access");
-        active = dspic33_can_receive(cpu, channel, &input, 0u) && dspic33_device_advance(cpu, 0u);
+        transfer_started = dspic33_can_receive(cpu, channel_index, &received_frame, 0u) &&
+                           dspic33_device_advance(cpu, 0u);
         expect(state,
-               active && (cpu->io.can_rx_busy & (uint8_t)(1u << channel)) != 0u &&
-                   dspic33_read_word(cpu, receive_data) == received_words[0] &&
-                   dspic33_can_test_memory_word(cpu, memory) == received_words[0],
+               transfer_started && (cpu->io.can_rx_busy & (uint8_t)(1u << channel_index)) != 0u &&
+                   dspic33_read_word(cpu, receive_data_address) == received_words[0] &&
+                   dspic33_can_test_memory_word(cpu, memory_address) == received_words[0],
                "receive stream overrides CPU backing for DMA");
-        dspic33_write_word(cpu, receive_data, 0xc55cu);
-        expect(state, dspic33_read_word(cpu, receive_data) == received_words[0],
+        dspic33_write_word(cpu, receive_data_address, 0xc55cu);
+        expect(state, dspic33_read_word(cpu, receive_data_address) == received_words[0],
                "receive stream survives concurrent CPU write");
         expect(state, dspic33_device_advance(cpu, 32u), "receive stream completion advance");
-        exact = true;
-        for (index = 0u; index < 8u; index++) {
-            exact = exact &&
-                    dspic33_can_test_memory_word(cpu, memory + index * 2u) == received_words[index];
+        dma_words_match = true;
+        for (uint8_t word_index = 0u; word_index < 8u; word_index++) {
+            dma_words_match = dma_words_match &&
+                              dspic33_can_test_memory_word(cpu, memory_address + word_index * 2u) ==
+                                  received_words[word_index];
         }
-        expect(state, exact, "receive stream DMA words");
+        expect(state, dma_words_match, "receive stream DMA words");
         expect(state,
-               (cpu->io.can_rx_busy & (uint8_t)(1u << channel)) == 0u &&
-                   dspic33_read_word(cpu, receive_data) == 0xc55cu,
+               (cpu->io.can_rx_busy & (uint8_t)(1u << channel_index)) == 0u &&
+                   dspic33_read_word(cpu, receive_data_address) == 0xc55cu,
                "receive data backing returns after stream");
     }
 }
