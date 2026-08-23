@@ -102,67 +102,81 @@ void dspic33_can_test_receive_flag_read_pointer_cases(TestState* state, Dspic33*
     }
 }
 
-static void fifo_interrupt_boundary_case(TestState* state, Dspic33* cpu, uint8_t channel, bool wrap,
-                                         uint8_t relation) {
-    uint16_t base = bases[channel];
-    uint16_t fifo_address = (uint16_t)(base + 8u);
-    uint16_t interrupt_address = (uint16_t)(base + 0x0au);
-    uint32_t memory = (uint32_t)(0xf800u + channel * 0x100u);
-    Dspic33CanFrame input = dspic33_can_test_frame(0x456u, false, false, 1u, 0x90u);
-    uint8_t preparation = wrap ? 2u : 0u;
-    uint8_t index;
-    uint8_t expected_fbp = wrap ? 5u : 3u;
-    uint8_t fnrb;
-    bool asserted = relation == FIFO_RELATION_THRESHOLD;
-    if (asserted) {
-        fnrb = wrap ? 2u : 4u;
-    } else if (relation == FIFO_RELATION_EQUAL) {
-        fnrb = expected_fbp;
+static void fifo_interrupt_boundary_case(TestState* state, Dspic33* cpu, uint8_t channel_index,
+                                         bool wraparound, uint8_t fifo_relation) {
+    uint16_t can_base = bases[channel_index];
+    uint16_t fifo_address = (uint16_t)(can_base + 8u);
+    uint16_t interrupt_address = (uint16_t)(can_base + 0x0au);
+    uint32_t receive_memory = (uint32_t)(0xf800u + channel_index * 0x100u);
+    Dspic33CanFrame input_frame = dspic33_can_test_frame(0x456u, false, false, 1u, 0x90u);
+    uint8_t preparation_count = wraparound ? 2u : 0u;
+    uint8_t frame_index;
+    uint8_t expected_write_pointer = wraparound ? 5u : 3u;
+    uint8_t expected_read_pointer;
+    bool interrupt_asserted = fifo_relation == FIFO_RELATION_THRESHOLD;
+
+    if (interrupt_asserted) {
+        expected_read_pointer = wraparound ? 2u : 4u;
+    } else if (fifo_relation == FIFO_RELATION_EQUAL) {
+        expected_read_pointer = expected_write_pointer;
     } else {
-        fnrb = wrap ? 3u : 5u;
+        expected_read_pointer = wraparound ? 3u : 5u;
     }
+
     dspic33_reset(cpu, 0u);
-    dspic33_can_test_configure_receive(cpu, channel, memory, 1u, 2u);
-    dspic33_can_test_configure_filter(cpu, channel, 0u, input.identifier, false, 0x7ffu, true, 15u,
-                                      0u);
-    dspic33_can_test_enable_filter(cpu, channel, 1u);
-    dspic33_can_test_select_window(cpu, channel, false);
-    dspic33_can_test_set_mode(cpu, channel, 0u);
-    for (index = 0u; index < preparation; index++) {
+    dspic33_can_test_configure_receive(cpu, channel_index, receive_memory, 1u, 2u);
+    dspic33_can_test_configure_filter(cpu, channel_index, 0u, input_frame.identifier, false, 0x7ffu,
+                                      true, 15u, 0u);
+    dspic33_can_test_enable_filter(cpu, channel_index, 1u);
+    dspic33_can_test_select_window(cpu, channel_index, false);
+    dspic33_can_test_set_mode(cpu, channel_index, 0u);
+    for (frame_index = 0u; frame_index < preparation_count; frame_index++) {
         expect(state,
-               dspic33_can_receive(cpu, channel, &input, 0u) && dspic33_device_advance(cpu, 32u),
+               dspic33_can_receive(cpu, channel_index, &input_frame, 0u) &&
+                   dspic33_device_advance(cpu, 32u),
                "FIFO interrupt boundary preparation");
     }
     dspic33_can_test_write_memory_word(
-        cpu, fifo_address, (uint16_t)((dspic33_read_word(cpu, fifo_address) & 0x3f00u) | fnrb));
+        cpu, fifo_address,
+        (uint16_t)((dspic33_read_word(cpu, fifo_address) & 0x3f00u) | expected_read_pointer));
     dspic33_write_word(cpu, interrupt_address,
                        (uint16_t)(dspic33_read_word(cpu, interrupt_address) & ~0x000au));
-    dspic33_write_word(cpu, (uint16_t)(base + 0x0cu), 0x0008u);
-    dspic33_can_test_clear_interrupt_flag(cpu, event_irqs[channel]);
-    expect(state, dspic33_can_receive(cpu, channel, &input, 0u) && dspic33_device_advance(cpu, 32u),
+    dspic33_write_word(cpu, (uint16_t)(can_base + 0x0cu), 0x0008u);
+    dspic33_can_test_clear_interrupt_flag(cpu, event_irqs[channel_index]);
+    expect(state,
+           dspic33_can_receive(cpu, channel_index, &input_frame, 0u) &&
+               dspic33_device_advance(cpu, 32u),
            "FIFO interrupt boundary receive");
-    expect(state, ((dspic33_read_word(cpu, fifo_address) >> 8u) & 0x003fu) == expected_fbp,
+    expect(state,
+           ((dspic33_read_word(cpu, fifo_address) >> 8u) & 0x003fu) == expected_write_pointer,
            "FIFO interrupt uses updated write pointer");
-    expect(state, (dspic33_read_word(cpu, fifo_address) & 0x003fu) == fnrb,
+    expect(state, (dspic33_read_word(cpu, fifo_address) & 0x003fu) == expected_read_pointer,
            "FIFO interrupt preserves read pointer");
-    expect(state, ((dspic33_read_word(cpu, interrupt_address) & 0x0008u) != 0u) == asserted,
+    expect(state,
+           ((dspic33_read_word(cpu, interrupt_address) & 0x0008u) != 0u) == interrupt_asserted,
            "FIFO interrupt boundary result");
-    expect(state, dspic33_can_test_interrupt_flag(cpu, event_irqs[channel]) == asserted,
+    expect(state,
+           dspic33_can_test_interrupt_flag(cpu, event_irqs[channel_index]) == interrupt_asserted,
            "FIFO interrupt boundary IFS result");
     expect(state,
-           (dspic33_read_word(cpu, (uint16_t)(base + 4u)) & 0x007fu) == (asserted ? 0x44u : 0x40u),
+           (dspic33_read_word(cpu, (uint16_t)(can_base + 4u)) & 0x007fu) ==
+               (interrupt_asserted ? 0x44u : 0x40u),
            "FIFO interrupt boundary vector result");
 }
 
 void dspic33_can_test_fifo_interrupt_boundary_cases(TestState* state, Dspic33* cpu) {
-    uint8_t channel;
-    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-        uint8_t wrap;
-        for (wrap = 0u; wrap < 2u; wrap++) {
-            uint8_t relation;
-            for (relation = FIFO_RELATION_THRESHOLD; relation <= FIFO_RELATION_DISTANT;
-                 relation++) {
-                fifo_interrupt_boundary_case(state, cpu, channel, wrap != 0u, relation);
+    uint8_t channel_index;
+
+    for (channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
+        uint8_t wraparound;
+
+        for (wraparound = 0u; wraparound < 2u; wraparound++) {
+            uint8_t fifo_relation;
+
+            for (fifo_relation = FIFO_RELATION_THRESHOLD; fifo_relation <= FIFO_RELATION_DISTANT;
+                 fifo_relation++) {
+                fifo_interrupt_boundary_case(state, cpu, channel_index, wraparound != 0u,
+                                             fifo_relation);
             }
         }
     }
