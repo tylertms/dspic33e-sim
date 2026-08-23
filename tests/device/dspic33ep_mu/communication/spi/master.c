@@ -114,80 +114,91 @@ void dspic33_spi_test_standard_buffer_cases(TestState* state, Dspic33* cpu) {
 }
 
 void dspic33_spi_test_enhanced_fifo_cases(TestState* state, Dspic33* cpu) {
-    uint8_t channel;
-    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-        uint16_t base = bases[channel];
-        uint16_t control = 0x043bu;
-        uint64_t cycles = dspic33_spi_test_transfer_cycles(control);
-        uint8_t index;
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_SPI_COUNT; channel_index++) {
+        const uint16_t spi_base = bases[channel_index];
+        const uint16_t spi_control = 0x043bu;
+        const uint64_t transfer_cycles = dspic33_spi_test_transfer_cycles(spi_control);
+
         dspic33_reset(cpu, 0u);
-        dspic33_spi_test_configure_spi(cpu, channel, control, 1u, 5u);
-        for (index = 0u; index < 9u; index++) {
-            dspic33_write_word(cpu, (uint16_t)(base + 8u), (uint16_t)(0x1000u + index));
+        dspic33_spi_test_configure_spi(cpu, channel_index, spi_control, 1u, 5u);
+        for (uint8_t transfer_index = 0u; transfer_index < 9u; transfer_index++) {
+            dspic33_write_word(cpu, (uint16_t)(spi_base + 8u),
+                               (uint16_t)(0x1000u + transfer_index));
         }
-        expect(state, cpu->io.spi_tx_fifo[channel].count == 8u, "enhanced eight pending words");
-        expect(state, (dspic33_read_word(cpu, base) & 0x0702u) == 0x0702u,
+        expect(state, cpu->io.spi_tx_fifo[channel_index].count == 8u,
+               "enhanced eight pending words");
+        expect(state, (dspic33_read_word(cpu, spi_base) & 0x0702u) == 0x0702u,
                "enhanced full count encoding");
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), 0xdeadu);
-        expect(state, cpu->io.spi_tx_fifo[channel].count == 8u, "enhanced full write ignored");
-        for (index = 0u; index < 9u; index++) {
-            expect(state, dspic33_device_advance(cpu, cycles), "enhanced transmit completion");
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0xdeadu);
+        expect(state, cpu->io.spi_tx_fifo[channel_index].count == 8u,
+               "enhanced full write ignored");
+        for (uint8_t transfer_index = 0u; transfer_index < 9u; transfer_index++) {
+            expect(state, dspic33_device_advance(cpu, transfer_cycles),
+                   "enhanced transmit completion");
             expect(state,
-                   dspic33_read_word(cpu, (uint16_t)(base + 8u)) == (uint16_t)(0x1000u + index),
+                   dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) ==
+                       (uint16_t)(0x1000u + transfer_index),
                    "enhanced transmit receive order");
         }
-        expect(state, (dspic33_read_word(cpu, base) & 0x00a2u) == 0x00a0u, "enhanced queues empty");
-        expect(state, dspic33_spi_test_interrupt_flag(cpu, irqs[channel]),
+        expect(state, (dspic33_read_word(cpu, spi_base) & 0x00a2u) == 0x00a0u,
+               "enhanced queues empty");
+        expect(state, dspic33_spi_test_interrupt_flag(cpu, irqs[channel_index]),
                "enhanced final completion interrupt");
 
         dspic33_reset(cpu, 0u);
-        dspic33_spi_test_configure_spi(cpu, channel, 0x0400u, 1u, 3u);
-        for (index = 0u; index < 8u; index++) {
-            expect(state,
-                   dspic33_spi_receive(cpu, channel, (uint16_t)(0x3000u + index), 1u) &&
-                       dspic33_device_advance(cpu, 1u),
-                   "enhanced slave receive fill");
+        dspic33_spi_test_configure_spi(cpu, channel_index, 0x0400u, 1u, 3u);
+        for (uint8_t receive_index = 0u; receive_index < 8u; receive_index++) {
+            expect(
+                state,
+                dspic33_spi_receive(cpu, channel_index, (uint16_t)(0x3000u + receive_index), 1u) &&
+                    dspic33_device_advance(cpu, 1u),
+                "enhanced slave receive fill");
         }
-        expect(state, cpu->io.spi_rx_fifo[channel].count == 8u, "enhanced receive depth");
-        expect(state, (dspic33_read_word(cpu, base) & 0x0721u) == 0x0701u,
+        expect(state, cpu->io.spi_rx_fifo[channel_index].count == 8u, "enhanced receive depth");
+        expect(state, (dspic33_read_word(cpu, spi_base) & 0x0721u) == 0x0701u,
                "enhanced receive full status");
-        expect(state, dspic33_spi_test_interrupt_flag(cpu, irqs[channel]),
+        expect(state, dspic33_spi_test_interrupt_flag(cpu, irqs[channel_index]),
                "enhanced receive full interrupt");
-        dspic33_spi_test_clear_interrupt(cpu, irqs[channel]);
+        dspic33_spi_test_clear_interrupt(cpu, irqs[channel_index]);
         expect(state,
-               dspic33_spi_receive(cpu, channel, 0x3fffu, 1u) && dspic33_device_advance(cpu, 1u),
+               dspic33_spi_receive(cpu, channel_index, 0x3fffu, 1u) &&
+                   dspic33_device_advance(cpu, 1u),
                "enhanced overflow advance");
-        expect(state, (dspic33_read_word(cpu, base) & 0x0040u) != 0u, "enhanced overflow flag");
-        expect(state, dspic33_spi_test_interrupt_flag(cpu, error_irqs[channel]),
+        expect(state, (dspic33_read_word(cpu, spi_base) & 0x0040u) != 0u, "enhanced overflow flag");
+        expect(state, dspic33_spi_test_interrupt_flag(cpu, error_irqs[channel_index]),
                "enhanced overflow error interrupt");
         expect(state,
-               dspic33_spi_receive(cpu, channel, 0x3eeeu, 1u) && dspic33_device_advance(cpu, 1u),
+               dspic33_spi_receive(cpu, channel_index, 0x3eeeu, 1u) &&
+                   dspic33_device_advance(cpu, 1u),
                "enhanced overflow blocks receive");
-        expect(state, cpu->io.spi_rx_fifo[channel].count == 8u,
+        expect(state, cpu->io.spi_rx_fifo[channel_index].count == 8u,
                "enhanced blocked receive preserves depth");
-        dspic33_write_word(cpu, base, (uint16_t)(dspic33_read_word(cpu, base) & ~0x0040u));
-        expect(state, (dspic33_read_word(cpu, base) & 0x0040u) == 0u,
+        dspic33_write_word(cpu, spi_base, (uint16_t)(dspic33_read_word(cpu, spi_base) & ~0x0040u));
+        expect(state, (dspic33_read_word(cpu, spi_base) & 0x0040u) == 0u,
                "enhanced overflow software clear");
-        expect(state, cpu->io.spi_rx_fifo[channel].count == 8u,
+        expect(state, cpu->io.spi_rx_fifo[channel_index].count == 8u,
                "enhanced clear preserves unread words");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0x3000u,
+        expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) == 0x3000u,
                "enhanced first preserved word");
-        expect(state, cpu->io.spi_rx_fifo[channel].count == 7u, "enhanced read frees receive slot");
+        expect(state, cpu->io.spi_rx_fifo[channel_index].count == 7u,
+               "enhanced read frees receive slot");
         expect(state,
-               dspic33_spi_receive(cpu, channel, 0x3dddu, 1u) && dspic33_device_advance(cpu, 1u),
+               dspic33_spi_receive(cpu, channel_index, 0x3dddu, 1u) &&
+                   dspic33_device_advance(cpu, 1u),
                "enhanced receive resumes after clear");
-        expect(state, (dspic33_read_word(cpu, base) & 0x0040u) == 0u,
+        expect(state, (dspic33_read_word(cpu, spi_base) & 0x0040u) == 0u,
                "enhanced recovered receive avoids overflow");
-        expect(state, cpu->io.spi_rx_fifo[channel].count == 8u,
+        expect(state, cpu->io.spi_rx_fifo[channel_index].count == 8u,
                "enhanced recovered receive fills slot");
-        for (index = 1u; index < 8u; index++) {
+        for (uint8_t receive_index = 1u; receive_index < 8u; receive_index++) {
             expect(state,
-                   dspic33_read_word(cpu, (uint16_t)(base + 8u)) == (uint16_t)(0x3000u + index),
+                   dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) ==
+                       (uint16_t)(0x3000u + receive_index),
                    "enhanced receive read order");
         }
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0x3dddu,
+        expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) == 0x3dddu,
                "enhanced recovered receive tail");
-        expect(state, (dspic33_read_word(cpu, base) & 0x0021u) == 0x0020u,
+        expect(state, (dspic33_read_word(cpu, spi_base) & 0x0021u) == 0x0020u,
                "enhanced receive empty status");
     }
 }
