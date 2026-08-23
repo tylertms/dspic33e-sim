@@ -1,7 +1,9 @@
 #include "internal.h"
+
 const uint8_t dspic33_internal_configuration_factory_defaults[8] = {
     0xcfu, 0xffu, 0xffu, 0xffu, 0xffu, 0xdfu, 0xcfu, 0xffu,
 };
+
 const uint8_t dspic33_internal_configuration_program_masks[8] = {
     0x33u, 0x87u, 0xe7u, 0xffu, 0x3fu, 0xf7u, 0x33u, 0xffu,
 };
@@ -69,9 +71,9 @@ static bool persistent_program_tagged_address(uint32_t address) {
     return address >= DSPIC33_PERSISTENT_PROGRAM_BASE && address < DSPIC33_PERSISTENT_PROGRAM_LIMIT;
 }
 
-uint8_t dspic33_internal_codeguard_configuration(const Dspic33* cpu, bool auxiliary) {
-    return cpu->configuration[auxiliary ? CODEGUARD_AUXILIARY_CONFIGURATION_OFFSET
-                                        : CODEGUARD_GENERAL_CONFIGURATION_OFFSET];
+uint8_t dspic33_internal_codeguard_configuration(const Dspic33* cpu, bool is_auxiliary) {
+    return cpu->configuration[is_auxiliary ? CODEGUARD_AUXILIARY_CONFIGURATION_OFFSET
+                                           : CODEGUARD_GENERAL_CONFIGURATION_OFFSET];
 }
 
 static bool codeguard_write_protected(uint8_t configuration) {
@@ -79,22 +81,23 @@ static bool codeguard_write_protected(uint8_t configuration) {
 }
 
 bool dspic33_internal_codeguard_high_security(uint8_t configuration) {
-    uint8_t protection = (uint8_t)(configuration & 0x03u);
-    uint8_t expected_key = protection == 0x03u ? 0u : 0x30u;
-    return (protection & 0x02u) == 0u || (configuration & 0x30u) != expected_key;
+    const uint8_t security_level = (uint8_t)(configuration & 0x03u);
+    const uint8_t required_key = security_level == 0x03u ? 0u : 0x30u;
+    return (security_level & 0x02u) == 0u || (configuration & 0x30u) != required_key;
 }
 
 bool dspic33_internal_codeguard_programming_allowed(const Dspic33* cpu, uint32_t target) {
-    bool auxiliary_target = dspic33_internal_auxiliary_program_address(target);
-    uint8_t configuration = dspic33_internal_codeguard_configuration(cpu, auxiliary_target);
-    if (codeguard_write_protected(configuration)) {
+    const bool is_auxiliary_target = dspic33_internal_auxiliary_program_address(target);
+    const uint8_t codeguard_value =
+        dspic33_internal_codeguard_configuration(cpu, is_auxiliary_target);
+    if (codeguard_write_protected(codeguard_value)) {
         return false;
     }
-    if (dspic33_internal_codeguard_high_security(configuration)) {
-        if (!auxiliary_target && (target & 0x00fff800u) == 0u) {
+    if (dspic33_internal_codeguard_high_security(codeguard_value)) {
+        if (!is_auxiliary_target && (target & 0x00fff800u) == 0u) {
             return false;
         }
-        if (cpu->nvm.auxiliary_origin != auxiliary_target) {
+        if (cpu->nvm.auxiliary_origin != is_auxiliary_target) {
             return false;
         }
     }
@@ -102,19 +105,19 @@ bool dspic33_internal_codeguard_programming_allowed(const Dspic33* cpu, uint32_t
 }
 
 static bool codeguard_program_read_allowed(const Dspic33* cpu, uint32_t target) {
-    bool auxiliary_origin;
-    bool auxiliary_target;
+    bool is_auxiliary_origin;
+    bool is_auxiliary_target;
     if (persistent_program_tagged_address(target)) {
         target -= DSPIC33_PERSISTENT_PROGRAM_BASE;
     }
     if (!cpu->instruction_active || !dspic33_device_program_range_implemented(cpu, target, 2u)) {
         return true;
     }
-    auxiliary_origin = dspic33_internal_auxiliary_program_address(cpu->current_instruction_pc);
-    auxiliary_target = dspic33_internal_auxiliary_program_address(target);
-    return auxiliary_origin == auxiliary_target ||
+    is_auxiliary_origin = dspic33_internal_auxiliary_program_address(cpu->current_instruction_pc);
+    is_auxiliary_target = dspic33_internal_auxiliary_program_address(target);
+    return is_auxiliary_origin == is_auxiliary_target ||
            !dspic33_internal_codeguard_high_security(
-               dspic33_internal_codeguard_configuration(cpu, auxiliary_target));
+               dspic33_internal_codeguard_configuration(cpu, is_auxiliary_target));
 }
 
 bool dspic33_codeguard_admit_program_flow(Dspic33* cpu, uint32_t origin, uint32_t target) {
