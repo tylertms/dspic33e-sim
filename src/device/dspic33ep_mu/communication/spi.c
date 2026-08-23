@@ -215,40 +215,43 @@ static void spi_raise_transfer_interrupt(Dspic33* cpu, uint8_t channel) {
 }
 
 void dspic33_device_internal_spi_remove_internal_events(Dspic33* cpu, uint8_t channel) {
-    size_t destination = 0u;
-    size_t source;
-    for (source = 0u; source < cpu->events.count; source++) {
-        Dspic33Event* event = &cpu->events.items[source];
+    size_t retained_event_count = 0u;
+
+    for (size_t event_index = 0u; event_index < cpu->events.count; event_index++) {
+        Dspic33Event* event = &cpu->events.items[event_index];
         if (event->type != DSPIC33_EVENT_SPI || event->source != channel ||
             (event->value & SPI_EVENT_KIND_MASK) == SPI_EVENT_EXTERNAL) {
-            cpu->events.items[destination++] = *event;
+            cpu->events.items[retained_event_count++] = *event;
         }
     }
-    cpu->events.count = destination;
+    cpu->events.count = retained_event_count;
     dspic33_reorder_events(cpu);
 }
 
 static void spi_remove_external_events(Dspic33* cpu, uint8_t channel) {
-    size_t destination = 0u;
-    size_t source;
-    for (source = 0u; source < cpu->events.count; source++) {
-        Dspic33Event* event = &cpu->events.items[source];
+    size_t retained_event_count = 0u;
+
+    for (size_t event_index = 0u; event_index < cpu->events.count; event_index++) {
+        Dspic33Event* event = &cpu->events.items[event_index];
         if (event->type != DSPIC33_EVENT_SPI || event->source != channel ||
             (event->value & SPI_EVENT_KIND_MASK) != SPI_EVENT_EXTERNAL) {
-            cpu->events.items[destination++] = *event;
+            cpu->events.items[retained_event_count++] = *event;
         }
     }
-    cpu->events.count = destination;
+    cpu->events.count = retained_event_count;
     dspic33_reorder_events(cpu);
 }
 
 void dspic33_device_internal_spi_update_power_state(Dspic33* cpu) {
     for (uint8_t channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-        uint16_t status = dspic33_device_internal_raw_word(cpu, dspic33_device_spi_bases[channel]);
-        bool abort = dspic33_device_internal_spi_master(cpu, channel) &&
-                     (cpu->power_state == DSPIC33_POWER_SLEEP ||
-                      (cpu->power_state == DSPIC33_POWER_IDLE && (status & SPI_STOP_IDLE) != 0u));
-        if (abort) {
+        uint16_t status_word =
+            dspic33_device_internal_raw_word(cpu, dspic33_device_spi_bases[channel]);
+        bool should_abort =
+            dspic33_device_internal_spi_master(cpu, channel) &&
+            (cpu->power_state == DSPIC33_POWER_SLEEP ||
+             (cpu->power_state == DSPIC33_POWER_IDLE && (status_word & SPI_STOP_IDLE) != 0u));
+
+        if (should_abort) {
             dspic33_device_internal_spi_remove_internal_events(cpu, channel);
             dspic33_device_internal_spi_clear_buffers(cpu, channel);
         }
@@ -256,17 +259,17 @@ void dspic33_device_internal_spi_update_power_state(Dspic33* cpu) {
 }
 
 void dspic33_device_internal_spi_schedule_current(Dspic33* cpu, uint8_t channel) {
-    uint16_t control =
+    uint16_t control_word =
         dspic33_device_internal_raw_word(cpu, (uint16_t)(dspic33_device_spi_bases[channel] + 2u));
-    uint8_t bit = (uint8_t)(1u << channel);
-    uint8_t bits;
-    uint8_t index;
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+    uint8_t transfer_bit_count;
     uint32_t event_value;
-    uint64_t period;
-    uint64_t sample;
+    uint64_t bit_period;
+    uint64_t first_sample_delay;
     bool scheduled = true;
-    if ((cpu->io.spi_busy & bit) == 0u || !dspic33_device_internal_spi_master(cpu, channel) ||
-        (control & SPI_DISABLE_CLOCK) != 0u ||
+    if ((cpu->io.spi_busy & channel_mask) == 0u ||
+        !dspic33_device_internal_spi_master(cpu, channel) ||
+        (control_word & SPI_DISABLE_CLOCK) != 0u ||
         !dspic33_device_internal_spi_power_enabled(cpu, channel)) {
         return;
     }
@@ -274,15 +277,16 @@ void dspic33_device_internal_spi_schedule_current(Dspic33* cpu, uint8_t channel)
                   ((uint32_t)cpu->io.spi_generation[channel] << SPI_EVENT_GENERATION_SHIFT) |
                   cpu->io.spi_shift[channel];
     if (spi_master_pin_input_enabled(cpu, channel)) {
-        bits = (control & SPI_MODE_16) != 0u ? 16u : 8u;
-        period = dspic33_device_internal_spi_transfer_cycles(cpu, channel) / bits;
-        sample = (control & SPI_SAMPLE_END) != 0u ? period : (period + 1u) / 2u;
-        for (index = 0u; index < bits; index++) {
+        transfer_bit_count = (control_word & SPI_MODE_16) != 0u ? 16u : 8u;
+        bit_period = dspic33_device_internal_spi_transfer_cycles(cpu, channel) / transfer_bit_count;
+        first_sample_delay =
+            (control_word & SPI_SAMPLE_END) != 0u ? bit_period : (bit_period + 1u) / 2u;
+        for (uint8_t bit_index = 0u; bit_index < transfer_bit_count; bit_index++) {
             scheduled &=
                 dspic33_schedule(cpu, DSPIC33_EVENT_SPI, channel,
                                  SPI_EVENT_SAMPLE | ((uint32_t)cpu->io.spi_generation[channel]
                                                      << SPI_EVENT_GENERATION_SHIFT),
-                                 sample + (uint64_t)index * period);
+                                 first_sample_delay + (uint64_t)bit_index * bit_period);
         }
     }
     scheduled &= dspic33_schedule(cpu, DSPIC33_EVENT_SPI, channel, event_value,
