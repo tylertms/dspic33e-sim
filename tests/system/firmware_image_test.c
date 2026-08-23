@@ -127,16 +127,16 @@ static void test_files(TestState* state, Dspic33* cpu) {
 
 static void test_binary(TestState* state, Dspic33* cpu) {
     const uint8_t image[] = {0x56u, 0x34u, 0x12u, 0u};
-    uint32_t entry = UINT32_MAX;
-    expect(state, dspic33_load_binary_data(cpu, image, sizeof(image), 0x200u, &entry),
-           "dspic33_load_binary_data(cpu, image, sizeof(image), 0x200u, &entry)");
-    expect(state, entry == 0x100u, "entry == 0x100u");
+    uint32_t entry_address = UINT32_MAX;
+    expect(state, dspic33_load_binary_data(cpu, image, sizeof(image), 0x200u, &entry_address),
+           "dspic33_load_binary_data(cpu, image, sizeof(image), 0x200u, &entry_address)");
+    expect(state, entry_address == 0x100u, "entry_address == 0x100u");
     expect(state, dspic33_read_program_word(cpu, 0x100u) == 0x00123456u,
            "dspic33_read_program_word(cpu, 0x100u) == 0x00123456u");
-    expect(state, !dspic33_load_binary_data(cpu, image, 3u, 0u, &entry),
-           "!dspic33_load_binary_data(cpu, image, 3u, 0u, &entry)");
-    expect(state, !dspic33_load_binary_data(cpu, image, sizeof(image), 2u, &entry),
-           "!dspic33_load_binary_data(cpu, image, sizeof(image), 2u, &entry)");
+    expect(state, !dspic33_load_binary_data(cpu, image, 3u, 0u, &entry_address),
+           "!dspic33_load_binary_data(cpu, image, 3u, 0u, &entry_address)");
+    expect(state, !dspic33_load_binary_data(cpu, image, sizeof(image), 2u, &entry_address),
+           "!dspic33_load_binary_data(cpu, image, sizeof(image), 2u, &entry_address)");
     expect(state, dspic33_load_binary_data(cpu, image, sizeof(image), 0x204u, NULL),
            "dspic33_load_binary_data(cpu, image, sizeof(image), 0x204u, NULL)");
 }
@@ -144,35 +144,35 @@ static void test_binary(TestState* state, Dspic33* cpu) {
 static void test_elf(TestState* state, Dspic33* cpu) {
     uint8_t image[IMAGE_SIZE];
     initialize_image(image);
-    uint32_t entry = UINT32_MAX;
-    expect(state, dspic33_load_elf_data(cpu, image, sizeof(image), &entry),
-           "dspic33_load_elf_data(cpu, image, sizeof(image), &entry)");
-    expect(state, entry == 0x100u, "entry == 0x100u");
+    uint32_t entry_address = UINT32_MAX;
+    expect(state, dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
+           "dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address)");
+    expect(state, entry_address == 0x100u, "entry_address == 0x100u");
     expect(state, dspic33_read_program_word(cpu, 0x100u) == 0x00123456u,
            "dspic33_read_program_word(cpu, 0x100u) == 0x00123456u");
     image[0] = 0u;
-    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry),
-           "!dspic33_load_elf_data(cpu, image, sizeof(image), &entry)");
+    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
+           "!dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address)");
     initialize_image(image);
     expect(state, dspic33_load_elf_data(cpu, image, sizeof(image), NULL),
            "dspic33_load_elf_data(cpu, image, sizeof(image), NULL)");
-    expect(state, !dspic33_load_elf_data(cpu, image, ELF_HEADER_SIZE - 1u, &entry),
+    expect(state, !dspic33_load_elf_data(cpu, image, ELF_HEADER_SIZE - 1u, &entry_address),
            "truncated ELF header is rejected");
     initialize_image(image);
     image[4] = 2u;
-    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry),
+    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
            "ELF64 image is rejected");
     initialize_image(image);
     write16(image, 46u, ELF_SECTION_SIZE - 1u);
-    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry),
+    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
            "short section header is rejected");
     initialize_image(image);
     write32(image, 32u, UINT32_MAX);
-    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry),
+    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
            "out-of-range section table is rejected");
     initialize_image(image);
     write32(image, ELF_HEADER_SIZE + ELF_SECTION_SIZE + 20u, 3u);
-    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry),
+    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
            "unaligned program section is rejected");
 }
 
