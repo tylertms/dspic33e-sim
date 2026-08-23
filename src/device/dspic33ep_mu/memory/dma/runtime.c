@@ -12,23 +12,24 @@ bool dspic33_device_internal_comparator_pin_channel(const Dspic33* cpu, uint8_t 
     return false;
 }
 
-bool dspic33_device_internal_can_queue_push(Dspic33CanQueue* queue, const Dspic33CanFrame* frame) {
-    uint8_t frame_index;
+bool dspic33_device_internal_can_queue_push(Dspic33CanQueue* queue,
+                                            const Dspic33CanFrame* input_frame) {
+    uint8_t queue_index;
 
     if (queue->count == 64u) {
         return false;
     }
-    frame_index = (uint8_t)((queue->head + queue->count) % 64u);
-    queue->frames[frame_index] = *frame;
+    queue_index = (uint8_t)((queue->head + queue->count) % 64u);
+    queue->frames[queue_index] = *input_frame;
     queue->count++;
     return true;
 }
 
-bool dspic33_device_internal_can_queue_pop(Dspic33CanQueue* queue, Dspic33CanFrame* frame) {
+bool dspic33_device_internal_can_queue_pop(Dspic33CanQueue* queue, Dspic33CanFrame* output_frame) {
     if (queue->count == 0u) {
         return false;
     }
-    *frame = queue->frames[queue->head];
+    *output_frame = queue->frames[queue->head];
     queue->head = (uint8_t)((queue->head + 1u) % 64u);
     queue->count--;
     return true;
@@ -63,27 +64,27 @@ static bool event_less(const Dspic33Event* left, const Dspic33Event* right) {
 }
 
 static bool event_reserve(Dspic33EventQueue* queue) {
-    Dspic33Event* resized_items;
-    size_t new_capacity;
+    Dspic33Event* resized_events;
+    size_t new_event_capacity;
 
     if (queue->count < queue->capacity) {
         return true;
     }
-    new_capacity = queue->capacity == 0u ? 64u : queue->capacity * 2u;
-    resized_items = realloc(queue->items, new_capacity * sizeof(*resized_items));
-    if (resized_items == NULL) {
+    new_event_capacity = queue->capacity == 0u ? 64u : queue->capacity * 2u;
+    resized_events = realloc(queue->items, new_event_capacity * sizeof(*resized_events));
+    if (resized_events == NULL) {
         return false;
     }
-    queue->items = resized_items;
-    queue->capacity = new_capacity;
+    queue->items = resized_events;
+    queue->capacity = new_event_capacity;
     return true;
 }
 
 static bool schedule_event(Dspic33* cpu, Dspic33EventType type, uint16_t event_source,
                            uint32_t event_value, uint64_t event_delay, bool is_external) {
     Dspic33Event event;
-    size_t insertion_index;
-    size_t parent_index;
+    size_t heap_index;
+    size_t parent_heap_index;
 
     if (event_delay > UINT64_MAX - cpu->device_cycles) {
         return false;
@@ -92,6 +93,7 @@ static bool schedule_event(Dspic33* cpu, Dspic33EventType type, uint16_t event_s
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
         return false;
     }
+
     event.cycle = cpu->device_cycles + event_delay;
     event.sequence = cpu->events.sequence++;
     event.paused_remaining = 0u;
@@ -100,16 +102,16 @@ static bool schedule_event(Dspic33* cpu, Dspic33EventType type, uint16_t event_s
     event.type = type;
     event.paused = false;
     event.external = is_external;
-    insertion_index = cpu->events.count++;
-    while (insertion_index != 0u) {
-        parent_index = (insertion_index - 1u) / 2u;
-        if (!event_less(&event, &cpu->events.items[parent_index])) {
+    heap_index = cpu->events.count++;
+    while (heap_index != 0u) {
+        parent_heap_index = (heap_index - 1u) / 2u;
+        if (!event_less(&event, &cpu->events.items[parent_heap_index])) {
             break;
         }
-        cpu->events.items[insertion_index] = cpu->events.items[parent_index];
-        insertion_index = parent_index;
+        cpu->events.items[heap_index] = cpu->events.items[parent_heap_index];
+        heap_index = parent_heap_index;
     }
-    cpu->events.items[insertion_index] = event;
+    cpu->events.items[heap_index] = event;
     return true;
 }
 

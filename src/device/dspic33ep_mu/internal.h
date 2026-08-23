@@ -21,8 +21,9 @@ bool dspic33_device_internal_byte_queue_pop(Dspic33ByteQueue* queue, uint8_t* ou
 bool dspic33_device_internal_byte_queue_push(Dspic33ByteQueue* queue, uint8_t byte_value);
 bool dspic33_device_internal_can_capture_enabled(const Dspic33* cpu);
 bool dspic33_device_internal_can_power_enabled(const Dspic33* cpu, uint8_t channel);
-bool dspic33_device_internal_can_queue_pop(Dspic33CanQueue* queue, Dspic33CanFrame* frame);
-bool dspic33_device_internal_can_queue_push(Dspic33CanQueue* queue, const Dspic33CanFrame* frame);
+bool dspic33_device_internal_can_queue_pop(Dspic33CanQueue* queue, Dspic33CanFrame* output_frame);
+bool dspic33_device_internal_can_queue_push(Dspic33CanQueue* queue,
+                                            const Dspic33CanFrame* input_frame);
 bool dspic33_device_internal_can_register_write_mask(const Dspic33* cpu, uint16_t address,
                                                      uint16_t* writable);
 bool dspic33_device_internal_can_schedule_mode_transition(Dspic33* cpu, uint8_t channel,
