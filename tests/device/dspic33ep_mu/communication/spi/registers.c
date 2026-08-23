@@ -327,19 +327,23 @@ void dspic33_spi_test_physical_slave_input_cases(TestState* state, Dspic33* cpu,
     dspic33_reset(cpu, 0u);
     dspic33_spi_pin_input(cpu, 0u, false, false, false);
     dspic33_spi_test_configure_spi(cpu, 0u, 0x049bu, 0u, 0u);
-    for (uint8_t index = 0u; index < 8u; index++) {
-        bool high = (0xa55au & (uint16_t)(1u << (15u - index))) != 0u;
-        dspic33_spi_pin_input(cpu, 0u, true, high, false);
-        dspic33_spi_pin_input(cpu, 0u, false, high, false);
+    for (uint8_t bit_index = 0u; bit_index < 8u; bit_index++) {
+        const bool data_high = (0xa55au & (uint16_t)(1u << (15u - bit_index))) != 0u;
+
+        dspic33_spi_pin_input(cpu, 0u, true, data_high, false);
+        dspic33_spi_pin_input(cpu, 0u, false, data_high, false);
     }
+
     expect(state, dspic33_copy(copy, cpu), "copy partial physical slave input");
     expect(state, copy->io.spi_pin_bits[0] == 8u && copy->io.spi_pin_receive[0] == 0x00a5u,
            "copied physical slave retains partial word");
-    for (uint8_t index = 8u; index < 16u; index++) {
-        bool high = (0xa55au & (uint16_t)(1u << (15u - index))) != 0u;
-        dspic33_spi_pin_input(copy, 0u, true, high, false);
-        dspic33_spi_pin_input(copy, 0u, false, high, false);
+    for (uint8_t bit_index = 8u; bit_index < 16u; bit_index++) {
+        const bool data_high = (0xa55au & (uint16_t)(1u << (15u - bit_index))) != 0u;
+
+        dspic33_spi_pin_input(copy, 0u, true, data_high, false);
+        dspic33_spi_pin_input(copy, 0u, false, data_high, false);
     }
+
     expect(state,
            dspic33_spi_test_transfer_interrupt_after_cycle(copy, irqs[0]) &&
                dspic33_read_word(copy, 0x0248u) == 0xa55au,
@@ -348,6 +352,7 @@ void dspic33_spi_test_physical_slave_input_cases(TestState* state, Dspic33* cpu,
            !dspic33_spi_test_interrupt_flag(cpu, irqs[0]) && cpu->io.spi_pin_bits[0] == 8u &&
                cpu->io.spi_pin_receive[0] == 0x00a5u,
            "source physical slave remains partial");
+
     dspic33_reset(cpu, 0u);
     expect(state,
            cpu->io.spi_pin_bits[0] == 0u && cpu->io.spi_pin_receive[0] == 0u &&
@@ -358,7 +363,7 @@ void dspic33_spi_test_physical_slave_input_cases(TestState* state, Dspic33* cpu,
     dspic33_reset(cpu, 0u);
     dspic33_spi_test_configure_spi(cpu, 0u, 0x001bu, 0u, 0u);
     cpu->device_cycles = UINT64_MAX;
-    for (uint8_t index = 0u; index < 8u; index++) {
+    for (uint8_t bit_index = 0u; bit_index < 8u; bit_index++) {
         dspic33_spi_pin_input(cpu, 0u, true, true, false);
         dspic33_spi_pin_input(cpu, 0u, false, true, false);
     }
