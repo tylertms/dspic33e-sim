@@ -321,8 +321,8 @@ void dspic33_device_internal_update_can_register(Dspic33* cpu, uint16_t address,
 void dspic33_device_internal_update_comparator_register(Dspic33* cpu, uint16_t address,
                                                         uint16_t previous, uint16_t requested);
 void dspic33_device_internal_update_crc_pmd(Dspic33* cpu, uint16_t previous);
-void dspic33_device_internal_update_crc_register(Dspic33* cpu, uint16_t address, uint16_t previous,
-                                                 uint16_t requested);
+void dspic33_device_internal_update_crc_register(Dspic33* cpu, uint16_t access_address,
+                                                 uint16_t previous_word, uint16_t requested_word);
 void dspic33_device_internal_update_dci_register(Dspic33* cpu, uint16_t address, uint16_t previous);
 void dspic33_device_internal_update_dma_control(Dspic33* cpu, uint8_t channel_index,
                                                 uint16_t previous_control);
@@ -335,8 +335,8 @@ void dspic33_device_internal_update_input_capture_register(Dspic33* cpu, uint16_
                                                            uint16_t previous);
 void dspic33_device_internal_update_main_clock_configuration(Dspic33* cpu, uint16_t address,
                                                              uint16_t previous);
-void dspic33_device_internal_update_nvm_control(Dspic33* cpu, uint16_t requested);
-void dspic33_device_internal_update_nvm_key(Dspic33* cpu, uint16_t requested);
+void dspic33_device_internal_update_nvm_control(Dspic33* cpu, uint16_t requested_control);
+void dspic33_device_internal_update_nvm_key(Dspic33* cpu, uint16_t key_word);
 void dspic33_device_internal_update_output_compare_pmd(Dspic33* cpu, uint16_t address,
                                                        uint16_t previous);
 void dspic33_device_internal_update_output_compare_register(Dspic33* cpu, uint16_t address,

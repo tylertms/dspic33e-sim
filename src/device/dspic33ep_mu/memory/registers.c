@@ -1,7 +1,7 @@
 #include "device/dspic33ep_mu/internal.h"
 
-void dspic33_device_internal_update_nvm_key(Dspic33* cpu, uint16_t requested_value) {
-    const uint8_t key_value = (uint8_t)requested_value;
+void dspic33_device_internal_update_nvm_key(Dspic33* cpu, uint16_t key_word) {
+    const uint8_t key_value = (uint8_t)key_word;
 
     if (key_value == 0x55u) {
         cpu->nvm.key_stage = 1u;
@@ -26,11 +26,11 @@ static uint8_t crc_write_width(const Dspic33* cpu) {
     return cpu->io.cpu_write_valid ? cpu->io.cpu_write_width : 1u;
 }
 
-static void update_crc_data(Dspic33* cpu, uint16_t address, uint16_t requested_value) {
-    const uint16_t register_address = (uint16_t)(address & 0xfffeu);
+static void update_crc_data(Dspic33* cpu, uint16_t access_address, uint16_t input_word) {
+    const uint16_t register_address = (uint16_t)(access_address & 0xfffeu);
     const uint8_t data_width = dspic33_device_internal_crc_data_width(cpu);
     const uint8_t write_width = crc_write_width(cpu);
-    const bool high_byte = (address & 1u) != 0u;
+    const bool high_byte_access = (access_address & 1u) != 0u;
 
     if ((dspic33_device_internal_raw_word(cpu, CRC_CONTROL) & CRC_ENABLE) == 0u) {
         dspic33_device_internal_raw_write_word(cpu, register_address, 0u);
@@ -39,40 +39,40 @@ static void update_crc_data(Dspic33* cpu, uint16_t address, uint16_t requested_v
     if (register_address == CRC_DATA_LOW) {
         if (data_width <= 8u) {
             if (write_width == 1u) {
-                dspic33_device_internal_crc_push(cpu, requested_value >> (high_byte ? 8u : 0u));
+                dspic33_device_internal_crc_push(cpu, input_word >> (high_byte_access ? 8u : 0u));
             } else {
-                dspic33_device_internal_crc_push(cpu, requested_value);
+                dspic33_device_internal_crc_push(cpu, input_word);
             }
         } else if (data_width <= 16u) {
             if (write_width == 2u) {
-                dspic33_device_internal_crc_push(cpu, requested_value);
+                dspic33_device_internal_crc_push(cpu, input_word);
                 cpu->io.crc.data_latch = 0u;
             }
         } else if (write_width == 2u) {
-            cpu->io.crc.data_latch = (cpu->io.crc.data_latch & 0xffff0000u) | requested_value;
-        } else if (high_byte) {
+            cpu->io.crc.data_latch = (cpu->io.crc.data_latch & 0xffff0000u) | input_word;
+        } else if (high_byte_access) {
             cpu->io.crc.data_latch =
-                (cpu->io.crc.data_latch & 0xffff00ffu) | (requested_value & 0xff00u);
+                (cpu->io.crc.data_latch & 0xffff00ffu) | (input_word & 0xff00u);
         } else {
             cpu->io.crc.data_latch =
-                (cpu->io.crc.data_latch & 0xffffff00u) | (requested_value & 0x00ffu);
+                (cpu->io.crc.data_latch & 0xffffff00u) | (input_word & 0x00ffu);
         }
     } else if (data_width > 16u) {
         if (write_width == 2u) {
             cpu->io.crc.data_latch =
-                (cpu->io.crc.data_latch & 0x0000ffffu) | ((uint32_t)requested_value << 16u);
+                (cpu->io.crc.data_latch & 0x0000ffffu) | ((uint32_t)input_word << 16u);
             dspic33_device_internal_crc_push(cpu, cpu->io.crc.data_latch);
             cpu->io.crc.data_latch = 0u;
-        } else if (high_byte) {
-            cpu->io.crc.data_latch = (cpu->io.crc.data_latch & 0x00ffffffu) |
-                                     ((uint32_t)(requested_value & 0xff00u) << 16u);
+        } else if (high_byte_access) {
+            cpu->io.crc.data_latch =
+                (cpu->io.crc.data_latch & 0x00ffffffu) | ((uint32_t)(input_word & 0xff00u) << 16u);
             if (data_width > 24u) {
                 dspic33_device_internal_crc_push(cpu, cpu->io.crc.data_latch);
                 cpu->io.crc.data_latch = 0u;
             }
         } else {
-            cpu->io.crc.data_latch = (cpu->io.crc.data_latch & 0xff00ffffu) |
-                                     ((uint32_t)(requested_value & 0x00ffu) << 16u);
+            cpu->io.crc.data_latch =
+                (cpu->io.crc.data_latch & 0xff00ffffu) | ((uint32_t)(input_word & 0x00ffu) << 16u);
             if (data_width <= 24u) {
                 dspic33_device_internal_crc_push(cpu, cpu->io.crc.data_latch);
                 cpu->io.crc.data_latch = 0u;
@@ -101,23 +101,23 @@ static void update_crc_control(Dspic33* cpu, uint16_t previous_control) {
     }
 }
 
-void dspic33_device_internal_update_crc_register(Dspic33* cpu, uint16_t address, uint16_t previous,
-                                                 uint16_t requested_value) {
-    const uint16_t register_address = (uint16_t)(address & 0xfffeu);
+void dspic33_device_internal_update_crc_register(Dspic33* cpu, uint16_t access_address,
+                                                 uint16_t previous_word, uint16_t requested_word) {
+    const uint16_t register_address = (uint16_t)(access_address & 0xfffeu);
 
     if (register_address == CRC_PMD_ADDRESS) {
-        dspic33_device_internal_update_crc_pmd(cpu, previous);
+        dspic33_device_internal_update_crc_pmd(cpu, previous_word);
     } else if (register_address < CRC_CONTROL || register_address > CRC_SHIFT_HIGH) {
         return;
     } else if (cpu->io.crc.pmd_disabled) {
-        dspic33_device_internal_raw_write_word(cpu, register_address, previous);
+        dspic33_device_internal_raw_write_word(cpu, register_address, previous_word);
     } else if (register_address == CRC_CONTROL) {
-        update_crc_control(cpu, previous);
+        update_crc_control(cpu, previous_word);
     } else if (register_address == CRC_DATA_LOW || register_address == CRC_DATA_HIGH) {
-        update_crc_data(cpu, address, requested_value);
+        update_crc_data(cpu, access_address, requested_word);
     } else if ((register_address == CRC_SHIFT_LOW || register_address == CRC_SHIFT_HIGH) &&
                (dspic33_device_internal_raw_word(cpu, CRC_CONTROL) & CRC_GO) != 0u) {
-        dspic33_device_internal_raw_write_word(cpu, register_address, previous);
+        dspic33_device_internal_raw_write_word(cpu, register_address, previous_word);
     }
 }
 
@@ -155,13 +155,13 @@ static bool nvm_target_valid(const Dspic33* cpu, uint16_t nvm_control, uint32_t 
     }
 }
 
-void dspic33_device_internal_update_nvm_control(Dspic33* cpu, uint16_t requested_value) {
+void dspic33_device_internal_update_nvm_control(Dspic33* cpu, uint16_t requested_control) {
     const uint16_t nvm_control = dspic33_device_internal_raw_word(cpu, NVM_CONTROL);
-    const uint32_t target_address =
+    const uint32_t nvm_target_address =
         ((uint32_t)dspic33_device_internal_raw_word(cpu, NVM_ADDRESS_HIGH) << 16u) |
         dspic33_device_internal_raw_word(cpu, NVM_ADDRESS);
-    const uint64_t completion_delay = cpu->non_cpu_sfr_read ? 3u : 2u;
-    const bool write_requested = (requested_value & NVM_WRITE) != 0u;
+    const uint64_t nvm_completion_delay = cpu->non_cpu_sfr_read ? 3u : 2u;
+    const bool write_requested = (requested_control & NVM_WRITE) != 0u;
 
     if (cpu->nvm.active) {
         dspic33_device_internal_raw_write_word(
@@ -173,13 +173,13 @@ void dspic33_device_internal_update_nvm_control(Dspic33* cpu, uint16_t requested
     }
     if ((nvm_control & NVM_WRITE_ENABLE) == 0u ||
         !dspic33_device_internal_nvm_key_authorized(cpu) ||
-        cpu->cycles > UINT64_MAX - completion_delay ||
-        !nvm_target_valid(cpu, nvm_control, target_address)) {
+        cpu->cycles > UINT64_MAX - nvm_completion_delay ||
+        !nvm_target_valid(cpu, nvm_control, nvm_target_address)) {
         fail_nvm_write(cpu);
         return;
     }
     cpu->nvm.control = nvm_control;
-    cpu->nvm.address = target_address;
+    cpu->nvm.address = nvm_target_address;
     cpu->nvm.auxiliary_origin =
         cpu->instruction_active ? cpu->current_instruction_pc >= DSPIC33_AUXILIARY_PROGRAM_BASE &&
                                       cpu->current_instruction_pc < DSPIC33_AUXILIARY_PROGRAM_LIMIT
@@ -189,11 +189,11 @@ void dspic33_device_internal_update_nvm_control(Dspic33* cpu, uint16_t requested
     memcpy(cpu->nvm.latches, cpu->write_latches, sizeof(cpu->nvm.latches));
     cpu->nvm.key_stage = 0u;
     cpu->nvm.active = true;
-    cpu->nvm.completion_cycle = cpu->cycles + completion_delay;
+    cpu->nvm.completion_cycle = cpu->cycles + nvm_completion_delay;
     dspic33_device_internal_raw_write_word(cpu, NVM_CONTROL,
                                            (uint16_t)(nvm_control | NVM_WRITE | NVM_WRITE_ERROR));
     if (!dspic33_schedule(cpu, DSPIC33_EVENT_NVM, 0u, 0u,
-                          dspic33_device_instruction_cycles(cpu, completion_delay))) {
+                          dspic33_device_instruction_cycles(cpu, nvm_completion_delay))) {
         fail_nvm_write(cpu);
     }
 }
