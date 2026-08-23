@@ -142,42 +142,45 @@ void dspic33_dci_test_pps_frame_cases(TestState* state, Dspic33* cpu) {
 }
 
 void dspic33_dci_test_pps_serial_matrix_cases(TestState* state, Dspic33* cpu) {
-    uint8_t mode;
-    for (mode = 0u; mode < 2u; mode++) {
+    uint8_t dci_mode;
+    for (dci_mode = 0u; dci_mode < 2u; dci_mode++) {
         uint8_t width;
         for (width = 4u; width <= 16u; width++) {
-            uint8_t rising;
-            for (rising = 0u; rising < 2u; rising++) {
-                uint8_t immediate;
-                for (immediate = 0u; immediate < 2u; immediate++) {
-                    uint16_t value = (uint16_t)(0xa55au & dspic33_dci_test_serial_word_mask(width));
-                    uint16_t control = DCI_EXTERNAL_FRAME;
-                    if (mode != 0u) {
-                        control |= DCI_MODE_I2S;
+            uint8_t sample_on_rising;
+            for (sample_on_rising = 0u; sample_on_rising < 2u; sample_on_rising++) {
+                uint8_t data_justified;
+                for (data_justified = 0u; data_justified < 2u; data_justified++) {
+                    uint16_t serial_word =
+                        (uint16_t)(0xa55au & dspic33_dci_test_serial_word_mask(width));
+                    uint16_t control_word = DCI_EXTERNAL_FRAME;
+                    if (dci_mode != 0u) {
+                        control_word |= DCI_MODE_I2S;
                     }
-                    if (rising != 0u) {
-                        control |= DCI_SAMPLE_RISING;
+                    if (sample_on_rising != 0u) {
+                        control_word |= DCI_SAMPLE_RISING;
                     }
-                    if (immediate != 0u) {
-                        control |= DCI_DATA_JUSTIFY;
+                    if (data_justified != 0u) {
+                        control_word |= DCI_DATA_JUSTIFY;
                     }
                     dspic33_reset(cpu, 0u);
                     dspic33_dci_test_configure_serial_pins(cpu);
-                    dspic33_dci_test_configure_external(cpu, control, width, 1u, 1u, 0u, 1u);
-                    dspic33_dci_test_activate_serial_clock(cpu, rising != 0u, GPIO_CLOCK_MASK);
+                    dspic33_dci_test_configure_external(cpu, control_word, width, 1u, 1u, 0u, 1u);
+                    dspic33_dci_test_activate_serial_clock(cpu, sample_on_rising != 0u,
+                                                           GPIO_CLOCK_MASK);
                     dspic33_gpio_drive(cpu, GPIO_PORT_D, GPIO_FRAME_MASK, GPIO_FRAME_MASK);
-                    if (immediate == 0u) {
+                    if (data_justified == 0u) {
                         expect(state,
-                               dspic33_dci_test_drive_serial_edge(cpu, false, rising != 0u,
-                                                                  GPIO_CLOCK_MASK),
+                               dspic33_dci_test_drive_serial_edge(
+                                   cpu, false, sample_on_rising != 0u, GPIO_CLOCK_MASK),
                                "clock default-justified PPS matrix frame");
-                        if (mode == 0u) {
+                        if (dci_mode == 0u) {
                             dspic33_gpio_drive(cpu, GPIO_PORT_D, 0u, GPIO_FRAME_MASK);
                         }
                     }
                     expect(state,
-                           dspic33_dci_test_drive_serial_word(cpu, value, width, rising != 0u) &&
-                               dspic33_read_word(cpu, DCI_RECEIVE_BASE) == value &&
+                           dspic33_dci_test_drive_serial_word(cpu, serial_word, width,
+                                                              sample_on_rising != 0u) &&
+                               dspic33_read_word(cpu, DCI_RECEIVE_BASE) == serial_word &&
                                !cpu->io.dci.started,
                            "PPS serial matrix captures framed word");
                 }
