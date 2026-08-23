@@ -1,62 +1,69 @@
 #include "device/dspic33ep_mu/internal.h"
 
-static uint8_t pmp_transfer_width(uint16_t mode) {
-    return (mode & PMP_DATA_16_BIT) != 0u ? 2u : 1u;
+static uint8_t pmp_transfer_width(uint16_t mode_word) {
+    return (mode_word & PMP_DATA_16_BIT) != 0u ? 2u : 1u;
 }
 
-static uint64_t pmp_transfer_cycles(uint16_t control, uint16_t mode) {
-    uint8_t address_phases = (uint8_t)((control & PMP_ADDRESS_MUX_MASK) >> 11u);
-    uint8_t data_phases = pmp_transfer_width(mode);
-    uint8_t beginning = (uint8_t)((mode & PMP_WAIT_BEGIN_MASK) >> 6u);
-    uint8_t middle = (uint8_t)((mode & PMP_WAIT_MIDDLE_MASK) >> 2u);
-    if (middle == 0u) {
-        return (uint64_t)address_phases + data_phases;
+static uint64_t pmp_transfer_cycles(uint16_t control_word, uint16_t mode_word) {
+    uint8_t address_phase_count = (uint8_t)((control_word & PMP_ADDRESS_MUX_MASK) >> 11u);
+    uint8_t data_phase_count = pmp_transfer_width(mode_word);
+    uint8_t wait_begin_count = (uint8_t)((mode_word & PMP_WAIT_BEGIN_MASK) >> 6u);
+    uint8_t wait_middle_count = (uint8_t)((mode_word & PMP_WAIT_MIDDLE_MASK) >> 2u);
+
+    if (wait_middle_count == 0u) {
+        return (uint64_t)address_phase_count + data_phase_count;
     }
-    return (uint64_t)address_phases * (beginning + 1u) +
-           (uint64_t)data_phases * (beginning + 1u + middle + (mode & PMP_WAIT_END_MASK) + 1u);
+    return (uint64_t)address_phase_count * (wait_begin_count + 1u) +
+           (uint64_t)data_phase_count *
+               (wait_begin_count + 1u + wait_middle_count + (mode_word & PMP_WAIT_END_MASK) + 1u);
 }
 
 static bool pmp_master_enabled(const Dspic33* cpu) {
-    uint16_t control = dspic33_device_internal_raw_word(cpu, PMP_CONTROL);
-    uint16_t mode = dspic33_device_internal_raw_word(cpu, PMP_MODE);
-    uint16_t master = mode & PMP_MASTER_MODE_MASK;
+    uint16_t control_word = dspic33_device_internal_raw_word(cpu, PMP_CONTROL);
+    uint16_t mode_word = dspic33_device_internal_raw_word(cpu, PMP_MODE);
+    uint16_t master_mode = mode_word & PMP_MASTER_MODE_MASK;
+
     return !cpu->io.pmp.pmd_disabled && cpu->power_state != DSPIC33_POWER_SLEEP &&
-           (cpu->power_state != DSPIC33_POWER_IDLE || (control & PMP_STOP_IDLE) == 0u) &&
-           (control & PMP_ENABLE) != 0u &&
-           (master == PMP_MASTER_MODE_2 || master == PMP_MASTER_MODE_1) &&
-           (control & PMP_ADDRESS_MUX_MASK) != PMP_ADDRESS_MUX_MASK &&
-           (control & PMP_CHIP_SELECT_FUNCTION_MASK) != PMP_CHIP_SELECT_FUNCTION_MASK;
+           (cpu->power_state != DSPIC33_POWER_IDLE || (control_word & PMP_STOP_IDLE) == 0u) &&
+           (control_word & PMP_ENABLE) != 0u &&
+           (master_mode == PMP_MASTER_MODE_2 || master_mode == PMP_MASTER_MODE_1) &&
+           (control_word & PMP_ADDRESS_MUX_MASK) != PMP_ADDRESS_MUX_MASK &&
+           (control_word & PMP_CHIP_SELECT_FUNCTION_MASK) != PMP_CHIP_SELECT_FUNCTION_MASK;
 }
 
 static bool pmp_slave_configured(const Dspic33* cpu) {
-    uint16_t control = dspic33_device_internal_raw_word(cpu, PMP_CONTROL);
-    uint16_t mode = dspic33_device_internal_raw_word(cpu, PMP_MODE);
-    uint16_t slave = mode & PMP_MASTER_MODE_MASK;
-    uint16_t increment = mode & PMP_INCREMENT_MODE_MASK;
-    return !cpu->io.pmp.pmd_disabled && (control & PMP_ENABLE) != 0u &&
-           ((slave == 0u && (increment == 0u || increment == PMP_INCREMENT_MODE_MASK)) ||
-            (slave == PMP_SLAVE_ADDRESSABLE && increment == 0u));
+    uint16_t control_word = dspic33_device_internal_raw_word(cpu, PMP_CONTROL);
+    uint16_t mode_word = dspic33_device_internal_raw_word(cpu, PMP_MODE);
+    uint16_t slave_mode = mode_word & PMP_MASTER_MODE_MASK;
+    uint16_t increment_mode = mode_word & PMP_INCREMENT_MODE_MASK;
+
+    return !cpu->io.pmp.pmd_disabled && (control_word & PMP_ENABLE) != 0u &&
+           ((slave_mode == 0u &&
+             (increment_mode == 0u || increment_mode == PMP_INCREMENT_MODE_MASK)) ||
+            (slave_mode == PMP_SLAVE_ADDRESSABLE && increment_mode == 0u));
 }
 
-static bool pmp_slave_enabled(const Dspic33* cpu, bool reading) {
-    uint16_t mode = dspic33_device_internal_raw_word(cpu, PMP_MODE);
-    uint16_t slave = mode & PMP_MASTER_MODE_MASK;
-    uint16_t control = dspic33_device_internal_raw_word(cpu, PMP_CONTROL);
-    uint16_t enabled_strobe = reading ? PMP_READ_STROBE_ENABLE : PMP_WRITE_STROBE_ENABLE;
-    if (!pmp_slave_configured(cpu) || (control & enabled_strobe) == 0u ||
+static bool pmp_slave_enabled(const Dspic33* cpu, bool is_read) {
+    uint16_t mode_word = dspic33_device_internal_raw_word(cpu, PMP_MODE);
+    uint16_t slave_mode = mode_word & PMP_MASTER_MODE_MASK;
+    uint16_t control_word = dspic33_device_internal_raw_word(cpu, PMP_CONTROL);
+    uint16_t enabled_strobe = is_read ? PMP_READ_STROBE_ENABLE : PMP_WRITE_STROBE_ENABLE;
+
+    if (!pmp_slave_configured(cpu) || (control_word & enabled_strobe) == 0u ||
         (dspic33_device_internal_raw_word(cpu, PMP_ADDRESS_ENABLE_REGISTER) &
          PMP_CHIP_SELECT_ENABLE) == 0u) {
         return false;
     }
-    return slave != PMP_SLAVE_ADDRESSABLE ||
+    return slave_mode != PMP_SLAVE_ADDRESSABLE ||
            (dspic33_device_internal_raw_word(cpu, PMP_ADDRESS_ENABLE_REGISTER) &
             PMP_ADDRESS_ENABLE) == PMP_ADDRESS_ENABLE;
 }
 
 static bool pmp_master_clock_available(const Dspic33* cpu) {
-    uint16_t control = dspic33_device_internal_raw_word(cpu, PMP_CONTROL);
+    uint16_t control_word = dspic33_device_internal_raw_word(cpu, PMP_CONTROL);
+
     return !cpu->io.pmp.pmd_disabled && cpu->power_state != DSPIC33_POWER_SLEEP &&
-           (cpu->power_state != DSPIC33_POWER_IDLE || (control & PMP_STOP_IDLE) == 0u);
+           (cpu->power_state != DSPIC33_POWER_IDLE || (control_word & PMP_STOP_IDLE) == 0u);
 }
 
 static bool pmp_master_event(const Dspic33Event* event) {
@@ -64,10 +71,9 @@ static bool pmp_master_event(const Dspic33Event* event) {
 }
 
 static void pmp_pause_master_events(Dspic33* cpu) {
-    size_t index;
     bool changed = false;
-    for (index = 0u; index < cpu->events.count; index++) {
-        Dspic33Event* event = &cpu->events.items[index];
+    for (size_t event_index = 0u; event_index < cpu->events.count; event_index++) {
+        Dspic33Event* event = &cpu->events.items[event_index];
         if (!pmp_master_event(event) || event->paused) {
             continue;
         }
@@ -81,10 +87,9 @@ static void pmp_pause_master_events(Dspic33* cpu) {
 }
 
 static void pmp_resume_master_events(Dspic33* cpu) {
-    size_t index;
     bool changed = false;
-    for (index = 0u; index < cpu->events.count; index++) {
-        Dspic33Event* event = &cpu->events.items[index];
+    for (size_t event_index = 0u; event_index < cpu->events.count; event_index++) {
+        Dspic33Event* event = &cpu->events.items[event_index];
         if (!pmp_master_event(event) || !event->paused) {
             continue;
         }
@@ -103,14 +108,14 @@ static void pmp_resume_master_events(Dspic33* cpu) {
 }
 
 static void pmp_discard_master_events(Dspic33* cpu) {
-    size_t source;
-    size_t destination = 0u;
-    for (source = 0u; source < cpu->events.count; source++) {
-        if (!pmp_master_event(&cpu->events.items[source])) {
-            cpu->events.items[destination++] = cpu->events.items[source];
+    size_t retained_event_count = 0u;
+
+    for (size_t event_index = 0u; event_index < cpu->events.count; event_index++) {
+        if (!pmp_master_event(&cpu->events.items[event_index])) {
+            cpu->events.items[retained_event_count++] = cpu->events.items[event_index];
         }
     }
-    cpu->events.count = destination;
+    cpu->events.count = retained_event_count;
     dspic33_reorder_events(cpu);
 }
 
