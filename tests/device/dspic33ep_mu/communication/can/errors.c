@@ -13,13 +13,14 @@ void dspic33_can_test_error_groups(TestState* state, Dspic33* cpu) {
 
 void dspic33_can_test_priority_and_abort_cases(TestState* state, Dspic33* cpu) {
     Dspic33CanFrame output;
-    uint8_t buffer;
+    uint8_t buffer_index;
+
     dspic33_reset(cpu, 0u);
     dspic33_can_test_configure_transmit(cpu, 0u, 0xb000u);
-    for (buffer = 0u; buffer < 8u; buffer++) {
-        dspic33_can_test_write_memory_word(cpu, (uint32_t)(0xb000u + buffer * 16u),
-                                           (uint16_t)((0x100u + buffer) << 2u));
-        dspic33_can_test_write_memory_word(cpu, (uint32_t)(0xb004u + buffer * 16u), 0u);
+    for (buffer_index = 0u; buffer_index < 8u; buffer_index++) {
+        dspic33_can_test_write_memory_word(cpu, (uint32_t)(0xb000u + buffer_index * 16u),
+                                           (uint16_t)((0x100u + buffer_index) << 2u));
+        dspic33_can_test_write_memory_word(cpu, (uint32_t)(0xb004u + buffer_index * 16u), 0u);
     }
     dspic33_can_test_set_mode(cpu, 0u, 0u);
     dspic33_write_word(cpu, 0x0430u, 0x8988u);
@@ -42,23 +43,24 @@ void dspic33_can_test_priority_and_abort_cases(TestState* state, Dspic33* cpu) {
 
 void dspic33_can_test_mode_and_power_cases(TestState* state, Dspic33* cpu) {
     static const uint8_t modes[] = {0u, 1u, 2u, 3u, 4u, 7u};
-    uint8_t index;
-    for (index = 0u; index < sizeof(modes); index++) {
-        uint8_t mode = modes[index];
-        Dspic33CanFrame input = dspic33_can_test_frame(0x234u, false, false, 1u, mode);
+    uint8_t mode_index;
+
+    for (mode_index = 0u; mode_index < sizeof(modes); mode_index++) {
+        uint8_t can_mode = modes[mode_index];
+        Dspic33CanFrame input = dspic33_can_test_frame(0x234u, false, false, 1u, can_mode);
         dspic33_reset(cpu, 0u);
         dspic33_can_test_configure_receive(cpu, 0u, 0xc000u, 4u, 0u);
         dspic33_can_test_configure_filter(cpu, 0u, 0u, 0x234u, false, 0x7ffu, true, 0u, 0u);
-        dspic33_can_test_enable_filter(cpu, 0u, mode == 7u ? 0u : 1u);
+        dspic33_can_test_enable_filter(cpu, 0u, can_mode == 7u ? 0u : 1u);
         dspic33_can_test_select_window(cpu, 0u, false);
-        dspic33_can_test_set_mode(cpu, 0u, mode);
-        expect(state, ((dspic33_read_word(cpu, 0x0400u) >> 5u) & 7u) == mode,
+        dspic33_can_test_set_mode(cpu, 0u, can_mode);
+        expect(state, ((dspic33_read_word(cpu, 0x0400u) >> 5u) & 7u) == can_mode,
                "mode acknowledgement matrix");
         expect(state, dspic33_can_receive(cpu, 0u, &input, 0u) && dspic33_device_advance(cpu, 32u),
                "mode receive schedule");
         expect(state,
                dspic33_can_test_receive_full(cpu, 0u, 0u) ==
-                   (mode == 0u || mode == 2u || mode == 3u || mode == 7u),
+                   (can_mode == 0u || can_mode == 2u || can_mode == 3u || can_mode == 7u),
                "mode receive behavior");
     }
     dspic33_reset(cpu, 0u);
@@ -98,14 +100,15 @@ void dspic33_can_test_mode_and_power_cases(TestState* state, Dspic33* cpu) {
 }
 
 void dspic33_can_test_mode_transition_cases(TestState* state, Dspic33* cpu) {
-    uint64_t cycles;
+    uint64_t mode_transition_cycles;
+
     dspic33_reset(cpu, 0u);
-    cycles = dspic33_can_test_mode_transition_cycles(cpu, 0u);
+    mode_transition_cycles = dspic33_can_test_mode_transition_cycles(cpu, 0u);
     dspic33_can_test_request_mode(cpu, 0u, 0u);
     expect(state, (dspic33_read_word(cpu, 0x0400u) & 0x07e0u) == 0x0080u,
            "CAN mode request preserves the active mode before bus idle");
     expect(state,
-           dspic33_device_advance(cpu, cycles - 1u) &&
+           dspic33_device_advance(cpu, mode_transition_cycles - 1u) &&
                (dspic33_read_word(cpu, 0x0400u) & 0x00e0u) == 0x0080u,
            "CAN mode request remains pending before 11 recessive bits");
     expect(state,
@@ -118,20 +121,21 @@ void dspic33_can_test_mode_transition_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x06d4u, 64u);
     dspic33_can_test_request_mode(cpu, 0u, 0u);
     expect(state,
-           dspic33_device_advance(cpu, cycles - 1u) && dspic33_can_input_pin(cpu, 64u, false, 0u) &&
-               dspic33_device_advance(cpu, 0u) && dspic33_can_input_pin(cpu, 64u, true, 0u) &&
-               dspic33_device_advance(cpu, 0u) && dspic33_device_advance(cpu, 1u) &&
+           dspic33_device_advance(cpu, mode_transition_cycles - 1u) &&
+               dspic33_can_input_pin(cpu, 64u, false, 0u) && dspic33_device_advance(cpu, 0u) &&
+               dspic33_can_input_pin(cpu, 64u, true, 0u) && dspic33_device_advance(cpu, 0u) &&
+               dspic33_device_advance(cpu, 1u) &&
                (dspic33_read_word(cpu, 0x0400u) & 0x00e0u) == 0x0080u,
            "dominant CAN input restarts the mode idle boundary");
     expect(state,
-           dspic33_device_advance(cpu, cycles - 1u) &&
+           dspic33_device_advance(cpu, mode_transition_cycles - 1u) &&
                (dspic33_read_word(cpu, 0x0400u) & 0x00e0u) == 0u,
            "CAN mode transition completes after the restarted idle boundary");
 
     dspic33_can_test_request_mode(cpu, 0u, 3u);
     dspic33_can_test_request_mode(cpu, 0u, 2u);
     expect(state,
-           dspic33_device_advance(cpu, cycles) &&
+           dspic33_device_advance(cpu, mode_transition_cycles) &&
                (dspic33_read_word(cpu, 0x0400u) & 0x07e0u) == 0x0240u,
            "new CAN mode request supersedes a pending transition");
 
@@ -140,7 +144,8 @@ void dspic33_can_test_mode_transition_cases(TestState* state, Dspic33* cpu) {
     dspic33_can_test_request_mode(cpu, 0u, 3u);
     expect(state, dspic33_copy(&copied_cpu, cpu), "copy pending CAN mode transition");
     expect(state,
-           dspic33_device_advance(cpu, cycles) && dspic33_device_advance(&copied_cpu, cycles) &&
+           dspic33_device_advance(cpu, mode_transition_cycles) &&
+               dspic33_device_advance(&copied_cpu, mode_transition_cycles) &&
                (dspic33_read_word(cpu, 0x0400u) & 0x00e0u) == 0x0060u &&
                (dspic33_read_word(&copied_cpu, 0x0400u) & 0x00e0u) == 0x0060u,
            "copy preserves pending CAN mode transition phase");
@@ -150,7 +155,7 @@ void dspic33_can_test_mode_transition_cases(TestState* state, Dspic33* cpu) {
     dspic33_can_test_request_mode(cpu, 0u, 0u);
     dspic33_reset(cpu, 0u);
     expect(state,
-           dspic33_device_advance(cpu, cycles) &&
+           dspic33_device_advance(cpu, mode_transition_cycles) &&
                (dspic33_read_word(cpu, 0x0400u) & 0x07e0u) == 0x0480u && cpu->events.count == 0u,
            "reset cancels a pending CAN mode transition");
 
@@ -175,7 +180,7 @@ void dspic33_can_test_mode_transition_cases(TestState* state, Dspic33* cpu) {
            "CAN mode transition test reaches an active frame");
     dspic33_can_test_request_mode(cpu, 0u, 4u);
     expect(state,
-           dspic33_device_advance(cpu, cycles) &&
+           dspic33_device_advance(cpu, mode_transition_cycles) &&
                (dspic33_read_word(cpu, 0x0400u) & 0x00e0u) == 0u &&
                (cpu->io.can_tx_on_bus & 1u) != 0u,
            "CAN mode transition waits for the active frame");
