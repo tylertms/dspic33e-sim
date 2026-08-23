@@ -33,41 +33,52 @@ uint8_t dspic33_device_internal_can_buffer_count(const Dspic33* cpu, uint8_t cha
     return buffer_counts[(can_control >> 13u) & 7u];
 }
 
-uint16_t dspic33_device_internal_can_buffer_control(const Dspic33* cpu, uint8_t channel,
-                                                    uint8_t buffer) {
-    uint16_t value = dspic33_device_internal_raw_word(
-        cpu, (uint16_t)(dspic33_device_can_bases[channel] + 0x30u + (buffer / 2u) * 2u));
-    return (uint16_t)(value >> ((buffer & 1u) * 8u));
+uint16_t dspic33_device_internal_can_buffer_control(const Dspic33* cpu, uint8_t channel_index,
+                                                    uint8_t buffer_index) {
+    const uint16_t control_word =
+        dspic33_device_internal_raw_word(cpu, (uint16_t)(dspic33_device_can_bases[channel_index] +
+                                                         0x30u + (buffer_index / 2u) * 2u));
+
+    return (uint16_t)(control_word >> ((buffer_index & 1u) * 8u));
 }
 
-void dspic33_device_internal_can_set_buffer_control(Dspic33* cpu, uint8_t channel, uint8_t buffer,
-                                                    uint16_t value) {
-    uint16_t address = (uint16_t)(dspic33_device_can_bases[channel] + 0x30u + (buffer / 2u) * 2u);
-    uint16_t current = dspic33_device_internal_raw_word(cpu, address);
-    uint8_t shift = (uint8_t)((buffer & 1u) * 8u);
-    current = (uint16_t)((current & ~(uint16_t)(0xffu << shift)) | ((value & 0xffu) << shift));
-    dspic33_device_internal_raw_write_word(cpu, address, current);
+void dspic33_device_internal_can_set_buffer_control(Dspic33* cpu, uint8_t channel_index,
+                                                    uint8_t buffer_index,
+                                                    uint16_t requested_value) {
+    const uint16_t register_address =
+        (uint16_t)(dspic33_device_can_bases[channel_index] + 0x30u + (buffer_index / 2u) * 2u);
+    const uint8_t byte_shift = (uint8_t)((buffer_index & 1u) * 8u);
+    uint16_t control_word = dspic33_device_internal_raw_word(cpu, register_address);
+
+    control_word = (uint16_t)((control_word & ~(uint16_t)(0xffu << byte_shift)) |
+                              ((requested_value & 0xffu) << byte_shift));
+    dspic33_device_internal_raw_write_word(cpu, register_address, control_word);
 }
 
-static uint16_t can_buffer_flag_address(uint8_t channel, uint8_t buffer, bool overflow) {
-    return (uint16_t)(dspic33_device_can_bases[channel] + (overflow ? 0x28u : 0x20u) +
-                      (buffer >= 16u ? 2u : 0u));
+static uint16_t can_buffer_flag_address(uint8_t channel_index, uint8_t buffer_index,
+                                        bool overflow) {
+    return (uint16_t)(dspic33_device_can_bases[channel_index] + (overflow ? 0x28u : 0x20u) +
+                      (buffer_index >= 16u ? 2u : 0u));
 }
 
-bool dspic33_device_internal_can_buffer_flag(const Dspic33* cpu, uint8_t channel, uint8_t buffer,
-                                             bool overflow) {
-    uint16_t address = can_buffer_flag_address(channel, buffer, overflow);
-    return (dspic33_device_internal_raw_word(cpu, address) & (uint16_t)(1u << (buffer & 15u))) !=
-           0u;
+bool dspic33_device_internal_can_buffer_flag(const Dspic33* cpu, uint8_t channel_index,
+                                             uint8_t buffer_index, bool overflow) {
+    const uint16_t register_address =
+        can_buffer_flag_address(channel_index, buffer_index, overflow);
+
+    return (dspic33_device_internal_raw_word(cpu, register_address) &
+            (uint16_t)(1u << (buffer_index & 15u))) != 0u;
 }
 
-void dspic33_device_internal_can_set_buffer_flag(Dspic33* cpu, uint8_t channel, uint8_t buffer,
-                                                 bool overflow) {
-    uint16_t address = can_buffer_flag_address(channel, buffer, overflow);
+void dspic33_device_internal_can_set_buffer_flag(Dspic33* cpu, uint8_t channel_index,
+                                                 uint8_t buffer_index, bool overflow) {
+    const uint16_t register_address =
+        can_buffer_flag_address(channel_index, buffer_index, overflow);
+
     dspic33_device_internal_raw_write_word(
-        cpu, address,
-        (uint16_t)(dspic33_device_internal_raw_word(cpu, address) |
-                   (uint16_t)(1u << (buffer & 15u))));
+        cpu, register_address,
+        (uint16_t)(dspic33_device_internal_raw_word(cpu, register_address) |
+                   (uint16_t)(1u << (buffer_index & 15u))));
 }
 
 void dspic33_device_internal_can_update_vector(Dspic33* cpu, uint8_t channel) {
