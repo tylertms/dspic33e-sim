@@ -3,10 +3,10 @@
 void dspic33_i2c_test_address_mode_cases(TestState* state, Dspic33* cpu) {
     uint8_t channel;
     for (channel = 0u; channel < DSPIC33_I2C_COUNT; channel++) {
-        uint16_t base = bases[channel];
-        uint8_t channel_bit = (uint8_t)(1u << channel);
+        uint16_t register_base = bases[channel];
+        uint8_t channel_mask = (uint8_t)(1u << channel);
         dspic33_reset(cpu, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x02abu);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 10u), 0x02abu);
         dspic33_i2c_test_enable(cpu, channel, 0x0440u, 0u);
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
@@ -14,24 +14,26 @@ void dspic33_i2c_test_address_mode_cases(TestState* state, Dspic33* cpu) {
                "ten bit first address event");
         expect(state, dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]),
                "ten bit first address interrupt");
-        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0100u) == 0u,
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 0x0100u) == 0u,
                "ten bit first address status");
-        expect(state, dspic33_read_word(cpu, base) == 0x00f4u, "ten bit first address receive");
-        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) == 0u,
+        expect(state, dspic33_read_word(cpu, register_base) == 0x00f4u,
+               "ten bit first address receive");
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(register_base + 6u)) & 0x1000u) == 0u,
                "ten bit first address stretches");
-        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9440u);
-        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) != 0u,
+        dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0x9440u);
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(register_base + 6u)) & 0x1000u) != 0u,
                "ten bit second address clock released");
         dspic33_i2c_test_clear_interrupt(cpu, slave_irqs[channel]);
         expect(state, dspic33_device_advance(cpu, 1u), "ten bit second address event");
         expect(state, dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]),
                "ten bit second address interrupt");
-        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0100u) != 0u,
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 0x0100u) != 0u,
                "ten bit second address status");
-        expect(state, dspic33_read_word(cpu, base) == 0x00abu, "ten bit second address receive");
-        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) == 0u,
+        expect(state, dspic33_read_word(cpu, register_base) == 0x00abu,
+               "ten bit second address receive");
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(register_base + 6u)) & 0x1000u) == 0u,
                "ten bit second address stretches");
-        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9440u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0x9440u);
         dspic33_i2c_test_clear_interrupt(cpu, slave_irqs[channel]);
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x02abu, true, true, 0u) &&
@@ -39,26 +41,27 @@ void dspic33_i2c_test_address_mode_cases(TestState* state, Dspic33* cpu) {
                "ten bit repeated read event");
         expect(state, dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]),
                "ten bit repeated read interrupt");
-        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x010cu) == 0x010cu,
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 0x010cu) == 0x010cu,
                "ten bit repeated read status");
-        expect(state, dspic33_read_word(cpu, base) == 0x00f5u, "ten bit repeated read receive");
+        expect(state, dspic33_read_word(cpu, register_base) == 0x00f5u,
+               "ten bit repeated read receive");
         dspic33_i2c_test_clear_interrupt(cpu, slave_irqs[channel]);
-        dspic33_write_word(cpu, (uint16_t)(base + 2u), 0x63u);
-        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 2u), 0x63u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0x9400u);
         expect(state,
                dspic33_i2c_slave_read(cpu, channel, false, 1u) && dspic33_device_advance(cpu, 1u),
                "ten bit slave nack event");
         expect(state,
                !dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x8000u) != 0u,
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 0x8000u) != 0u,
                "ten bit slave nack omits interrupt");
         expect(state,
-               (cpu->io.i2c_slave_active & channel_bit) == 0u &&
-                   (cpu->io.i2c_slave_read & channel_bit) == 0u,
+               (cpu->io.i2c_slave_active & channel_mask) == 0u &&
+                   (cpu->io.i2c_slave_read & channel_mask) == 0u,
                "ten bit slave nack resets transmit state");
 
         dspic33_reset(cpu, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x02abu);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 10u), 0x02abu);
         dspic33_i2c_test_enable(cpu, channel, 0x0400u, 0u);
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
@@ -66,21 +69,21 @@ void dspic33_i2c_test_address_mode_cases(TestState* state, Dspic33* cpu) {
                "ten bit address without receive stretch");
         expect(state,
                dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) == 0u,
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 6u)) & 0x1000u) == 0u,
                "ten bit first address always stretches");
-        dspic33_read_word(cpu, base);
+        dspic33_read_word(cpu, register_base);
         dspic33_i2c_test_clear_interrupt(cpu, slave_irqs[channel]);
         expect(state,
                dspic33_device_advance(cpu, 1u) &&
                    !dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]),
                "ten bit second address waits for release");
-        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0x9400u);
         expect(state, dspic33_device_advance(cpu, 1u), "ten bit second address after release");
         expect(state,
                dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0100u) != 0u &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) == 0u &&
-                   dspic33_read_word(cpu, base) == 0x00abu,
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 0x0100u) != 0u &&
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 6u)) & 0x1000u) == 0u &&
+                   dspic33_read_word(cpu, register_base) == 0x00abu,
                "ten bit second address always stretches");
 
         dspic33_reset(cpu, 0u);
@@ -91,11 +94,11 @@ void dspic33_i2c_test_address_mode_cases(TestState* state, Dspic33* cpu) {
                "general call event");
         expect(state, dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]),
                "general call interrupt");
-        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0200u) != 0u,
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 0x0200u) != 0u,
                "general call status");
 
         dspic33_reset(cpu, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x12u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 10u), 0x12u);
         dspic33_i2c_test_enable(cpu, channel, 0x0c80u, 0u);
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x67u, false, false, 0u) &&
@@ -103,13 +106,13 @@ void dspic33_i2c_test_address_mode_cases(TestState* state, Dspic33* cpu) {
                "ipmi address event");
         expect(state,
                dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (cpu->io.i2c_slave_active & channel_bit) != 0u &&
-                   (cpu->io.i2c_slave_read & channel_bit) == 0u &&
-                   dspic33_read_word(cpu, base) == 0x00ceu,
+                   (cpu->io.i2c_slave_active & channel_mask) != 0u &&
+                   (cpu->io.i2c_slave_read & channel_mask) == 0u &&
+                   dspic33_read_word(cpu, register_base) == 0x00ceu,
                "ipmi accepts all addresses");
 
         dspic33_reset(cpu, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x0155u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 10u), 0x0155u);
         dspic33_i2c_test_enable(cpu, channel, 0x0080u, 0u);
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
@@ -117,12 +120,12 @@ void dspic33_i2c_test_address_mode_cases(TestState* state, Dspic33* cpu) {
                "non-ipmi ten bit preamble without address mode");
         expect(state,
                !dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (cpu->io.i2c_slave_rejected & channel_bit) != 0u &&
-                   (cpu->io.i2c_slave_active & channel_bit) == 0u,
+                   (cpu->io.i2c_slave_rejected & channel_mask) != 0u &&
+                   (cpu->io.i2c_slave_active & channel_mask) == 0u,
                "non-ipmi address mode controls preamble matching");
 
         dspic33_reset(cpu, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x0155u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 10u), 0x0155u);
         dspic33_i2c_test_enable(cpu, channel, 0x0400u, 0u);
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
@@ -130,12 +133,12 @@ void dspic33_i2c_test_address_mode_cases(TestState* state, Dspic33* cpu) {
                "non-ipmi mismatched ten bit preamble");
         expect(state,
                !dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (cpu->io.i2c_slave_rejected & channel_bit) != 0u &&
-                   (cpu->io.i2c_slave_active & channel_bit) == 0u,
+                   (cpu->io.i2c_slave_rejected & channel_mask) != 0u &&
+                   (cpu->io.i2c_slave_active & channel_mask) == 0u,
                "non-ipmi address controls preamble matching");
 
         dspic33_reset(cpu, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x0155u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 10u), 0x0155u);
         dspic33_i2c_test_enable(cpu, channel, 0x0c00u, 0u);
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
@@ -143,23 +146,23 @@ void dspic33_i2c_test_address_mode_cases(TestState* state, Dspic33* cpu) {
                "ipmi ten bit preamble with address mode");
         expect(state,
                dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (cpu->io.i2c_slave_rejected & channel_bit) == 0u &&
-                   (cpu->io.i2c_slave_active & channel_bit) != 0u &&
-                   dspic33_read_word(cpu, base) == 0x00f4u,
+                   (cpu->io.i2c_slave_rejected & channel_mask) == 0u &&
+                   (cpu->io.i2c_slave_active & channel_mask) != 0u &&
+                   dspic33_read_word(cpu, register_base) == 0x00f4u,
                "ipmi bypasses enabled ten bit address matching");
         dspic33_i2c_test_clear_interrupt(cpu, slave_irqs[channel]);
-        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9c00u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0x9c00u);
         expect(state,
                dspic33_device_advance(cpu, 1u) &&
                    dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0100u) != 0u &&
-                   (cpu->io.i2c_slave_rejected & channel_bit) == 0u &&
-                   (cpu->io.i2c_slave_active & channel_bit) != 0u &&
-                   dspic33_read_word(cpu, base) == 0x00abu,
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 0x0100u) != 0u &&
+                   (cpu->io.i2c_slave_rejected & channel_mask) == 0u &&
+                   (cpu->io.i2c_slave_active & channel_mask) != 0u &&
+                   dspic33_read_word(cpu, register_base) == 0x00abu,
                "ipmi bypasses enabled ten bit address low matching");
 
         dspic33_reset(cpu, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x0155u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 10u), 0x0155u);
         dspic33_i2c_test_enable(cpu, channel, 0x0880u, 0u);
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
@@ -167,47 +170,47 @@ void dspic33_i2c_test_address_mode_cases(TestState* state, Dspic33* cpu) {
                "ipmi ten bit preamble event");
         expect(state,
                dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (cpu->io.i2c_slave_rejected & channel_bit) == 0u &&
-                   (cpu->io.i2c_slave_active & channel_bit) != 0u &&
-                   (cpu->io.i2c_slave_read & channel_bit) == 0u &&
-                   dspic33_read_word(cpu, base) == 0x00f4u,
+                   (cpu->io.i2c_slave_rejected & channel_mask) == 0u &&
+                   (cpu->io.i2c_slave_active & channel_mask) != 0u &&
+                   (cpu->io.i2c_slave_read & channel_mask) == 0u &&
+                   dspic33_read_word(cpu, register_base) == 0x00f4u,
                "ipmi accepts ten bit preamble");
         dspic33_i2c_test_clear_interrupt(cpu, slave_irqs[channel]);
-        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9880u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0x9880u);
         expect(state, dspic33_device_advance(cpu, 1u), "ipmi ten bit address event");
         expect(state,
                dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0100u) != 0u &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) == 0u &&
-                   (cpu->io.i2c_slave_active & channel_bit) != 0u &&
-                   (cpu->io.i2c_slave_read & channel_bit) == 0u &&
-                   dspic33_read_word(cpu, base) == 0x00abu,
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 0x0100u) != 0u &&
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 6u)) & 0x1000u) == 0u &&
+                   (cpu->io.i2c_slave_active & channel_mask) != 0u &&
+                   (cpu->io.i2c_slave_read & channel_mask) == 0u &&
+                   dspic33_read_word(cpu, register_base) == 0x00abu,
                "ipmi ten bit address stretches");
         dspic33_i2c_test_clear_interrupt(cpu, slave_irqs[channel]);
-        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9880u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0x9880u);
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x02abu, true, true, 0u) &&
                    dspic33_device_advance(cpu, 0u),
                "ipmi ten bit read event");
         expect(state,
                dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x4107u) == 0x0106u &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) != 0u &&
-                   (cpu->io.i2c_slave_active & channel_bit) == 0u &&
-                   (cpu->io.i2c_slave_read & channel_bit) == 0u &&
-                   (cpu->io.i2c_slave_rejected & channel_bit) == 0u &&
-                   dspic33_read_word(cpu, base) == 0x00f5u,
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 0x4107u) == 0x0106u &&
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 6u)) & 0x1000u) != 0u &&
+                   (cpu->io.i2c_slave_active & channel_mask) == 0u &&
+                   (cpu->io.i2c_slave_read & channel_mask) == 0u &&
+                   (cpu->io.i2c_slave_rejected & channel_mask) == 0u &&
+                   dspic33_read_word(cpu, register_base) == 0x00f5u,
                "ipmi ten bit read aborts without stretching");
         dspic33_i2c_test_clear_interrupt(cpu, slave_irqs[channel]);
         expect(state,
                dspic33_i2c_slave_write(cpu, channel, 0x45u, 0u) &&
                    dspic33_device_advance(cpu, 0u) &&
                    !dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 2u) == 0u,
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 2u) == 0u,
                "ipmi ten bit read aborts slave transfer");
 
         dspic33_reset(cpu, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x12u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 10u), 0x12u);
         dspic33_i2c_test_enable(cpu, channel, 0x0c80u, 0u);
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x67u, true, false, 0u) &&
@@ -215,19 +218,19 @@ void dspic33_i2c_test_address_mode_cases(TestState* state, Dspic33* cpu) {
                "ipmi read address event");
         expect(state,
                dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x4007u) == 0x0006u &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 0x1000u) != 0u &&
-                   (cpu->io.i2c_slave_active & channel_bit) == 0u &&
-                   (cpu->io.i2c_slave_read & channel_bit) == 0u &&
-                   dspic33_read_word(cpu, base) == 0x00cfu,
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 0x4007u) == 0x0006u &&
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 6u)) & 0x1000u) != 0u &&
+                   (cpu->io.i2c_slave_active & channel_mask) == 0u &&
+                   (cpu->io.i2c_slave_read & channel_mask) == 0u &&
+                   dspic33_read_word(cpu, register_base) == 0x00cfu,
                "ipmi read interrupts without stretching");
         dspic33_i2c_test_clear_interrupt(cpu, slave_irqs[channel]);
         expect(state,
                dspic33_i2c_slave_write(cpu, channel, 0x44u, 0u) &&
                    dspic33_device_advance(cpu, 0u) &&
                    !dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 2u) == 0u &&
-                   dspic33_read_word(cpu, base) == 0x00cfu,
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 2u) == 0u &&
+                   dspic33_read_word(cpu, register_base) == 0x00cfu,
                "ipmi read aborts slave transfer");
     }
 }
