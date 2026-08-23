@@ -431,17 +431,18 @@ void dspic33_i2c_test_isolation_and_power_cases(TestState* state, Dspic33* cpu) 
            "second channel independent output");
 
     for (channel = 0u; channel < DSPIC33_I2C_COUNT; channel++) {
-        uint16_t control = (uint16_t)(bases[channel] + 6u);
+        uint16_t control_register = (uint16_t)(bases[channel] + 6u);
         dspic33_reset(cpu, 0u);
         dspic33_i2c_test_enable(cpu, channel, 0u, 0u);
-        dspic33_write_word(cpu, control, 0x8000u);
-        expect(state, dspic33_read_word(cpu, control) == 0x9000u,
+        dspic33_write_word(cpu, control_register, 0x8000u);
+        expect(state, dspic33_read_word(cpu, control_register) == 0x9000u,
                "software cannot clear release without stretch enable");
-        dspic33_write_word(cpu, control, 0x8040u);
-        expect(state, dspic33_read_word(cpu, control) == 0x8040u,
+        dspic33_write_word(cpu, control_register, 0x8040u);
+        expect(state, dspic33_read_word(cpu, control_register) == 0x8040u,
                "software clears release with stretch enable");
-        dspic33_write_word(cpu, control, 0u);
-        expect(state, dspic33_read_word(cpu, control) == 0x1000u, "module disable releases clock");
+        dspic33_write_word(cpu, control_register, 0u);
+        expect(state, dspic33_read_word(cpu, control_register) == 0x1000u,
+               "module disable releases clock");
     }
     dspic33_reset(cpu, 0u);
     dspic33_i2c_test_enable(cpu, 0u, 0u, 0u);
@@ -468,68 +469,71 @@ void dspic33_i2c_test_isolation_and_power_cases(TestState* state, Dspic33* cpu) 
            "idle resume completes module");
 
     for (channel = 0u; channel < DSPIC33_I2C_COUNT; channel++) {
-        uint16_t base = bases[channel];
-        uint64_t total = dspic33_i2c_test_control_cycles(9u);
-        uint64_t elapsed = 4u;
-        uint64_t remaining = total - elapsed;
+        uint16_t register_base = bases[channel];
+        uint64_t total_cycles = dspic33_i2c_test_control_cycles(9u);
+        uint64_t elapsed_cycles = 4u;
+        uint64_t remaining_cycles = total_cycles - elapsed_cycles;
 
         dspic33_reset(cpu, 0u);
         dspic33_i2c_test_enable(cpu, channel, 1u, 9u);
-        expect(state, dspic33_device_advance(cpu, elapsed), "power stop master partial advance");
+        expect(state, dspic33_device_advance(cpu, elapsed_cycles),
+               "power stop master partial advance");
         expect(state,
-               (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 1u) != 0u &&
+               (dspic33_read_word(cpu, (uint16_t)(register_base + 6u)) & 1u) != 0u &&
                    !dspic33_i2c_test_interrupt_flag(cpu, master_irqs[channel]),
                "power stop master remains pending");
         dspic33_write_word(cpu, pmd_addresses[channel], pmd_masks[channel]);
-        expect(state, dspic33_device_advance(cpu, total + 5u),
+        expect(state, dspic33_device_advance(cpu, total_cycles + 5u),
                "power stop master disabled advance");
         expect(state,
-               (dspic33_i2c_test_stored_word(cpu, (uint16_t)(base + 6u)) & 1u) != 0u &&
+               (dspic33_i2c_test_stored_word(cpu, (uint16_t)(register_base + 6u)) & 1u) != 0u &&
                    !dspic33_i2c_test_interrupt_flag(cpu, master_irqs[channel]),
                "power stop freezes master state");
         dspic33_write_word(cpu, pmd_addresses[channel], 0u);
-        expect(state, dspic33_device_advance(cpu, remaining - 1u),
+        expect(state, dspic33_device_advance(cpu, remaining_cycles - 1u),
                "power stop master remaining advance");
         expect(state,
-               (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 1u) != 0u &&
+               (dspic33_read_word(cpu, (uint16_t)(register_base + 6u)) & 1u) != 0u &&
                    !dspic33_i2c_test_interrupt_flag(cpu, master_irqs[channel]),
                "power stop master waits exact remainder");
         expect(state, dspic33_device_advance(cpu, 1u), "power stop master completion advance");
         expect(state,
-               (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 1u) == 0u &&
+               (dspic33_read_word(cpu, (uint16_t)(register_base + 6u)) & 1u) == 0u &&
                    dspic33_i2c_test_interrupt_flag(cpu, master_irqs[channel]) &&
                    dspic33_i2c_transmit(cpu, channel, &transfer) &&
                    transfer.type == DSPIC33_I2C_START,
                "power stop master completes after remainder");
 
-        total = dspic33_i2c_test_byte_cycles(3u);
-        elapsed = 12u;
-        remaining = total - elapsed;
+        total_cycles = dspic33_i2c_test_byte_cycles(3u);
+        elapsed_cycles = 12u;
+        remaining_cycles = total_cycles - elapsed_cycles;
         dspic33_reset(cpu, 0u);
         dspic33_i2c_test_enable(cpu, channel, 0u, 3u);
-        dspic33_write_word(cpu, (uint16_t)(base + 2u), 0x5au);
-        expect(state, dspic33_device_advance(cpu, elapsed), "power stop transmit partial advance");
+        dspic33_write_word(cpu, (uint16_t)(register_base + 2u), 0x5au);
+        expect(state, dspic33_device_advance(cpu, elapsed_cycles),
+               "power stop transmit partial advance");
         expect(state,
-               (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x4001u) == 0x4001u &&
+               (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 0x4001u) == 0x4001u &&
                    !dspic33_i2c_test_interrupt_flag(cpu, master_irqs[channel]),
                "power stop transmit remains active");
         dspic33_write_word(cpu, pmd_addresses[channel], pmd_masks[channel]);
-        expect(state, dspic33_device_advance(cpu, total + 5u),
+        expect(state, dspic33_device_advance(cpu, total_cycles + 5u),
                "power stop transmit disabled advance");
         expect(state,
-               (dspic33_i2c_test_stored_word(cpu, (uint16_t)(base + 8u)) & 0x4001u) == 0x4001u &&
+               (dspic33_i2c_test_stored_word(cpu, (uint16_t)(register_base + 8u)) & 0x4001u) ==
+                       0x4001u &&
                    !dspic33_i2c_test_interrupt_flag(cpu, master_irqs[channel]),
                "power stop freezes transmit state");
         dspic33_write_word(cpu, pmd_addresses[channel], 0u);
-        expect(state, dspic33_device_advance(cpu, remaining - 1u),
+        expect(state, dspic33_device_advance(cpu, remaining_cycles - 1u),
                "power stop transmit remaining advance");
         expect(state,
-               (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x4001u) == 0x4000u &&
+               (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 0x4001u) == 0x4000u &&
                    !dspic33_i2c_test_interrupt_flag(cpu, master_irqs[channel]),
                "power stop transmit waits exact remainder");
         expect(state, dspic33_device_advance(cpu, 1u), "power stop transmit completion advance");
         expect(state,
-               (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x4001u) == 0u &&
+               (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 0x4001u) == 0u &&
                    dspic33_i2c_test_interrupt_flag(cpu, master_irqs[channel]),
                "power stop transmit completes after remainder");
     }
