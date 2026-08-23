@@ -60,88 +60,91 @@ static void master_frame_slave_cases(TestState* state, Dspic33* cpu) {
 }
 
 static void clock_and_power_cases(TestState* state, Dspic33* cpu) {
-    uint8_t channel;
-    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-        uint16_t base = bases[channel];
-        uint16_t control = 0x143bu;
-        uint64_t cycles = dspic33_spi_test_transfer_cycles(control);
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_SPI_COUNT; channel_index++) {
+        const uint16_t spi_base = bases[channel_index];
+        const uint16_t spi_control = 0x143bu;
+        const uint64_t transfer_cycles = dspic33_spi_test_transfer_cycles(spi_control);
+        const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+
         dspic33_reset(cpu, 0u);
-        dspic33_spi_test_configure_spi(cpu, channel, control, 0u, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), 0x1111u);
+        dspic33_spi_test_configure_spi(cpu, channel_index, spi_control, 0u, 0u);
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0x1111u);
         expect(state, cpu->events.count == 0u, "disabled clock does not schedule");
-        dspic33_write_word(cpu, (uint16_t)(base + 2u), 0x043bu);
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 2u), 0x043bu);
         expect(state, cpu->events.count == 1u, "clock enable resumes transfer");
-        expect(state, dspic33_device_advance(cpu, cycles), "resumed clock completion advance");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0x1111u,
+        expect(state, dspic33_device_advance(cpu, transfer_cycles),
+               "resumed clock completion advance");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) == 0x1111u,
                "resumed clock transfer value");
 
         dspic33_reset(cpu, 0u);
-        dspic33_spi_test_configure_spi(cpu, channel, 0x043bu, 0u, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), 0x2222u);
+        dspic33_spi_test_configure_spi(cpu, channel_index, 0x043bu, 0u, 0u);
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0x2222u);
         cpu->power_state = DSPIC33_POWER_SLEEP;
         dspic33_device_power_state_changed(cpu);
-        expect(state,
-               (cpu->io.spi_busy & (uint8_t)(1u << channel)) == 0u && cpu->events.count == 0u,
+        expect(state, (cpu->io.spi_busy & channel_bit) == 0u && cpu->events.count == 0u,
                "master sleep aborts transfer immediately");
-        expect(state, dspic33_device_advance(cpu, cycles), "master sleep transfer advance");
+        expect(state, dspic33_device_advance(cpu, transfer_cycles),
+               "master sleep transfer advance");
         expect(state,
-               (dspic33_read_word(cpu, base) & 1u) == 0u &&
-                   (cpu->io.spi_busy & (uint8_t)(1u << channel)) == 0u,
+               (dspic33_read_word(cpu, spi_base) & 1u) == 0u &&
+                   (cpu->io.spi_busy & channel_bit) == 0u,
                "master sleep aborts transfer");
 
         dspic33_reset(cpu, 0u);
-        dspic33_spi_test_configure_spi(cpu, channel, 0x0400u, 0u, 0u);
+        dspic33_spi_test_configure_spi(cpu, channel_index, 0x0400u, 0u, 0u);
         cpu->power_state = DSPIC33_POWER_SLEEP;
         expect(state,
-               dspic33_spi_receive(cpu, channel, 0x3333u, 1u) && dspic33_device_advance(cpu, 1u),
+               dspic33_spi_receive(cpu, channel_index, 0x3333u, 1u) &&
+                   dspic33_device_advance(cpu, 1u),
                "slave sleep transaction advance");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0x3333u,
+        expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) == 0x3333u,
                "slave sleep completes transfer");
 
         dspic33_reset(cpu, 0u);
-        dspic33_spi_test_configure_spi(cpu, channel, 0u, 0u, 0u);
-        dspic33_write_word(cpu, base, 0xa000u);
+        dspic33_spi_test_configure_spi(cpu, channel_index, 0u, 0u, 0u);
+        dspic33_write_word(cpu, spi_base, 0xa000u);
         cpu->power_state = DSPIC33_POWER_IDLE;
         expect(state,
-               dspic33_spi_receive(cpu, channel, 0x55u, 1u) && dspic33_device_advance(cpu, 1u) &&
-                   (dspic33_read_word(cpu, base) & 1u) == 0u,
+               dspic33_spi_receive(cpu, channel_index, 0x55u, 1u) &&
+                   dspic33_device_advance(cpu, 1u) && (dspic33_read_word(cpu, spi_base) & 1u) == 0u,
                "stopped-idle slave ignores logical transfer input");
-        for (uint8_t index = 0u; index < 8u; index++) {
-            dspic33_spi_pin_input(cpu, channel, true, true, false);
-            dspic33_spi_pin_input(cpu, channel, false, true, false);
+        for (uint8_t edge_index = 0u; edge_index < 8u; edge_index++) {
+            dspic33_spi_pin_input(cpu, channel_index, true, true, false);
+            dspic33_spi_pin_input(cpu, channel_index, false, true, false);
         }
         expect(state,
-               cpu->io.spi_pin_bits[channel] == 0u && (dspic33_read_word(cpu, base) & 1u) == 0u,
+               cpu->io.spi_pin_bits[channel_index] == 0u &&
+                   (dspic33_read_word(cpu, spi_base) & 1u) == 0u,
                "stopped-idle slave ignores physical clock edges");
         cpu->power_state = DSPIC33_POWER_ACTIVE;
-        for (uint8_t index = 0u; index < 8u; index++) {
-            dspic33_spi_pin_input(cpu, channel, true, true, false);
-            dspic33_spi_pin_input(cpu, channel, false, true, false);
+        for (uint8_t edge_index = 0u; edge_index < 8u; edge_index++) {
+            dspic33_spi_pin_input(cpu, channel_index, true, true, false);
+            dspic33_spi_pin_input(cpu, channel_index, false, true, false);
         }
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0xffu,
+        expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) == 0xffu,
                "stopped-idle slave resumes on the next active physical edge");
 
         dspic33_reset(cpu, 0u);
-        dspic33_spi_test_configure_spi(cpu, channel, 0x043bu, 0u, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), 0x4444u);
+        dspic33_spi_test_configure_spi(cpu, channel_index, 0x043bu, 0u, 0u);
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0x4444u);
         cpu->power_state = DSPIC33_POWER_IDLE;
-        expect(state, dspic33_device_advance(cpu, cycles), "master idle running advance");
-        expect(state, (dspic33_read_word(cpu, base) & 1u) != 0u,
+        expect(state, dspic33_device_advance(cpu, transfer_cycles), "master idle running advance");
+        expect(state, (dspic33_read_word(cpu, spi_base) & 1u) != 0u,
                "master idle continues by default");
 
         dspic33_reset(cpu, 0u);
-        dspic33_spi_test_configure_spi(cpu, channel, 0x043bu, 0u, 0u);
-        dspic33_write_word(cpu, base, 0xa000u);
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), 0x5555u);
+        dspic33_spi_test_configure_spi(cpu, channel_index, 0x043bu, 0u, 0u);
+        dspic33_write_word(cpu, spi_base, 0xa000u);
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0x5555u);
         cpu->power_state = DSPIC33_POWER_IDLE;
         dspic33_device_power_state_changed(cpu);
-        expect(state,
-               (cpu->io.spi_busy & (uint8_t)(1u << channel)) == 0u && cpu->events.count == 0u,
+        expect(state, (cpu->io.spi_busy & channel_bit) == 0u && cpu->events.count == 0u,
                "stopped-idle master aborts transfer immediately");
-        expect(state, dspic33_device_advance(cpu, cycles), "master stopped idle advance");
+        expect(state, dspic33_device_advance(cpu, transfer_cycles), "master stopped idle advance");
         expect(state,
-               (dspic33_read_word(cpu, base) & 1u) == 0u &&
-                   (cpu->io.spi_busy & (uint8_t)(1u << channel)) == 0u,
+               (dspic33_read_word(cpu, spi_base) & 1u) == 0u &&
+                   (cpu->io.spi_busy & channel_bit) == 0u,
                "master stopped idle aborts transfer");
     }
 }
