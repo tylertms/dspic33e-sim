@@ -524,39 +524,43 @@ void dspic33_can_test_payload_and_remote_cases(TestState* state, Dspic33* cpu) {
 }
 
 void dspic33_can_test_devicenet_cases(TestState* state, Dspic33* cpu) {
-    uint8_t bits;
-    uint8_t length;
-    for (bits = 1u; bits <= 31u; bits++) {
-        for (length = 0u; length <= 3u; length++) {
-            Dspic33CanFrame input = dspic33_can_test_frame(0x321u, false, false, length, 0xa5u);
-            uint32_t data = 0u;
-            uint8_t compared = bits > 18u ? 18u : bits;
-            if (compared > length * 8u) {
-                compared = (uint8_t)(length * 8u);
+    for (uint8_t qualification_bits = 1u; qualification_bits <= 31u; qualification_bits++) {
+        for (uint8_t payload_length = 0u; payload_length <= 3u; payload_length++) {
+            const Dspic33CanFrame received_frame =
+                dspic33_can_test_frame(0x321u, false, false, payload_length, 0xa5u);
+            uint32_t payload_bits = 0u;
+            uint8_t compared_bits = qualification_bits > 18u ? 18u : qualification_bits;
+
+            if (compared_bits > payload_length * 8u) {
+                compared_bits = (uint8_t)(payload_length * 8u);
             }
-            if (length > 0u) {
-                data = (uint32_t)input.data[0] << 16u;
+            if (payload_length > 0u) {
+                payload_bits = (uint32_t)received_frame.data[0] << 16u;
             }
-            if (length > 1u) {
-                data |= (uint32_t)input.data[1] << 8u;
+            if (payload_length > 1u) {
+                payload_bits |= (uint32_t)received_frame.data[1] << 8u;
             }
-            if (length > 2u) {
-                data |= input.data[2];
+            if (payload_length > 2u) {
+                payload_bits |= received_frame.data[2];
             }
-            data = compared == 0u ? 0u : (data >> (24u - compared)) << (18u - compared);
+            payload_bits = compared_bits == 0u
+                               ? 0u
+                               : (payload_bits >> (24u - compared_bits)) << (18u - compared_bits);
+
             dspic33_reset(cpu, 0u);
             dspic33_can_test_configure_receive(cpu, 0u, 0x5000u, 4u, 0u);
             dspic33_can_test_configure_filter(cpu, 0u, 0u, 0x321u, false, 0x7ffu, true, 0u, 0u);
             dspic33_can_test_select_window(cpu, 0u, true);
             dspic33_write_word(cpu, 0x0430u, (uint16_t)((0x7ffu << 5u) | 8u));
-            dspic33_write_word(cpu, 0x0440u, (uint16_t)((0x321u << 5u) | (data >> 16u)));
-            dspic33_write_word(cpu, 0x0442u, (uint16_t)data);
+            dspic33_write_word(cpu, 0x0440u, (uint16_t)((0x321u << 5u) | (payload_bits >> 16u)));
+            dspic33_write_word(cpu, 0x0442u, (uint16_t)payload_bits);
             dspic33_can_test_enable_filter(cpu, 0u, 1u);
-            dspic33_write_word(cpu, 0x0402u, bits);
+            dspic33_write_word(cpu, 0x0402u, qualification_bits);
             dspic33_can_test_select_window(cpu, 0u, false);
             dspic33_can_test_set_mode(cpu, 0u, 0u);
             expect(state,
-                   dspic33_can_receive(cpu, 0u, &input, 0u) && dspic33_device_advance(cpu, 32u),
+                   dspic33_can_receive(cpu, 0u, &received_frame, 0u) &&
+                       dspic33_device_advance(cpu, 32u),
                    "DeviceNet matching transfer");
             expect(state, dspic33_can_test_receive_full(cpu, 0u, 0u), "DeviceNet match");
         }
