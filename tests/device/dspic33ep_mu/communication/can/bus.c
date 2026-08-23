@@ -603,50 +603,56 @@ void dspic33_can_test_bus_off_recovery_cases(TestState* state, Dspic33* cpu) {
 }
 
 void dspic33_can_test_error_counter_recovery_cases(TestState* state, Dspic33* cpu) {
-    for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-        uint16_t base = bases[channel];
-        uint32_t memory = (uint32_t)(0xe000u + channel * 0x100u);
-        Dspic33CanFrame input = dspic33_can_test_frame(0x234u, false, false, 1u, 0x5au);
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
+        const uint16_t can_base = bases[channel_index];
+        const uint32_t memory_address = (uint32_t)(0xe000u + channel_index * 0x100u);
+        Dspic33CanFrame received_frame = dspic33_can_test_frame(0x234u, false, false, 1u, 0x5au);
+
         dspic33_reset(cpu, 0u);
-        dspic33_can_test_configure_receive(cpu, channel, memory, 4u, 0u);
-        dspic33_can_test_configure_filter(cpu, channel, 0u, 0x234u, false, 0x7ffu, true, 0u, 0u);
-        dspic33_can_test_enable_filter(cpu, channel, 1u);
-        dspic33_can_test_select_window(cpu, channel, false);
-        dspic33_can_test_set_mode(cpu, channel, 0u);
+        dspic33_can_test_configure_receive(cpu, channel_index, memory_address, 4u, 0u);
+        dspic33_can_test_configure_filter(cpu, channel_index, 0u, 0x234u, false, 0x7ffu, true, 0u,
+                                          0u);
+        dspic33_can_test_enable_filter(cpu, channel_index, 1u);
+        dspic33_can_test_select_window(cpu, channel_index, false);
+        dspic33_can_test_set_mode(cpu, channel_index, 0u);
         expect(state,
-               dspic33_can_error(cpu, channel, false, 1u, 0u) && dspic33_device_advance(cpu, 0u) &&
-                   dspic33_can_receive(cpu, channel, &input, 0u) &&
+               dspic33_can_error(cpu, channel_index, false, 1u, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   dspic33_can_receive(cpu, channel_index, &received_frame, 0u) &&
                    dspic33_device_advance(cpu, 32u) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0eu)) & 0x00ffu) == 0u,
+                   (dspic33_read_word(cpu, (uint16_t)(can_base + 0x0eu)) & 0x00ffu) == 0u,
                "successful CAN reception decrements REC below error-passive");
 
         dspic33_reset(cpu, 0u);
-        dspic33_can_test_configure_receive(cpu, channel, memory, 4u, 0u);
-        dspic33_can_test_configure_filter(cpu, channel, 0u, 0x234u, false, 0x7ffu, true, 0u, 0u);
-        dspic33_can_test_enable_filter(cpu, channel, 1u);
-        dspic33_can_test_select_window(cpu, channel, false);
-        dspic33_can_test_set_mode(cpu, channel, 0u);
-        expect(
-            state,
-            dspic33_can_error(cpu, channel, false, 128u, 0u) && dspic33_device_advance(cpu, 0u) &&
-                dspic33_can_receive(cpu, channel, &input, 0u) && dspic33_device_advance(cpu, 32u) &&
-                (dspic33_read_word(cpu, (uint16_t)(base + 0x0eu)) & 0x00ffu) == 127u &&
-                (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x0800u) == 0u,
-            "successful CAN reception leaves error-passive in the documented range");
+        dspic33_can_test_configure_receive(cpu, channel_index, memory_address, 4u, 0u);
+        dspic33_can_test_configure_filter(cpu, channel_index, 0u, 0x234u, false, 0x7ffu, true, 0u,
+                                          0u);
+        dspic33_can_test_enable_filter(cpu, channel_index, 1u);
+        dspic33_can_test_select_window(cpu, channel_index, false);
+        dspic33_can_test_set_mode(cpu, channel_index, 0u);
+        expect(state,
+               dspic33_can_error(cpu, channel_index, false, 128u, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   dspic33_can_receive(cpu, channel_index, &received_frame, 0u) &&
+                   dspic33_device_advance(cpu, 32u) &&
+                   (dspic33_read_word(cpu, (uint16_t)(can_base + 0x0eu)) & 0x00ffu) == 127u &&
+                   (dspic33_read_word(cpu, (uint16_t)(can_base + 0x0au)) & 0x0800u) == 0u,
+               "successful CAN reception leaves error-passive in the documented range");
 
         dspic33_reset(cpu, 0u);
-        dspic33_can_test_configure_receive(cpu, channel, memory, 4u, 0u);
-        dspic33_can_test_configure_filter(cpu, channel, 0u, 0x234u, false, 0x7ffu, true, 0u, 0u);
-        dspic33_can_test_enable_filter(cpu, channel, 1u);
-        dspic33_can_test_select_window(cpu, channel, false);
-        dspic33_can_test_set_mode(cpu, channel, 0u);
-        bool prepared =
-            dspic33_can_error(cpu, channel, false, 5u, 0u) && dspic33_device_advance(cpu, 0u);
-        dspic33_can_test_set_mode(cpu, channel, 3u);
+        dspic33_can_test_configure_receive(cpu, channel_index, memory_address, 4u, 0u);
+        dspic33_can_test_configure_filter(cpu, channel_index, 0u, 0x234u, false, 0x7ffu, true, 0u,
+                                          0u);
+        dspic33_can_test_enable_filter(cpu, channel_index, 1u);
+        dspic33_can_test_select_window(cpu, channel_index, false);
+        dspic33_can_test_set_mode(cpu, channel_index, 0u);
+        bool counters_prepared =
+            dspic33_can_error(cpu, channel_index, false, 5u, 0u) && dspic33_device_advance(cpu, 0u);
+        dspic33_can_test_set_mode(cpu, channel_index, 3u);
         expect(state,
-               prepared && dspic33_can_receive(cpu, channel, &input, 0u) &&
+               counters_prepared && dspic33_can_receive(cpu, channel_index, &received_frame, 0u) &&
                    dspic33_device_advance(cpu, 32u) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0eu)) & 0x00ffu) == 5u,
+                   (dspic33_read_word(cpu, (uint16_t)(can_base + 0x0eu)) & 0x00ffu) == 5u,
                "listen-only CAN reception freezes REC");
     }
 }
