@@ -150,7 +150,8 @@ static void external_event_cases(TestState* state, Dspic33* cpu) {
 }
 
 static void event_queue_boundary_cases(TestState* state, Dspic33* cpu) {
-    bool high = true;
+    bool is_high = true;
+
     dspic33_reset(cpu, 0u);
     expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 0u, 0u, 0u),
            "schedule unrelated event");
@@ -163,25 +164,25 @@ static void event_queue_boundary_cases(TestState* state, Dspic33* cpu) {
     cpu->io.dci.generation = 2u;
     expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_DCI, DCI_TEST_EVENT_INTERNAL, 2u, 1000u),
            "schedule malformed DCI phase event");
-    expect(state, dspic33_device_internal_dci_frame_output(cpu, &high) && !high,
+    expect(state, dspic33_device_internal_dci_frame_output(cpu, &is_high) && !is_high,
            "DCI frame output rejects impossible event phase");
 
     cpu->events.count = 0u;
     expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_DCI, DCI_TEST_EVENT_SAMPLE, 2u, 0u),
            "schedule non-phase DCI event");
-    expect(state, dspic33_device_internal_dci_frame_output(cpu, &high) && !high,
+    expect(state, dspic33_device_internal_dci_frame_output(cpu, &is_high) && !is_high,
            "DCI frame output ignores a non-phase event");
 
     cpu->events.count = 0u;
     expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_DCI, DCI_TEST_EVENT_INTERNAL, 1u, 0u),
            "schedule stale DCI phase event");
-    expect(state, dspic33_device_internal_dci_frame_output(cpu, &high) && !high,
+    expect(state, dspic33_device_internal_dci_frame_output(cpu, &is_high) && !is_high,
            "DCI frame output ignores a stale phase event");
 
     cpu->events.items[0].value = 2u;
     cpu->events.items[0].paused = true;
     cpu->events.items[0].paused_remaining = 0u;
-    expect(state, dspic33_device_internal_dci_frame_output(cpu, &high),
+    expect(state, dspic33_device_internal_dci_frame_output(cpu, &is_high),
            "DCI frame output accepts a paused current phase event");
 
     cpu->events.count = 0u;
@@ -210,27 +211,28 @@ static void event_queue_boundary_cases(TestState* state, Dspic33* cpu) {
 }
 
 static void output_boundary_cases(TestState* state, Dspic33* cpu) {
-    bool high = true;
+    bool is_high = true;
+
     dspic33_reset(cpu, 0u);
     dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL1, DCI_TRISTATE);
     dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL2, 3u);
     dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL3, 1u);
-    expect(state, !dspic33_device_internal_dci_data_output(cpu, &high),
+    expect(state, !dspic33_device_internal_dci_data_output(cpu, &is_high),
            "inactive tristated DCI has no data output");
-    expect(state, dspic33_device_internal_dci_frame_output(cpu, &high) && !high,
+    expect(state, dspic33_device_internal_dci_frame_output(cpu, &is_high) && !is_high,
            "inactive internal DCI frame is low");
-    expect(state, dspic33_device_internal_dci_internal_clock_high(cpu, &high),
+    expect(state, dspic33_device_internal_dci_internal_clock_high(cpu, &is_high),
            "configured internal DCI owns its clock");
 
     dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL1, DCI_EXTERNAL_CLOCK);
-    expect(state, !dspic33_device_internal_dci_internal_clock_high(cpu, &high),
+    expect(state, !dspic33_device_internal_dci_internal_clock_high(cpu, &is_high),
            "external DCI does not own its clock");
-    expect(state, dspic33_device_internal_dci_frame_output(cpu, &high) && !high,
+    expect(state, dspic33_device_internal_dci_frame_output(cpu, &is_high) && !is_high,
            "inactive external DCI frame is low");
     cpu->io.dci.pmd_disabled = true;
     dspic33_write_word(cpu, DCI_PMD, 0u);
     dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL1, 0u);
-    expect(state, !dspic33_device_internal_dci_internal_clock_high(cpu, &high),
+    expect(state, !dspic33_device_internal_dci_internal_clock_high(cpu, &is_high),
            "PMD-disabled DCI does not own its clock");
 
     dspic33_reset(cpu, 0u);
@@ -238,13 +240,13 @@ static void output_boundary_cases(TestState* state, Dspic33* cpu) {
     dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL1, 0u);
     dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL2, 3u);
     dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL3, 0u);
-    expect(state, !dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high),
+    expect(state, !dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &is_high),
            "unclocked DCI does not drive its mapped clock pin");
     dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL1, DCI_EXTERNAL_CLOCK);
-    expect(state, !dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high),
+    expect(state, !dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &is_high),
            "disabled external DCI does not drive its mapped clock pin");
     cpu->io.dci.disable_pending = true;
-    expect(state, !dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high),
+    expect(state, !dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &is_high),
            "deferred DCI disable does not assign an external clock output");
 }
 
