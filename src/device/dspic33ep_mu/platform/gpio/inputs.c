@@ -11,29 +11,30 @@ bool dspic33_device_internal_oscillator_pin_clock_output(const Dspic33* cpu) {
 }
 
 uint16_t dspic33_device_internal_gpio_pin_values(const Dspic33* cpu, uint8_t port) {
-    uint16_t tris = dspic33_device_internal_raw_word(cpu, dspic33_device_gpio_tris_addresses[port]);
-    uint16_t lat = dspic33_device_internal_raw_word(cpu, dspic33_device_gpio_latch_addresses[port]);
-    uint16_t open_drain =
+    uint16_t tris_mask =
+        dspic33_device_internal_raw_word(cpu, dspic33_device_gpio_tris_addresses[port]);
+    uint16_t latch_value =
+        dspic33_device_internal_raw_word(cpu, dspic33_device_gpio_latch_addresses[port]);
+    uint16_t open_drain_mask =
         dspic33_device_internal_raw_word(cpu, dspic33_device_gpio_open_drain_addresses[port]);
-    uint16_t driven = cpu->io.gpio_driven[port];
-    uint16_t pull_up =
+    uint16_t driven_mask = cpu->io.gpio_driven[port];
+    uint16_t pull_up_mask =
         dspic33_device_internal_raw_word(cpu, dspic33_device_gpio_pull_up_addresses[port]);
-    uint16_t pull_down =
+    uint16_t pull_down_mask =
         dspic33_device_internal_raw_word(cpu, dspic33_device_gpio_pull_down_addresses[port]);
-    uint16_t inputs = (uint16_t)(tris | dspic33_device_gpio_input_only_masks[port]);
-    uint16_t analog =
+    uint16_t input_mask = (uint16_t)(tris_mask | dspic33_device_gpio_input_only_masks[port]);
+    uint16_t analog_mask =
         dspic33_device_gpio_analog_addresses[port] != 0u
             ? dspic33_device_internal_raw_word(cpu, dspic33_device_gpio_analog_addresses[port])
             : 0u;
     if ((cpu->io.adc_pmd_disabled & 1u) != 0u) {
-        analog = 0u;
+        analog_mask = 0u;
     } else if (port == 1u && (cpu->io.adc_pmd_disabled & 2u) != 0u) {
-        analog = 0u;
+        analog_mask = 0u;
     }
-    uint16_t external =
-        (uint16_t)((cpu->io.gpio[port] & driven) | (pull_up & ~driven & ~pull_down));
-    uint16_t values;
-    uint8_t pin;
+    uint16_t external_level = (uint16_t)((cpu->io.gpio[port] & driven_mask) |
+                                         (pull_up_mask & ~driven_mask & ~pull_down_mask));
+    uint16_t pin_values;
     if (port == 2u && (cpu->configuration[8u] & 0x04u) == 0u) {
         uint8_t source = dspic33_device_internal_oscillator_current_source(
             dspic33_device_internal_raw_word(cpu, OSCILLATOR_CONTROL));
@@ -43,61 +44,66 @@ uint16_t dspic33_device_internal_gpio_pin_values(const Dspic33* cpu, uint8_t por
         if ((frc || external_clock) &&
             (dspic33_device_internal_raw_word(cpu, dspic33_device_gpio_open_drain_addresses[0]) &
              0x0008u) != 0u) {
-            open_drain |= 0x8000u;
+            open_drain_mask |= 0x8000u;
         }
     }
     if (port == 6u && (dspic33_device_internal_raw_word(cpu, USB_CON) & USB_ENABLE) != 0u) {
-        analog |= 0x000cu;
+        analog_mask |= 0x000cu;
     }
-    values = (uint16_t)(((external & inputs & ~analog) | (lat & ~inputs & ~open_drain) |
-                         (external & ~inputs & open_drain & lat)) &
-                        dspic33_device_internal_gpio_port_mask(cpu, port));
-    for (pin = 0u; pin < 16u; pin++) {
+    pin_values = (uint16_t)(((external_level & input_mask & ~analog_mask) |
+                             (latch_value & ~input_mask & ~open_drain_mask) |
+                             (external_level & ~input_mask & open_drain_mask & latch_value)) &
+                            dspic33_device_internal_gpio_port_mask(cpu, port));
+    for (uint8_t pin = 0u; pin < 16u; pin++) {
         bool high;
-        uint16_t bit = (uint16_t)(1u << pin);
+        uint16_t pin_bit = (uint16_t)(1u << pin);
         if (dspic33_device_internal_pwm_pin_value(cpu, port, pin, &high)) {
-            values = high ? (uint16_t)(values | bit) : (uint16_t)(values & ~bit);
+            pin_values =
+                high ? (uint16_t)(pin_values | pin_bit) : (uint16_t)(pin_values & ~pin_bit);
         } else if (dspic33_device_internal_uart_pps_output_value(cpu, port, pin, &high)) {
-            if (high && (open_drain & bit) != 0u) {
-                values =
-                    (external & bit) != 0u ? (uint16_t)(values | bit) : (uint16_t)(values & ~bit);
+            if (high && (open_drain_mask & pin_bit) != 0u) {
+                pin_values = (external_level & pin_bit) != 0u ? (uint16_t)(pin_values | pin_bit)
+                                                              : (uint16_t)(pin_values & ~pin_bit);
             } else {
-                values = high ? (uint16_t)(values | bit) : (uint16_t)(values & ~bit);
+                pin_values =
+                    high ? (uint16_t)(pin_values | pin_bit) : (uint16_t)(pin_values & ~pin_bit);
             }
         } else if (dspic33_device_internal_qei_pps_output_value(cpu, port, pin, &high)) {
-            if (high && (open_drain & bit) != 0u) {
-                values =
-                    (external & bit) != 0u ? (uint16_t)(values | bit) : (uint16_t)(values & ~bit);
+            if (high && (open_drain_mask & pin_bit) != 0u) {
+                pin_values = (external_level & pin_bit) != 0u ? (uint16_t)(pin_values | pin_bit)
+                                                              : (uint16_t)(pin_values & ~pin_bit);
             } else {
-                values = high ? (uint16_t)(values | bit) : (uint16_t)(values & ~bit);
+                pin_values =
+                    high ? (uint16_t)(pin_values | pin_bit) : (uint16_t)(pin_values & ~pin_bit);
             }
         }
     }
     if (port == 2u && dspic33_device_internal_oscillator_pin_owned(cpu)) {
-        values &= 0x7fffu;
+        pin_values &= 0x7fffu;
     }
-    return values;
+    return pin_values;
 }
 
 static uint16_t gpio_change_notification_qualified(const Dspic33* cpu, uint8_t port) {
-    uint16_t inputs =
+    uint16_t input_mask =
         (uint16_t)(dspic33_device_internal_raw_word(cpu, dspic33_device_gpio_tris_addresses[port]) |
                    dspic33_device_gpio_input_only_masks[port]);
-    uint16_t analog =
+    uint16_t analog_mask =
         dspic33_device_gpio_analog_addresses[port] != 0u
             ? dspic33_device_internal_raw_word(cpu, dspic33_device_gpio_analog_addresses[port])
             : 0u;
     if ((cpu->io.adc_pmd_disabled & 1u) != 0u) {
-        analog = 0u;
+        analog_mask = 0u;
     } else if (port == 1u && (cpu->io.adc_pmd_disabled & 2u) != 0u) {
-        analog = 0u;
+        analog_mask = 0u;
     }
     if (port == 6u && (dspic33_device_internal_raw_word(cpu, USB_CON) & USB_ENABLE) != 0u) {
-        analog |= 0x000cu;
+        analog_mask |= 0x000cu;
     }
     return (uint16_t)(dspic33_device_internal_raw_word(
                           cpu, dspic33_device_gpio_change_notification_addresses[port]) &
-                      inputs & ~analog & dspic33_device_internal_gpio_port_mask(cpu, port));
+                      input_mask & ~analog_mask &
+                      dspic33_device_internal_gpio_port_mask(cpu, port));
 }
 
 static uint16_t gpio_change_notification_mismatch(const Dspic33* cpu, uint8_t port) {
@@ -107,17 +113,16 @@ static uint16_t gpio_change_notification_mismatch(const Dspic33* cpu, uint8_t po
 
 void dspic33_device_internal_refresh_gpio_change_notification(Dspic33* cpu) {
     bool changed = false;
-    uint8_t port;
-    for (port = 0u; port < DSPIC33_GPIO_PORT_COUNT; port++) {
+    for (uint8_t port = 0u; port < DSPIC33_GPIO_PORT_COUNT; port++) {
         uint16_t previous_mismatch = gpio_change_notification_mismatch(cpu, port);
-        uint16_t values = dspic33_device_internal_gpio_pin_values(cpu, port);
-        uint16_t qualified = gpio_change_notification_qualified(cpu, port);
-        uint16_t newly_qualified = (uint16_t)(qualified & ~cpu->io.gpio_cn_qualified[port]);
+        uint16_t pin_values = dspic33_device_internal_gpio_pin_values(cpu, port);
+        uint16_t qualified_mask = gpio_change_notification_qualified(cpu, port);
+        uint16_t newly_qualified = (uint16_t)(qualified_mask & ~cpu->io.gpio_cn_qualified[port]);
         cpu->io.gpio_cn_reference[port] =
-            (uint16_t)((cpu->io.gpio_cn_reference[port] & qualified & ~newly_qualified) |
-                       (values & (~qualified | newly_qualified)));
-        cpu->io.gpio_cn_values[port] = values;
-        cpu->io.gpio_cn_qualified[port] = qualified;
+            (uint16_t)((cpu->io.gpio_cn_reference[port] & qualified_mask & ~newly_qualified) |
+                       (pin_values & (~qualified_mask | newly_qualified)));
+        cpu->io.gpio_cn_values[port] = pin_values;
+        cpu->io.gpio_cn_qualified[port] = qualified_mask;
         changed =
             changed || (gpio_change_notification_mismatch(cpu, port) & ~previous_mismatch) != 0u;
     }
