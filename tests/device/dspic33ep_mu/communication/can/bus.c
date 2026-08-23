@@ -548,53 +548,57 @@ static bool drive_can_recessive_bits(Dspic33* cpu, uint8_t pin_number, uint16_t 
 }
 
 void dspic33_can_test_bus_off_recovery_cases(TestState* state, Dspic33* cpu) {
-    for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-        uint16_t base = bases[channel];
-        uint32_t memory = (uint32_t)(0xde00u + channel * 0x100u);
-        uint8_t function = (uint8_t)(14u + channel);
-        bool high;
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
+        const uint16_t can_base = bases[channel_index];
+        const uint32_t memory_address = (uint32_t)(0xde00u + channel_index * 0x100u);
+        const uint8_t pps_output_function = (uint8_t)(14u + channel_index);
+        bool pin_level;
+
         dspic33_reset(cpu, 0u);
         dspic33_write_word(cpu, 0x0e30u, 0xffffu);
         dspic33_write_word(cpu, 0x0e3eu, 0u);
-        dspic33_write_word(cpu, 0x0680u, function);
-        dspic33_write_word(cpu, 0x06d4u, channel == 0u ? 65u : (uint16_t)(65u << 8u));
-        dspic33_can_test_configure_transmit(cpu, channel, memory);
-        Dspic33CanFrame input =
-            dspic33_can_test_frame((uint32_t)(0x300u + channel), false, false, 0u, 0u);
-        dspic33_can_test_write_transmit_frame(cpu, memory, &input);
-        dspic33_can_test_select_window(cpu, channel, false);
-        dspic33_write_word(cpu, (uint16_t)(base + 0x10u), 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 0x12u), 0u);
-        dspic33_can_test_set_mode(cpu, channel, 0u);
+        dspic33_write_word(cpu, 0x0680u, pps_output_function);
+        dspic33_write_word(cpu, 0x06d4u, channel_index == 0u ? 65u : (uint16_t)(65u << 8u));
+
+        dspic33_can_test_configure_transmit(cpu, channel_index, memory_address);
+        Dspic33CanFrame transmitted_frame =
+            dspic33_can_test_frame((uint32_t)(0x300u + channel_index), false, false, 0u, 0u);
+        dspic33_can_test_write_transmit_frame(cpu, memory_address, &transmitted_frame);
+        dspic33_can_test_select_window(cpu, channel_index, false);
+        dspic33_write_word(cpu, (uint16_t)(can_base + 0x10u), 0u);
+        dspic33_write_word(cpu, (uint16_t)(can_base + 0x12u), 0u);
+        dspic33_can_test_set_mode(cpu, channel_index, 0u);
+
         expect(state,
-               dspic33_can_error(cpu, channel, true, 248u, 0u) && dspic33_device_advance(cpu, 0u) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0eu)) >> 8u) == 248u,
+               dspic33_can_error(cpu, channel_index, true, 248u, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   (dspic33_read_word(cpu, (uint16_t)(can_base + 0x0eu)) >> 8u) == 248u,
                "CAN transmitter reaches the bus-off boundary precursor");
-        dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x008bu);
+        dspic33_write_word(cpu, (uint16_t)(can_base + 0x30u), 0x008bu);
         expect(state,
                dspic33_device_advance(cpu, 8u) &&
-                   drive_unacknowledged_can_frame(cpu, channel, 64u, 65u, 4u) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x2000u) != 0u &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) & 0x0018u) == 0x0018u,
+                   drive_unacknowledged_can_frame(cpu, channel_index, 64u, 65u, 4u) &&
+                   (dspic33_read_word(cpu, (uint16_t)(can_base + 0x0au)) & 0x2000u) != 0u &&
+                   (dspic33_read_word(cpu, (uint16_t)(can_base + 0x30u)) & 0x0018u) == 0x0018u,
                "missing ACK at TEC 248 enters CAN bus-off");
         expect(state,
-               dspic33_can_pin(cpu, 64u, &high) && high && cpu->io.can_tx_error_active == 0u &&
-                   cpu->io.can_tx_retry_wait == 0u,
+               dspic33_can_pin(cpu, 64u, &pin_level) && pin_level &&
+                   cpu->io.can_tx_error_active == 0u && cpu->io.can_tx_retry_wait == 0u,
                "bus-off CAN controller releases the bus and suppresses retry");
         expect(state,
                drive_can_recessive_bits(cpu, 65u, 10u) &&
                    dspic33_can_input_pin(cpu, 65u, false, 0u) && dspic33_device_advance(cpu, 4u) &&
                    drive_can_recessive_bits(cpu, 65u, 1407u) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x2000u) != 0u &&
-                   cpu->io.can_bus_off_recessive_bits[channel] == 1407u,
+                   (dspic33_read_word(cpu, (uint16_t)(can_base + 0x0au)) & 0x2000u) != 0u &&
+                   cpu->io.can_bus_off_recessive_bits[channel_index] == 1407u,
                "dominant CAN bit resets the bus-off recovery sequence");
         expect(state,
                drive_can_recessive_bits(cpu, 65u, 1u) && dspic33_device_advance(cpu, 4u) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x3f00u) == 0u &&
-                   dspic33_read_word(cpu, (uint16_t)(base + 0x0eu)) == 0u &&
-                   (cpu->io.can_tx_on_bus & (uint8_t)(1u << channel)) != 0u,
+                   (dspic33_read_word(cpu, (uint16_t)(can_base + 0x0au)) & 0x3f00u) == 0u &&
+                   dspic33_read_word(cpu, (uint16_t)(can_base + 0x0eu)) == 0u &&
+                   (cpu->io.can_tx_on_bus & (uint8_t)(1u << channel_index)) != 0u,
                "CAN recovers after 128 occurrences of 11 recessive bits");
-        dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x0093u);
+        dspic33_write_word(cpu, (uint16_t)(can_base + 0x30u), 0x0093u);
     }
 }
 
