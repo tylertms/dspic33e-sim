@@ -639,24 +639,26 @@ Dspic33CanSerialResult dspic33_device_internal_can_decode_serial(const Dspic33* 
 }
 
 uint64_t dspic33_device_internal_can_sample_cycles(const Dspic33* cpu, uint8_t channel) {
-    uint16_t config1 = dspic33_device_internal_raw_word(
+    uint16_t timing_config1 = dspic33_device_internal_raw_word(
         cpu, (uint16_t)(dspic33_device_can_bases[channel] + 0x10u));
-    uint16_t config2 = dspic33_device_internal_raw_word(
+    uint16_t timing_config2 = dspic33_device_internal_raw_word(
         cpu, (uint16_t)(dspic33_device_can_bases[channel] + 0x12u));
-    uint16_t control = dspic33_device_internal_raw_word(cpu, dspic33_device_can_bases[channel]);
-    uint64_t prescaler = (config1 & 0x003fu) + 1u;
-    uint64_t quanta = 1u + (config2 & 7u) + 1u + ((config2 >> 3u) & 7u) + 1u;
-    uint64_t clock_divisor = (control & 0x0800u) != 0u ? 2u : 1u;
-    return prescaler * quanta * clock_divisor;
+    uint16_t control_word =
+        dspic33_device_internal_raw_word(cpu, dspic33_device_can_bases[channel]);
+    uint64_t prescaler = (timing_config1 & 0x003fu) + 1u;
+    uint64_t time_quanta = 1u + (timing_config2 & 7u) + 1u + ((timing_config2 >> 3u) & 7u) + 1u;
+    uint64_t peripheral_clock_divisor = (control_word & 0x0800u) != 0u ? 2u : 1u;
+    return prescaler * time_quanta * peripheral_clock_divisor;
 }
 
 uint64_t dspic33_device_internal_can_time_quantum(const Dspic33* cpu, uint8_t channel) {
-    uint16_t config1 = dspic33_device_internal_raw_word(
+    uint16_t timing_config1 = dspic33_device_internal_raw_word(
         cpu, (uint16_t)(dspic33_device_can_bases[channel] + 0x10u));
-    uint16_t control = dspic33_device_internal_raw_word(cpu, dspic33_device_can_bases[channel]);
-    uint64_t prescaler = (config1 & 0x003fu) + 1u;
-    uint64_t clock_divisor = (control & 0x0800u) != 0u ? 2u : 1u;
-    return prescaler * clock_divisor;
+    uint16_t control_word =
+        dspic33_device_internal_raw_word(cpu, dspic33_device_can_bases[channel]);
+    uint64_t prescaler = (timing_config1 & 0x003fu) + 1u;
+    uint64_t peripheral_clock_divisor = (control_word & 0x0800u) != 0u ? 2u : 1u;
+    return prescaler * peripheral_clock_divisor;
 }
 
 bool dspic33_device_internal_can_triple_sample(const Dspic33* cpu, uint8_t channel) {
@@ -666,26 +668,29 @@ bool dspic33_device_internal_can_triple_sample(const Dspic33* cpu, uint8_t chann
 }
 
 static uint8_t can_receive_pps_pin(const Dspic33* cpu, uint8_t channel) {
-    uint16_t mapping = dspic33_device_internal_raw_word(cpu, 0x06d4u);
-    return channel == 0u ? (uint8_t)(mapping & 0x007fu) : (uint8_t)((mapping >> 8u) & 0x007fu);
+    uint16_t pps_mapping = dspic33_device_internal_raw_word(cpu, 0x06d4u);
+    return channel == 0u ? (uint8_t)(pps_mapping & 0x007fu)
+                         : (uint8_t)((pps_mapping >> 8u) & 0x007fu);
 }
 
 bool dspic33_device_internal_can_serial_receive_enabled(const Dspic33* cpu, uint8_t channel) {
-    uint8_t mode = dspic33_device_internal_can_mode(cpu, channel);
+    uint8_t can_mode = dspic33_device_internal_can_mode(cpu, channel);
+
     return dspic33_device_internal_can_power_enabled(cpu, channel) &&
            cpu->power_state != DSPIC33_POWER_SLEEP &&
            (dspic33_device_internal_raw_word(
                 cpu, (uint16_t)(dspic33_device_can_bases[channel] + 0x0au)) &
             CAN_BUS_OFF) == 0u &&
-           (mode == CAN_MODE_NORMAL || mode == CAN_MODE_LISTEN || mode == CAN_MODE_LISTEN_ALL);
+           (can_mode == CAN_MODE_NORMAL || can_mode == CAN_MODE_LISTEN ||
+            can_mode == CAN_MODE_LISTEN_ALL);
 }
 
 bool dspic33_device_internal_can_schedule_mode_transition(Dspic33* cpu, uint8_t channel,
                                                           uint8_t mode) {
-    uint32_t value =
+    uint32_t mode_transition_event =
         CAN_EVENT_MODE_TRANSITION | ((uint32_t)mode << CAN_EVENT_MODE_SHIFT) |
         ((uint32_t)cpu->io.can_mode_generation[channel] << CAN_EVENT_MODE_GENERATION_SHIFT);
-    return dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, value,
+    return dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, mode_transition_event,
                             11u * dspic33_device_internal_can_bit_cycles(cpu, channel));
 }
 
