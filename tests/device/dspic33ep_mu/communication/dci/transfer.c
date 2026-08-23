@@ -143,15 +143,16 @@ void dspic33_dci_test_pps_frame_cases(TestState* state, Dspic33* cpu) {
 
 void dspic33_dci_test_pps_serial_matrix_cases(TestState* state, Dspic33* cpu) {
     uint8_t dci_mode;
+
     for (dci_mode = 0u; dci_mode < 2u; dci_mode++) {
-        uint8_t width;
-        for (width = 4u; width <= 16u; width++) {
+        uint8_t serial_width;
+        for (serial_width = 4u; serial_width <= 16u; serial_width++) {
             uint8_t sample_on_rising;
             for (sample_on_rising = 0u; sample_on_rising < 2u; sample_on_rising++) {
                 uint8_t data_justified;
                 for (data_justified = 0u; data_justified < 2u; data_justified++) {
                     uint16_t serial_word =
-                        (uint16_t)(0xa55au & dspic33_dci_test_serial_word_mask(width));
+                        (uint16_t)(0xa55au & dspic33_dci_test_serial_word_mask(serial_width));
                     uint16_t control_word = DCI_EXTERNAL_FRAME;
                     if (dci_mode != 0u) {
                         control_word |= DCI_MODE_I2S;
@@ -164,7 +165,8 @@ void dspic33_dci_test_pps_serial_matrix_cases(TestState* state, Dspic33* cpu) {
                     }
                     dspic33_reset(cpu, 0u);
                     dspic33_dci_test_configure_serial_pins(cpu);
-                    dspic33_dci_test_configure_external(cpu, control_word, width, 1u, 1u, 0u, 1u);
+                    dspic33_dci_test_configure_external(cpu, control_word, serial_width, 1u, 1u, 0u,
+                                                        1u);
                     dspic33_dci_test_activate_serial_clock(cpu, sample_on_rising != 0u,
                                                            GPIO_CLOCK_MASK);
                     dspic33_gpio_drive(cpu, GPIO_PORT_D, GPIO_FRAME_MASK, GPIO_FRAME_MASK);
@@ -178,7 +180,7 @@ void dspic33_dci_test_pps_serial_matrix_cases(TestState* state, Dspic33* cpu) {
                         }
                     }
                     expect(state,
-                           dspic33_dci_test_drive_serial_word(cpu, serial_word, width,
+                           dspic33_dci_test_drive_serial_word(cpu, serial_word, serial_width,
                                                               sample_on_rising != 0u) &&
                                dspic33_read_word(cpu, DCI_RECEIVE_BASE) == serial_word &&
                                !cpu->io.dci.started,
@@ -222,6 +224,7 @@ void dspic33_dci_test_pps_startup_cases(TestState* state, Dspic33* cpu) {
 
 void dspic33_dci_test_pps_internal_input_cases(TestState* state, Dspic33* cpu) {
     uint8_t dci_mode;
+
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, DCI_PPS_INPUTS, 0u);
     dspic33_dci_input(cpu, UINT16_MAX);
@@ -232,23 +235,25 @@ void dspic33_dci_test_pps_internal_input_cases(TestState* state, Dspic33* cpu) {
            "internal DCI VSS selection ignores logical input latch");
 
     for (dci_mode = DCI_MODE_I2S - 1u; dci_mode <= DCI_MODE_I2S; dci_mode++) {
-        uint8_t width;
-        for (width = 4u; width <= 16u; width++) {
+        uint8_t serial_width;
+        for (serial_width = 4u; serial_width <= 16u; serial_width++) {
             uint8_t sample_on_rising;
             for (sample_on_rising = 0u; sample_on_rising < 2u; sample_on_rising++) {
                 uint16_t serial_word =
-                    (uint16_t)(0xa55au & dspic33_dci_test_serial_word_mask(width));
+                    (uint16_t)(0xa55au & dspic33_dci_test_serial_word_mask(serial_width));
                 uint16_t control_word = dci_mode;
                 if (sample_on_rising != 0u) {
                     control_word |= DCI_SAMPLE_RISING;
                 }
                 dspic33_reset(cpu, 0u);
                 dspic33_dci_test_configure_serial_pins(cpu);
-                dspic33_dci_test_configure_internal(cpu, control_word, width, 1u, 1u, 0u, 1u);
-                expect(state,
-                       dspic33_dci_test_drive_internal_pin_slot(cpu, serial_word, width, 12u) &&
-                           dspic33_read_word(cpu, DCI_RECEIVE_BASE) == serial_word,
-                       "internally clocked DCI samples mapped CSDI pin");
+                dspic33_dci_test_configure_internal(cpu, control_word, serial_width, 1u, 1u, 0u,
+                                                    1u);
+                expect(
+                    state,
+                    dspic33_dci_test_drive_internal_pin_slot(cpu, serial_word, serial_width, 12u) &&
+                        dspic33_read_word(cpu, DCI_RECEIVE_BASE) == serial_word,
+                    "internally clocked DCI samples mapped CSDI pin");
             }
         }
     }
@@ -274,6 +279,7 @@ void dspic33_dci_test_pps_internal_input_cases(TestState* state, Dspic33* cpu) {
 void dspic33_dci_test_pps_internal_frame_cases(TestState* state, Dspic33* cpu) {
     bool is_high;
     uint8_t dci_mode;
+
     for (dci_mode = 0u; dci_mode < 4u; dci_mode++) {
         uint8_t sample_on_rising;
         for (sample_on_rising = 0u; sample_on_rising < 2u; sample_on_rising++) {
@@ -281,9 +287,9 @@ void dspic33_dci_test_pps_internal_frame_cases(TestState* state, Dspic33* cpu) {
             for (data_justified = 0u; data_justified < 2u; data_justified++) {
                 uint16_t control_word = (uint16_t)(dci_mode | DCI_EXTERNAL_FRAME);
                 uint16_t serial_word = dci_mode >= DCI_MODE_AC_LINK_16 ? 0x5aa5u : 0xa000u;
-                uint8_t width = dci_mode == DCI_MODE_AC_LINK_16   ? 16u
-                                : dci_mode == DCI_MODE_AC_LINK_20 ? 16u
-                                                                  : 4u;
+                uint8_t serial_width = dci_mode == DCI_MODE_AC_LINK_16   ? 16u
+                                       : dci_mode == DCI_MODE_AC_LINK_20 ? 16u
+                                                                         : 4u;
                 uint64_t frame_delay;
                 if (sample_on_rising != 0u) {
                     control_word |= DCI_SAMPLE_RISING;
@@ -304,7 +310,7 @@ void dspic33_dci_test_pps_internal_frame_cases(TestState* state, Dspic33* cpu) {
                                        ((serial_word & 0x8000u) != 0u ? GPIO_DATA_MASK : 0u),
                                    GPIO_FRAME_MASK | GPIO_DATA_MASK);
                 expect(state,
-                       dspic33_dci_test_drive_internal_pin_slot(cpu, serial_word, width,
+                       dspic33_dci_test_drive_internal_pin_slot(cpu, serial_word, serial_width,
                                                                 frame_delay) &&
                            dspic33_read_word(cpu, DCI_RECEIVE_BASE) == serial_word,
                        "mapped COFS starts internally clocked DCI frame");
