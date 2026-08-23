@@ -191,7 +191,7 @@ void dspic33_can_test_mode_transition_cases(TestState* state, Dspic33* cpu) {
 }
 
 void dspic33_can_test_physical_debug_mode_cases(TestState* state, Dspic33* cpu) {
-    for (uint8_t mode = 3u; mode <= 7u; mode += 4u) {
+    for (uint8_t debug_mode = 3u; debug_mode <= 7u; debug_mode += 4u) {
         Dspic33CanFrame input = dspic33_can_test_frame(0x234u, false, false, 1u, 0x5au);
         bool acknowledge_observed = false;
         dspic33_reset(cpu, 0u);
@@ -211,7 +211,7 @@ void dspic33_can_test_physical_debug_mode_cases(TestState* state, Dspic33* cpu) 
         dspic33_write_word(cpu, 0x0510u, 0u);
         dspic33_write_word(cpu, 0x0512u, 0u);
         dspic33_can_test_set_mode(cpu, 0u, 0u);
-        dspic33_can_test_set_mode(cpu, 1u, mode);
+        dspic33_can_test_set_mode(cpu, 1u, debug_mode);
         dspic33_write_word(cpu, 0x0430u, 0x008bu);
         expect(
             state,
@@ -223,7 +223,7 @@ void dspic33_can_test_physical_debug_mode_cases(TestState* state, Dspic33* cpu) 
                    (dspic33_read_word(cpu, 0x050eu) & 0x00ffu) == 0u &&
                    (cpu->io.can_rx_error_active & 2u) == 0u,
                "CAN debug receive mode accepts a valid physical frame");
-        expect(state, acknowledge_observed == (mode == 7u),
+        expect(state, acknowledge_observed == (debug_mode == 7u),
                "CAN listen-only mode suppresses physical acknowledgement");
 
         acknowledge_observed = false;
@@ -244,7 +244,7 @@ void dspic33_can_test_physical_debug_mode_cases(TestState* state, Dspic33* cpu) 
         dspic33_write_word(cpu, 0x0510u, 0u);
         dspic33_write_word(cpu, 0x0512u, 0u);
         dspic33_can_test_set_mode(cpu, 0u, 0u);
-        dspic33_can_test_set_mode(cpu, 1u, mode);
+        dspic33_can_test_set_mode(cpu, 1u, debug_mode);
         dspic33_write_word(cpu, 0x0430u, 0x008bu);
         expect(
             state,
@@ -253,11 +253,12 @@ void dspic33_can_test_physical_debug_mode_cases(TestState* state, Dspic33* cpu) 
             "CAN debug receive mode advances an invalid physical frame");
         expect(state,
                (dspic33_read_word(cpu, 0x050au) & 0x0080u) != 0u &&
-                   (dspic33_can_test_receive_full(cpu, 1u, 0u) == (mode == 7u)),
+                   (dspic33_can_test_receive_full(cpu, 1u, 0u) == (debug_mode == 7u)),
                "CAN listen-all mode transfers an invalid physical frame");
         expect(state,
-               mode == 7u || ((dspic33_read_word(cpu, 0x050eu) & 0x00ffu) == 0u &&
-                              (cpu->io.can_rx_error_active & 2u) == 0u && !acknowledge_observed),
+               debug_mode == 7u ||
+                   ((dspic33_read_word(cpu, 0x050eu) & 0x00ffu) == 0u &&
+                    (cpu->io.can_rx_error_active & 2u) == 0u && !acknowledge_observed),
                "CAN listen-only mode freezes counters and suppresses error output");
     }
 }
