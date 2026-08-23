@@ -619,104 +619,113 @@ void dspic33_device_internal_can_invalid_event(Dspic33* cpu, uint8_t channel_ind
     dspic33_device_internal_can_raise_event(cpu, channel_index, CAN_INTERRUPT_INVALID, 0u, 0u);
 }
 
-void dspic33_device_internal_run_can(Dspic33* cpu, uint8_t channel, uint32_t value) {
-    uint32_t kind = value & CAN_EVENT_KIND_MASK;
-    if (kind == CAN_EVENT_RECEIVE_PIN) {
-        dspic33_device_internal_apply_physical_pin_level(cpu, channel,
-                                                         (value & CAN_EVENT_PIN_HIGH) != 0u);
+void dspic33_device_internal_run_can(Dspic33* cpu, uint8_t channel_index, uint32_t event_value) {
+    const uint32_t event_kind = event_value & CAN_EVENT_KIND_MASK;
+
+    if (event_kind == CAN_EVENT_RECEIVE_PIN) {
+        dspic33_device_internal_apply_physical_pin_level(cpu, channel_index,
+                                                         (event_value & CAN_EVENT_PIN_HIGH) != 0u);
         return;
     }
-    if (channel >= DSPIC33_CAN_COUNT) {
+    if (channel_index >= DSPIC33_CAN_COUNT) {
         return;
     }
-    switch (kind) {
+    switch (event_kind) {
     case CAN_EVENT_RECEIVE_START:
-        can_receive_start(cpu, channel);
+        can_receive_start(cpu, channel_index);
         break;
     case CAN_EVENT_RECEIVE_WORD:
-        can_receive_word(cpu, channel);
+        can_receive_word(cpu, channel_index);
         break;
     case CAN_EVENT_RECEIVE_FINISH:
-        can_receive_finish(cpu, channel);
+        can_receive_finish(cpu, channel_index);
         break;
+
     case CAN_EVENT_TRANSMIT_START:
-        can_transmit_start(cpu, channel);
+        can_transmit_start(cpu, channel_index);
         break;
     case CAN_EVENT_TRANSMIT_WORD:
-        can_transmit_word(cpu, channel);
+        can_transmit_word(cpu, channel_index);
         break;
     case CAN_EVENT_TRANSMIT_FINISH:
-        can_transmit_finish(cpu, channel);
+        can_transmit_finish(cpu, channel_index);
         break;
     case CAN_EVENT_TRANSMIT_BUS_FINISH:
-        can_transmit_bus_finish(cpu, channel);
+        can_transmit_bus_finish(cpu, channel_index);
         break;
+
     case CAN_EVENT_CAPTURE_RELEASE:
         dspic33_device_internal_input_capture_level(cpu, 1u, false);
         break;
     case CAN_EVENT_INVALID:
-        dspic33_device_internal_can_invalid_event(cpu, channel);
+        dspic33_device_internal_can_invalid_event(cpu, channel_index);
         break;
+
     case CAN_EVENT_RECEIVE_SAMPLE:
-        if (dspic33_device_internal_can_triple_sample(cpu, channel)) {
-            can_receive_sample_final(cpu, channel);
+        if (dspic33_device_internal_can_triple_sample(cpu, channel_index)) {
+            can_receive_sample_final(cpu, channel_index);
         } else {
-            can_receive_sample(cpu, channel,
-                               (cpu->io.can_rx_pin_high & (uint8_t)(1u << channel)) != 0u);
+            can_receive_sample(cpu, channel_index,
+                               (cpu->io.can_rx_pin_high & (uint8_t)(1u << channel_index)) != 0u);
         }
         break;
     case CAN_EVENT_RECEIVE_SAMPLE_FIRST:
-        can_receive_sample_first(cpu, channel);
+        can_receive_sample_first(cpu, channel_index);
         break;
     case CAN_EVENT_RECEIVE_SAMPLE_SECOND:
-        can_receive_sample_second(cpu, channel);
+        can_receive_sample_second(cpu, channel_index);
         break;
+
     case CAN_EVENT_ACK_START:
-        can_ack_start(cpu, channel);
+        can_ack_start(cpu, channel_index);
         break;
     case CAN_EVENT_ACK_FINISH:
-        can_ack_finish(cpu, channel);
+        can_ack_finish(cpu, channel_index);
         break;
+
     case CAN_EVENT_TRANSMIT_RETRY:
-        can_transmit_retry(cpu, channel);
+        can_transmit_retry(cpu, channel_index);
         break;
     case CAN_EVENT_TRANSMIT_ERROR_START:
-        can_transmit_error_start(cpu, channel);
+        can_transmit_error_start(cpu, channel_index);
         break;
     case CAN_EVENT_TRANSMIT_SAMPLE:
-        if (dspic33_device_internal_can_triple_sample(cpu, channel)) {
-            can_transmit_sample_final(cpu, channel);
+        if (dspic33_device_internal_can_triple_sample(cpu, channel_index)) {
+            can_transmit_sample_final(cpu, channel_index);
         } else {
-            can_transmit_sample(cpu, channel,
-                                (cpu->io.can_rx_pin_high & (uint8_t)(1u << channel)) != 0u);
+            can_transmit_sample(cpu, channel_index,
+                                (cpu->io.can_rx_pin_high & (uint8_t)(1u << channel_index)) != 0u);
         }
         break;
     case CAN_EVENT_TRANSMIT_SAMPLE_FIRST:
-        can_transmit_sample_first(cpu, channel);
+        can_transmit_sample_first(cpu, channel_index);
         break;
     case CAN_EVENT_TRANSMIT_SAMPLE_SECOND:
-        can_transmit_sample_second(cpu, channel);
+        can_transmit_sample_second(cpu, channel_index);
         break;
+
     case CAN_EVENT_RECEIVE_ERROR_START:
-        can_receive_error_start(cpu, channel);
+        can_receive_error_start(cpu, channel_index);
         break;
     case CAN_EVENT_RECEIVE_ERROR_FINISH:
-        can_receive_error_finish(cpu, channel);
+        can_receive_error_finish(cpu, channel_index);
         break;
+
     case CAN_EVENT_MODE_TRANSITION:
-        can_mode_transition(cpu, channel, value);
+        can_mode_transition(cpu, channel_index, event_value);
         break;
     case CAN_EVENT_INTERMISSION_FINISH:
-        dspic33_device_internal_can_intermission_finish(cpu, channel, value);
+        dspic33_device_internal_can_intermission_finish(cpu, channel_index, event_value);
         break;
     case CAN_EVENT_OVERLOAD_FINISH:
-        dspic33_device_internal_can_overload_finish(cpu, channel, value);
+        dspic33_device_internal_can_overload_finish(cpu, channel_index, event_value);
         break;
+
     case CAN_EVENT_RECEIVE_SUCCESS:
-        can_receive_success_start(cpu, channel);
+        can_receive_success_start(cpu, channel_index);
         break;
     case CAN_EVENT_ERROR:
-        dspic33_device_internal_can_error_event(cpu, channel, value);
+        dspic33_device_internal_can_error_event(cpu, channel_index, event_value);
         break;
     }
 }
