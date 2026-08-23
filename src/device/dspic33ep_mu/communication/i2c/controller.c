@@ -20,11 +20,13 @@ void dspic33_i2c_internal_raw_write_word(Dspic33* cpu, uint16_t address, uint16_
 
 bool dspic33_i2c_internal_channel_for_address(uint16_t address, uint8_t* channel,
                                               uint16_t* offset) {
-    uint8_t index;
-    for (index = 0u; index < DSPIC33_I2C_COUNT; index++) {
-        if (address >= dspic33_i2c_bases[index] && address <= dspic33_i2c_bases[index] + I2C_MSK) {
-            *channel = index;
-            *offset = (uint16_t)(address - dspic33_i2c_bases[index]);
+    uint8_t channel_index;
+
+    for (channel_index = 0u; channel_index < DSPIC33_I2C_COUNT; channel_index++) {
+        if (address >= dspic33_i2c_bases[channel_index] &&
+            address <= dspic33_i2c_bases[channel_index] + I2C_MSK) {
+            *channel = channel_index;
+            *offset = (uint16_t)(address - dspic33_i2c_bases[channel_index]);
             return true;
         }
     }
@@ -67,40 +69,46 @@ bool dspic33_i2c_internal_pin_mapping(const Dspic33* cpu, uint8_t channel,
     return true;
 }
 
-static Dspic33Event* scheduled_event(Dspic33* cpu, uint64_t sequence) {
-    size_t index;
-    for (index = 0u; index < cpu->events.count; index++) {
-        if (cpu->events.items[index].sequence == sequence) {
-            return &cpu->events.items[index];
+static Dspic33Event* find_scheduled_event(Dspic33* cpu, uint64_t sequence) {
+    size_t event_index;
+
+    for (event_index = 0u; event_index < cpu->events.count; event_index++) {
+        if (cpu->events.items[event_index].sequence == sequence) {
+            return &cpu->events.items[event_index];
         }
     }
     return NULL;
 }
 
 void dspic33_i2c_internal_pause_events(Dspic33* cpu, uint8_t channel) {
-    size_t index;
-    bool changed = false;
-    for (index = 0u; index < cpu->events.count; index++) {
-        Dspic33Event* event = &cpu->events.items[index];
-        uint8_t kind = (uint8_t)(event->value >> I2C_EVENT_KIND_SHIFT);
+    size_t event_index;
+    bool events_changed = false;
+
+    for (event_index = 0u; event_index < cpu->events.count; event_index++) {
+        Dspic33Event* event = &cpu->events.items[event_index];
+        uint8_t event_kind = (uint8_t)(event->value >> I2C_EVENT_KIND_SHIFT);
+
         if (event->type != DSPIC33_EVENT_I2C || event->source != channel || event->paused ||
-            (kind > I2C_EVENT_TRANSMIT_SHIFT && kind != I2C_EVENT_PIN)) {
+            (event_kind > I2C_EVENT_TRANSMIT_SHIFT && event_kind != I2C_EVENT_PIN)) {
             continue;
         }
         event->paused_remaining = event->cycle - cpu->device_cycles;
         event->paused = true;
-        changed = true;
+        events_changed = true;
     }
-    if (changed) {
+
+    if (events_changed) {
         dspic33_reorder_events(cpu);
     }
 }
 
 void dspic33_i2c_internal_resume_events(Dspic33* cpu, uint8_t channel) {
-    size_t index;
-    bool changed = false;
-    for (index = 0u; index < cpu->events.count; index++) {
-        Dspic33Event* event = &cpu->events.items[index];
+    size_t event_index;
+    bool events_changed = false;
+
+    for (event_index = 0u; event_index < cpu->events.count; event_index++) {
+        Dspic33Event* event = &cpu->events.items[event_index];
+
         if (event->type != DSPIC33_EVENT_I2C || event->source != channel || !event->paused) {
             continue;
         }
@@ -111,14 +119,15 @@ void dspic33_i2c_internal_resume_events(Dspic33* cpu, uint8_t channel) {
         event->cycle = cpu->device_cycles + event->paused_remaining;
         event->paused_remaining = 0u;
         event->paused = false;
-        changed = true;
+        events_changed = true;
     }
-    if (changed) {
+
+    if (events_changed) {
         dspic33_reorder_events(cpu);
     }
 }
 
-void dspic33_i2c_update_pmd(Dspic33* cpu, uint16_t address, uint16_t previous) {
+void dspic33_i2c_update_pmd(Dspic33* cpu, uint16_t address, uint16_t previous_word) {
     static const uint16_t addresses[DSPIC33_I2C_COUNT] = {0x0760u, 0x0764u};
     static const uint16_t masks[DSPIC33_I2C_COUNT] = {0x0080u, 0x0002u};
     uint8_t channel;
@@ -128,7 +137,7 @@ void dspic33_i2c_update_pmd(Dspic33* cpu, uint16_t address, uint16_t previous) {
             continue;
         }
         disabled = (dspic33_i2c_internal_raw_word(cpu, address) & masks[channel]) != 0u;
-        if (((previous & masks[channel]) != 0u) == disabled) {
+        if (((previous_word & masks[channel]) != 0u) == disabled) {
             return;
         }
         cpu->io.i2c_pmd_generation[channel]++;
@@ -138,7 +147,7 @@ void dspic33_i2c_update_pmd(Dspic33* cpu, uint16_t address, uint16_t previous) {
                     ((uint32_t)cpu->io.i2c_pmd_generation[channel] << I2C_EVENT_GENERATION_SHIFT) |
                     (disabled ? 1u : 0u),
                 dspic33_device_instruction_cycles(cpu, 1u))) {
-            dspic33_i2c_internal_raw_write_word(cpu, address, previous);
+            dspic33_i2c_internal_raw_write_word(cpu, address, previous_word);
             cpu->io.i2c_pmd_generation[channel]++;
             cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
         }
@@ -146,13 +155,14 @@ void dspic33_i2c_update_pmd(Dspic33* cpu, uint16_t address, uint16_t previous) {
     }
 }
 
-static bool transfer_push(Dspic33I2cQueue* queue, const Dspic33I2cTransfer* transfer) {
-    uint8_t index;
+static bool enqueue_transfer(Dspic33I2cQueue* queue, const Dspic33I2cTransfer* transfer) {
+    uint8_t transfer_index;
+
     if (queue->count == DSPIC33_I2C_QUEUE_SIZE) {
         return false;
     }
-    index = (uint8_t)((queue->head + queue->count) % DSPIC33_I2C_QUEUE_SIZE);
-    queue->transfers[index] = *transfer;
+    transfer_index = (uint8_t)((queue->head + queue->count) % DSPIC33_I2C_QUEUE_SIZE);
+    queue->transfers[transfer_index] = *transfer;
     queue->count++;
     return true;
 }
@@ -169,26 +179,29 @@ bool dspic33_i2c_internal_transfer_pop(Dspic33I2cQueue* queue, Dspic33I2cTransfe
 
 bool dspic33_i2c_internal_response_push(Dspic33I2cResponseQueue* queue,
                                         const Dspic33I2cResponse* response) {
-    uint8_t index;
-    uint8_t logical;
+    uint8_t response_index;
+
     if (queue->count == DSPIC33_I2C_QUEUE_SIZE) {
         return false;
     }
-    index = (uint8_t)((queue->head + queue->count) % DSPIC33_I2C_QUEUE_SIZE);
-    queue->responses[index] = *response;
+    response_index = (uint8_t)((queue->head + queue->count) % DSPIC33_I2C_QUEUE_SIZE);
+    queue->responses[response_index] = *response;
     queue->count++;
-    logical = (uint8_t)(queue->count - 1u);
-    while (logical != 0u) {
-        uint8_t current = (uint8_t)((queue->head + logical) % DSPIC33_I2C_QUEUE_SIZE);
-        uint8_t prior = (uint8_t)((queue->head + logical - 1u) % DSPIC33_I2C_QUEUE_SIZE);
-        Dspic33I2cResponse temporary;
-        if (queue->responses[prior].cycle <= queue->responses[current].cycle) {
+    response_index = (uint8_t)(queue->count - 1u);
+
+    while (response_index != 0u) {
+        uint8_t current_index = (uint8_t)((queue->head + response_index) % DSPIC33_I2C_QUEUE_SIZE);
+        uint8_t previous_index =
+            (uint8_t)((queue->head + response_index - 1u) % DSPIC33_I2C_QUEUE_SIZE);
+        Dspic33I2cResponse response_swap;
+
+        if (queue->responses[previous_index].cycle <= queue->responses[current_index].cycle) {
             break;
         }
-        temporary = queue->responses[prior];
-        queue->responses[prior] = queue->responses[current];
-        queue->responses[current] = temporary;
-        logical--;
+        response_swap = queue->responses[previous_index];
+        queue->responses[previous_index] = queue->responses[current_index];
+        queue->responses[current_index] = response_swap;
+        response_index--;
     }
     return true;
 }
@@ -213,14 +226,15 @@ static bool response_pop(Dspic33I2cResponseQueue* queue, uint64_t cycle,
 }
 
 void dspic33_i2c_internal_record_transfer(Dspic33* cpu, uint8_t channel,
-                                          Dspic33I2cTransferType type, uint16_t value,
+                                          Dspic33I2cTransferType type, uint16_t transfer_value,
                                           bool acknowledge, bool master) {
     Dspic33I2cTransfer transfer;
+
     transfer.type = type;
-    transfer.value = value;
+    transfer.value = transfer_value;
     transfer.acknowledge = acknowledge;
     transfer.master = master;
-    if (!transfer_push(&cpu->io.i2c_tx[channel], &transfer)) {
+    if (!enqueue_transfer(&cpu->io.i2c_tx[channel], &transfer)) {
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
 }
@@ -235,17 +249,17 @@ void dspic33_i2c_internal_record_slave_acknowledgement(Dspic33* cpu, uint8_t cha
                                          false);
 }
 
-static uint64_t operation_cycles(const Dspic33* cpu, uint8_t channel, uint8_t half_periods) {
+static uint64_t operation_cycles(const Dspic33* cpu, uint8_t channel, uint8_t half_period_count) {
     uint64_t scaled = (uint64_t)(dspic33_i2c_internal_raw_word(
                                      cpu, (uint16_t)(dspic33_i2c_bases[channel] + I2C_BRG)) +
                                  2u) *
-                      half_periods;
+                      half_period_count;
     return (scaled + 1u) / 2u;
 }
 
-static uint32_t internal_event_value(const Dspic33* cpu, uint8_t channel, uint8_t kind,
-                                     uint16_t payload) {
-    return ((uint32_t)kind << I2C_EVENT_KIND_SHIFT) |
+static uint32_t build_internal_event_value(const Dspic33* cpu, uint8_t channel, uint8_t event_kind,
+                                           uint16_t payload) {
+    return ((uint32_t)event_kind << I2C_EVENT_KIND_SHIFT) |
            ((uint32_t)cpu->io.i2c_generation[channel] << I2C_EVENT_GENERATION_SHIFT) | payload;
 }
 
@@ -253,13 +267,14 @@ bool dspic33_i2c_internal_schedule_event(Dspic33* cpu, uint8_t channel, uint32_t
                                          uint64_t delay, bool external) {
     uint64_t sequence = cpu->events.sequence;
     Dspic33Event* event;
-    bool scheduled = external
-                         ? dspic33_schedule_external(cpu, DSPIC33_EVENT_I2C, channel, value, delay)
-                         : dspic33_schedule(cpu, DSPIC33_EVENT_I2C, channel, value, delay);
-    if (!scheduled) {
+
+    bool event_scheduled =
+        external ? dspic33_schedule_external(cpu, DSPIC33_EVENT_I2C, channel, value, delay)
+                 : dspic33_schedule(cpu, DSPIC33_EVENT_I2C, channel, value, delay);
+    if (!event_scheduled) {
         return false;
     }
-    event = scheduled_event(cpu, sequence);
+    event = find_scheduled_event(cpu, sequence);
     if (event == NULL) {
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
         return false;
@@ -275,20 +290,21 @@ bool dspic33_i2c_internal_schedule_event(Dspic33* cpu, uint8_t channel, uint32_t
     return true;
 }
 
-static bool schedule_internal(Dspic33* cpu, uint8_t channel, uint8_t kind, uint16_t payload,
-                              uint64_t delay) {
-    bool scheduled = dspic33_i2c_internal_schedule_event(
-        cpu, channel, internal_event_value(cpu, channel, kind, payload), delay, false);
-    if (!scheduled) {
+static bool schedule_internal_event(Dspic33* cpu, uint8_t channel, uint8_t event_kind,
+                                    uint16_t payload, uint64_t delay) {
+    bool event_scheduled = dspic33_i2c_internal_schedule_event(
+        cpu, channel, build_internal_event_value(cpu, channel, event_kind, payload), delay, false);
+
+    if (!event_scheduled) {
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
-    return scheduled;
+    return event_scheduled;
 }
 
-bool dspic33_i2c_internal_schedule_external_event(Dspic33* cpu, uint8_t channel, uint8_t kind,
+bool dspic33_i2c_internal_schedule_external_event(Dspic33* cpu, uint8_t channel, uint8_t event_kind,
                                                   uint16_t payload, uint64_t delay) {
     return dspic33_i2c_internal_schedule_event(
-        cpu, channel, ((uint32_t)kind << I2C_EVENT_KIND_SHIFT) | payload, delay, true);
+        cpu, channel, ((uint32_t)event_kind << I2C_EVENT_KIND_SHIFT) | payload, delay, true);
 }
 
 void dspic33_i2c_internal_raise_master(Dspic33* cpu, uint8_t channel) {
@@ -344,9 +360,10 @@ void dspic33_i2c_internal_pin_set_low(Dspic33* cpu, uint8_t channel, bool clock,
 }
 
 static bool pin_schedule_next(Dspic33* cpu, uint8_t channel, uint8_t phase) {
-    uint64_t previous = operation_cycles(cpu, channel, phase);
-    uint64_t next = operation_cycles(cpu, channel, (uint8_t)(phase + 1u));
-    return schedule_internal(cpu, channel, I2C_EVENT_PIN, 0u, next - previous);
+    uint64_t previous_cycle = operation_cycles(cpu, channel, phase);
+    uint64_t next_cycle = operation_cycles(cpu, channel, (uint8_t)(phase + 1u));
+
+    return schedule_internal_event(cpu, channel, I2C_EVENT_PIN, 0u, next_cycle - previous_cycle);
 }
 
 void dspic33_i2c_internal_pin_abort(Dspic33* cpu, uint8_t channel) {
@@ -427,7 +444,7 @@ static bool pin_rising_edge(Dspic33* cpu, uint8_t channel, const Dspic33I2cPinMa
         return true;
     }
     if (pin_delay_master_events(cpu, channel) &&
-        schedule_internal(cpu, channel, I2C_EVENT_PIN, 0u, 1u)) {
+        schedule_internal_event(cpu, channel, I2C_EVENT_PIN, 0u, 1u)) {
         return false;
     }
     dspic33_i2c_internal_pin_abort(cpu, channel);
@@ -589,8 +606,8 @@ void dspic33_i2c_internal_begin_control(Dspic33* cpu, uint8_t channel, uint16_t 
         } else if (selected == I2C_RSEN || selected == I2C_PEN) {
             periods = 3u;
         }
-        if (!schedule_internal(cpu, channel, I2C_EVENT_CONTROL, selected,
-                               operation_cycles(cpu, channel, periods))) {
+        if (!schedule_internal_event(cpu, channel, I2C_EVENT_CONTROL, selected,
+                                     operation_cycles(cpu, channel, periods))) {
             dspic33_i2c_internal_raw_write_word(cpu,
                                                 (uint16_t)(dspic33_i2c_bases[channel] + I2C_CON),
                                                 (uint16_t)(control & ~selected));
@@ -598,8 +615,8 @@ void dspic33_i2c_internal_begin_control(Dspic33* cpu, uint8_t channel, uint16_t 
         }
         if (condition) {
             uint8_t status_periods = selected == I2C_SEN ? 1u : 2u;
-            if (!schedule_internal(cpu, channel, I2C_EVENT_BUS_STATUS, selected,
-                                   operation_cycles(cpu, channel, status_periods))) {
+            if (!schedule_internal_event(cpu, channel, I2C_EVENT_BUS_STATUS, selected,
+                                         operation_cycles(cpu, channel, status_periods))) {
                 cpu->io.i2c_generation[channel]++;
                 dspic33_i2c_internal_raw_write_word(
                     cpu, (uint16_t)(dspic33_i2c_bases[channel] + I2C_CON),
@@ -670,10 +687,10 @@ void dspic33_i2c_internal_write_transmit(Dspic33* cpu, uint8_t channel, uint16_t
     cpu->io.i2c_master_active |= bit;
     status |= I2C_TRANSMIT_ACTIVE;
     dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(base + I2C_STAT), status);
-    if (!schedule_internal(cpu, channel, I2C_EVENT_TRANSMIT_SHIFT, value,
-                           operation_cycles(cpu, channel, 16u)) ||
-        !schedule_internal(cpu, channel, I2C_EVENT_TRANSMIT, value,
-                           operation_cycles(cpu, channel, 18u)) ||
+    if (!schedule_internal_event(cpu, channel, I2C_EVENT_TRANSMIT_SHIFT, value,
+                                 operation_cycles(cpu, channel, 16u)) ||
+        !schedule_internal_event(cpu, channel, I2C_EVENT_TRANSMIT, value,
+                                 operation_cycles(cpu, channel, 18u)) ||
         !pin_begin(cpu, channel, I2C_PIN_TRANSMIT, value)) {
         cpu->io.i2c_generation[channel]++;
         cpu->io.i2c_master_active &= (uint8_t)~bit;
@@ -700,7 +717,7 @@ void dspic33_i2c_internal_complete_control(Dspic33* cpu, uint8_t channel, uint16
     if (operation == I2C_RCEN) {
         uint64_t delay;
         if (response_wait(&cpu->io.i2c_response[channel], cpu->device_cycles, &delay)) {
-            schedule_internal(cpu, channel, I2C_EVENT_CONTROL, operation, delay);
+            schedule_internal_event(cpu, channel, I2C_EVENT_CONTROL, operation, delay);
             return;
         }
     }
@@ -749,7 +766,7 @@ void dspic33_i2c_internal_complete_transmit(Dspic33* cpu, uint8_t channel) {
     {
         uint64_t delay;
         if (response_wait(&cpu->io.i2c_response[channel], cpu->device_cycles, &delay)) {
-            schedule_internal(cpu, channel, I2C_EVENT_TRANSMIT, 0u, delay);
+            schedule_internal_event(cpu, channel, I2C_EVENT_TRANSMIT, 0u, delay);
             return;
         }
     }
