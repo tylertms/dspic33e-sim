@@ -420,75 +420,76 @@ void dspic33_dci_test_pps_internal_frame_output_cases(TestState* state, Dspic33*
 }
 
 void dspic33_dci_test_pps_bcg_cases(TestState* state, Dspic33* cpu) {
-    Dspic33 copy;
-    bool high;
-    bool copy_high;
+    Dspic33 copied_cpu;
+    bool is_high;
+    bool copied_is_high;
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, DCI_PPS_CLOCK_FRAME_OUTPUT, 0x000cu);
     dspic33_write_word(cpu, DCI_CONTROL3, 1u);
     expect(state,
-           dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high) && high &&
+           dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &is_high) && is_high &&
                (dspic33_read_word(cpu, DCI_CONTROL1) & DCI_ENABLE) == 0u,
            "nonzero BCG drives CSCK while DCI is disabled");
     expect(state,
-           dspic33_device_advance(cpu, 2u) && dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high) &&
-               !high,
+           dspic33_device_advance(cpu, 2u) &&
+               dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &is_high) && !is_high,
            "standalone BCG reaches falling half-cycle");
     expect(state,
-           dspic33_device_advance(cpu, 2u) && dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high) &&
-               high,
+           dspic33_device_advance(cpu, 2u) &&
+               dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &is_high) && is_high,
            "standalone BCG completes full cycle");
     cpu->power_state = DSPIC33_POWER_SLEEP;
     dspic33_device_power_state_changed(cpu);
     expect(state,
-           dspic33_device_advance(cpu, 9u) && dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high) &&
-               high,
+           dspic33_device_advance(cpu, 9u) &&
+               dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &is_high) && is_high,
            "Sleep retains standalone BCG phase");
     cpu->power_state = DSPIC33_POWER_ACTIVE;
     dspic33_device_power_state_changed(cpu);
     expect(state,
-           dspic33_device_advance(cpu, 2u) && dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high) &&
-               !high,
+           dspic33_device_advance(cpu, 2u) &&
+               dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &is_high) && !is_high,
            "wake resumes standalone BCG phase");
-    expect(state, dspic33_initialize(&copy), "initialize standalone BCG copy");
+    expect(state, dspic33_initialize(&copied_cpu), "initialize standalone BCG copy");
     expect(state,
-           dspic33_copy(&copy, cpu) && dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high) &&
-               dspic33_dci_pin(&copy, PPS_CLOCK_OUTPUT_PIN, &copy_high) && high == copy_high,
+           dspic33_copy(&copied_cpu, cpu) && dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &is_high) &&
+               dspic33_dci_pin(&copied_cpu, PPS_CLOCK_OUTPUT_PIN, &copied_is_high) &&
+               is_high == copied_is_high,
            "copy preserves standalone BCG phase");
-    dspic33_release(&copy);
+    dspic33_release(&copied_cpu);
     dspic33_write_word(cpu, DCI_PMD, DCI_PMD_MASK);
     expect(state,
-           dspic33_device_advance(cpu, 1u) && !dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high),
+           dspic33_device_advance(cpu, 1u) && !dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &is_high),
            "PMD releases standalone BCG output");
     dspic33_write_word(cpu, DCI_PMD, 0u);
     expect(state,
-           dspic33_device_advance(cpu, 1u) && dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high),
+           dspic33_device_advance(cpu, 1u) && dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &is_high),
            "PMD clear restores standalone BCG output");
 
     dspic33_write_word(cpu, DCI_CONTROL1, DCI_STOP_IDLE);
     cpu->power_state = DSPIC33_POWER_IDLE;
     dspic33_device_power_state_changed(cpu);
     expect(state,
-           dspic33_device_advance(cpu, 7u) && dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high),
+           dspic33_device_advance(cpu, 7u) && dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &is_high),
            "DCISIDL retains standalone BCG phase in Idle");
     cpu->power_state = DSPIC33_POWER_ACTIVE;
     dspic33_device_power_state_changed(cpu);
     expect(state,
-           dspic33_device_advance(cpu, 1u) && dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high) &&
-               high,
+           dspic33_device_advance(cpu, 1u) &&
+               dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &is_high) && is_high,
            "Idle wake resumes standalone BCG phase");
 
     dspic33_load_program_word(cpu, 0u, 0xfe0000u);
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING &&
-               !dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high) &&
+               !dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &is_high) &&
                dspic33_read_word(cpu, DCI_CONTROL3) == 0u,
            "warm reset clears standalone BCG output");
 }
 
 void dspic33_dci_test_pps_internal_sample_lifecycle_cases(TestState* state, Dspic33* cpu) {
-    Dspic33 copy;
-    uint8_t bit;
+    Dspic33 copied_cpu;
+    uint8_t bit_index;
     dspic33_reset(cpu, 0u);
     dspic33_dci_test_configure_serial_pins(cpu);
     dspic33_dci_test_configure_internal(cpu, DCI_SAMPLE_RISING, 4u, 1u, 1u, 0u, 1u);
@@ -509,10 +510,10 @@ void dspic33_dci_test_pps_internal_sample_lifecycle_cases(TestState* state, Dspi
     dspic33_write_word(cpu, DCI_PMD, 0u);
     expect(state, dspic33_device_advance(cpu, 1u) && !cpu->io.dci.pmd_disabled,
            "PMD clear resumes physical CSDI sampler");
-    for (bit = 1u; bit < 4u; bit++) {
-        uint16_t high = bit == 2u ? GPIO_DATA_MASK : 0u;
-        dspic33_gpio_drive(cpu, GPIO_PORT_D, high, GPIO_DATA_MASK);
-        dspic33_device_advance(cpu, bit == 1u ? 3u : 4u);
+    for (bit_index = 1u; bit_index < 4u; bit_index++) {
+        uint16_t data_value = bit_index == 2u ? GPIO_DATA_MASK : 0u;
+        dspic33_gpio_drive(cpu, GPIO_PORT_D, data_value, GPIO_DATA_MASK);
+        dspic33_device_advance(cpu, bit_index == 1u ? 3u : 4u);
     }
     expect(state,
            dspic33_device_advance(cpu, 4u) && dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0xa000u,
@@ -523,20 +524,20 @@ void dspic33_dci_test_pps_internal_sample_lifecycle_cases(TestState* state, Dspi
     dspic33_dci_test_configure_internal(cpu, DCI_SAMPLE_RISING, 4u, 1u, 1u, 0u, 1u);
     dspic33_gpio_drive(cpu, GPIO_PORT_D, GPIO_DATA_MASK, GPIO_DATA_MASK);
     expect(state, dspic33_device_advance(cpu, 12u), "advance internal CSDI sampler before copy");
-    expect(state, dspic33_initialize(&copy), "initialize internal CSDI copy");
-    expect(state, dspic33_copy(&copy, cpu), "copy active internal CSDI sampler");
-    for (bit = 1u; bit < 4u; bit++) {
+    expect(state, dspic33_initialize(&copied_cpu), "initialize internal CSDI copy");
+    expect(state, dspic33_copy(&copied_cpu, cpu), "copy active internal CSDI sampler");
+    for (bit_index = 1u; bit_index < 4u; bit_index++) {
         dspic33_gpio_drive(cpu, GPIO_PORT_D, 0u, GPIO_DATA_MASK);
-        dspic33_gpio_drive(&copy, GPIO_PORT_D, GPIO_DATA_MASK, GPIO_DATA_MASK);
+        dspic33_gpio_drive(&copied_cpu, GPIO_PORT_D, GPIO_DATA_MASK, GPIO_DATA_MASK);
         dspic33_device_advance(cpu, 4u);
-        dspic33_device_advance(&copy, 4u);
+        dspic33_device_advance(&copied_cpu, 4u);
     }
     expect(state,
-           dspic33_device_advance(cpu, 4u) && dspic33_device_advance(&copy, 4u) &&
+           dspic33_device_advance(cpu, 4u) && dspic33_device_advance(&copied_cpu, 4u) &&
                dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0x8000u &&
-               dspic33_read_word(&copy, DCI_RECEIVE_BASE) == 0xf000u,
+               dspic33_read_word(&copied_cpu, DCI_RECEIVE_BASE) == 0xf000u,
            "copied CSDI samplers shift physical inputs independently");
-    dspic33_release(&copy);
+    dspic33_release(&copied_cpu);
 }
 
 void dspic33_dci_test_pps_selection_cases(TestState* state, Dspic33* cpu) {
