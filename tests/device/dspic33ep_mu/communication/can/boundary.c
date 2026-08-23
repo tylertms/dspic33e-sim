@@ -74,9 +74,10 @@ static uint64_t mix(uint64_t fingerprint, uint32_t value) {
 
 static void allocation_failure_cases(TestState* state, Dspic33* cpu) {
     uint64_t fingerprint = UINT64_C(14695981039346656037);
-    uint32_t failures = 0u;
-    for (uint32_t event = CAN_TEST_EVENT_RECEIVE_START; event <= CAN_TEST_EVENT_OVERLOAD_FINISH;
-         event++) {
+    uint32_t failure_count = 0u;
+
+    for (uint32_t event_code = CAN_TEST_EVENT_RECEIVE_START;
+         event_code <= CAN_TEST_EVENT_OVERLOAD_FINISH; event_code++) {
         dspic33_reset(cpu, 0u);
         dspic33_can_test_set_mode(cpu, 0u, 0u);
         fill_event_queue(state, cpu);
@@ -97,16 +98,16 @@ static void allocation_failure_cases(TestState* state, Dspic33* cpu) {
         cpu->io.can_tx[0].frames[0] = dspic33_can_test_frame(0x321u, false, false, 8u, 0x60u);
         cpu->stop_reason = DSPIC33_RUNNING;
         test_reject_reallocation(true);
-        dspic33_device_internal_run_can(cpu, 0u, event);
+        dspic33_device_internal_run_can(cpu, 0u, event_code);
         test_reject_reallocation(false);
-        failures += cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR;
-        fingerprint = mix(fingerprint, event);
+        failure_count += cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR;
+        fingerprint = mix(fingerprint, event_code);
         fingerprint = mix(fingerprint, cpu->stop_reason);
         fingerprint = mix(fingerprint, cpu->io.can_rx_serial_active);
         fingerprint = mix(fingerprint, cpu->io.can_tx_on_bus);
         fingerprint = mix(fingerprint, (uint32_t)cpu->events.count);
     }
-    expect(state, failures == 15u && fingerprint == UINT64_C(1351361066272320567),
+    expect(state, failure_count == 15u && fingerprint == UINT64_C(1351361066272320567),
            "CAN allocation failure census matches");
 
     dspic33_reset(cpu, 0u);
@@ -121,24 +122,24 @@ static void allocation_failure_cases(TestState* state, Dspic33* cpu) {
 
     dspic33_reset(cpu, 0u);
     dspic33_can_test_set_mode(cpu, 0u, 0u);
-    const Dspic33CanFrame frame = dspic33_can_test_frame(0x123u, false, false, 8u, 0x20u);
+    const Dspic33CanFrame input_frame = dspic33_can_test_frame(0x123u, false, false, 8u, 0x20u);
     fill_event_queue(state, cpu);
     test_reject_reallocation(true);
-    dspic33_device_internal_can_receive_error(cpu, 0u, &frame);
+    dspic33_device_internal_can_receive_error(cpu, 0u, &input_frame);
     test_reject_reallocation(false);
     expect(state, cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR,
            "CAN receive error allocation failure stops execution");
 
     dspic33_reset(cpu, 0u);
     dspic33_can_test_set_mode(cpu, 0u, 0u);
-    dspic33_device_internal_can_encode_frame(&frame, 0u, cpu->io.can_tx_words[0]);
-    bool bits[160];
-    dspic33_device_internal_can_frame_bits(&frame, bits);
+    dspic33_device_internal_can_encode_frame(&input_frame, 0u, cpu->io.can_tx_words[0]);
+    bool frame_bits[160];
+    dspic33_device_internal_can_frame_bits(&input_frame, frame_bits);
     cpu->io.can_tx_on_bus = 1u;
     cpu->device_cycles = 20u * dspic33_device_internal_can_bit_cycles(cpu, 0u);
     fill_event_queue(state, cpu);
     test_reject_reallocation(true);
-    dspic33_device_internal_can_monitor_transmit_sample(cpu, 0u, !bits[20]);
+    dspic33_device_internal_can_monitor_transmit_sample(cpu, 0u, !frame_bits[20]);
     test_reject_reallocation(false);
     expect(state, cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR,
            "CAN transmit error allocation failure stops execution");
@@ -166,7 +167,7 @@ static void allocation_failure_cases(TestState* state, Dspic33* cpu) {
     dspic33_can_test_set_mode(cpu, 0u, 7u);
     fill_event_queue(state, cpu);
     test_reject_reallocation(true);
-    dspic33_device_internal_can_receive_error(cpu, 0u, &frame);
+    dspic33_device_internal_can_receive_error(cpu, 0u, &input_frame);
     test_reject_reallocation(false);
     expect(state, cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR,
            "listen-all CAN receive allocation failure stops execution");

@@ -90,9 +90,9 @@ void dspic33_can_test_receive_flag_read_pointer_cases(TestState* state, Dspic33*
                        "FIFO receive flag preserves write pointer");
             }
             if (start_buffer != 0u) {
-                uint8_t buffer_index = (uint8_t)(start_buffer - 1u);
+                uint8_t previous_buffer_index = (uint8_t)(start_buffer - 1u);
                 uint16_t register_address = (uint16_t)(bases[channel_index] + 0x20u);
-                uint16_t bit_mask = (uint16_t)(1u << buffer_index);
+                uint16_t bit_mask = (uint16_t)(1u << previous_buffer_index);
                 uint16_t fifo_address = (uint16_t)(bases[channel_index] + 8u);
 
                 dspic33_reset(cpu, 0u);
