@@ -382,8 +382,9 @@ static bool dci_transfer_buffers(Dspic33* cpu, bool receive, bool transmit) {
 
 static bool dci_startup_transfer(Dspic33* cpu) {
     Dspic33Dci* dci = &cpu->io.dci;
-    uint16_t control = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
-    uint8_t active_transmit = dci_active_transmit_buffers(cpu);
+    uint16_t control_word = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
+    uint8_t active_transmit_mask = dci_active_transmit_buffers(cpu);
+
     dci->started = true;
     dci->initialized = true;
     dci->buffer = 0u;
@@ -392,24 +393,25 @@ static bool dci_startup_transfer(Dspic33* cpu) {
     dci->serial_bits = 0u;
     dci->serial_startup_bits = 0u;
     dci->serial_frame_bits = 0u;
-    dci->serial_delay = (control & DCI_CONTROL_EXTERNAL_CLOCK) != 0u &&
-                        (control & DCI_CONTROL_EXTERNAL_FRAME) == 0u &&
+    dci->serial_delay = (control_word & DCI_CONTROL_EXTERNAL_CLOCK) != 0u &&
+                        (control_word & DCI_CONTROL_EXTERNAL_FRAME) == 0u &&
                         dci_mode(cpu) < DCI_MODE_AC_LINK_16 &&
-                        (control & DCI_CONTROL_DATA_JUSTIFY) == 0u;
+                        (control_word & DCI_CONTROL_DATA_JUSTIFY) == 0u;
     dci->output_frame_high = true;
-    dci->transmit_buffered = active_transmit;
-    return active_transmit == 0u || dci_transfer_buffers(cpu, false, true);
+    dci->transmit_buffered = active_transmit_mask;
+    return active_transmit_mask == 0u || dci_transfer_buffers(cpu, false, true);
 }
 
 static bool dci_finish_frame(Dspic33* cpu) {
     Dspic33Dci* dci = &cpu->io.dci;
-    bool complete = true;
+    bool frame_complete = true;
+
     if (dci->disable_pending && dci->disable_frames > 1u) {
         dci->disable_frames--;
         return true;
     }
     if (dci->disable_pending && (dci->receive_buffered != 0u || dci->transmit_buffered != 0u)) {
-        complete =
+        frame_complete =
             dci_transfer_buffers(cpu, dci->receive_buffered != 0u, dci->transmit_buffered != 0u);
     }
     if (dci->disable_pending) {
@@ -423,38 +425,40 @@ static bool dci_finish_frame(Dspic33* cpu) {
         dci->slot = 0u;
         dci_refresh_status(cpu);
     }
-    return complete;
+    return frame_complete;
 }
 
-static bool dci_process_word(Dspic33* cpu, uint16_t input) {
+static bool dci_process_word(Dspic33* cpu, uint16_t input_word) {
     Dspic33Dci* dci = &cpu->io.dci;
-    uint16_t control = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
-    uint16_t slot_mask = dci_slot_mask(cpu);
+    uint16_t control_word = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
+    uint16_t slot_domain_mask = dci_slot_mask(cpu);
     uint16_t transmit_slots =
-        (uint16_t)(dspic33_device_internal_raw_word(cpu, DCI_TRANSMIT_SLOTS) & slot_mask);
+        (uint16_t)(dspic33_device_internal_raw_word(cpu, DCI_TRANSMIT_SLOTS) & slot_domain_mask);
     uint16_t receive_slots =
-        (uint16_t)(dspic33_device_internal_raw_word(cpu, DCI_RECEIVE_SLOTS) & slot_mask);
-    uint8_t bit = (uint8_t)(1u << dci->buffer);
+        (uint16_t)(dspic33_device_internal_raw_word(cpu, DCI_RECEIVE_SLOTS) & slot_domain_mask);
+    uint8_t buffer_mask = (uint8_t)(1u << dci->buffer);
     uint16_t slot_bit = (uint16_t)(1u << dci->slot);
-    bool transmit = (transmit_slots & slot_bit) != 0u;
-    bool receive = (receive_slots & slot_bit) != 0u;
-    bool driven = transmit || (control & DCI_CONTROL_TRISTATE) == 0u;
-    uint16_t output = transmit ? (uint16_t)(dci->transmit[dci->buffer] & dci_word_mask(cpu)) : 0u;
-    if (!dci_output_push(cpu, output, dci->slot, driven)) {
+    bool is_transmit_slot = (transmit_slots & slot_bit) != 0u;
+    bool is_receive_slot = (receive_slots & slot_bit) != 0u;
+    bool output_driven = is_transmit_slot || (control_word & DCI_CONTROL_TRISTATE) == 0u;
+    uint16_t output_word =
+        is_transmit_slot ? (uint16_t)(dci->transmit[dci->buffer] & dci_word_mask(cpu)) : 0u;
+
+    if (!dci_output_push(cpu, output_word, dci->slot, output_driven)) {
         dci_abort(cpu);
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
         return false;
     }
-    if (transmit) {
-        dci->transmit_buffered |= bit;
+    if (is_transmit_slot) {
+        dci->transmit_buffered |= buffer_mask;
     }
-    if (receive) {
-        dci->receive[dci->buffer] = (control & DCI_CONTROL_LOOPBACK) != 0u
-                                        ? output
-                                        : (uint16_t)(input & dci_word_mask(cpu));
-        dci->receive_buffered |= bit;
+    if (is_receive_slot) {
+        dci->receive[dci->buffer] = (control_word & DCI_CONTROL_LOOPBACK) != 0u
+                                        ? output_word
+                                        : (uint16_t)(input_word & dci_word_mask(cpu));
+        dci->receive_buffered |= buffer_mask;
     }
-    if (transmit || receive) {
+    if (is_transmit_slot || is_receive_slot) {
         dci->buffer++;
         if (dci->buffer == dci_buffer_count(cpu) &&
             !dci_transfer_buffers(cpu, dci->receive_buffered != 0u, dci->transmit_buffered != 0u)) {
@@ -468,17 +472,17 @@ static bool dci_process_word(Dspic33* cpu, uint16_t input) {
     if (dci->slot == dci_frame_count(cpu)) {
         dci->slot = 0u;
         dci->serial_frame_bits = 0u;
-        if (dci_mode(cpu) == 1u && (control & DCI_CONTROL_EXTERNAL_FRAME) == 0u) {
+        if (dci_mode(cpu) == 1u && (control_word & DCI_CONTROL_EXTERNAL_FRAME) == 0u) {
             dci->output_frame_high = !dci->output_frame_high;
         }
         if (!dci_finish_frame(cpu)) {
             return false;
         }
-        if ((control & DCI_CONTROL_EXTERNAL_FRAME) != 0u) {
+        if ((control_word & DCI_CONTROL_EXTERNAL_FRAME) != 0u) {
             dci->started = false;
-        } else if ((control & DCI_CONTROL_EXTERNAL_CLOCK) != 0u &&
+        } else if ((control_word & DCI_CONTROL_EXTERNAL_CLOCK) != 0u &&
                    dci_mode(cpu) < DCI_MODE_AC_LINK_16 &&
-                   (control & DCI_CONTROL_DATA_JUSTIFY) == 0u) {
+                   (control_word & DCI_CONTROL_DATA_JUSTIFY) == 0u) {
             dci->serial_delay = true;
         }
     }
