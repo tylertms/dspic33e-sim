@@ -641,17 +641,17 @@ void dspic33_i2c_test_slave_pin_receive_cases(TestState* state, Dspic33* cpu) {
 
 void dspic33_i2c_test_slave_pin_rejection_and_transmit_cases(TestState* state, Dspic33* cpu) {
     const I2cPinRoute* route = &pin_routes[1];
-    const uint16_t base = bases[1];
+    const uint16_t register_base = bases[1];
     const uint16_t clock_mask = 0x0020u;
     const uint16_t data_mask = 0x0010u;
-    const uint16_t pins = (uint16_t)(clock_mask | data_mask);
+    const uint16_t pin_mask = (uint16_t)(clock_mask | data_mask);
     Dspic33I2cTransfer transfer;
-    uint8_t bit;
+    uint8_t bit_index;
 
     dspic33_load_configuration_word(cpu, 0xf8000cu, route->configuration);
     dspic33_reset(cpu, 0u);
-    dspic33_gpio_drive(cpu, route->port, pins, pins);
-    dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
+    dspic33_gpio_drive(cpu, route->port, pin_mask, pin_mask);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 10u), 0x52u);
     dspic33_i2c_test_enable(cpu, 1u, 0u, 0u);
     dspic33_i2c_test_drive_pin(route, cpu, false, false);
     dspic33_i2c_test_drive_byte(route, cpu, 0xa6u);
@@ -673,25 +673,25 @@ void dspic33_i2c_test_slave_pin_rejection_and_transmit_cases(TestState* state, D
            "physical Stop clears rejected-address state");
 
     dspic33_reset(cpu, 0u);
-    dspic33_gpio_drive(cpu, route->port, pins, pins);
-    dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
+    dspic33_gpio_drive(cpu, route->port, pin_mask, pin_mask);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 10u), 0x52u);
     dspic33_i2c_test_enable(cpu, 1u, 0u, 0u);
     dspic33_i2c_test_drive_pin(route, cpu, false, false);
     dspic33_i2c_test_drive_byte(route, cpu, 0xa5u);
     expect(state,
-           dspic33_read_word(cpu, base) == 0x00a5u &&
+           dspic33_read_word(cpu, register_base) == 0x00a5u &&
                dspic33_i2c_test_pop_slave_acknowledgement(cpu, 1u, true),
            "physical slave-transmit address is received and acknowledged");
     dspic33_i2c_test_drive_pin(route, cpu, true, true);
     dspic33_i2c_test_drive_pin(route, cpu, true, false);
-    dspic33_write_word(cpu, (uint16_t)(base + 2u), 0x005au);
-    dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9000u);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 2u), 0x005au);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0x9000u);
     dspic33_i2c_test_clear_interrupt(cpu, slave_irqs[1]);
     expect(state,
            dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, false, false),
            "physical slave-transmit data starts after ninth-clock service");
-    for (bit = 0u; bit < 8u; bit++) {
-        bool bit_high = (0x5au & (uint8_t)(0x80u >> bit)) != 0u;
+    for (bit_index = 0u; bit_index < 8u; bit_index++) {
+        bool bit_high = (0x5au & (uint8_t)(0x80u >> bit_index)) != 0u;
         expect(state,
                dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, false,
                                            bit_high),
@@ -706,7 +706,7 @@ void dspic33_i2c_test_slave_pin_rejection_and_transmit_cases(TestState* state, D
     dspic33_i2c_test_drive_pin(route, cpu, false, false);
     expect(state,
            dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, false, false) &&
-               (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 1u) == 0u &&
+               (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 1u) == 0u &&
                !dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[1]),
            "physical slave clears TBF after eight bits before master ACK");
     dspic33_i2c_test_drive_pin(route, cpu, true, true);
@@ -720,7 +720,7 @@ void dspic33_i2c_test_slave_pin_rejection_and_transmit_cases(TestState* state, D
                dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[1]),
            "physical master ACK completes slave transmit byte");
     dspic33_i2c_test_drive_pin(route, cpu, false, false);
-    dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9000u);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0x9000u);
     dspic33_i2c_test_drive_pin(route, cpu, true, true);
     dspic33_i2c_test_drive_pin(route, cpu, false, true);
     expect(state, cpu->io.i2c_slave_pin_active == 0u,
