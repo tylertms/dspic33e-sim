@@ -195,47 +195,50 @@ void dspic33_can_test_arbitration_field_cases(TestState* state, Dspic33* cpu) {
 }
 
 void dspic33_can_test_arbitration_cases(TestState* state, Dspic33* cpu) {
-    Dspic33CanFrame higher = dspic33_can_test_frame(0x400u, false, false, 2u, 0xa0u);
-    Dspic33CanFrame lower = dspic33_can_test_frame(0u, false, false, 2u, 0xb0u);
+    Dspic33CanFrame higher_priority_frame = dspic33_can_test_frame(0x400u, false, false, 2u, 0xa0u);
+    Dspic33CanFrame lower_priority_frame = dspic33_can_test_frame(0u, false, false, 2u, 0xb0u);
     Dspic33CanFrame output;
-    Dspic33 winner;
-    expect(state, dspic33_initialize(&winner), "initialize independent CAN arbitration winner");
+    Dspic33 winning_cpu;
+
+    expect(state, dspic33_initialize(&winning_cpu),
+           "initialize independent CAN arbitration winner");
     dspic33_reset(cpu, 0u);
-    dspic33_reset(&winner, 0u);
+    dspic33_reset(&winning_cpu, 0u);
     dspic33_write_word(cpu, 0x0e30u, 0xffffu);
     dspic33_write_word(cpu, 0x0e3eu, 0u);
     dspic33_write_word(cpu, 0x0680u, 0x0e00u);
     dspic33_write_word(cpu, 0x06d4u, 0x0040u);
-    dspic33_write_word(&winner, 0x0e30u, 0xffffu);
-    dspic33_write_word(&winner, 0x0e3eu, 0u);
-    dspic33_write_word(&winner, 0x0682u, 0x000fu);
-    dspic33_write_word(&winner, 0x06d4u, 0x4000u);
+    dspic33_write_word(&winning_cpu, 0x0e30u, 0xffffu);
+    dspic33_write_word(&winning_cpu, 0x0e3eu, 0u);
+    dspic33_write_word(&winning_cpu, 0x0682u, 0x000fu);
+    dspic33_write_word(&winning_cpu, 0x06d4u, 0x4000u);
     dspic33_can_test_configure_receive(cpu, 0u, 0xd000u, 4u, 0u);
-    dspic33_can_test_configure_receive(&winner, 1u, 0xd200u, 4u, 0u);
-    dspic33_can_test_configure_filter(cpu, 0u, 0u, lower.identifier, false, 0x7ffu, true, 0u, 0u);
-    dspic33_can_test_configure_filter(&winner, 1u, 0u, higher.identifier, false, 0x7ffu, true, 0u,
-                                      0u);
+    dspic33_can_test_configure_receive(&winning_cpu, 1u, 0xd200u, 4u, 0u);
+    dspic33_can_test_configure_filter(cpu, 0u, 0u, lower_priority_frame.identifier, false, 0x7ffu,
+                                      true, 0u, 0u);
+    dspic33_can_test_configure_filter(&winning_cpu, 1u, 0u, higher_priority_frame.identifier, false,
+                                      0x7ffu, true, 0u, 0u);
     dspic33_can_test_enable_filter(cpu, 0u, 1u);
-    dspic33_can_test_enable_filter(&winner, 1u, 1u);
+    dspic33_can_test_enable_filter(&winning_cpu, 1u, 1u);
     dspic33_can_test_configure_transmit(cpu, 0u, 0xd400u);
-    dspic33_can_test_configure_transmit(&winner, 1u, 0xd600u);
-    dspic33_can_test_write_transmit_frame(cpu, 0xd400u, &higher);
-    dspic33_can_test_write_transmit_frame(&winner, 0xd600u, &lower);
+    dspic33_can_test_configure_transmit(&winning_cpu, 1u, 0xd600u);
+    dspic33_can_test_write_transmit_frame(cpu, 0xd400u, &higher_priority_frame);
+    dspic33_can_test_write_transmit_frame(&winning_cpu, 0xd600u, &lower_priority_frame);
     dspic33_can_test_select_window(cpu, 0u, false);
-    dspic33_can_test_select_window(&winner, 1u, false);
+    dspic33_can_test_select_window(&winning_cpu, 1u, false);
     dspic33_write_word(cpu, 0x0410u, 0u);
     dspic33_write_word(cpu, 0x0412u, 0u);
-    dspic33_write_word(&winner, 0x0510u, 0u);
-    dspic33_write_word(&winner, 0x0512u, 0u);
+    dspic33_write_word(&winning_cpu, 0x0510u, 0u);
+    dspic33_write_word(&winning_cpu, 0x0512u, 0u);
     dspic33_can_test_set_mode(cpu, 0u, 0u);
-    dspic33_can_test_set_mode(&winner, 1u, 0u);
+    dspic33_can_test_set_mode(&winning_cpu, 1u, 0u);
     dspic33_write_word(cpu, 0x0430u, 0x008bu);
-    dspic33_write_word(&winner, 0x0530u, 0x008bu);
+    dspic33_write_word(&winning_cpu, 0x0530u, 0x008bu);
     expect(state,
-           dspic33_device_advance(cpu, 8u) && dspic33_device_advance(&winner, 8u) &&
-               (cpu->io.can_tx_on_bus & 1u) != 0u && (winner.io.can_tx_on_bus & 2u) != 0u,
+           dspic33_device_advance(cpu, 8u) && dspic33_device_advance(&winning_cpu, 8u) &&
+               (cpu->io.can_tx_on_bus & 1u) != 0u && (winning_cpu.io.can_tx_on_bus & 2u) != 0u,
            "competing CAN transmissions enter the bus together");
-    expect(state, drive_shared_can_bus(cpu, &winner, 1u, 4u),
+    expect(state, drive_shared_can_bus(cpu, &winning_cpu, 1u, 4u),
            "lower identifier wins CAN arbitration");
     expect(state,
            (dspic33_read_word(cpu, 0x0430u) & 0x0028u) == 0x0028u &&
@@ -243,22 +246,23 @@ void dspic33_can_test_arbitration_cases(TestState* state, Dspic33* cpu) {
                !dspic33_can_transmit(cpu, 0u, &output),
            "losing CAN transmission records TXLARB and begins an automatic retry");
     expect(state,
-           dspic33_can_transmit(&winner, 1u, &output) && output.identifier == lower.identifier,
+           dspic33_can_transmit(&winning_cpu, 1u, &output) &&
+               output.identifier == lower_priority_frame.identifier,
            "winning CAN frame completes before the retry");
     expect(state,
            cpu->io.can_rx_serial_count[0] != 0u && dspic33_device_advance(cpu, 7u) &&
-               dspic33_device_advance(&winner, 7u) && (cpu->io.can_tx_retry_wait & 1u) == 0u &&
+               dspic33_device_advance(&winning_cpu, 7u) && (cpu->io.can_tx_retry_wait & 1u) == 0u &&
                (cpu->io.can_tx_on_bus & 1u) != 0u,
            "losing node monitors the winner and retries after intermission");
-    expect(state, drive_shared_can_bus(cpu, &winner, 0u, 4u),
+    expect(state, drive_shared_can_bus(cpu, &winning_cpu, 0u, 4u),
            "retried CAN transmission completes on the shared bus");
     expect(state,
            dspic33_device_advance(cpu, 8u) && dspic33_can_transmit(cpu, 0u, &output) &&
-               output.identifier == higher.identifier &&
+               output.identifier == higher_priority_frame.identifier &&
                (dspic33_read_word(cpu, 0x0430u) & 0x0078u) == 0x0020u &&
-               winner.io.can_rx_serial_count[1] != 0u,
+               winning_cpu.io.can_rx_serial_count[1] != 0u,
            "successful retry preserves TXLARB and clears TXREQ without errors");
-    dspic33_release(&winner);
+    dspic33_release(&winning_cpu);
 }
 
 static bool drive_unacknowledged_can_frame(Dspic33* cpu, uint8_t channel_index,
