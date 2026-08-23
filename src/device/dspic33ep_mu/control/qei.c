@@ -527,55 +527,63 @@ static uint64_t qei_output_transition_ticks(const Dspic33* cpu, uint8_t channel,
     return transition_boundary;
 }
 
-uint64_t dspic33_device_internal_qei_boundary_cycles(const Dspic33* cpu, uint64_t limit) {
-    uint64_t boundary = limit;
+uint64_t dspic33_device_internal_qei_boundary_cycles(const Dspic33* cpu, uint64_t maximum_cycles) {
+    uint64_t earliest_boundary_cycles = maximum_cycles;
+
     for (uint8_t channel = 0u; channel < DSPIC33_QEI_COUNT; channel++) {
-        uint16_t base = dspic33_device_qei_bases[channel];
-        uint16_t control = dspic33_device_internal_raw_word(cpu, base);
-        uint16_t io_control = dspic33_device_internal_raw_word(cpu, (uint16_t)(base + 2u));
-        uint8_t logical = cpu->io.qei.logical_inputs[channel];
-        bool gate_allows = (control & QEI_CONTROL_GATE_ENABLE) == 0u || (logical & 2u) != 0u;
-        if (!qei_pps_output_mapped(cpu, channel) || (io_control & QEI_IO_OUTPUT_MASK) == 0u) {
+        const uint16_t register_base = dspic33_device_qei_bases[channel];
+        const uint16_t control_word = dspic33_device_internal_raw_word(cpu, register_base);
+        const uint16_t io_control_word =
+            dspic33_device_internal_raw_word(cpu, (uint16_t)(register_base + 2u));
+        const uint8_t logical_inputs = cpu->io.qei.logical_inputs[channel];
+        const bool gate_allows =
+            (control_word & QEI_CONTROL_GATE_ENABLE) == 0u || (logical_inputs & 2u) != 0u;
+
+        if (!qei_pps_output_mapped(cpu, channel) || (io_control_word & QEI_IO_OUTPUT_MASK) == 0u) {
             continue;
         }
-        if ((io_control & QEI_IO_FILTER_ENABLE) != 0u && qei_filter_clock_enabled(cpu, channel) &&
+        if ((io_control_word & QEI_IO_FILTER_ENABLE) != 0u &&
+            qei_filter_clock_enabled(cpu, channel) &&
             cpu->io.qei.filtered_inputs[channel] != cpu->qei_inputs[channel]) {
-            uint64_t filter_cycles =
-                qei_filter_divider(io_control) - cpu->io.qei.filter_fraction[channel];
-            if (filter_cycles < boundary) {
-                boundary = filter_cycles;
+            const uint64_t filter_cycles =
+                qei_filter_divider(io_control_word) - cpu->io.qei.filter_fraction[channel];
+            if (filter_cycles < earliest_boundary_cycles) {
+                earliest_boundary_cycles = filter_cycles;
             }
         }
-        if (qei_clock_enabled(cpu, channel) && (control & QEI_CONTROL_COUNT_MODE_MASK) == 3u &&
+        if (qei_clock_enabled(cpu, channel) && (control_word & QEI_CONTROL_COUNT_MODE_MASK) == 3u &&
             gate_allows) {
-            uint64_t ticks = qei_output_transition_ticks(
-                cpu, channel, (control & QEI_CONTROL_DIRECTION_INVERT) != 0u ? -1 : 1);
-            uint64_t divider = qei_divider(control);
-            if (ticks != UINT64_MAX && ticks <= UINT64_MAX / divider) {
-                uint64_t cycles = ticks * divider - cpu->io.qei.counter_fraction[channel];
-                if (cycles < boundary) {
-                    boundary = cycles;
+            const uint64_t transition_ticks = qei_output_transition_ticks(
+                cpu, channel, (control_word & QEI_CONTROL_DIRECTION_INVERT) != 0u ? -1 : 1);
+            const uint64_t counter_divider = qei_divider(control_word);
+            if (transition_ticks != UINT64_MAX &&
+                transition_ticks <= UINT64_MAX / counter_divider) {
+                const uint64_t transition_cycles =
+                    transition_ticks * counter_divider - cpu->io.qei.counter_fraction[channel];
+                if (transition_cycles < earliest_boundary_cycles) {
+                    earliest_boundary_cycles = transition_cycles;
                 }
             }
         }
     }
-    return boundary;
+    return earliest_boundary_cycles;
 }
 
-bool dspic33_device_internal_qei_pps_output_value(const Dspic33* cpu, uint8_t port, uint8_t bit,
-                                                  bool* high) {
-    for (size_t index = 0u;
-         index < sizeof(dspic33_device_pps_pins) / sizeof(dspic33_device_pps_pins[0]); index++) {
-        if (dspic33_device_pps_pins[index].port == port &&
-            dspic33_device_pps_pins[index].bit == bit) {
-            uint8_t function = dspic33_device_internal_pps_output_function(
-                cpu, dspic33_device_pps_pins[index].pin);
-            if (function == 47u || function == 48u) {
-                uint8_t channel = (uint8_t)(function - 47u);
+bool dspic33_device_internal_qei_pps_output_value(const Dspic33* cpu, uint8_t port, uint8_t pin,
+                                                  bool* is_high) {
+    for (size_t pin_index = 0u;
+         pin_index < sizeof(dspic33_device_pps_pins) / sizeof(dspic33_device_pps_pins[0]);
+         pin_index++) {
+        if (dspic33_device_pps_pins[pin_index].port == port &&
+            dspic33_device_pps_pins[pin_index].bit == pin) {
+            const uint8_t output_function = dspic33_device_internal_pps_output_function(
+                cpu, dspic33_device_pps_pins[pin_index].pin);
+            if (output_function == 47u || output_function == 48u) {
+                const uint8_t channel = (uint8_t)(output_function - 47u);
                 if ((dspic33_device_internal_raw_word(
                          cpu, (uint16_t)(dspic33_device_qei_bases[channel] + 2u)) &
                      QEI_IO_OUTPUT_MASK) != 0u) {
-                    return dspic33_device_internal_qei_compare_output_value(cpu, channel, high);
+                    return dspic33_device_internal_qei_compare_output_value(cpu, channel, is_high);
                 }
             }
             return false;
@@ -584,57 +592,65 @@ bool dspic33_device_internal_qei_pps_output_value(const Dspic33* cpu, uint8_t po
     return false;
 }
 
-static void qei_filter_ticks(Dspic33* cpu, uint8_t channel, uint64_t ticks) {
-    uint8_t input;
-    bool changed = false;
-    for (input = 0u; input < 4u; input++) {
-        uint8_t bit = (uint8_t)(1u << input);
-        bool raw = (cpu->qei_inputs[channel] & bit) != 0u;
-        bool filtered = (cpu->io.qei.filtered_inputs[channel] & bit) != 0u;
-        if (raw == filtered) {
-            cpu->io.qei.filter_stability[channel][input] = 0u;
+static void qei_filter_ticks(Dspic33* cpu, uint8_t channel, uint64_t tick_count) {
+    bool inputs_changed = false;
+
+    for (uint8_t input_index = 0u; input_index < 4u; input_index++) {
+        const uint8_t input_mask = (uint8_t)(1u << input_index);
+        const bool raw_level = (cpu->qei_inputs[channel] & input_mask) != 0u;
+        const bool filtered_level = (cpu->io.qei.filtered_inputs[channel] & input_mask) != 0u;
+
+        if (raw_level == filtered_level) {
+            cpu->io.qei.filter_stability[channel][input_index] = 0u;
         } else {
-            uint64_t stability = cpu->io.qei.filter_stability[channel][input] + ticks;
-            if (stability >= 3u) {
-                if (raw) {
-                    cpu->io.qei.filtered_inputs[channel] |= bit;
+            const uint64_t stability_ticks =
+                cpu->io.qei.filter_stability[channel][input_index] + tick_count;
+            if (stability_ticks >= 3u) {
+                if (raw_level) {
+                    cpu->io.qei.filtered_inputs[channel] |= input_mask;
                 } else {
-                    cpu->io.qei.filtered_inputs[channel] &= (uint8_t)~bit;
+                    cpu->io.qei.filtered_inputs[channel] &= (uint8_t)~input_mask;
                 }
-                cpu->io.qei.filter_stability[channel][input] = 0u;
-                changed = true;
+                cpu->io.qei.filter_stability[channel][input_index] = 0u;
+                inputs_changed = true;
             } else {
-                cpu->io.qei.filter_stability[channel][input] = (uint8_t)stability;
+                cpu->io.qei.filter_stability[channel][input_index] = (uint8_t)stability_ticks;
             }
         }
     }
-    if (changed) {
+    if (inputs_changed) {
         qei_apply_filtered_inputs(cpu, channel);
     }
 }
 
-static uint64_t qei_accumulate_ticks(uint64_t* fraction, uint64_t cycles, uint64_t divider) {
-    uint64_t ticks = cycles / divider;
-    uint64_t remainder = cycles % divider;
-    if (remainder != 0u && *fraction >= divider - remainder) {
-        ticks++;
-        *fraction -= divider - remainder;
+static uint64_t qei_accumulate_ticks(uint64_t* fractional_cycles, uint64_t cycle_count,
+                                     uint64_t divider) {
+    uint64_t tick_count = cycle_count / divider;
+    const uint64_t remainder_cycles = cycle_count % divider;
+
+    if (remainder_cycles != 0u && *fractional_cycles >= divider - remainder_cycles) {
+        tick_count++;
+        *fractional_cycles -= divider - remainder_cycles;
     } else {
-        *fraction += remainder;
+        *fractional_cycles += remainder_cycles;
     }
-    return ticks;
+    return tick_count;
 }
 
-static void qei_advance_counters(Dspic33* cpu, uint8_t channel, uint16_t control, uint64_t cycles) {
-    uint64_t ticks =
-        qei_accumulate_ticks(&cpu->io.qei.counter_fraction[channel], cycles, qei_divider(control));
-    if ((control & QEI_CONTROL_COUNT_MODE_MASK) == 3u) {
-        uint8_t logical = cpu->io.qei.logical_inputs[channel];
-        bool gate_allows = (control & QEI_CONTROL_GATE_ENABLE) == 0u || (logical & 2u) != 0u;
-        int8_t direction = (control & QEI_CONTROL_DIRECTION_INVERT) != 0u ? -1 : 1;
-        qei_advance_timer_ticks(cpu, channel, direction, gate_allows, logical, ticks);
-    } else if ((control & QEI_CONTROL_COUNT_MODE_MASK) < 2u) {
-        qei_update_interval(cpu, channel, ticks);
+static void qei_advance_counters(Dspic33* cpu, uint8_t channel, uint16_t control_word,
+                                 uint64_t cycle_count) {
+    const uint64_t tick_count = qei_accumulate_ticks(&cpu->io.qei.counter_fraction[channel],
+                                                     cycle_count, qei_divider(control_word));
+
+    if ((control_word & QEI_CONTROL_COUNT_MODE_MASK) == 3u) {
+        const uint8_t logical_inputs = cpu->io.qei.logical_inputs[channel];
+        const bool gate_allows =
+            (control_word & QEI_CONTROL_GATE_ENABLE) == 0u || (logical_inputs & 2u) != 0u;
+        const int8_t direction = (control_word & QEI_CONTROL_DIRECTION_INVERT) != 0u ? -1 : 1;
+
+        qei_advance_timer_ticks(cpu, channel, direction, gate_allows, logical_inputs, tick_count);
+    } else if ((control_word & QEI_CONTROL_COUNT_MODE_MASK) < 2u) {
+        qei_update_interval(cpu, channel, tick_count);
     }
 }
 
