@@ -295,9 +295,10 @@ static bool watchdog_enabled(const Dspic33* cpu) {
 }
 
 static uint32_t watchdog_period(const Dspic33* cpu) {
-    uint8_t configuration = cpu->configuration[10u];
-    uint32_t prescaler = (configuration & 0x10u) != 0u ? 128u : 32u;
-    return prescaler << (configuration & 0x0fu);
+    uint8_t watchdog_configuration = cpu->configuration[10u];
+    uint32_t watchdog_prescaler = (watchdog_configuration & 0x10u) != 0u ? 128u : 32u;
+
+    return watchdog_prescaler << (watchdog_configuration & 0x0fu);
 }
 
 static void watchdog_timeout(Dspic33* cpu) {
@@ -317,9 +318,10 @@ static void watchdog_timeout(Dspic33* cpu) {
 }
 
 void dspic33_internal_clear_watchdog(Dspic33* cpu) {
-    uint32_t period = watchdog_period(cpu);
+    uint32_t watchdog_period_ticks = watchdog_period(cpu);
+
     if (watchdog_enabled(cpu) && (cpu->configuration[10u] & 0x40u) == 0u &&
-        cpu->watchdog.ticks < period - period / 4u) {
+        cpu->watchdog.ticks < watchdog_period_ticks - watchdog_period_ticks / 4u) {
         watchdog_timeout(cpu);
         return;
     }
@@ -328,13 +330,14 @@ void dspic33_internal_clear_watchdog(Dspic33* cpu) {
 
 void dspic33_watchdog_advance_lprc(Dspic33* cpu, uint64_t ticks) {
     while (ticks != 0u && watchdog_enabled(cpu)) {
-        uint32_t period = watchdog_period(cpu);
-        uint32_t remaining = period - cpu->watchdog.ticks;
-        if (ticks < remaining) {
+        uint32_t watchdog_period_ticks = watchdog_period(cpu);
+        uint32_t remaining_ticks = watchdog_period_ticks - cpu->watchdog.ticks;
+
+        if (ticks < remaining_ticks) {
             cpu->watchdog.ticks += (uint32_t)ticks;
             return;
         }
-        ticks -= remaining;
+        ticks -= remaining_ticks;
         watchdog_timeout(cpu);
         if (cpu->watchdog.reset_pending) {
             return;
