@@ -305,22 +305,24 @@ static void can_receive_start(Dspic33* cpu, uint8_t channel_index) {
     dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_RECEIVE_WORD, 0u);
 }
 
-static void can_receive_success_start(Dspic33* cpu, uint8_t channel) {
-    dspic33_device_internal_can_receive_success(cpu, channel);
-    can_receive_start(cpu, channel);
+static void can_receive_success_start(Dspic33* cpu, uint8_t channel_index) {
+    dspic33_device_internal_can_receive_success(cpu, channel_index);
+    can_receive_start(cpu, channel_index);
 }
 
-static void can_receive_word(Dspic33* cpu, uint8_t channel) {
-    uint8_t word = cpu->io.can_rx_word[channel];
-    if (word >= 8u) {
-        dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_FINISH, 0u);
+static void can_receive_word(Dspic33* cpu, uint8_t channel_index) {
+    const uint8_t receive_word_index = cpu->io.can_rx_word[channel_index];
+
+    if (receive_word_index >= 8u) {
+        dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_RECEIVE_FINISH, 0u);
         return;
     }
-    cpu->io.can_rx_word[channel]++;
-    dspic33_raise_interrupt(cpu, dspic33_device_can_rx_irqs[channel]);
-    dspic33_dma_request(cpu, dspic33_device_can_rx_requests[channel],
-                        (uint16_t)(cpu->io.can_rx_buffer[channel] * 16u + word * 2u), 0u);
-    dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_WORD, 1u);
+    cpu->io.can_rx_word[channel_index]++;
+    dspic33_raise_interrupt(cpu, dspic33_device_can_rx_irqs[channel_index]);
+    dspic33_dma_request(
+        cpu, dspic33_device_can_rx_requests[channel_index],
+        (uint16_t)(cpu->io.can_rx_buffer[channel_index] * 16u + receive_word_index * 2u), 0u);
+    dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_RECEIVE_WORD, 1u);
 }
 
 static void can_receive_finish(Dspic33* cpu, uint8_t channel) {
