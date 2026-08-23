@@ -233,69 +233,76 @@ void dspic33_device_internal_can_refresh_error_status(Dspic33* cpu, uint8_t chan
     dspic33_device_internal_raw_write_word(cpu, (uint16_t)(can_base + 0x0au), error_status);
 }
 
-static void can_receive_start(Dspic33* cpu, uint8_t channel) {
-    Dspic33CanFrame frame;
-    uint8_t buffer;
-    uint8_t filter;
-    uint8_t bit = (uint8_t)(1u << channel);
-    if ((cpu->io.can_rx_busy & bit) != 0u ||
-        !dspic33_device_internal_can_queue_pop(&cpu->io.can_rx[channel], &frame)) {
+static void can_receive_start(Dspic33* cpu, uint8_t channel_index) {
+    Dspic33CanFrame received_frame;
+    uint8_t receive_buffer;
+    uint8_t filter_index;
+    const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+
+    if ((cpu->io.can_rx_busy & channel_bit) != 0u ||
+        !dspic33_device_internal_can_queue_pop(&cpu->io.can_rx[channel_index], &received_frame)) {
         return;
     }
     if (cpu->power_state == DSPIC33_POWER_SLEEP) {
         if ((dspic33_device_internal_raw_word(
-                 cpu, (uint16_t)(dspic33_device_can_bases[channel] + 0x12u)) &
+                 cpu, (uint16_t)(dspic33_device_can_bases[channel_index] + 0x12u)) &
              CAN_WAKE_FILTER) != 0u) {
-            dspic33_device_internal_can_raise_event(cpu, channel, CAN_INTERRUPT_WAKE, 0u, 0u);
+            dspic33_device_internal_can_raise_event(cpu, channel_index, CAN_INTERRUPT_WAKE, 0u, 0u);
         }
         return;
     }
-    if (!dspic33_device_internal_can_power_enabled(cpu, channel) ||
-        dspic33_device_internal_can_mode(cpu, channel) == CAN_MODE_DISABLE ||
-        dspic33_device_internal_can_mode(cpu, channel) == CAN_MODE_CONFIGURATION) {
+    if (!dspic33_device_internal_can_power_enabled(cpu, channel_index) ||
+        dspic33_device_internal_can_mode(cpu, channel_index) == CAN_MODE_DISABLE ||
+        dspic33_device_internal_can_mode(cpu, channel_index) == CAN_MODE_CONFIGURATION) {
         return;
     }
-    dspic33_device_internal_can_capture_received_frame(cpu, channel);
-    if (dspic33_device_internal_can_mode(cpu, channel) == CAN_MODE_LISTEN_ALL) {
-        bool fifo;
-        bool transmit;
-        filter = 0u;
-        buffer = dspic33_device_internal_can_filter_buffer(cpu, channel, filter);
-        fifo = buffer == 15u;
-        if (fifo) {
-            buffer = cpu->io.can_fifo_write[channel];
+    dspic33_device_internal_can_capture_received_frame(cpu, channel_index);
+    if (dspic33_device_internal_can_mode(cpu, channel_index) == CAN_MODE_LISTEN_ALL) {
+        bool is_fifo_buffer;
+        bool is_transmit_buffer;
+        filter_index = 0u;
+        receive_buffer =
+            dspic33_device_internal_can_filter_buffer(cpu, channel_index, filter_index);
+        is_fifo_buffer = receive_buffer == 15u;
+        if (is_fifo_buffer) {
+            receive_buffer = cpu->io.can_fifo_write[channel_index];
         }
-        transmit =
-            buffer < 8u && (dspic33_device_internal_can_buffer_control(cpu, channel, buffer) &
-                            CAN_BUFFER_TRANSMIT) != 0u;
-        if (buffer >= dspic33_device_internal_can_buffer_count(cpu, channel) || transmit ||
-            dspic33_device_internal_can_buffer_flag(cpu, channel, buffer, false)) {
-            if (buffer < 32u) {
-                dspic33_device_internal_can_set_buffer_flag(cpu, channel, buffer, true);
-                dspic33_device_internal_can_raise_event(cpu, channel, CAN_INTERRUPT_OVERFLOW,
-                                                        buffer, filter);
-                if (fifo) {
-                    dspic33_device_internal_can_advance_fifo_write(cpu, channel, buffer);
+        is_transmit_buffer =
+            receive_buffer < 8u &&
+            (dspic33_device_internal_can_buffer_control(cpu, channel_index, receive_buffer) &
+             CAN_BUFFER_TRANSMIT) != 0u;
+        if (receive_buffer >= dspic33_device_internal_can_buffer_count(cpu, channel_index) ||
+            is_transmit_buffer ||
+            dspic33_device_internal_can_buffer_flag(cpu, channel_index, receive_buffer, false)) {
+            if (receive_buffer < 32u) {
+                dspic33_device_internal_can_set_buffer_flag(cpu, channel_index, receive_buffer,
+                                                            true);
+                dspic33_device_internal_can_raise_event(cpu, channel_index, CAN_INTERRUPT_OVERFLOW,
+                                                        receive_buffer, filter_index);
+                if (is_fifo_buffer) {
+                    dspic33_device_internal_can_advance_fifo_write(cpu, channel_index,
+                                                                   receive_buffer);
                 }
             }
             return;
         }
-    } else if (!dspic33_device_internal_can_select_receive_buffer(cpu, channel, &frame, &buffer,
-                                                                  &filter)) {
+    } else if (!dspic33_device_internal_can_select_receive_buffer(
+                   cpu, channel_index, &received_frame, &receive_buffer, &filter_index)) {
         return;
     }
     if (!dspic33_device_internal_can_dma_ready(
-            cpu, dspic33_device_can_rx_requests[channel],
-            (uint16_t)(dspic33_device_can_bases[channel] + 0x40u), false)) {
-        dspic33_raise_interrupt(cpu, dspic33_device_can_rx_irqs[channel]);
+            cpu, dspic33_device_can_rx_requests[channel_index],
+            (uint16_t)(dspic33_device_can_bases[channel_index] + 0x40u), false)) {
+        dspic33_raise_interrupt(cpu, dspic33_device_can_rx_irqs[channel_index]);
         return;
     }
-    dspic33_device_internal_can_encode_frame(&frame, filter, cpu->io.can_rx_words[channel]);
-    cpu->io.can_rx_buffer[channel] = buffer;
-    cpu->io.can_rx_filter[channel] = filter;
-    cpu->io.can_rx_word[channel] = 0u;
-    cpu->io.can_rx_busy |= bit;
-    dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_WORD, 0u);
+    dspic33_device_internal_can_encode_frame(&received_frame, filter_index,
+                                             cpu->io.can_rx_words[channel_index]);
+    cpu->io.can_rx_buffer[channel_index] = receive_buffer;
+    cpu->io.can_rx_filter[channel_index] = filter_index;
+    cpu->io.can_rx_word[channel_index] = 0u;
+    cpu->io.can_rx_busy |= channel_bit;
+    dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_RECEIVE_WORD, 0u);
 }
 
 static void can_receive_success_start(Dspic33* cpu, uint8_t channel) {
