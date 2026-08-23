@@ -202,33 +202,35 @@ static void can_mode_transition(Dspic33* cpu, uint8_t channel_index, uint32_t ev
     }
 }
 
-void dspic33_device_internal_can_refresh_error_status(Dspic33* cpu, uint8_t channel) {
-    uint16_t base = dspic33_device_can_bases[channel];
-    uint16_t counts = dspic33_device_internal_raw_word(cpu, (uint16_t)(base + 0x0eu));
-    uint16_t status = dspic33_device_internal_raw_word(cpu, (uint16_t)(base + 0x0au));
-    uint8_t receive = (uint8_t)counts;
-    uint8_t transmit = (uint8_t)(counts >> 8u);
-    bool bus_off = (status & CAN_BUS_OFF) != 0u;
-    status &= 0x00ffu;
-    if (receive >= 96u || transmit >= 96u) {
-        status |= CAN_ERROR_WARNING;
+void dspic33_device_internal_can_refresh_error_status(Dspic33* cpu, uint8_t channel_index) {
+    const uint16_t can_base = dspic33_device_can_bases[channel_index];
+    const uint16_t error_counters =
+        dspic33_device_internal_raw_word(cpu, (uint16_t)(can_base + 0x0eu));
+    uint16_t error_status = dspic33_device_internal_raw_word(cpu, (uint16_t)(can_base + 0x0au));
+    const uint8_t receive_error_count = (uint8_t)error_counters;
+    const uint8_t transmit_error_count = (uint8_t)(error_counters >> 8u);
+    const bool bus_off = (error_status & CAN_BUS_OFF) != 0u;
+
+    error_status &= 0x00ffu;
+    if (receive_error_count >= 96u || transmit_error_count >= 96u) {
+        error_status |= CAN_ERROR_WARNING;
     }
-    if (receive >= 96u && receive < 128u) {
-        status |= CAN_RECEIVE_WARNING;
+    if (receive_error_count >= 96u && receive_error_count < 128u) {
+        error_status |= CAN_RECEIVE_WARNING;
     }
-    if (transmit >= 96u && transmit < 128u) {
-        status |= CAN_TRANSMIT_WARNING;
+    if (transmit_error_count >= 96u && transmit_error_count < 128u) {
+        error_status |= CAN_TRANSMIT_WARNING;
     }
-    if (receive >= 128u) {
-        status |= CAN_RECEIVE_PASSIVE;
+    if (receive_error_count >= 128u) {
+        error_status |= CAN_RECEIVE_PASSIVE;
     }
-    if (transmit >= 128u && !bus_off) {
-        status |= CAN_TRANSMIT_PASSIVE;
+    if (transmit_error_count >= 128u && !bus_off) {
+        error_status |= CAN_TRANSMIT_PASSIVE;
     }
     if (bus_off) {
-        status |= CAN_BUS_OFF;
+        error_status |= CAN_BUS_OFF;
     }
-    dspic33_device_internal_raw_write_word(cpu, (uint16_t)(base + 0x0au), status);
+    dspic33_device_internal_raw_write_word(cpu, (uint16_t)(can_base + 0x0au), error_status);
 }
 
 static void can_receive_start(Dspic33* cpu, uint8_t channel) {
