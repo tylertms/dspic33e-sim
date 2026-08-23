@@ -742,14 +742,15 @@ void dspic33_can_test_receive_pps_cases(TestState* state, Dspic33* cpu) {
     dspic33_can_test_configure_filter(cpu, 1u, 0u, 0u, false, 0x7ffu, true, 0u, 0u);
     dspic33_can_test_enable_filter(cpu, 1u, 1u);
     dspic33_can_test_configure_transmit(cpu, 0u, 0xde00u);
-    Dspic33CanFrame invalid = dspic33_can_test_frame(0u, false, false, 0u, 0u);
-    dspic33_can_test_write_transmit_frame(cpu, 0xde00u, &invalid);
+    Dspic33CanFrame transmitted_frame = dspic33_can_test_frame(0u, false, false, 0u, 0u);
+    dspic33_can_test_write_transmit_frame(cpu, 0xde00u, &transmitted_frame);
     dspic33_can_test_select_window(cpu, 0u, false);
     dspic33_can_test_select_window(cpu, 1u, false);
     dspic33_write_word(cpu, 0x050cu, 0x0080u);
     dspic33_can_test_set_mode(cpu, 0u, 0u);
     dspic33_can_test_set_mode(cpu, 1u, 0u);
     dspic33_write_word(cpu, 0x0430u, 0x008bu);
+
     bool acknowledge_observed = false;
     expect(state,
            dspic33_device_advance(cpu, 8u) &&
