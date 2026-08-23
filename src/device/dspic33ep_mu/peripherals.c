@@ -14,10 +14,11 @@ bool dspic33_input_capture_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t de
                INPUT_CAPTURE_EVENT_PIN | (high ? INPUT_CAPTURE_EVENT_HIGH : 0u), delay);
 }
 
-bool dspic33_output_compare_output(const Dspic33* cpu, uint8_t channel, bool* high) {
-    uint16_t control2;
-    uint16_t bit;
-    if (channel >= DSPIC33_OUTPUT_COMPARE_COUNT || high == NULL ||
+bool dspic33_output_compare_output(const Dspic33* cpu, uint8_t channel, bool* output_high) {
+    uint16_t control_word;
+    uint16_t channel_mask;
+
+    if (channel >= DSPIC33_OUTPUT_COMPARE_COUNT || output_high == NULL ||
         !dspic33_device_internal_output_compare_supported(cpu, channel) ||
         dspic33_device_internal_output_compare_pmd_disabled(cpu, channel) ||
         (dspic33_device_internal_output_compare_cascade_requested(cpu, channel) &&
@@ -29,34 +30,36 @@ bool dspic33_output_compare_output(const Dspic33* cpu, uint8_t channel, bool* hi
          channel == dspic33_device_internal_output_compare_pair_low(channel))) {
         return false;
     }
-    control2 = dspic33_device_internal_raw_word(
+    control_word = dspic33_device_internal_raw_word(
         cpu, (uint16_t)(dspic33_device_internal_output_compare_base(channel) + 2u));
-    bit = (uint16_t)(1u << channel);
-    if ((cpu->io.output_compare.fault_held & bit) != 0u) {
-        *high = (control2 & OUTPUT_COMPARE_FAULT_OUTPUT) != 0u;
+    channel_mask = (uint16_t)(1u << channel);
+    if ((cpu->io.output_compare.fault_held & channel_mask) != 0u) {
+        *output_high = (control_word & OUTPUT_COMPARE_FAULT_OUTPUT) != 0u;
     } else {
-        *high = dspic33_device_internal_output_compare_high(cpu, channel) !=
-                ((control2 & OUTPUT_COMPARE_INVERT) != 0u);
+        *output_high = dspic33_device_internal_output_compare_high(cpu, channel) !=
+                       ((control_word & OUTPUT_COMPARE_INVERT) != 0u);
     }
     return true;
 }
 
-bool dspic33_output_compare_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
+bool dspic33_output_compare_pin(const Dspic33* cpu, uint8_t pin, bool* output_high) {
     uint8_t channel;
-    uint16_t control2;
-    uint16_t bit;
-    if (high == NULL || !dspic33_device_internal_output_compare_pin_channel(cpu, pin, &channel)) {
+    uint16_t control_word;
+    uint16_t channel_mask;
+
+    if (output_high == NULL ||
+        !dspic33_device_internal_output_compare_pin_channel(cpu, pin, &channel)) {
         return false;
     }
-    control2 = dspic33_device_internal_raw_word(
+    control_word = dspic33_device_internal_raw_word(
         cpu, (uint16_t)(dspic33_device_internal_output_compare_base(channel) + 2u));
-    bit = (uint16_t)(1u << channel);
-    if ((control2 & OUTPUT_COMPARE_TRISTATE) != 0u ||
-        ((cpu->io.output_compare.fault_held & bit) != 0u &&
-         (control2 & OUTPUT_COMPARE_FAULT_TRISTATE) != 0u)) {
+    channel_mask = (uint16_t)(1u << channel);
+    if ((control_word & OUTPUT_COMPARE_TRISTATE) != 0u ||
+        ((cpu->io.output_compare.fault_held & channel_mask) != 0u &&
+         (control_word & OUTPUT_COMPARE_FAULT_TRISTATE) != 0u)) {
         return false;
     }
-    return dspic33_output_compare_output(cpu, channel, high);
+    return dspic33_output_compare_output(cpu, channel, output_high);
 }
 
 bool dspic33_output_compare_fault(Dspic33* cpu, uint8_t source, bool high, uint64_t delay) {
@@ -73,42 +76,46 @@ bool dspic33_output_compare_fault_pin(Dspic33* cpu, uint8_t pin, bool high, uint
                                      delay);
 }
 
-bool dspic33_comparator_input(Dspic33* cpu, uint8_t comparator, Dspic33ComparatorInput input,
-                              uint16_t level, uint64_t delay) {
-    uint16_t source;
-    if (comparator >= DSPIC33_COMPARATOR_COUNT || input >= DSPIC33_COMPARATOR_INPUT_COUNT) {
+bool dspic33_comparator_input(Dspic33* cpu, uint8_t comparator, Dspic33ComparatorInput input_source,
+                              uint16_t input_level, uint64_t delay) {
+    uint16_t event_source;
+
+    if (comparator >= DSPIC33_COMPARATOR_COUNT || input_source >= DSPIC33_COMPARATOR_INPUT_COUNT) {
         return false;
     }
-    source = (uint16_t)(comparator * DSPIC33_COMPARATOR_INPUT_COUNT + input);
-    return dspic33_schedule_external(cpu, DSPIC33_EVENT_COMPARATOR, source, level, delay);
+    event_source = (uint16_t)(comparator * DSPIC33_COMPARATOR_INPUT_COUNT + input_source);
+    return dspic33_schedule_external(cpu, DSPIC33_EVENT_COMPARATOR, event_source, input_level,
+                                     delay);
 }
 
 bool dspic33_comparator_reference(Dspic33* cpu, Dspic33ComparatorReference reference,
-                                  uint16_t level, uint64_t delay) {
+                                  uint16_t reference_level, uint64_t delay) {
     return reference < DSPIC33_COMPARATOR_REFERENCE_COUNT &&
            dspic33_schedule_external(cpu, DSPIC33_EVENT_COMPARATOR,
                                      (uint16_t)(COMPARATOR_EVENT_REFERENCE_FIRST + reference),
-                                     level, delay);
+                                     reference_level, delay);
 }
 
-bool dspic33_comparator_output(const Dspic33* cpu, uint8_t comparator, bool* high) {
-    if (comparator >= DSPIC33_COMPARATOR_COUNT || high == NULL || cpu->io.comparator.pmd_disabled ||
+bool dspic33_comparator_output(const Dspic33* cpu, uint8_t comparator, bool* output_high) {
+    if (comparator >= DSPIC33_COMPARATOR_COUNT || output_high == NULL ||
+        cpu->io.comparator.pmd_disabled ||
         !dspic33_device_internal_comparator_configuration_supported(cpu, comparator)) {
         return false;
     }
-    *high = (cpu->io.comparator.output_high & (uint8_t)(1u << comparator)) != 0u;
+    *output_high = (cpu->io.comparator.output_high & (uint8_t)(1u << comparator)) != 0u;
     return true;
 }
 
-bool dspic33_comparator_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
+bool dspic33_comparator_pin(const Dspic33* cpu, uint8_t pin, bool* output_high) {
     uint8_t comparator;
-    if (high == NULL || !dspic33_device_internal_comparator_pin_channel(cpu, pin, &comparator) ||
+    if (output_high == NULL ||
+        !dspic33_device_internal_comparator_pin_channel(cpu, pin, &comparator) ||
         (dspic33_device_internal_raw_word(cpu,
                                           dspic33_device_internal_comparator_base(comparator)) &
          COMPARATOR_OUTPUT_ENABLE) == 0u) {
         return false;
     }
-    return dspic33_comparator_output(cpu, comparator, high);
+    return dspic33_comparator_output(cpu, comparator, output_high);
 }
 
 bool dspic33_rtcc_clock(Dspic33* cpu, uint32_t edges, uint64_t delay) {

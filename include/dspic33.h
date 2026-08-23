@@ -896,16 +896,16 @@ void dspic33_device_power_state_changed(Dspic33* cpu);
 bool dspic33_input_capture_input(Dspic33* cpu, uint8_t channel, bool high, uint64_t delay);
 bool dspic33_input_capture_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t delay);
 void dspic33_configuration_mismatch_reset(Dspic33* cpu);
-bool dspic33_output_compare_output(const Dspic33* cpu, uint8_t channel, bool* high);
-bool dspic33_output_compare_pin(const Dspic33* cpu, uint8_t pin, bool* high);
+bool dspic33_output_compare_output(const Dspic33* cpu, uint8_t channel, bool* output_high);
+bool dspic33_output_compare_pin(const Dspic33* cpu, uint8_t pin, bool* output_high);
 bool dspic33_output_compare_fault(Dspic33* cpu, uint8_t source, bool high, uint64_t delay);
 bool dspic33_output_compare_fault_pin(Dspic33* cpu, uint8_t pin, bool high, uint64_t delay);
-bool dspic33_comparator_input(Dspic33* cpu, uint8_t comparator, Dspic33ComparatorInput input,
-                              uint16_t level, uint64_t delay);
+bool dspic33_comparator_input(Dspic33* cpu, uint8_t comparator, Dspic33ComparatorInput input_source,
+                              uint16_t input_level, uint64_t delay);
 bool dspic33_comparator_reference(Dspic33* cpu, Dspic33ComparatorReference reference,
-                                  uint16_t level, uint64_t delay);
-bool dspic33_comparator_output(const Dspic33* cpu, uint8_t comparator, bool* high);
-bool dspic33_comparator_pin(const Dspic33* cpu, uint8_t pin, bool* high);
+                                  uint16_t reference_level, uint64_t delay);
+bool dspic33_comparator_output(const Dspic33* cpu, uint8_t comparator, bool* output_high);
+bool dspic33_comparator_pin(const Dspic33* cpu, uint8_t pin, bool* output_high);
 bool dspic33_rtcc_clock(Dspic33* cpu, uint32_t edges, uint64_t delay);
 bool dspic33_rtcc_output(const Dspic33* cpu, bool* high);
 bool dspic33_qei_input(Dspic33* cpu, uint8_t channel, Dspic33QeiInput input, bool high,
