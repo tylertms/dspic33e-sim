@@ -213,9 +213,9 @@ bool dspic33ep_mu_device_from_name(const char* name, Dspic33epMuDevice* device) 
     if (name == NULL || device == NULL) {
         return false;
     }
-    for (size_t index = 0u; index < DSPIC33EP_MU_DEVICE_COUNT; index++) {
-        if (strcmp(name, profiles[index].name) == 0) {
-            *device = profiles[index].device;
+    for (size_t device_index = 0u; device_index < DSPIC33EP_MU_DEVICE_COUNT; device_index++) {
+        if (strcmp(name, profiles[device_index].name) == 0) {
+            *device = profiles[device_index].device;
             return true;
         }
     }
@@ -231,12 +231,12 @@ bool dspic33ep_mu_address_implemented(Dspic33epMuDevice device, uint32_t address
     if (address >= 0x1000u) {
         return address < profile->data_limit;
     }
-    uint32_t slot = (address & 0x0ffeu) >> 1u;
-    return (bitmap[slot >> 3u] & (uint8_t)(1u << (slot & 7u))) != 0u;
+    const uint32_t sfr_slot = (address & 0x0ffeu) >> 1u;
+    return (bitmap[sfr_slot >> 3u] & (uint8_t)(1u << (sfr_slot & 7u))) != 0u;
 }
 
 const Dspic33SfrMasterClearReset* dspic33ep_mu_master_clear_resets(Dspic33epMuDevice device,
-                                                                   size_t* count) {
+                                                                   size_t* reset_count_output) {
     const Dspic33SfrMasterClearReset* resets = NULL;
     size_t reset_count = 0u;
     if (device == DSPIC33EP_MU_DEVICE_256MU806) {
@@ -251,8 +251,8 @@ const Dspic33SfrMasterClearReset* dspic33ep_mu_master_clear_resets(Dspic33epMuDe
         resets = sfr_resets_814;
         reset_count = sizeof(sfr_resets_814) / sizeof(sfr_resets_814[0]);
     }
-    if (count != NULL) {
-        *count = reset_count;
+    if (reset_count_output != NULL) {
+        *reset_count_output = reset_count;
     }
     return resets;
 }
