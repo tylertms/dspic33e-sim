@@ -325,30 +325,33 @@ static void can_receive_word(Dspic33* cpu, uint8_t channel_index) {
     dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_RECEIVE_WORD, 1u);
 }
 
-static void can_receive_finish(Dspic33* cpu, uint8_t channel) {
-    uint8_t buffer = cpu->io.can_rx_buffer[channel];
-    uint8_t filter = cpu->io.can_rx_filter[channel];
-    uint8_t bit = (uint8_t)(1u << channel);
-    uint8_t next;
-    uint16_t control =
-        dspic33_device_internal_raw_word(cpu, (uint16_t)(dspic33_device_can_bases[channel] + 6u));
-    uint16_t fifo;
-    dspic33_device_internal_can_set_buffer_flag(cpu, channel, buffer, false);
-    if (dspic33_device_internal_can_filter_buffer(cpu, channel, filter) == 15u) {
-        next = dspic33_device_internal_can_advance_fifo_write(cpu, channel, buffer);
-        fifo = dspic33_device_internal_raw_word(cpu,
-                                                (uint16_t)(dspic33_device_can_bases[channel] + 8u));
-        if ((fifo & 0x003fu) == next + 1u ||
-            (((fifo & 0x003fu) == (control & 0x001fu)) &&
-             next == dspic33_device_internal_can_fifo_end(cpu, channel))) {
-            dspic33_device_internal_can_raise_event(cpu, channel, CAN_INTERRUPT_FIFO, buffer,
-                                                    filter);
+static void can_receive_finish(Dspic33* cpu, uint8_t channel_index) {
+    const uint8_t receive_buffer = cpu->io.can_rx_buffer[channel_index];
+    const uint8_t filter_index = cpu->io.can_rx_filter[channel_index];
+    const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+    uint8_t next_fifo_buffer;
+    const uint16_t can_control = dspic33_device_internal_raw_word(
+        cpu, (uint16_t)(dspic33_device_can_bases[channel_index] + 6u));
+    uint16_t fifo_state;
+
+    dspic33_device_internal_can_set_buffer_flag(cpu, channel_index, receive_buffer, false);
+    if (dspic33_device_internal_can_filter_buffer(cpu, channel_index, filter_index) == 15u) {
+        next_fifo_buffer =
+            dspic33_device_internal_can_advance_fifo_write(cpu, channel_index, receive_buffer);
+        fifo_state = dspic33_device_internal_raw_word(
+            cpu, (uint16_t)(dspic33_device_can_bases[channel_index] + 8u));
+        if ((fifo_state & 0x003fu) == next_fifo_buffer + 1u ||
+            (((fifo_state & 0x003fu) == (can_control & 0x001fu)) &&
+             next_fifo_buffer == dspic33_device_internal_can_fifo_end(cpu, channel_index))) {
+            dspic33_device_internal_can_raise_event(cpu, channel_index, CAN_INTERRUPT_FIFO,
+                                                    receive_buffer, filter_index);
         }
     }
-    dspic33_device_internal_can_raise_event(cpu, channel, CAN_INTERRUPT_RECEIVE, buffer, filter);
-    cpu->io.can_rx_busy &= (uint8_t)~bit;
-    if (cpu->io.can_rx[channel].count != 0u) {
-        dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_START, 0u);
+    dspic33_device_internal_can_raise_event(cpu, channel_index, CAN_INTERRUPT_RECEIVE,
+                                            receive_buffer, filter_index);
+    cpu->io.can_rx_busy &= (uint8_t)~channel_bit;
+    if (cpu->io.can_rx[channel_index].count != 0u) {
+        dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_RECEIVE_START, 0u);
     }
 }
 
