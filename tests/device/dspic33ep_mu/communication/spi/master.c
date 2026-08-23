@@ -280,36 +280,37 @@ void dspic33_spi_test_interrupt_mode_cases(TestState* state, Dspic33* cpu) {
 }
 
 void dspic33_spi_test_mode_transition_cases(TestState* state, Dspic33* cpu) {
-    uint8_t channel;
-    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-        uint16_t base = bases[channel];
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_SPI_COUNT; channel_index++) {
+        const uint16_t spi_base = bases[channel_index];
+        const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+
         dspic33_reset(cpu, 0u);
-        dspic33_spi_test_configure_spi(cpu, channel, 0x003bu, 0u, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), 0x00aau);
-        dspic33_write_word(cpu, (uint16_t)(base + 2u), 0x043bu);
+        dspic33_spi_test_configure_spi(cpu, channel_index, 0x003bu, 0u, 0u);
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0x00aau);
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 2u), 0x043bu);
         expect(state,
-               cpu->io.spi_tx_fifo[channel].count == 0u &&
-                   (cpu->io.spi_busy & (uint8_t)(1u << channel)) == 0u,
+               cpu->io.spi_tx_fifo[channel_index].count == 0u &&
+                   (cpu->io.spi_busy & channel_bit) == 0u,
                "mode width change resets transfer");
-        expect(state, (dspic33_read_word(cpu, base) & 0x0003u) == 0u,
+        expect(state, (dspic33_read_word(cpu, spi_base) & 0x0003u) == 0u,
                "mode width change clears flags");
 
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), 0xaaaau);
-        dspic33_write_word(cpu, (uint16_t)(base + 4u), 1u);
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0xaaaau);
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 4u), 1u);
         expect(state,
-               cpu->io.spi_tx_fifo[channel].count == 0u &&
-                   (cpu->io.spi_busy & (uint8_t)(1u << channel)) == 0u,
+               cpu->io.spi_tx_fifo[channel_index].count == 0u &&
+                   (cpu->io.spi_busy & channel_bit) == 0u,
                "enhanced mode change resets transfer");
-        expect(state, (dspic33_read_word(cpu, base) & 0x00a0u) == 0x00a0u,
+        expect(state, (dspic33_read_word(cpu, spi_base) & 0x00a0u) == 0x00a0u,
                "enhanced mode reset status");
 
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), 0xbbbbu);
-        dspic33_write_word(cpu, base, 0u);
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0xbbbbu);
+        dspic33_write_word(cpu, spi_base, 0u);
         expect(state,
-               cpu->io.spi_tx_fifo[channel].count == 0u &&
-                   (cpu->io.spi_busy & (uint8_t)(1u << channel)) == 0u,
+               cpu->io.spi_tx_fifo[channel_index].count == 0u &&
+                   (cpu->io.spi_busy & channel_bit) == 0u,
                "module disable resets transfer");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0u,
+        expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) == 0u,
                "module disable clears buffer");
     }
 }
