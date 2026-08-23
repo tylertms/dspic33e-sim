@@ -277,7 +277,8 @@ static void dma_cases(TestState* state, Dspic33* cpu) {
 }
 
 static void copy_and_reset_cases(TestState* state, Dspic33* cpu, Dspic33* copy) {
-    uint64_t cycles = dspic33_spi_test_transfer_cycles(0x043bu);
+    const uint64_t transfer_cycles = dspic33_spi_test_transfer_cycles(0x043bu);
+
     dspic33_reset(cpu, 0u);
     dspic33_reset(copy, 0u);
     dspic33_spi_test_configure_spi(cpu, 0u, 0x043bu, 1u, 5u);
@@ -288,7 +289,7 @@ static void copy_and_reset_cases(TestState* state, Dspic33* cpu, Dspic33* copy) 
            copy->io.spi_busy == cpu->io.spi_busy &&
                copy->io.spi_tx_fifo[0].count == cpu->io.spi_tx_fifo[0].count,
            "copied spi queues");
-    expect(state, dspic33_device_advance(copy, cycles), "advance copied spi state");
+    expect(state, dspic33_device_advance(copy, transfer_cycles), "advance copied spi state");
     expect(state, copy->io.spi_rx_fifo[0].count == 1u && copy->io.spi_shift[0] == 0xbbbbu,
            "copied spi completes independently");
     expect(state, (dspic33_read_word(cpu, 0x0240u) & 1u) == 0u, "source spi remains pending");
