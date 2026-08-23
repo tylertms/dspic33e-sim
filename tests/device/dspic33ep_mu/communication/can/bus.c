@@ -538,9 +538,9 @@ void dspic33_can_test_receive_error_cases(TestState* state, Dspic33* cpu) {
            "error-passive CAN receiver flag remains recessive");
 }
 
-static bool drive_can_recessive_bits(Dspic33* cpu, uint8_t pin, uint16_t count) {
-    for (uint16_t bit = 0u; bit < count; bit++) {
-        if (!dspic33_can_input_pin(cpu, pin, true, 0u) || !dspic33_device_advance(cpu, 4u)) {
+static bool drive_can_recessive_bits(Dspic33* cpu, uint8_t pin_number, uint16_t bit_count) {
+    for (uint16_t bit_index = 0u; bit_index < bit_count; bit_index++) {
+        if (!dspic33_can_input_pin(cpu, pin_number, true, 0u) || !dspic33_device_advance(cpu, 4u)) {
             return false;
         }
     }
