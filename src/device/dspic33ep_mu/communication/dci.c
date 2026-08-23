@@ -1025,81 +1025,86 @@ static void dci_update_pmd(Dspic33* cpu, uint16_t previous_pmd) {
     }
 }
 
-void dspic33_device_internal_update_dci_register(Dspic33* cpu, uint16_t address,
-                                                 uint16_t previous) {
+void dspic33_device_internal_update_dci_register(Dspic33* cpu, uint16_t register_address,
+                                                 uint16_t previous_value) {
     Dspic33Dci* dci = &cpu->io.dci;
-    if (address == DCI_PMD_ADDRESS) {
-        dci_update_pmd(cpu, previous);
+    if (register_address == DCI_PMD_ADDRESS) {
+        dci_update_pmd(cpu, previous_value);
         return;
     }
-    if (address == DCI_PPS_INPUTS) {
+    if (register_address == DCI_PPS_INPUTS) {
         dci->pps_input_configured = true;
         return;
     }
-    if (address < DCI_BASE || address > DCI_TRANSMIT_BASE + 6u) {
+    if (register_address < DCI_BASE || register_address > DCI_TRANSMIT_BASE + 6u) {
         return;
     }
     if (dci->pmd_disabled) {
-        dspic33_device_internal_raw_write_word(cpu, address, previous);
+        dspic33_device_internal_raw_write_word(cpu, register_address, previous_value);
         return;
     }
-    if (address == DCI_CONTROL1) {
-        bool was_enabled = (previous & DCI_CONTROL_ENABLE) != 0u;
-        bool enabled =
+    if (register_address == DCI_CONTROL1) {
+        bool was_enabled = (previous_value & DCI_CONTROL_ENABLE) != 0u;
+        bool currently_enabled =
             (dspic33_device_internal_raw_word(cpu, DCI_CONTROL1) & DCI_CONTROL_ENABLE) != 0u;
-        if (!was_enabled && enabled) {
+        if (!was_enabled && currently_enabled) {
             dci_start(cpu);
-        } else if (was_enabled && !enabled) {
-            dci_disable(cpu, previous);
+        } else if (was_enabled && !currently_enabled) {
+            dci_disable(cpu, previous_value);
         }
         dspic33_device_internal_dci_update_power_state(cpu);
         return;
     }
-    if (address == DCI_CONTROL3) {
+    if (register_address == DCI_CONTROL3) {
         dci_update_bcg(cpu, true);
         dspic33_device_internal_dci_update_power_state(cpu);
         return;
     }
-    if (address >= DCI_TRANSMIT_BASE && address <= DCI_TRANSMIT_BASE + 6u) {
-        uint8_t index = (uint8_t)((address - DCI_TRANSMIT_BASE) / 2u);
-        uint8_t bit = (uint8_t)(1u << index);
-        if (index < dci_buffer_count(cpu)) {
-            dci->transmit_written |= bit;
-            dci->transmit_underflow &= (uint8_t)~bit;
+    if (register_address >= DCI_TRANSMIT_BASE && register_address <= DCI_TRANSMIT_BASE + 6u) {
+        uint8_t transmit_buffer_index = (uint8_t)((register_address - DCI_TRANSMIT_BASE) / 2u);
+        uint8_t buffer_mask = (uint8_t)(1u << transmit_buffer_index);
+
+        if (transmit_buffer_index < dci_buffer_count(cpu)) {
+            dci->transmit_written |= buffer_mask;
+            dci->transmit_underflow &= (uint8_t)~buffer_mask;
         }
-        if ((dci_active_transmit_buffers(cpu) & bit) != 0u) {
+        if ((dci_active_transmit_buffers(cpu) & buffer_mask) != 0u) {
             dci->transmit_empty = false;
         }
         dci_refresh_status(cpu);
     }
 }
 
-bool dspic33_device_internal_dci_read_register(Dspic33* cpu, uint16_t address, uint8_t* value) {
+bool dspic33_device_internal_dci_read_register(Dspic33* cpu, uint16_t register_address,
+                                               uint8_t* read_value) {
     Dspic33Dci* dci = &cpu->io.dci;
-    uint16_t base = (uint16_t)(address & 0xfffeu);
-    if (base < DCI_BASE || base > DCI_TRANSMIT_BASE + 6u || base == 0x028au || base == 0x028eu) {
+    uint16_t register_base = (uint16_t)(register_address & 0xfffeu);
+
+    if (register_base < DCI_BASE || register_base > DCI_TRANSMIT_BASE + 6u ||
+        register_base == 0x028au || register_base == 0x028eu) {
         return false;
     }
     if (dci->pmd_disabled) {
-        *value = 0u;
+        *read_value = 0u;
         return true;
     }
-    if (base >= DCI_TRANSMIT_BASE) {
-        *value = 0u;
+    if (register_base >= DCI_TRANSMIT_BASE) {
+        *read_value = 0u;
         return true;
     }
-    if (base >= DCI_RECEIVE_BASE && base <= DCI_RECEIVE_BASE + 6u &&
+    if (register_base >= DCI_RECEIVE_BASE && register_base <= DCI_RECEIVE_BASE + 6u &&
         ((!cpu->io.cpu_read_valid && !cpu->io.dma_transfer_active) ||
          (cpu->io.dma_transfer_active && cpu->io.dma_transfer_width == 1u) ||
          (!cpu->io.dma_transfer_active && cpu->io.cpu_read_width == 1u) ||
          (cpu->io.dma_transfer_active && cpu->io.dma_transfer_width == 2u &&
-          (address & 1u) != 0u) ||
+          (register_address & 1u) != 0u) ||
          (!cpu->io.dma_transfer_active && cpu->io.cpu_read_valid &&
-          address == cpu->io.cpu_read_address + 1u))) {
-        uint8_t index = (uint8_t)((base - DCI_RECEIVE_BASE) / 2u);
-        uint8_t bit = (uint8_t)(1u << index);
-        dci->receive_unread &= (uint8_t)~bit;
-        dci->receive_overflow &= (uint8_t)~bit;
+          register_address == cpu->io.cpu_read_address + 1u))) {
+        uint8_t receive_buffer_index = (uint8_t)((register_base - DCI_RECEIVE_BASE) / 2u);
+        uint8_t buffer_mask = (uint8_t)(1u << receive_buffer_index);
+
+        dci->receive_unread &= (uint8_t)~buffer_mask;
+        dci->receive_overflow &= (uint8_t)~buffer_mask;
         dci_refresh_status(cpu);
     }
     return true;
