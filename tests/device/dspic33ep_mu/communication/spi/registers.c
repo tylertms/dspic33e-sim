@@ -378,30 +378,28 @@ void dspic33_spi_test_pps_slave_input_cases(TestState* state, Dspic33* cpu) {
     static const uint8_t channels[] = {0u, 2u, 3u};
     static const uint16_t input_registers[] = {0x06c8u, 0x06dau, 0x06deu};
     static const uint16_t select_registers[] = {0x06cau, 0x06dcu, 0x06e0u};
-    size_t channel_index;
-    for (channel_index = 0u; channel_index < sizeof(channels) / sizeof(channels[0]);
-         channel_index++) {
-        uint8_t mode16;
-        for (mode16 = 0u; mode16 < 2u; mode16++) {
-            uint8_t channel = channels[channel_index];
-            uint16_t base = bases[channel];
-            uint16_t control = (uint16_t)(0x019bu | ((uint16_t)mode16 << 10u));
-            uint16_t received = mode16 != 0u ? 0xa55au : 0x005au;
-            uint8_t width = mode16 != 0u ? 16u : 8u;
+    for (size_t mapping_index = 0u; mapping_index < sizeof(channels) / sizeof(channels[0]);
+         mapping_index++) {
+        for (uint8_t word_mode = 0u; word_mode < 2u; word_mode++) {
+            const uint8_t channel_index = channels[mapping_index];
+            const uint16_t spi_base = bases[channel_index];
+            const uint16_t spi_control = (uint16_t)(0x019bu | ((uint16_t)word_mode << 10u));
+            const uint16_t received_value = word_mode != 0u ? 0xa55au : 0x005au;
+            const uint8_t transfer_width = word_mode != 0u ? 16u : 8u;
 
             dspic33_reset(cpu, 0u);
             dspic33_write_word(cpu, 0x0e3eu,
                                (uint16_t)(dspic33_read_word(cpu, 0x0e3eu) & ~0x0007u));
             dspic33_write_word(cpu, 0x0e30u, (uint16_t)(dspic33_read_word(cpu, 0x0e30u) | 0x0007u));
             dspic33_gpio_drive(cpu, 3u, 0x0004u, 0x0007u);
-            dspic33_write_word(cpu, input_registers[channel_index], 0x4140u);
-            dspic33_write_word(cpu, select_registers[channel_index], 66u);
-            dspic33_spi_test_configure_spi(cpu, channel, control, 0u, 0u);
+            dspic33_write_word(cpu, input_registers[mapping_index], 0x4140u);
+            dspic33_write_word(cpu, select_registers[mapping_index], 66u);
+            dspic33_spi_test_configure_spi(cpu, channel_index, spi_control, 0u, 0u);
             expect(state,
                    dspic33_gpio_drive(cpu, 3u, 0u, 0x0004u) &&
-                       drive_pps_spi_word(cpu, received, width, 0x0001u, 0x0002u) &&
-                       dspic33_spi_test_transfer_interrupt_after_cycle(cpu, irqs[channel]) &&
-                       dspic33_read_word(cpu, (uint16_t)(base + 8u)) == received,
+                       drive_pps_spi_word(cpu, received_value, transfer_width, 0x0001u, 0x0002u) &&
+                       dspic33_spi_test_transfer_interrupt_after_cycle(cpu, irqs[channel_index]) &&
+                       dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) == received_value,
                    "mapped PPS slave receives serial input");
         }
     }
