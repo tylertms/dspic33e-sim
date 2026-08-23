@@ -1,48 +1,53 @@
 #include "device/dspic33ep_mu/communication/spi/internal.h"
 
 void dspic33_spi_test_timing_matrix_cases(TestState* state, Dspic33* cpu) {
-    uint8_t channel;
-    uint8_t mode16;
-    uint8_t primary;
-    uint8_t secondary;
-    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-        for (mode16 = 0u; mode16 < 2u; mode16++) {
-            for (primary = 0u; primary < 4u; primary++) {
-                for (secondary = 0u; secondary < 8u; secondary++) {
-                    uint16_t control;
-                    uint16_t sent;
-                    uint16_t received;
-                    uint64_t cycles;
-                    if (primary == 3u && secondary == 7u) {
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_SPI_COUNT; channel_index++) {
+        for (uint8_t word_mode = 0u; word_mode < 2u; word_mode++) {
+            for (uint8_t primary_prescaler = 0u; primary_prescaler < 4u; primary_prescaler++) {
+                for (uint8_t secondary_prescaler = 0u; secondary_prescaler < 8u;
+                     secondary_prescaler++) {
+                    uint16_t spi_control;
+                    uint16_t transmitted_value;
+                    uint16_t received_value;
+                    uint64_t transfer_cycles;
+
+                    if (primary_prescaler == 3u && secondary_prescaler == 7u) {
                         continue;
                     }
-                    control = (uint16_t)(0x0020u | primary | ((uint16_t)secondary << 2u) |
-                                         (mode16 != 0u ? 0x0400u : 0u));
-                    sent =
-                        (uint16_t)(0x8100u | (channel << 4u) | (primary << 2u) | (secondary & 3u));
-                    received = (uint16_t)(0x5a00u | (secondary << 4u) | primary);
-                    cycles = dspic33_spi_test_transfer_cycles(control);
+                    spi_control = (uint16_t)(0x0020u | primary_prescaler |
+                                             ((uint16_t)secondary_prescaler << 2u) |
+                                             (word_mode != 0u ? 0x0400u : 0u));
+                    transmitted_value =
+                        (uint16_t)(0x8100u | (channel_index << 4u) | (primary_prescaler << 2u) |
+                                   (secondary_prescaler & 3u));
+                    received_value =
+                        (uint16_t)(0x5a00u | (secondary_prescaler << 4u) | primary_prescaler);
+                    transfer_cycles = dspic33_spi_test_transfer_cycles(spi_control);
                     dspic33_reset(cpu, 0u);
-                    dspic33_spi_test_configure_spi(cpu, channel, control, 0u, 0u);
-                    expect(state, dspic33_spi_receive(cpu, channel, received, cycles),
+                    dspic33_spi_test_configure_spi(cpu, channel_index, spi_control, 0u, 0u);
+                    expect(state,
+                           dspic33_spi_receive(cpu, channel_index, received_value, transfer_cycles),
                            "schedule master response matrix");
-                    dspic33_write_word(cpu, (uint16_t)(bases[channel] + 8u), sent);
-                    expect(state, (dspic33_read_word(cpu, bases[channel]) & 0x0080u) == 0u,
+                    dspic33_write_word(cpu, (uint16_t)(bases[channel_index] + 8u),
+                                       transmitted_value);
+                    expect(state, (dspic33_read_word(cpu, bases[channel_index]) & 0x0080u) == 0u,
                            "matrix shift register active");
-                    expect(state, dspic33_device_advance(cpu, cycles - 1u),
+                    expect(state, dspic33_device_advance(cpu, transfer_cycles - 1u),
                            "matrix advance before completion");
-                    expect(state, (dspic33_read_word(cpu, bases[channel]) & 0x0001u) == 0u,
+                    expect(state, (dspic33_read_word(cpu, bases[channel_index]) & 0x0001u) == 0u,
                            "matrix not complete early");
                     expect(state, dspic33_device_advance(cpu, 1u), "matrix completion advance");
-                    expect(state, (dspic33_read_word(cpu, bases[channel]) & 0x0001u) != 0u,
+                    expect(state, (dspic33_read_word(cpu, bases[channel_index]) & 0x0001u) != 0u,
                            "matrix receive flag");
                     expect(state,
-                           dspic33_read_word(cpu, (uint16_t)(bases[channel] + 8u)) ==
-                               (mode16 != 0u ? received : (uint16_t)(received & 0x00ffu)),
+                           dspic33_read_word(cpu, (uint16_t)(bases[channel_index] + 8u)) ==
+                               (word_mode != 0u ? received_value
+                                                : (uint16_t)(received_value & 0x00ffu)),
                            "matrix received value");
-                    expect(state,
-                           dspic33_spi_test_transfer_interrupt_after_cycle(cpu, irqs[channel]),
-                           "matrix transfer interrupt");
+                    expect(
+                        state,
+                        dspic33_spi_test_transfer_interrupt_after_cycle(cpu, irqs[channel_index]),
+                        "matrix transfer interrupt");
                 }
             }
         }
@@ -50,57 +55,60 @@ void dspic33_spi_test_timing_matrix_cases(TestState* state, Dspic33* cpu) {
 }
 
 void dspic33_spi_test_standard_buffer_cases(TestState* state, Dspic33* cpu) {
-    uint8_t channel;
-    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-        uint16_t base = bases[channel];
-        uint16_t control = 0x043bu;
-        uint64_t cycles = dspic33_spi_test_transfer_cycles(control);
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_SPI_COUNT; channel_index++) {
+        const uint16_t spi_base = bases[channel_index];
+        const uint16_t spi_control = 0x043bu;
+        const uint64_t transfer_cycles = dspic33_spi_test_transfer_cycles(spi_control);
+
         dspic33_reset(cpu, 0u);
-        dspic33_spi_test_configure_spi(cpu, channel, control, 0u, 0u);
+        dspic33_spi_test_configure_spi(cpu, channel_index, spi_control, 0u, 0u);
         expect(state,
-               dspic33_spi_receive(cpu, channel, 0x1111u, cycles) &&
-                   dspic33_spi_receive(cpu, channel, 0x2222u, cycles * 2u),
+               dspic33_spi_receive(cpu, channel_index, 0x1111u, transfer_cycles) &&
+                   dspic33_spi_receive(cpu, channel_index, 0x2222u, transfer_cycles * 2u),
                "queue standard responses");
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), 0xaaaau);
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), 0xbbbbu);
-        expect(state, (dspic33_read_word(cpu, base) & 0x0002u) != 0u,
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0xaaaau);
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0xbbbbu);
+        expect(state, (dspic33_read_word(cpu, spi_base) & 0x0002u) != 0u,
                "standard transmit buffer full");
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), 0xccccu);
-        expect(state, cpu->io.spi_tx_fifo[channel].count == 1u, "standard full write ignored");
-        expect(state, dspic33_device_advance(cpu, cycles), "standard first completion");
-        expect(state, (dspic33_read_word(cpu, base) & 0x0002u) == 0u,
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0xccccu);
+        expect(state, cpu->io.spi_tx_fifo[channel_index].count == 1u,
+               "standard full write ignored");
+        expect(state, dspic33_device_advance(cpu, transfer_cycles), "standard first completion");
+        expect(state, (dspic33_read_word(cpu, spi_base) & 0x0002u) == 0u,
                "standard queued word moved to shift");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0x1111u,
+        expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) == 0x1111u,
                "standard first response order");
-        expect(state, dspic33_spi_test_transfer_interrupt_after_cycle(cpu, irqs[channel]),
+        expect(state, dspic33_spi_test_transfer_interrupt_after_cycle(cpu, irqs[channel_index]),
                "standard first interrupt follows one-cycle latency");
-        dspic33_spi_test_clear_interrupt(cpu, irqs[channel]);
-        expect(state, dspic33_device_advance(cpu, cycles - 1u), "standard second completion");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0x2222u,
+        dspic33_spi_test_clear_interrupt(cpu, irqs[channel_index]);
+        expect(state, dspic33_device_advance(cpu, transfer_cycles - 1u),
+               "standard second completion");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) == 0x2222u,
                "standard second response order");
-        expect(state, dspic33_spi_test_transfer_interrupt_after_cycle(cpu, irqs[channel]),
+        expect(state, dspic33_spi_test_transfer_interrupt_after_cycle(cpu, irqs[channel_index]),
                "standard second interrupt");
 
         dspic33_reset(cpu, 0u);
-        dspic33_spi_test_configure_spi(cpu, channel, 0u, 0u, 0u);
+        dspic33_spi_test_configure_spi(cpu, channel_index, 0u, 0u, 0u);
         expect(state,
-               dspic33_spi_receive(cpu, channel, 0x0031u, 1u) &&
-                   dspic33_spi_receive(cpu, channel, 0x0032u, 2u),
+               dspic33_spi_receive(cpu, channel_index, 0x0031u, 1u) &&
+                   dspic33_spi_receive(cpu, channel_index, 0x0032u, 2u),
                "queue standard slave overflow");
         expect(state, dspic33_device_advance(cpu, 2u), "standard slave overflow advance");
-        expect(state, (dspic33_read_word(cpu, base) & 0x0041u) == 0x0041u,
+        expect(state, (dspic33_read_word(cpu, spi_base) & 0x0041u) == 0x0041u,
                "standard overflow flags");
-        expect(state, dspic33_spi_test_interrupt_flag(cpu, error_irqs[channel]),
+        expect(state, dspic33_spi_test_interrupt_flag(cpu, error_irqs[channel_index]),
                "standard overflow error interrupt");
-        dspic33_write_word(cpu, base, (uint16_t)(dspic33_read_word(cpu, base) & ~0x0040u));
-        expect(state, (dspic33_read_word(cpu, base) & 0x0040u) == 0u,
+        dspic33_write_word(cpu, spi_base, (uint16_t)(dspic33_read_word(cpu, spi_base) & ~0x0040u));
+        expect(state, (dspic33_read_word(cpu, spi_base) & 0x0040u) == 0u,
                "standard overflow software clear");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0x0031u,
+        expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) == 0x0031u,
                "standard overflow preserves unread value");
         expect(state,
-               dspic33_spi_receive(cpu, channel, 0x0033u, 1u) && dspic33_device_advance(cpu, 1u),
+               dspic33_spi_receive(cpu, channel_index, 0x0033u, 1u) &&
+                   dspic33_device_advance(cpu, 1u),
                "standard receive resumes after clear");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0x0033u,
+        expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) == 0x0033u,
                "standard recovered receive value");
     }
 }
