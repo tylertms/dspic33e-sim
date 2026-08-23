@@ -1,13 +1,14 @@
 #include "device/dspic33ep_mu/internal.h"
 
-uint16_t dspic33_device_internal_pwm_generator_base(uint8_t generator) {
-    return (uint16_t)(PWM_GENERATOR_BASE + generator * PWM_GENERATOR_STRIDE);
+uint16_t dspic33_device_internal_pwm_generator_base(uint8_t generator_index) {
+    return (uint16_t)(PWM_GENERATOR_BASE + generator_index * PWM_GENERATOR_STRIDE);
 }
 
-uint16_t dspic33_device_internal_pwm_register(const Dspic33* cpu, uint8_t generator,
-                                              uint16_t offset) {
+uint16_t dspic33_device_internal_pwm_register(const Dspic33* cpu, uint8_t generator_index,
+                                              uint16_t register_offset) {
     return dspic33_device_internal_raw_word(
-        cpu, (uint16_t)(dspic33_device_internal_pwm_generator_base(generator) + offset));
+        cpu,
+        (uint16_t)(dspic33_device_internal_pwm_generator_base(generator_index) + register_offset));
 }
 
 bool dspic33_device_internal_pwm_global_pmd_disabled(const Dspic33* cpu) {
@@ -26,8 +27,9 @@ static bool pwm_address_pmd_disabled(const Dspic33* cpu, uint16_t address) {
     if (address >= PWM_GENERATOR_BASE &&
         address < PWM_GENERATOR_BASE +
                       dspic33_device_internal_pwm_generator_count(cpu) * PWM_GENERATOR_STRIDE) {
-        uint8_t generator = (uint8_t)((address - PWM_GENERATOR_BASE) / PWM_GENERATOR_STRIDE);
-        return dspic33_device_internal_pwm_generator_pmd_disabled(cpu, generator);
+        const uint8_t generator_index =
+            (uint8_t)((address - PWM_GENERATOR_BASE) / PWM_GENERATOR_STRIDE);
+        return dspic33_device_internal_pwm_generator_pmd_disabled(cpu, generator_index);
     }
     return false;
 }
@@ -42,18 +44,22 @@ bool dspic33_device_internal_pwm_address_inaccessible(const Dspic33* cpu, uint16
 }
 
 static bool pwm_power_enabled(const Dspic33* cpu) {
-    uint16_t control = dspic33_device_internal_raw_word(cpu, PWM_GLOBAL_BASE);
-    if (dspic33_device_internal_pwm_global_pmd_disabled(cpu) || (control & PWM_ENABLE) == 0u ||
+    const uint16_t control_word = dspic33_device_internal_raw_word(cpu, PWM_GLOBAL_BASE);
+
+    if (dspic33_device_internal_pwm_global_pmd_disabled(cpu) || (control_word & PWM_ENABLE) == 0u ||
         cpu->power_state == DSPIC33_POWER_SLEEP) {
         return false;
     }
-    return cpu->power_state != DSPIC33_POWER_IDLE || (control & PWM_STOP_IDLE) == 0u;
+    return cpu->power_state != DSPIC33_POWER_IDLE || (control_word & PWM_STOP_IDLE) == 0u;
 }
 
-static uint16_t pwm_divider(const Dspic33* cpu, uint8_t time_base) {
-    uint16_t address = (uint16_t)(PWM_GLOBAL_BASE + (time_base == 0u ? 2u : 0x10u));
-    uint8_t selection = (uint8_t)(dspic33_device_internal_raw_word(cpu, address) & 7u);
-    return selection < 7u ? (uint16_t)(1u << selection) : 64u;
+static uint16_t pwm_divider(const Dspic33* cpu, uint8_t time_base_index) {
+    const uint16_t divider_address =
+        (uint16_t)(PWM_GLOBAL_BASE + (time_base_index == 0u ? 2u : 0x10u));
+    const uint8_t divider_selection =
+        (uint8_t)(dspic33_device_internal_raw_word(cpu, divider_address) & 7u);
+
+    return divider_selection < 7u ? (uint16_t)(1u << divider_selection) : 64u;
 }
 
 static void pwm_latch_periods(Dspic33* cpu) {
@@ -62,15 +68,17 @@ static void pwm_latch_periods(Dspic33* cpu) {
 }
 
 void dspic33_device_internal_pwm_latch_generator(Dspic33* cpu, uint8_t generator) {
-    uint16_t control = dspic33_device_internal_pwm_register(cpu, generator, 0u);
-    uint16_t master = dspic33_device_internal_raw_word(cpu, PWM_GLOBAL_BASE + 0x0au);
+    const uint16_t control_word = dspic33_device_internal_pwm_register(cpu, generator, 0u);
+    const uint16_t master_duty_word =
+        dspic33_device_internal_raw_word(cpu, PWM_GLOBAL_BASE + 0x0au);
+
     cpu->io.pwm_active_duty[generator][0] =
-        (control & PWM_MASTER_DUTY) != 0u
-            ? master
+        (control_word & PWM_MASTER_DUTY) != 0u
+            ? master_duty_word
             : dspic33_device_internal_pwm_register(cpu, generator, 6u);
     cpu->io.pwm_active_duty[generator][1] =
-        (control & PWM_MASTER_DUTY) != 0u
-            ? master
+        (control_word & PWM_MASTER_DUTY) != 0u
+            ? master_duty_word
             : dspic33_device_internal_pwm_register(cpu, generator, 0x0eu);
     cpu->io.pwm_active_phase[generator][0] =
         dspic33_device_internal_pwm_register(cpu, generator, 8u);
@@ -83,86 +91,102 @@ void dspic33_device_internal_pwm_latch_generator(Dspic33* cpu, uint8_t generator
 }
 
 static uint16_t pwm_output_io(const Dspic33* cpu, uint8_t generator) {
-    uint16_t io = dspic33_device_internal_pwm_register(cpu, generator, 2u);
-    if ((io & PWM_OVERRIDE_SYNCHRONIZED) == 0u) {
-        return io;
+    const uint16_t io_control_word = dspic33_device_internal_pwm_register(cpu, generator, 2u);
+
+    if ((io_control_word & PWM_OVERRIDE_SYNCHRONIZED) == 0u) {
+        return io_control_word;
     }
-    return (uint16_t)((io & ~PWM_SYNCHRONIZED_IO) |
+    return (uint16_t)((io_control_word & ~PWM_SYNCHRONIZED_IO) |
                       (cpu->io.pwm_active_io[generator] & PWM_SYNCHRONIZED_IO));
 }
 
-static uint16_t pwm_period(const Dspic33* cpu, uint8_t generator, uint8_t output) {
-    uint16_t control = dspic33_device_internal_pwm_register(cpu, generator, 0u);
-    uint16_t mode = dspic33_device_internal_pwm_register(cpu, generator, 2u) & PWM_MODE_MASK;
-    if ((control & PWM_INDEPENDENT_TIME_BASE) != 0u) {
-        return output != 0u && mode == PWM_MODE_INDEPENDENT
+static uint16_t pwm_period(const Dspic33* cpu, uint8_t generator, uint8_t output_index) {
+    const uint16_t control_word = dspic33_device_internal_pwm_register(cpu, generator, 0u);
+    const uint16_t mode_bits =
+        dspic33_device_internal_pwm_register(cpu, generator, 2u) & PWM_MODE_MASK;
+
+    if ((control_word & PWM_INDEPENDENT_TIME_BASE) != 0u) {
+        return output_index != 0u && mode_bits == PWM_MODE_INDEPENDENT
                    ? cpu->io.pwm_active_phase[generator][1]
                    : cpu->io.pwm_active_phase[generator][0];
     }
-    return cpu->io.pwm_active_period[(control & 0x0008u) != 0u ? 1u : 0u];
+    return cpu->io.pwm_active_period[(control_word & 0x0008u) != 0u ? 1u : 0u];
 }
 
-static uint16_t pwm_shifted_counter(uint16_t counter, uint16_t phase, uint16_t period) {
-    uint32_t modulus = (uint32_t)period + 1u;
-    return (uint16_t)((counter + modulus - phase % modulus) % modulus);
+static uint16_t pwm_shifted_counter(uint16_t counter_value, uint16_t phase_value,
+                                    uint16_t period_value) {
+    const uint32_t period_modulus = (uint32_t)period_value + 1u;
+
+    return (uint16_t)((counter_value + period_modulus - phase_value % period_modulus) %
+                      period_modulus);
 }
 
-static bool pwm_input_active(uint32_t inputs, uint8_t source, bool inverted) {
-    bool high = (inputs & ((uint32_t)1u << source)) != 0u;
-    return inverted ? !high : high;
+static bool pwm_input_active(uint32_t input_bits, uint8_t source_index, bool is_inverted) {
+    const bool is_high = (input_bits & ((uint32_t)1u << source_index)) != 0u;
+
+    return is_inverted ? !is_high : is_high;
 }
 
 bool dspic33_device_internal_pwm_fault_active(const Dspic33* cpu, uint8_t generator) {
-    uint16_t fault = dspic33_device_internal_pwm_register(cpu, generator, 4u);
-    uint8_t source = (uint8_t)((fault >> 3u) & 0x1fu);
-    return pwm_input_active(cpu->io.pwm_fault_inputs, source, (fault & 0x0004u) != 0u);
+    const uint16_t fault_word = dspic33_device_internal_pwm_register(cpu, generator, 4u);
+    const uint8_t source_index = (uint8_t)((fault_word >> 3u) & 0x1fu);
+
+    return pwm_input_active(cpu->io.pwm_fault_inputs, source_index, (fault_word & 0x0004u) != 0u);
 }
 
 static bool pwm_current_limit_active(const Dspic33* cpu, uint8_t generator) {
-    uint16_t fault = dspic33_device_internal_pwm_register(cpu, generator, 4u);
-    uint8_t source = (uint8_t)((fault >> 10u) & 0x1fu);
-    return pwm_input_active(cpu->io.pwm_current_limit_inputs, source, (fault & 0x0200u) != 0u);
+    const uint16_t fault_word = dspic33_device_internal_pwm_register(cpu, generator, 4u);
+    const uint8_t source_index = (uint8_t)((fault_word >> 10u) & 0x1fu);
+
+    return pwm_input_active(cpu->io.pwm_current_limit_inputs, source_index,
+                            (fault_word & 0x0200u) != 0u);
 }
 
 static void pwm_waveform_pair(const Dspic33* cpu, uint8_t generator, bool* high, bool* low);
 
-static bool pwm_state_blanked(const Dspic33* cpu, uint8_t generator, bool current_limit) {
-    uint16_t leading = dspic33_device_internal_pwm_register(cpu, generator, 0x1au);
-    uint16_t auxiliary = dspic33_device_internal_pwm_register(cpu, generator, 0x1eu);
-    bool high = cpu->io.pwm[generator * 2u] != 0u;
-    bool low = cpu->io.pwm[generator * 2u + 1u] != 0u;
-    uint8_t source = (uint8_t)((auxiliary >> 8u) & 0x0fu);
-    bool blank_source = false;
-    if (source != 0u && source <= dspic33_device_internal_pwm_generator_count(cpu)) {
-        bool blank_low;
-        pwm_waveform_pair(cpu, (uint8_t)(source - 1u), &blank_source, &blank_low);
+static bool pwm_state_blanked(const Dspic33* cpu, uint8_t generator, bool is_current_limit) {
+    const uint16_t leading_control = dspic33_device_internal_pwm_register(cpu, generator, 0x1au);
+    const uint16_t auxiliary_control = dspic33_device_internal_pwm_register(cpu, generator, 0x1eu);
+    const bool is_high = cpu->io.pwm[generator * 2u] != 0u;
+    const bool is_low = cpu->io.pwm[generator * 2u + 1u] != 0u;
+    const uint8_t blank_source_index = (uint8_t)((auxiliary_control >> 8u) & 0x0fu);
+    bool is_blank_source_high = false;
+
+    if (blank_source_index != 0u &&
+        blank_source_index <= dspic33_device_internal_pwm_generator_count(cpu)) {
+        bool is_blank_source_low = false;
+        pwm_waveform_pair(cpu, (uint8_t)(blank_source_index - 1u), &is_blank_source_high,
+                          &is_blank_source_low);
     }
-    if (current_limit ? (leading & 0x0400u) == 0u : (leading & 0x0800u) == 0u) {
+    if (is_current_limit ? (leading_control & 0x0400u) == 0u : (leading_control & 0x0800u) == 0u) {
         return false;
     }
     if (cpu->io.pwm_leb_ticks[generator] != 0u) {
         return true;
     }
-    return ((leading & 0x0020u) != 0u && blank_source) ||
-           ((leading & 0x0010u) != 0u && !blank_source) || ((leading & 0x0008u) != 0u && high) ||
-           ((leading & 0x0004u) != 0u && !high) || ((leading & 0x0002u) != 0u && low) ||
-           ((leading & 0x0001u) != 0u && !low);
+    return ((leading_control & 0x0020u) != 0u && is_blank_source_high) ||
+           ((leading_control & 0x0010u) != 0u && !is_blank_source_high) ||
+           ((leading_control & 0x0008u) != 0u && is_high) ||
+           ((leading_control & 0x0004u) != 0u && !is_high) ||
+           ((leading_control & 0x0002u) != 0u && is_low) ||
+           ((leading_control & 0x0001u) != 0u && !is_low);
 }
 
 void dspic33_device_internal_pwm_refresh_status(Dspic33* cpu, uint8_t generator) {
-    uint16_t base = dspic33_device_internal_pwm_generator_base(generator);
-    uint16_t control = dspic33_device_internal_raw_word(cpu, base);
-    bool fault = dspic33_device_internal_pwm_fault_active(cpu, generator);
-    bool current_limit = pwm_current_limit_active(cpu, generator);
-    if ((control & PWM_FAULT_INTERRUPT) == 0u) {
-        control = fault ? (uint16_t)(control | PWM_FAULT_STATUS)
-                        : (uint16_t)(control & ~PWM_FAULT_STATUS);
+    const uint16_t register_base = dspic33_device_internal_pwm_generator_base(generator);
+    uint16_t control_word = dspic33_device_internal_raw_word(cpu, register_base);
+    const bool fault_active = dspic33_device_internal_pwm_fault_active(cpu, generator);
+    const bool current_limit_active = pwm_current_limit_active(cpu, generator);
+
+    if ((control_word & PWM_FAULT_INTERRUPT) == 0u) {
+        control_word = fault_active ? (uint16_t)(control_word | PWM_FAULT_STATUS)
+                                    : (uint16_t)(control_word & ~PWM_FAULT_STATUS);
     }
-    if ((control & PWM_CURRENT_LIMIT_INTERRUPT) == 0u) {
-        control = current_limit ? (uint16_t)(control | PWM_CURRENT_LIMIT_STATUS)
-                                : (uint16_t)(control & ~PWM_CURRENT_LIMIT_STATUS);
+    if ((control_word & PWM_CURRENT_LIMIT_INTERRUPT) == 0u) {
+        control_word = current_limit_active ? (uint16_t)(control_word | PWM_CURRENT_LIMIT_STATUS)
+                                            : (uint16_t)(control_word & ~PWM_CURRENT_LIMIT_STATUS);
     }
-    dspic33_device_internal_raw_write_word(cpu, base, control);
+    dspic33_device_internal_raw_write_word(cpu, register_base, control_word);
 }
 
 static bool pwm_waveform(uint16_t counter, uint16_t duty) { return counter <= duty; }
