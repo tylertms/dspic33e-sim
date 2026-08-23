@@ -884,7 +884,8 @@ bool dspic33_i2c_slave_stop(Dspic33* cpu, uint8_t channel, uint64_t delay);
 bool dspic33_i2c_collision(Dspic33* cpu, uint8_t channel, uint64_t delay);
 bool dspic33_i2c_transmit(Dspic33* cpu, uint8_t channel, Dspic33I2cTransfer* transfer);
 bool dspic33_i2c_pin(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* high);
-bool dspic33_dma_request(Dspic33* cpu, uint8_t request, uint16_t indirect_address, uint64_t delay);
+bool dspic33_dma_request(Dspic33* cpu, uint8_t request_source, uint16_t peripheral_offset,
+                         uint64_t event_delay);
 bool dspic33_cpu_rmw_matches(const Dspic33* cpu, uint32_t address, uint8_t width);
 bool dspic33_pmp_respond(Dspic33* cpu, uint16_t value, uint64_t delay);
 bool dspic33_pmp_transmit(Dspic33* cpu, Dspic33PmpTransfer* transfer);

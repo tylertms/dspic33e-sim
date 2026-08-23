@@ -309,35 +309,37 @@ bool dspic33_spi_frame_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
     return false;
 }
 
-bool dspic33_dma_request(Dspic33* cpu, uint8_t request, uint16_t indirect_address, uint64_t delay) {
-    uint8_t channel;
-    bool succeeded = true;
-    for (channel = 0u; channel < DSPIC33_DMA_COUNT; channel++) {
-        uint16_t base = dspic33_device_internal_dma_channel_base(channel);
-        uint16_t bit = dspic33_device_internal_dma_channel_bit(channel);
-        if ((dspic33_device_internal_raw_word(cpu, base) & DMA_CON_CHEN) == 0u ||
-            (dspic33_device_internal_raw_word(cpu, (uint16_t)(base + 2u)) & DMA_REQ_SOURCE_MASK) !=
-                request ||
-            (dspic33_device_internal_raw_word(cpu, DMA_PWC) & bit) != 0u) {
+bool dspic33_dma_request(Dspic33* cpu, uint8_t request_source, uint16_t peripheral_offset,
+                         uint64_t event_delay) {
+    bool all_requests_succeeded = true;
+
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_DMA_COUNT; channel_index++) {
+        const uint16_t channel_base = dspic33_device_internal_dma_channel_base(channel_index);
+        const uint16_t channel_bit = dspic33_device_internal_dma_channel_bit(channel_index);
+
+        if ((dspic33_device_internal_raw_word(cpu, channel_base) & DMA_CON_CHEN) == 0u ||
+            (dspic33_device_internal_raw_word(cpu, (uint16_t)(channel_base + 2u)) &
+             DMA_REQ_SOURCE_MASK) != request_source ||
+            (dspic33_device_internal_raw_word(cpu, DMA_PWC) & channel_bit) != 0u) {
             continue;
         }
-        if ((cpu->io.dma_peripheral_pending & bit) != 0u) {
-            if ((request == dspic33_device_can_rx_requests[0] ||
-                 request == dspic33_device_can_rx_requests[1]) &&
-                (cpu->io.dma_arbiter_waiting & bit) != 0u) {
+        if ((cpu->io.dma_peripheral_pending & channel_bit) != 0u) {
+            if ((request_source == dspic33_device_can_rx_requests[0] ||
+                 request_source == dspic33_device_can_rx_requests[1]) &&
+                (cpu->io.dma_arbiter_waiting & channel_bit) != 0u) {
                 cpu->stop_reason = DSPIC33_SILICON_RESULT_UNDEFINED;
             }
             continue;
         }
-        if ((cpu->io.dma_forced_pending & bit) != 0u) {
-            dspic33_device_internal_dma_request_collision(cpu, channel);
+        if ((cpu->io.dma_forced_pending & channel_bit) != 0u) {
+            dspic33_device_internal_dma_request_collision(cpu, channel_index);
         }
-        if (!dspic33_device_internal_schedule_dma_channel(cpu, channel, indirect_address, false,
-                                                          delay)) {
-            succeeded = false;
+        if (!dspic33_device_internal_schedule_dma_channel(cpu, channel_index, peripheral_offset,
+                                                          false, event_delay)) {
+            all_requests_succeeded = false;
         }
     }
-    return succeeded;
+    return all_requests_succeeded;
 }
 
 bool dspic33_pmp_transmit(Dspic33* cpu, Dspic33PmpTransfer* transfer) {

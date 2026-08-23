@@ -205,8 +205,8 @@ void dspic33_device_internal_crc_start_if_ready(Dspic33* cpu);
 void dspic33_device_internal_dci_discard_internal_events(Dspic33* cpu);
 void dspic33_device_internal_dci_refresh_pps_inputs(Dspic33* cpu);
 void dspic33_device_internal_dci_update_power_state(Dspic33* cpu);
-void dspic33_device_internal_dma_advance_generation(Dspic33* cpu, uint8_t channel);
-void dspic33_device_internal_dma_request_collision(Dspic33* cpu, uint8_t channel);
+void dspic33_device_internal_dma_advance_generation(Dspic33* cpu, uint8_t channel_index);
+void dspic33_device_internal_dma_request_collision(Dspic33* cpu, uint8_t channel_index);
 void dspic33_device_internal_dma_update_power_state(Dspic33* cpu);
 void dspic33_device_internal_input_capture_advance_clock(Dspic33* cpu, uint16_t timer_source,
                                                          uint64_t cycles);
