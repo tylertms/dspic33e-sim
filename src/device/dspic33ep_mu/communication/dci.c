@@ -12,12 +12,12 @@ static uint8_t dci_mode(const Dspic33* cpu) {
 }
 
 static uint8_t dci_frame_count(const Dspic33* cpu) {
-    uint8_t dci_mode_value = dci_mode(cpu);
+    uint8_t mode_value = dci_mode(cpu);
 
-    if (dci_mode_value == 2u) {
+    if (mode_value == 2u) {
         return 13u;
     }
-    if (dci_mode_value == 3u) {
+    if (mode_value == 3u) {
         return 16u;
     }
     return (
@@ -35,8 +35,8 @@ static uint8_t dci_word_width(const Dspic33* cpu) {
                  1u);
 }
 
-static uint8_t dci_slot_width(const Dspic33* cpu, uint8_t slot_index) {
-    return dci_mode(cpu) == 2u && slot_index != 0u ? 20u : dci_word_width(cpu);
+static uint8_t dci_slot_width(const Dspic33* cpu, uint8_t slot_number) {
+    return dci_mode(cpu) == 2u && slot_number != 0u ? 20u : dci_word_width(cpu);
 }
 
 static uint16_t dci_slot_mask(const Dspic33* cpu) {
@@ -44,34 +44,34 @@ static uint16_t dci_slot_mask(const Dspic33* cpu) {
 }
 
 static uint16_t dci_word_mask(const Dspic33* cpu) {
-    uint8_t width = dci_word_width(cpu);
-    return width == 16u ? UINT16_MAX : (uint16_t)(UINT16_MAX << (16u - width));
+    uint8_t word_width = dci_word_width(cpu);
+    return word_width == 16u ? UINT16_MAX : (uint16_t)(UINT16_MAX << (16u - word_width));
 }
 
 static uint8_t dci_active_transmit_buffers(const Dspic33* cpu) {
-    uint16_t slot_mask = dci_slot_mask(cpu);
-    uint16_t transmit_slots =
-        (uint16_t)(dspic33_device_internal_raw_word(cpu, DCI_TRANSMIT_SLOTS) & slot_mask);
-    uint16_t active_slots =
-        (uint16_t)(transmit_slots |
-                   (dspic33_device_internal_raw_word(cpu, DCI_RECEIVE_SLOTS) & slot_mask));
+    uint16_t slot_domain_mask = dci_slot_mask(cpu);
+    uint16_t configured_transmit_slots =
+        (uint16_t)(dspic33_device_internal_raw_word(cpu, DCI_TRANSMIT_SLOTS) & slot_domain_mask);
+    uint16_t configured_active_slots =
+        (uint16_t)(configured_transmit_slots |
+                   (dspic33_device_internal_raw_word(cpu, DCI_RECEIVE_SLOTS) & slot_domain_mask));
     uint8_t buffer_count = dci_buffer_count(cpu);
-    uint8_t buffer_index = 0u;
-    uint8_t active_buffer_mask = 0u;
+    uint8_t active_buffer_index = 0u;
+    uint8_t transmit_buffer_mask = 0u;
 
-    for (uint8_t frame_index = 0u; frame_index < buffer_count; frame_index++) {
-        for (uint8_t slot_index = 0u; slot_index < dci_frame_count(cpu); slot_index++) {
-            uint16_t slot_bit = (uint16_t)(1u << slot_index);
+    for (uint8_t frame_number = 0u; frame_number < buffer_count; frame_number++) {
+        for (uint8_t slot_number = 0u; slot_number < dci_frame_count(cpu); slot_number++) {
+            uint16_t slot_bit = (uint16_t)(1u << slot_number);
 
-            if ((transmit_slots & slot_bit) != 0u) {
-                active_buffer_mask |= (uint8_t)(1u << buffer_index);
+            if ((configured_transmit_slots & slot_bit) != 0u) {
+                transmit_buffer_mask |= (uint8_t)(1u << active_buffer_index);
             }
-            if ((active_slots & slot_bit) != 0u) {
-                buffer_index = (uint8_t)((buffer_index + 1u) % buffer_count);
+            if ((configured_active_slots & slot_bit) != 0u) {
+                active_buffer_index = (uint8_t)((active_buffer_index + 1u) % buffer_count);
             }
         }
     }
-    return active_buffer_mask;
+    return transmit_buffer_mask;
 }
 
 bool dspic33_device_internal_dci_configuration_supported(const Dspic33* cpu) {
