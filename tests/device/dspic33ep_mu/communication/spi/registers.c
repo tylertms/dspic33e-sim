@@ -1,43 +1,51 @@
 #include "device/dspic33ep_mu/communication/spi/internal.h"
 
-bool dspic33_spi_test_interrupt_flag(Dspic33* cpu, uint8_t irq) {
-    uint16_t address = (uint16_t)(0x0800u + (irq / 16u) * 2u);
-    return (dspic33_read_word(cpu, address) & (uint16_t)(1u << (irq % 16u))) != 0u;
+bool dspic33_spi_test_interrupt_flag(Dspic33* cpu, uint8_t interrupt_number) {
+    const uint16_t status_address = (uint16_t)(0x0800u + (interrupt_number / 16u) * 2u);
+
+    return (dspic33_read_word(cpu, status_address) & (uint16_t)(1u << (interrupt_number % 16u))) !=
+           0u;
 }
 
-void dspic33_spi_test_clear_interrupt(Dspic33* cpu, uint8_t irq) {
-    uint16_t address = (uint16_t)(0x0800u + (irq / 16u) * 2u);
-    dspic33_write_word(
-        cpu, address, (uint16_t)(dspic33_read_word(cpu, address) & ~(uint16_t)(1u << (irq % 16u))));
+void dspic33_spi_test_clear_interrupt(Dspic33* cpu, uint8_t interrupt_number) {
+    const uint16_t status_address = (uint16_t)(0x0800u + (interrupt_number / 16u) * 2u);
+
+    dspic33_write_word(cpu, status_address,
+                       (uint16_t)(dspic33_read_word(cpu, status_address) &
+                                  ~(uint16_t)(1u << (interrupt_number % 16u))));
 }
 
-bool dspic33_spi_test_transfer_interrupt_after_cycle(Dspic33* cpu, uint8_t irq) {
-    return !dspic33_spi_test_interrupt_flag(cpu, irq) && dspic33_device_advance(cpu, 1u) &&
-           dspic33_spi_test_interrupt_flag(cpu, irq);
+bool dspic33_spi_test_transfer_interrupt_after_cycle(Dspic33* cpu, uint8_t interrupt_number) {
+    return !dspic33_spi_test_interrupt_flag(cpu, interrupt_number) &&
+           dspic33_device_advance(cpu, 1u) &&
+           dspic33_spi_test_interrupt_flag(cpu, interrupt_number);
 }
 
-uint64_t dspic33_spi_test_transfer_cycles(uint16_t control) {
-    static const uint8_t primary[] = {64u, 16u, 4u, 1u};
-    uint8_t secondary = (uint8_t)(8u - ((control >> 2u) & 7u));
-    uint8_t bits = (control & 0x0400u) != 0u ? 16u : 8u;
-    return (uint64_t)bits * primary[control & 3u] * secondary;
+uint64_t dspic33_spi_test_transfer_cycles(uint16_t spi_control) {
+    static const uint8_t primary_cycles[] = {64u, 16u, 4u, 1u};
+    const uint8_t secondary_divisor = (uint8_t)(8u - ((spi_control >> 2u) & 7u));
+    const uint8_t transfer_width = (spi_control & 0x0400u) != 0u ? 16u : 8u;
+
+    return (uint64_t)transfer_width * primary_cycles[spi_control & 3u] * secondary_divisor;
 }
 
-void dspic33_spi_test_configure_spi(Dspic33* cpu, uint8_t channel, uint16_t control,
-                                    uint16_t control2, uint8_t interrupt_mode) {
-    uint16_t base = bases[channel];
-    dspic33_write_word(cpu, base, 0u);
-    dspic33_write_word(cpu, (uint16_t)(base + 2u), control);
-    dspic33_write_word(cpu, (uint16_t)(base + 4u), control2);
-    dspic33_write_word(cpu, base, (uint16_t)(0x8000u | ((uint16_t)interrupt_mode << 2u)));
+void dspic33_spi_test_configure_spi(Dspic33* cpu, uint8_t channel_index, uint16_t spi_control,
+                                    uint16_t frame_control, uint8_t interrupt_mode) {
+    const uint16_t spi_base = bases[channel_index];
+
+    dspic33_write_word(cpu, spi_base, 0u);
+    dspic33_write_word(cpu, (uint16_t)(spi_base + 2u), spi_control);
+    dspic33_write_word(cpu, (uint16_t)(spi_base + 4u), frame_control);
+    dspic33_write_word(cpu, spi_base, (uint16_t)(0x8000u | ((uint16_t)interrupt_mode << 2u)));
 }
 
-static bool drive_pps_spi_word(Dspic33* cpu, uint16_t value, uint8_t width, uint16_t data_mask,
-                               uint16_t clock_mask) {
-    uint8_t index;
-    for (index = 0u; index < width; index++) {
-        uint16_t data = (value & (uint16_t)(1u << (width - index - 1u))) != 0u ? data_mask : 0u;
-        if (!dspic33_gpio_drive(cpu, 3u, data, data_mask) ||
+static bool drive_pps_spi_word(Dspic33* cpu, uint16_t value, uint8_t transfer_width,
+                               uint16_t data_mask, uint16_t clock_mask) {
+    for (uint8_t bit_index = 0u; bit_index < transfer_width; bit_index++) {
+        const uint16_t data_value =
+            (value & (uint16_t)(1u << (transfer_width - bit_index - 1u))) != 0u ? data_mask : 0u;
+
+        if (!dspic33_gpio_drive(cpu, 3u, data_value, data_mask) ||
             !dspic33_gpio_drive(cpu, 3u, clock_mask, clock_mask) ||
             !dspic33_gpio_drive(cpu, 3u, 0u, clock_mask)) {
             return false;
@@ -46,21 +54,22 @@ static bool drive_pps_spi_word(Dspic33* cpu, uint16_t value, uint8_t width, uint
     return true;
 }
 
-uint16_t dspic33_spi_test_dma_base(uint8_t channel) {
-    return (uint16_t)(0x0b00u + channel * 0x10u);
+uint16_t dspic33_spi_test_dma_base(uint8_t channel_index) {
+    return (uint16_t)(0x0b00u + channel_index * 0x10u);
 }
 
-void dspic33_spi_test_configure_dma(Dspic33* cpu, uint8_t channel, uint16_t control,
-                                    uint8_t request, uint32_t memory, uint16_t pad,
-                                    uint16_t count) {
-    uint16_t base = dspic33_spi_test_dma_base(channel);
-    dspic33_write_word(cpu, base, 0u);
-    dspic33_write_word(cpu, (uint16_t)(base + 2u), request);
-    dspic33_write_word(cpu, (uint16_t)(base + 4u), (uint16_t)memory);
-    dspic33_write_word(cpu, (uint16_t)(base + 6u), (uint16_t)(memory >> 16u));
-    dspic33_write_word(cpu, (uint16_t)(base + 0x0cu), pad);
-    dspic33_write_word(cpu, (uint16_t)(base + 0x0eu), count);
-    dspic33_write_word(cpu, base, (uint16_t)(control | 0x8000u));
+void dspic33_spi_test_configure_dma(Dspic33* cpu, uint8_t channel_index, uint16_t dma_control,
+                                    uint8_t request_source, uint32_t memory_address,
+                                    uint16_t peripheral_address, uint16_t transfer_count) {
+    const uint16_t channel_base = dspic33_spi_test_dma_base(channel_index);
+
+    dspic33_write_word(cpu, channel_base, 0u);
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 2u), request_source);
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 4u), (uint16_t)memory_address);
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 6u), (uint16_t)(memory_address >> 16u));
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 0x0cu), peripheral_address);
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 0x0eu), transfer_count);
+    dspic33_write_word(cpu, channel_base, (uint16_t)(dma_control | 0x8000u));
 }
 
 void dspic33_spi_test_register_cases(TestState* state, Dspic33* cpu) {
