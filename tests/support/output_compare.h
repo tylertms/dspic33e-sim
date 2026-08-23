@@ -63,16 +63,18 @@ static inline uint16_t compare_pmd_mask(uint8_t channel) {
 }
 
 static inline bool interrupt_flag(Dspic33* cpu, uint8_t channel) {
-    uint8_t irq = compare_irqs[channel];
-    uint16_t address = (uint16_t)(0x0800u + (irq / 16u) * 2u);
-    return (dspic33_read_word(cpu, address) & (uint16_t)(1u << (irq % 16u))) != 0u;
+    uint8_t interrupt_number = compare_irqs[channel];
+    uint16_t status_address = (uint16_t)(0x0800u + (interrupt_number / 16u) * 2u);
+    return (dspic33_read_word(cpu, status_address) & (uint16_t)(1u << (interrupt_number % 16u))) !=
+           0u;
 }
 
 static inline void clear_interrupt(Dspic33* cpu, uint8_t channel) {
-    uint8_t irq = compare_irqs[channel];
-    uint16_t address = (uint16_t)(0x0800u + (irq / 16u) * 2u);
-    uint16_t bit = (uint16_t)(1u << (irq % 16u));
-    dspic33_write_word(cpu, address, (uint16_t)(dspic33_read_word(cpu, address) & ~bit));
+    uint8_t interrupt_number = compare_irqs[channel];
+    uint16_t status_address = (uint16_t)(0x0800u + (interrupt_number / 16u) * 2u);
+    uint16_t interrupt_bit = (uint16_t)(1u << (interrupt_number % 16u));
+    dspic33_write_word(cpu, status_address,
+                       (uint16_t)(dspic33_read_word(cpu, status_address) & ~interrupt_bit));
 }
 
 static inline bool output_is(const Dspic33* cpu, uint8_t channel, bool expected) {
@@ -99,26 +101,26 @@ static inline bool drive_compare_fault(Dspic33* cpu, uint8_t source, bool high) 
 
 static inline void configure_compare_source(Dspic33* cpu, uint8_t channel, uint16_t period,
                                             uint16_t duty, uint16_t synchronization) {
-    uint16_t base = compare_base(channel);
-    dspic33_write_word(cpu, base, 0u);
-    dspic33_write_word(cpu, (uint16_t)(base + 2u), 0u);
-    dspic33_write_word(cpu, (uint16_t)(base + 4u), period);
-    dspic33_write_word(cpu, (uint16_t)(base + 6u), duty);
+    uint16_t register_base = compare_base(channel);
+    dspic33_write_word(cpu, register_base, 0u);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 2u), 0u);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 4u), period);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 6u), duty);
     clear_interrupt(cpu, channel);
-    dspic33_write_word(cpu, base, COMPARE_FP_EDGE_PWM);
-    dspic33_write_word(cpu, (uint16_t)(base + 2u), synchronization);
+    dspic33_write_word(cpu, register_base, COMPARE_FP_EDGE_PWM);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 2u), synchronization);
 }
 
 static inline void configure_compare_mode(Dspic33* cpu, uint8_t channel, uint8_t mode,
                                           uint16_t secondary, uint16_t primary, uint16_t control2) {
-    uint16_t base = compare_base(channel);
-    dspic33_write_word(cpu, base, 0u);
-    dspic33_write_word(cpu, (uint16_t)(base + 2u), 0u);
-    dspic33_write_word(cpu, (uint16_t)(base + 4u), secondary);
-    dspic33_write_word(cpu, (uint16_t)(base + 6u), primary);
+    uint16_t register_base = compare_base(channel);
+    dspic33_write_word(cpu, register_base, 0u);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 2u), 0u);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 4u), secondary);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 6u), primary);
     clear_interrupt(cpu, channel);
-    dspic33_write_word(cpu, base, (uint16_t)(COMPARE_FP | mode));
-    dspic33_write_word(cpu, (uint16_t)(base + 2u), control2);
+    dspic33_write_word(cpu, register_base, (uint16_t)(COMPARE_FP | mode));
+    dspic33_write_word(cpu, (uint16_t)(register_base + 2u), control2);
 }
 
 static inline void configure_compare(Dspic33* cpu, uint8_t channel, uint16_t period,
