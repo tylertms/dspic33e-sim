@@ -388,17 +388,19 @@ static void clear_error_interrupt(TestState* state, Dspic33* cpu, uint8_t channe
 }
 
 static void error_threshold_domain(TestState* state, Dspic33* cpu) {
-    uint8_t channel;
-    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-        uint8_t direction;
-        for (direction = 0u; direction < 2u; direction++) {
-            bool transmit = direction != 0u;
-            uint16_t count;
-            for (count = 1u; count <= UINT8_MAX; count++) {
-                uint16_t counts = transmit ? (uint16_t)(count << 8u) : count;
-                configure_error_test(cpu, channel);
-                expect_error_step(state, cpu, channel, transmit, (uint8_t)count, counts,
-                                  expected_error_status(transmit, count, false));
+    uint8_t channel_index;
+
+    for (channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
+        uint8_t direction_index;
+        for (direction_index = 0u; direction_index < 2u; direction_index++) {
+            bool is_transmit = direction_index != 0u;
+            uint16_t error_count;
+            for (error_count = 1u; error_count <= UINT8_MAX; error_count++) {
+                uint16_t error_counts = is_transmit ? (uint16_t)(error_count << 8u) : error_count;
+                configure_error_test(cpu, channel_index);
+                expect_error_step(state, cpu, channel_index, is_transmit, (uint8_t)error_count,
+                                  error_counts,
+                                  expected_error_status(is_transmit, error_count, false));
             }
         }
     }
@@ -466,10 +468,10 @@ static void transmit_error_transition_cases(TestState* state, Dspic33* cpu, uint
 static void complete_error_test_transmission(TestState* state, Dspic33* cpu, uint8_t channel) {
     uint32_t memory = (uint32_t)(0xe000u + channel * 0x100u);
     Dspic33CanFrame output;
-    uint8_t word;
+    uint8_t word_index;
     dspic33_can_test_configure_transmit(cpu, channel, memory);
-    for (word = 0u; word < 8u; word++) {
-        dspic33_can_test_write_memory_word(cpu, memory + word * 2u, 0u);
+    for (word_index = 0u; word_index < 8u; word_index++) {
+        dspic33_can_test_write_memory_word(cpu, memory + word_index * 2u, 0u);
     }
     dspic33_can_test_select_window(cpu, channel, false);
     dspic33_write_word(cpu, (uint16_t)(bases[channel] + 0x30u), 0x008bu);
