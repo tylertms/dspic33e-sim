@@ -167,7 +167,11 @@ static void update_subtract_flags(Dspic33* cpu, uint16_t left, uint16_t right, u
     uint16_t sign = byte_mode ? 0x0080u : 0x8000u;
     uint16_t digit_mask = byte_mode ? 0x000fu : 0x00ffu;
     uint32_t subtraction = (right & mask) + borrow;
-    uint16_t operand = (uint16_t)(subtraction & mask);
+    int32_t signed_left = byte_mode ? (int8_t)left : (int16_t)left;
+    int32_t signed_right = byte_mode ? (int8_t)right : (int16_t)right;
+    int32_t signed_result = signed_left - signed_right - borrow;
+    int32_t signed_minimum = byte_mode ? INT8_MIN : INT16_MIN;
+    int32_t signed_maximum = byte_mode ? INT8_MAX : INT16_MAX;
     bool previous_zero = (cpu->sr & 0x0002u) != 0u;
     left = (uint16_t)(left & mask);
     value = (uint16_t)(value & mask);
@@ -184,7 +188,7 @@ static void update_subtract_flags(Dspic33* cpu, uint16_t left, uint16_t right, u
     if ((uint32_t)(left & digit_mask) >= (uint32_t)(right & digit_mask) + borrow) {
         cpu->sr |= 0x0100u;
     }
-    if ((((left ^ operand) & (left ^ value)) & sign) != 0u) {
+    if (signed_result < signed_minimum || signed_result > signed_maximum) {
         cpu->sr |= 0x0004u;
     }
 }

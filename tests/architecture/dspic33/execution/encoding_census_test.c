@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #include "architecture/dspic33/execution/internal.h"
@@ -68,24 +69,29 @@ int main(int argc, char** argv) {
         1048576u, 1048576u, 1048576u, 966656u,  809990u,  851968u,  917504u,  761856u,
     };
     static const uint64_t expected_fingerprints[16] = {
-        UINT64_C(14964596877420212897), UINT64_C(16725181896822591465),
+        UINT64_C(14964596877420212897), UINT64_C(764949113210372105),
         UINT64_C(17321065357767263013), UINT64_C(4091026983387374373),
-        UINT64_C(3221232769131753183),  UINT64_C(12576375436086507549),
+        UINT64_C(3221232769131753183),  UINT64_C(2041206799426521133),
         UINT64_C(12291876438187873379), UINT64_C(4888425759874588143),
         UINT64_C(12513212965201142334), UINT64_C(17553851555242393381),
-        UINT64_C(8459395887854694913),  UINT64_C(9315316097031253775),
+        UINT64_C(8459395887854694913),  UINT64_C(4748227562539279623),
         UINT64_C(12991544788716398853), UINT64_C(4064714396898001113),
-        UINT64_C(932780874201035360),   UINT64_C(3251569668013103597),
+        UINT64_C(14142881104235815568), UINT64_C(3251569668013103597),
     };
     Dspic33 cpu;
     const bool initialized = dspic33_initialize(&cpu);
     expect(&state, initialized, "cpu initialized");
     if (initialized) {
         const Census census = census_encodings(&cpu, shard);
-        expect(&state,
-               census.examined == 1048576u && census.executed == expected_executed[shard] &&
-                   census.fingerprint == expected_fingerprints[shard],
-               "instruction encoding census matches");
+        const bool matches =
+            census.examined == 1048576u && census.executed == expected_executed[shard] &&
+            census.fingerprint == expected_fingerprints[shard];
+        if (!matches) {
+            printf("[census] shard=%u examined=%llu executed=%llu fingerprint=%llu\n", shard,
+                   (unsigned long long)census.examined, (unsigned long long)census.executed,
+                   (unsigned long long)census.fingerprint);
+        }
+        expect(&state, matches, "instruction encoding census matches");
         dspic33_release(&cpu);
     }
     return test_finish(&state);

@@ -25,6 +25,7 @@ int main(void) {
     if (initialized) {
         dspic33_data_test_loop_encoding_matrix_cases(&state, &cpu);
         dspic33_data_test_bit_encoding_matrix_cases(&state, &cpu);
+        dspic33_data_test_register_bit_sequence_case(&state, &cpu);
         dspic33_data_test_direct_file_bit_value_cases(&state, &cpu);
         dspic33_data_test_bit_operand_lifecycle_cases(&state, &cpu);
         dspic33_data_test_table_encoding_matrix_cases(&state, &cpu);

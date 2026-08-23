@@ -85,6 +85,7 @@ void dspic33_data_test_arithmetic_encoding_matrix_cases(TestState* state, Dspic3
 void dspic33_data_test_binary_matrix_write_register(uint16_t registers[16], uint8_t reg,
                                                     uint16_t value);
 void dspic33_data_test_bit_encoding_matrix_cases(TestState* state, Dspic33* cpu);
+void dspic33_data_test_register_bit_sequence_case(TestState* state, Dspic33* cpu);
 void dspic33_data_test_bit_operand_lifecycle_cases(TestState* state, Dspic33* cpu);
 void dspic33_data_test_byte_extension_encoding_matrix_cases(TestState* state, Dspic33* cpu);
 void dspic33_data_test_byte_extension_lifecycle_cases(TestState* state, Dspic33* cpu);

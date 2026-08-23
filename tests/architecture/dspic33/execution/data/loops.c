@@ -453,14 +453,18 @@ uint16_t dspic33_data_test_binary_matrix_status(BinaryMatrixOperation operation,
         uint16_t minuend = binary_matrix_reverse(operation) ? right : left;
         uint16_t subtrahend = binary_matrix_reverse(operation) ? left : right;
         uint32_t subtraction = (uint32_t)subtrahend + borrow;
-        uint16_t operand = (uint16_t)(subtraction & mask);
+        int32_t signed_minuend = byte_mode ? (int8_t)minuend : (int16_t)minuend;
+        int32_t signed_subtrahend = byte_mode ? (int8_t)subtrahend : (int16_t)subtrahend;
+        int32_t signed_result = signed_minuend - signed_subtrahend - borrow;
+        int32_t minimum = byte_mode ? INT8_MIN : INT16_MIN;
+        int32_t maximum = byte_mode ? INT8_MAX : INT16_MAX;
         if (minuend >= subtraction) {
             status |= 0x0001u;
         }
         if ((minuend & digit_mask) >= (uint32_t)(subtrahend & digit_mask) + borrow) {
             status |= 0x0100u;
         }
-        if ((((minuend ^ operand) & (minuend ^ value)) & sign) != 0u) {
+        if (signed_result < minimum || signed_result > maximum) {
             status |= 0x0004u;
         }
     }

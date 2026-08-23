@@ -444,6 +444,21 @@ void dspic33_data_test_bit_encoding_matrix_cases(TestState* state, Dspic33* cpu)
     }
 }
 
+void dspic33_data_test_register_bit_sequence_case(TestState* state, Dspic33* cpu) {
+    reset_processor_test(cpu, 0x0200u);
+    dspic33_set_async_events(cpu, false);
+    dspic33_set_working_register(cpu, 1u, 0u);
+    load_instruction(state, cpu, 0x0200u, 0xa00001u);
+    load_instruction(state, cpu, 0x0202u, 0xa16001u);
+    load_instruction(state, cpu, 0x0204u, 0xa0c001u);
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "execute BSET W1 bit zero");
+    expect(state, cpu->w[1] == 0x0001u, "BSET W1 bit zero");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "execute BCLR W1 bit six");
+    expect(state, cpu->w[1] == 0x0001u, "BCLR W1 bit six");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING, "execute BSET W1 bit twelve");
+    expect(state, cpu->w[1] == 0x1001u, "BSET W1 bit twelve");
+}
+
 void dspic33_data_test_direct_file_bit_value_cases(TestState* state, Dspic33* cpu) {
     static const uint8_t kinds[] = {0u, 1u, 2u, 3u, 4u, 6u, 7u};
     static const uint16_t values[] = {0x0000u, 0xffffu, 0xa55au, 0x5aa5u};

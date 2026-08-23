@@ -460,12 +460,27 @@ static void arithmetic_flag_boundary_cases(TestState* state, Dspic33* cpu) {
     }
 }
 
+static void subtract_borrow_flags(TestState* state, Dspic33* cpu) {
+    reset_processor_test(cpu, 0u);
+    dspic33_set_async_events(cpu, false);
+    dspic33_set_working_register(cpu, 11u, 0x0098u);
+    dspic33_set_working_register(cpu, 13u, 0x7fffu);
+    cpu->sr = 0u;
+    load_instruction(state, cpu, 0u, 0x5d808du);
+
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->sr == 0x0008u &&
+               cpu->w[1] == 0x8098u,
+           "SUBB excludes a false high-word signed overflow");
+}
+
 void dspic33_data_test_arithmetic_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
     general_arithmetic_encoding_matrix_cases(state, cpu);
     general_logical_encoding_matrix_cases(state, cpu);
     literal_arithmetic_encoding_matrix_cases(state, cpu);
     literal_logical_encoding_matrix_cases(state, cpu);
     arithmetic_flag_boundary_cases(state, cpu);
+    subtract_borrow_flags(state, cpu);
 }
 
 bool dspic33_data_test_direct_file_address_implemented(uint16_t address) {
