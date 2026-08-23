@@ -454,20 +454,24 @@ static void can_transmit_bus_finish(Dspic33* cpu, uint8_t channel_index) {
     dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_TRANSMIT_START, 0u);
 }
 
-static void can_transmit_finish(Dspic33* cpu, uint8_t channel) {
-    Dspic33CanFrame frame = dspic33_device_internal_can_decode_frame(cpu->io.can_tx_words[channel]);
-    uint8_t bit = (uint8_t)(1u << channel);
-    cpu->io.can_tx_start_cycle[channel] = cpu->device_cycles;
-    cpu->io.can_tx_phase_adjustment[channel] = 0;
-    cpu->io.can_tx_on_bus |= bit;
-    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_BUS_FINISH,
-                          dspic33_device_internal_can_frame_cycles(cpu, channel, &frame)) ||
+static void can_transmit_finish(Dspic33* cpu, uint8_t channel_index) {
+    const Dspic33CanFrame transmitted_frame =
+        dspic33_device_internal_can_decode_frame(cpu->io.can_tx_words[channel_index]);
+    const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+
+    cpu->io.can_tx_start_cycle[channel_index] = cpu->device_cycles;
+    cpu->io.can_tx_phase_adjustment[channel_index] = 0;
+    cpu->io.can_tx_on_bus |= channel_bit;
+    if (!dspic33_schedule(
+            cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_TRANSMIT_BUS_FINISH,
+            dspic33_device_internal_can_frame_cycles(cpu, channel_index, &transmitted_frame)) ||
         !dspic33_device_internal_can_schedule_transmit_sample(
-            cpu, channel, dspic33_device_internal_can_first_sample_delay(cpu, channel))) {
-        dspic33_device_internal_can_remove_transmit_events(cpu, channel);
+            cpu, channel_index,
+            dspic33_device_internal_can_first_sample_delay(cpu, channel_index))) {
+        dspic33_device_internal_can_remove_transmit_events(cpu, channel_index);
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
-        cpu->io.can_tx_on_bus &= (uint8_t)~bit;
-        cpu->io.can_tx_busy &= (uint8_t)~(uint8_t)(1u << channel);
+        cpu->io.can_tx_on_bus &= (uint8_t)~channel_bit;
+        cpu->io.can_tx_busy &= (uint8_t)~channel_bit;
     }
 }
 
