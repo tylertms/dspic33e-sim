@@ -222,35 +222,41 @@ static bool can_filter_matches(const Dspic33* cpu, uint8_t channel_index, uint8_
     return true;
 }
 
-uint8_t dspic33_device_internal_can_filter_buffer(const Dspic33* cpu, uint8_t channel,
-                                                  uint8_t filter) {
-    uint16_t value = dspic33_device_internal_can_filter_word(
-        cpu, channel, (uint16_t)(0x20u + (filter / 4u) * 2u));
-    return (uint8_t)((value >> ((filter & 3u) * 4u)) & 0x0fu);
+uint8_t dspic33_device_internal_can_filter_buffer(const Dspic33* cpu, uint8_t channel_index,
+                                                  uint8_t filter_index) {
+    const uint16_t filter_word = dspic33_device_internal_can_filter_word(
+        cpu, channel_index, (uint16_t)(0x20u + (filter_index / 4u) * 2u));
+
+    return (uint8_t)((filter_word >> ((filter_index & 3u) * 4u)) & 0x0fu);
 }
 
-uint8_t dspic33_device_internal_can_fifo_end(const Dspic33* cpu, uint8_t channel) {
-    return (uint8_t)(dspic33_device_internal_can_buffer_count(cpu, channel) - 1u);
+uint8_t dspic33_device_internal_can_fifo_end(const Dspic33* cpu, uint8_t channel_index) {
+    return (uint8_t)(dspic33_device_internal_can_buffer_count(cpu, channel_index) - 1u);
 }
 
-uint8_t dspic33_device_internal_can_next_fifo_buffer(const Dspic33* cpu, uint8_t channel,
-                                                     uint8_t buffer) {
-    uint8_t start = (uint8_t)(dspic33_device_internal_raw_word(
-                                  cpu, (uint16_t)(dspic33_device_can_bases[channel] + 6u)) &
-                              0x001fu);
-    return buffer >= dspic33_device_internal_can_fifo_end(cpu, channel) ? start
-                                                                        : (uint8_t)(buffer + 1u);
+uint8_t dspic33_device_internal_can_next_fifo_buffer(const Dspic33* cpu, uint8_t channel_index,
+                                                     uint8_t buffer_index) {
+    const uint8_t fifo_start_buffer =
+        (uint8_t)(dspic33_device_internal_raw_word(
+                      cpu, (uint16_t)(dspic33_device_can_bases[channel_index] + 6u)) &
+                  0x001fu);
+
+    return buffer_index >= dspic33_device_internal_can_fifo_end(cpu, channel_index)
+               ? fifo_start_buffer
+               : (uint8_t)(buffer_index + 1u);
 }
 
-uint8_t dspic33_device_internal_can_advance_fifo_write(Dspic33* cpu, uint8_t channel,
-                                                       uint8_t buffer) {
-    uint8_t next = dspic33_device_internal_can_next_fifo_buffer(cpu, channel, buffer);
-    uint16_t address = (uint16_t)(dspic33_device_can_bases[channel] + 8u);
-    uint16_t fifo = dspic33_device_internal_raw_word(cpu, address);
-    cpu->io.can_fifo_write[channel] = next;
-    dspic33_device_internal_raw_write_word(cpu, address,
-                                           (uint16_t)((fifo & 0x003fu) | ((uint16_t)next << 8u)));
-    return next;
+uint8_t dspic33_device_internal_can_advance_fifo_write(Dspic33* cpu, uint8_t channel_index,
+                                                       uint8_t buffer_index) {
+    const uint8_t next_buffer =
+        dspic33_device_internal_can_next_fifo_buffer(cpu, channel_index, buffer_index);
+    const uint16_t register_address = (uint16_t)(dspic33_device_can_bases[channel_index] + 8u);
+    const uint16_t fifo_state = dspic33_device_internal_raw_word(cpu, register_address);
+
+    cpu->io.can_fifo_write[channel_index] = next_buffer;
+    dspic33_device_internal_raw_write_word(
+        cpu, register_address, (uint16_t)((fifo_state & 0x003fu) | ((uint16_t)next_buffer << 8u)));
+    return next_buffer;
 }
 
 bool dspic33_device_internal_can_select_receive_buffer(Dspic33* cpu, uint8_t channel,
