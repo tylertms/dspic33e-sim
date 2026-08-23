@@ -358,62 +358,70 @@ void dspic33_spi_test_selection_and_frame_cases(TestState* state, Dspic33* cpu) 
 
 void dspic33_spi_test_slave_select_retry_cases(TestState* state, Dspic33* cpu) {
     static const uint8_t data_functions[DSPIC33_SPI_COUNT] = {5u, 0u, 31u, 34u};
-    for (uint8_t channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-        uint16_t base = bases[channel];
-        uint16_t received = (uint16_t)(0x5aa0u + channel);
-        uint16_t transmitted = (uint16_t)(0xa550u + channel);
-        uint8_t bit = (uint8_t)(1u << channel);
-        bool data = false;
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_SPI_COUNT; channel_index++) {
+        const uint16_t spi_base = bases[channel_index];
+        const uint16_t received_value = (uint16_t)(0x5aa0u + channel_index);
+        const uint16_t transmitted_value = (uint16_t)(0xa550u + channel_index);
+        const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+        bool data_high = false;
 
         dspic33_reset(cpu, 0u);
-        if (data_functions[channel] != 0u) {
-            dspic33_write_word(cpu, 0x0680u, data_functions[channel]);
+        if (data_functions[channel_index] != 0u) {
+            dspic33_write_word(cpu, 0x0680u, data_functions[channel_index]);
         }
-        dspic33_spi_test_configure_spi(cpu, channel, 0x0480u, 0u, 0u);
-        dspic33_spi_pin_input(cpu, channel, false, false, true);
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), transmitted);
-        expect(state, (cpu->io.spi_busy & bit) == 0u && cpu->io.spi_tx_fifo[channel].count == 1u,
+        dspic33_spi_test_configure_spi(cpu, channel_index, 0x0480u, 0u, 0u);
+        dspic33_spi_pin_input(cpu, channel_index, false, false, true);
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), transmitted_value);
+        expect(state,
+               (cpu->io.spi_busy & channel_bit) == 0u &&
+                   cpu->io.spi_tx_fifo[channel_index].count == 1u,
                "inactive slave select holds pending data");
         expect(state,
-               !dspic33_spi_data_output(cpu, channel, &data) &&
-                   (data_functions[channel] == 0u || !dspic33_spi_pin(cpu, 64u, &data)),
+               !dspic33_spi_data_output(cpu, channel_index, &data_high) &&
+                   (data_functions[channel_index] == 0u || !dspic33_spi_pin(cpu, 64u, &data_high)),
                "inactive slave select tri-states output");
 
-        dspic33_spi_pin_input(cpu, channel, false, false, false);
+        dspic33_spi_pin_input(cpu, channel_index, false, false, false);
         expect(state,
-               (cpu->io.spi_busy & bit) != 0u && cpu->io.spi_shift[channel] == transmitted &&
-                   dspic33_spi_data_output(cpu, channel, &data) && data &&
-                   (data_functions[channel] == 0u || (dspic33_spi_pin(cpu, 64u, &data) && data)),
+               (cpu->io.spi_busy & channel_bit) != 0u &&
+                   cpu->io.spi_shift[channel_index] == transmitted_value &&
+                   dspic33_spi_data_output(cpu, channel_index, &data_high) && data_high &&
+                   (data_functions[channel_index] == 0u ||
+                    (dspic33_spi_pin(cpu, 64u, &data_high) && data_high)),
                "active slave select starts the held transmission");
 
-        for (uint8_t index = 0u; index < 4u; index++) {
-            bool high = (received & (uint16_t)(1u << (15u - index))) != 0u;
-            dspic33_spi_pin_input(cpu, channel, true, high, false);
-            dspic33_spi_pin_input(cpu, channel, false, high, false);
+        for (uint8_t bit_index = 0u; bit_index < 4u; bit_index++) {
+            const bool sample_high = (received_value & (uint16_t)(1u << (15u - bit_index))) != 0u;
+
+            dspic33_spi_pin_input(cpu, channel_index, true, sample_high, false);
+            dspic33_spi_pin_input(cpu, channel_index, false, sample_high, false);
         }
-        dspic33_spi_pin_input(cpu, channel, false, false, true);
+        dspic33_spi_pin_input(cpu, channel_index, false, false, true);
         expect(state,
-               (cpu->io.spi_busy & bit) == 0u && cpu->io.spi_tx_fifo[channel].count == 1u &&
-                   cpu->io.spi_pin_bits[channel] == 0u &&
-                   !dspic33_spi_data_output(cpu, channel, &data) &&
-                   !dspic33_spi_test_interrupt_flag(cpu, irqs[channel]),
+               (cpu->io.spi_busy & channel_bit) == 0u &&
+                   cpu->io.spi_tx_fifo[channel_index].count == 1u &&
+                   cpu->io.spi_pin_bits[channel_index] == 0u &&
+                   !dspic33_spi_data_output(cpu, channel_index, &data_high) &&
+                   !dspic33_spi_test_interrupt_flag(cpu, irqs[channel_index]),
                "slave deselection aborts and retains the incomplete word");
 
-        dspic33_spi_pin_input(cpu, channel, false, false, false);
+        dspic33_spi_pin_input(cpu, channel_index, false, false, false);
         expect(state,
-               (cpu->io.spi_busy & bit) != 0u && cpu->io.spi_shift[channel] == transmitted &&
-                   cpu->io.spi_tx_fifo[channel].count == 0u,
+               (cpu->io.spi_busy & channel_bit) != 0u &&
+                   cpu->io.spi_shift[channel_index] == transmitted_value &&
+                   cpu->io.spi_tx_fifo[channel_index].count == 0u,
                "slave reselection retries the retained word from its first bit");
-        for (uint8_t index = 0u; index < 16u; index++) {
-            bool high = (received & (uint16_t)(1u << (15u - index))) != 0u;
-            dspic33_spi_pin_input(cpu, channel, true, high, false);
-            dspic33_spi_pin_input(cpu, channel, false, high, false);
+        for (uint8_t bit_index = 0u; bit_index < 16u; bit_index++) {
+            const bool sample_high = (received_value & (uint16_t)(1u << (15u - bit_index))) != 0u;
+
+            dspic33_spi_pin_input(cpu, channel_index, true, sample_high, false);
+            dspic33_spi_pin_input(cpu, channel_index, false, sample_high, false);
         }
         expect(state,
-               (cpu->io.spi_busy & bit) == 0u &&
-                   dspic33_read_word(cpu, (uint16_t)(base + 8u)) == received &&
-                   !dspic33_spi_test_interrupt_flag(cpu, irqs[channel]) &&
-                   dspic33_spi_test_transfer_interrupt_after_cycle(cpu, irqs[channel]),
+               (cpu->io.spi_busy & channel_bit) == 0u &&
+                   dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) == received_value &&
+                   !dspic33_spi_test_interrupt_flag(cpu, irqs[channel_index]) &&
+                   dspic33_spi_test_transfer_interrupt_after_cycle(cpu, irqs[channel_index]),
                "retried slave word completes once with delayed interrupt");
     }
 }
