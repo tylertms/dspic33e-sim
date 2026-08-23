@@ -6,21 +6,21 @@ uint16_t dspic33_device_internal_comparator_base(uint8_t comparator) {
 
 static bool comparator_reference_level(const Dspic33* cpu, uint16_t control, bool positive,
                                        uint16_t* level) {
-    uint16_t reference = dspic33_device_internal_raw_word(cpu, COMPARATOR_REFERENCE);
+    uint16_t reference_control = dspic33_device_internal_raw_word(cpu, COMPARATOR_REFERENCE);
     if (positive) {
-        uint32_t source;
-        uint8_t tap;
+        uint32_t reference_source;
+        uint8_t reference_tap;
         if ((control & COMPARATOR_REFERENCE_INTERNAL) == 0u) {
             return false;
         }
-        if ((reference & COMPARATOR_REFERENCE_EXTERNAL) != 0u) {
+        if ((reference_control & COMPARATOR_REFERENCE_EXTERNAL) != 0u) {
             *level = cpu->io.comparator.reference[DSPIC33_COMPARATOR_REFERENCE_VREF_POSITIVE];
             return true;
         }
-        if ((reference & COMPARATOR_REFERENCE_ENABLE) == 0u) {
+        if ((reference_control & COMPARATOR_REFERENCE_ENABLE) == 0u) {
             return false;
         }
-        if ((reference & COMPARATOR_REFERENCE_SOURCE_EXTERNAL) != 0u) {
+        if ((reference_control & COMPARATOR_REFERENCE_SOURCE_EXTERNAL) != 0u) {
             uint16_t positive_reference =
                 cpu->io.comparator.reference[DSPIC33_COMPARATOR_REFERENCE_VREF_POSITIVE];
             uint16_t negative_reference =
@@ -28,20 +28,20 @@ static bool comparator_reference_level(const Dspic33* cpu, uint16_t control, boo
             if (positive_reference < negative_reference) {
                 return false;
             }
-            source = (uint32_t)(positive_reference - negative_reference);
+            reference_source = (uint32_t)(positive_reference - negative_reference);
         } else {
-            source = cpu->io.comparator.reference[DSPIC33_COMPARATOR_REFERENCE_AVDD];
+            reference_source = cpu->io.comparator.reference[DSPIC33_COMPARATOR_REFERENCE_AVDD];
         }
-        tap = (uint8_t)(reference & 0x000fu);
-        *level = (uint16_t)((reference & COMPARATOR_REFERENCE_LOW_RANGE) != 0u
-                                ? source * tap / 24u
-                                : source * (8u + tap) / 32u);
+        reference_tap = (uint8_t)(reference_control & 0x000fu);
+        *level = (uint16_t)((reference_control & COMPARATOR_REFERENCE_LOW_RANGE) != 0u
+                                ? reference_source * reference_tap / 24u
+                                : reference_source * (8u + reference_tap) / 32u);
         return true;
     }
     if ((control & COMPARATOR_CHANNEL_MASK) != COMPARATOR_CHANNEL_MASK) {
         return false;
     }
-    switch (reference & COMPARATOR_REFERENCE_BAND_GAP_MASK) {
+    switch (reference_control & COMPARATOR_REFERENCE_BAND_GAP_MASK) {
     case 0x0000u:
         *level = 1200u;
         return true;
@@ -52,7 +52,7 @@ static bool comparator_reference_level(const Dspic33* cpu, uint16_t control, boo
         *level = 200u;
         return true;
     default:
-        if ((reference & COMPARATOR_REFERENCE_SOURCE_EXTERNAL) != 0u) {
+        if ((reference_control & COMPARATOR_REFERENCE_SOURCE_EXTERNAL) != 0u) {
             return false;
         }
         *level = cpu->io.comparator.reference[DSPIC33_COMPARATOR_REFERENCE_VREF_POSITIVE];
@@ -64,16 +64,16 @@ bool dspic33_device_internal_comparator_configuration_supported(const Dspic33* c
                                                                 uint8_t comparator) {
     uint16_t control =
         dspic33_device_internal_raw_word(cpu, dspic33_device_internal_comparator_base(comparator));
-    uint16_t level;
+    uint16_t reference_level;
     if ((control & COMPARATOR_ENABLE) == 0u) {
         return false;
     }
     if ((control & COMPARATOR_REFERENCE_INTERNAL) != 0u &&
-        !comparator_reference_level(cpu, control, true, &level)) {
+        !comparator_reference_level(cpu, control, true, &reference_level)) {
         return false;
     }
     return (control & COMPARATOR_CHANNEL_MASK) != COMPARATOR_CHANNEL_MASK ||
-           comparator_reference_level(cpu, control, false, &level);
+           comparator_reference_level(cpu, control, false, &reference_level);
 }
 
 static bool comparator_operating(const Dspic33* cpu, uint8_t comparator) {
@@ -103,33 +103,34 @@ static void comparator_refresh_status(Dspic33* cpu) {
 }
 
 static void comparator_set_output(Dspic33* cpu, uint8_t comparator, bool high) {
-    uint16_t base = dspic33_device_internal_comparator_base(comparator);
-    uint16_t control = dspic33_device_internal_raw_word(cpu, base);
-    uint8_t bit = (uint8_t)(1u << comparator);
-    bool rising = (control & COMPARATOR_OUTPUT) == 0u && high;
+    uint16_t register_base = dspic33_device_internal_comparator_base(comparator);
+    uint16_t control = dspic33_device_internal_raw_word(cpu, register_base);
+    uint8_t comparator_bit = (uint8_t)(1u << comparator);
+    bool rising_edge = (control & COMPARATOR_OUTPUT) == 0u && high;
     if (high) {
         control |= COMPARATOR_OUTPUT;
-        cpu->io.comparator.output_high |= bit;
+        cpu->io.comparator.output_high |= comparator_bit;
     } else {
         control &= (uint16_t)~COMPARATOR_OUTPUT;
-        cpu->io.comparator.output_high &= (uint8_t)~bit;
+        cpu->io.comparator.output_high &= (uint8_t)~comparator_bit;
     }
-    dspic33_device_internal_raw_write_word(cpu, base, control);
+    dspic33_device_internal_raw_write_word(cpu, register_base, control);
     comparator_refresh_status(cpu);
     dspic33_device_internal_refresh_external_interrupts(cpu);
     dspic33_device_internal_refresh_timer_inputs(cpu);
     dspic33_device_internal_output_compare_refresh_fault_pps_inputs(cpu);
     dspic33_device_internal_refresh_pwm_inputs(cpu);
-    if (rising) {
+    if (rising_edge) {
         dspic33_device_internal_input_capture_pulse_source(
             cpu, (uint8_t)(INPUT_CAPTURE_SYNC_COMPARATOR_FIRST + comparator));
     }
 }
 
 static void comparator_raise_event(Dspic33* cpu, uint8_t comparator) {
-    uint16_t base = dspic33_device_internal_comparator_base(comparator);
+    uint16_t register_base = dspic33_device_internal_comparator_base(comparator);
     dspic33_device_internal_raw_write_word(
-        cpu, base, (uint16_t)(dspic33_device_internal_raw_word(cpu, base) | COMPARATOR_EVENT));
+        cpu, register_base,
+        (uint16_t)(dspic33_device_internal_raw_word(cpu, register_base) | COMPARATOR_EVENT));
     comparator_refresh_status(cpu);
     dspic33_raise_interrupt(cpu, COMPARATOR_IRQ);
     dspic33_device_internal_output_compare_pulse_source(
@@ -137,17 +138,17 @@ static void comparator_raise_event(Dspic33* cpu, uint8_t comparator) {
 }
 
 static bool comparator_transition_matches(uint16_t control, bool previous, bool current) {
-    uint16_t polarity = control & COMPARATOR_EVENT_POLARITY_MASK;
-    bool rising = !previous && current;
-    bool falling = previous && !current;
-    if (polarity == COMPARATOR_EVENT_POLARITY_MASK) {
-        return rising || falling;
+    uint16_t event_polarity = control & COMPARATOR_EVENT_POLARITY_MASK;
+    bool rising_edge = !previous && current;
+    bool falling_edge = previous && !current;
+    if (event_polarity == COMPARATOR_EVENT_POLARITY_MASK) {
+        return rising_edge || falling_edge;
     }
-    if (polarity == 0x0040u) {
-        return rising;
+    if (event_polarity == 0x0040u) {
+        return rising_edge;
     }
-    if (polarity == 0x0080u) {
-        return falling;
+    if (event_polarity == 0x0080u) {
+        return falling_edge;
     }
     return false;
 }
@@ -159,43 +160,44 @@ static bool comparator_mask_source(const Dspic33* cpu, uint8_t selection) {
     return (cpu->io.pwm_fault_inputs & ((uint32_t)1u << (selection == 14u ? 1u : 3u))) != 0u;
 }
 
-static bool comparator_mask_gate(bool source, uint16_t control, uint16_t positive,
-                                 uint16_t negative) {
-    return ((control & positive) != 0u && source) || ((control & negative) != 0u && !source);
+static bool comparator_mask_gate(bool source_active, uint16_t control, uint16_t active_mask,
+                                 uint16_t inactive_mask) {
+    return ((control & active_mask) != 0u && source_active) ||
+           ((control & inactive_mask) != 0u && !source_active);
 }
 
-static bool comparator_mask_and(bool source, uint16_t control, uint16_t positive, uint16_t negative,
-                                bool result) {
-    if ((control & positive) != 0u) {
-        result &= source;
+static bool comparator_mask_and(bool source_active, uint16_t control, uint16_t active_mask,
+                                uint16_t inactive_mask, bool result) {
+    if ((control & active_mask) != 0u) {
+        result &= source_active;
     }
-    if ((control & negative) != 0u) {
-        result &= !source;
+    if ((control & inactive_mask) != 0u) {
+        result &= !source_active;
     }
     return result;
 }
 
 static bool comparator_mask_active(const Dspic33* cpu, uint8_t comparator) {
-    uint16_t base = dspic33_device_internal_comparator_base(comparator);
-    uint16_t selections = dspic33_device_internal_raw_word(cpu, (uint16_t)(base + 2u));
-    uint16_t control = dspic33_device_internal_raw_word(cpu, (uint16_t)(base + 4u));
-    bool source_a = comparator_mask_source(cpu, (uint8_t)(selections & 0x000fu));
-    bool source_b = comparator_mask_source(cpu, (uint8_t)((selections >> 4u) & 0x000fu));
-    bool source_c = comparator_mask_source(cpu, (uint8_t)((selections >> 8u) & 0x000fu));
+    uint16_t register_base = dspic33_device_internal_comparator_base(comparator);
+    uint16_t source_select = dspic33_device_internal_raw_word(cpu, (uint16_t)(register_base + 2u));
+    uint16_t mask_control = dspic33_device_internal_raw_word(cpu, (uint16_t)(register_base + 4u));
+    bool source_a_active = comparator_mask_source(cpu, (uint8_t)(source_select & 0x000fu));
+    bool source_b_active = comparator_mask_source(cpu, (uint8_t)((source_select >> 4u) & 0x000fu));
+    bool source_c_active = comparator_mask_source(cpu, (uint8_t)((source_select >> 8u) & 0x000fu));
     bool and_result = true;
-    bool mask = comparator_mask_gate(source_a, control, 0x0200u, 0x0100u) ||
-                comparator_mask_gate(source_b, control, 0x0800u, 0x0400u) ||
-                comparator_mask_gate(source_c, control, 0x2000u, 0x1000u);
-    and_result = comparator_mask_and(source_a, control, 0x0002u, 0x0001u, and_result);
-    and_result = comparator_mask_and(source_b, control, 0x0008u, 0x0004u, and_result);
-    and_result = comparator_mask_and(source_c, control, 0x0020u, 0x0010u, and_result);
-    if ((control & 0x0040u) != 0u && and_result) {
-        mask = true;
+    bool mask_active = comparator_mask_gate(source_a_active, mask_control, 0x0200u, 0x0100u) ||
+                       comparator_mask_gate(source_b_active, mask_control, 0x0800u, 0x0400u) ||
+                       comparator_mask_gate(source_c_active, mask_control, 0x2000u, 0x1000u);
+    and_result = comparator_mask_and(source_a_active, mask_control, 0x0002u, 0x0001u, and_result);
+    and_result = comparator_mask_and(source_b_active, mask_control, 0x0008u, 0x0004u, and_result);
+    and_result = comparator_mask_and(source_c_active, mask_control, 0x0020u, 0x0010u, and_result);
+    if ((mask_control & 0x0040u) != 0u && and_result) {
+        mask_active = true;
     }
-    if ((control & 0x0080u) != 0u && !and_result) {
-        mask = true;
+    if ((mask_control & 0x0080u) != 0u && !and_result) {
+        mask_active = true;
     }
-    return mask;
+    return mask_active;
 }
 
 static bool comparator_filter_enabled(const Dspic33* cpu, uint8_t comparator) {
@@ -221,38 +223,38 @@ static uint16_t comparator_filter_divider(const Dspic33* cpu, uint8_t comparator
 static void comparator_publish_output(Dspic33* cpu, uint8_t comparator, bool current) {
     uint16_t control =
         dspic33_device_internal_raw_word(cpu, dspic33_device_internal_comparator_base(comparator));
-    bool previous = (cpu->io.comparator.last_read_cout & (uint8_t)(1u << comparator)) != 0u;
+    bool previous_output = (cpu->io.comparator.last_read_cout & (uint8_t)(1u << comparator)) != 0u;
     comparator_set_output(cpu, comparator, current);
     if ((control & COMPARATOR_EVENT) == 0u &&
         cpu->device_cycles >= cpu->io.comparator.rearm_cycle[comparator] &&
-        comparator_transition_matches(control, previous, current)) {
+        comparator_transition_matches(control, previous_output, current)) {
         comparator_raise_event(cpu, comparator);
     }
 }
 
 static void comparator_filter_sample(Dspic33* cpu, uint8_t comparator) {
-    uint8_t bit = (uint8_t)(1u << comparator);
-    bool sample = (cpu->io.comparator.raw_high & bit) != 0u;
-    bool output = (cpu->io.comparator.output_high & bit) != 0u;
-    bool candidate = (cpu->io.comparator.filter_candidate_high & bit) != 0u;
-    if (sample == output) {
+    uint8_t comparator_bit = (uint8_t)(1u << comparator);
+    bool sample_high = (cpu->io.comparator.raw_high & comparator_bit) != 0u;
+    bool output_high = (cpu->io.comparator.output_high & comparator_bit) != 0u;
+    bool candidate_high = (cpu->io.comparator.filter_candidate_high & comparator_bit) != 0u;
+    if (sample_high == output_high) {
         cpu->io.comparator.filter_count[comparator] = 0u;
-        comparator_publish_output(cpu, comparator, output);
+        comparator_publish_output(cpu, comparator, output_high);
         return;
     }
-    if (cpu->io.comparator.filter_count[comparator] == 0u || sample != candidate) {
+    if (cpu->io.comparator.filter_count[comparator] == 0u || sample_high != candidate_high) {
         cpu->io.comparator.filter_count[comparator] = 1u;
-        if (sample) {
-            cpu->io.comparator.filter_candidate_high |= bit;
+        if (sample_high) {
+            cpu->io.comparator.filter_candidate_high |= comparator_bit;
         } else {
-            cpu->io.comparator.filter_candidate_high &= (uint8_t)~bit;
+            cpu->io.comparator.filter_candidate_high &= (uint8_t)~comparator_bit;
         }
         return;
     }
     cpu->io.comparator.filter_count[comparator]++;
     if (cpu->io.comparator.filter_count[comparator] >= 3u) {
         cpu->io.comparator.filter_count[comparator] = 0u;
-        comparator_publish_output(cpu, comparator, sample);
+        comparator_publish_output(cpu, comparator, sample_high);
     }
 }
 
@@ -381,42 +383,45 @@ void dspic33_device_internal_comparator_filter_clock(Dspic33* cpu, uint8_t sourc
 }
 
 static void comparator_evaluate(Dspic33* cpu, uint8_t comparator) {
-    uint16_t base = dspic33_device_internal_comparator_base(comparator);
-    uint16_t control = dspic33_device_internal_raw_word(cpu, base);
-    uint8_t bit = (uint8_t)(1u << comparator);
-    uint16_t positive;
-    uint16_t negative;
-    bool current;
+    uint16_t register_base = dspic33_device_internal_comparator_base(comparator);
+    uint16_t control = dspic33_device_internal_raw_word(cpu, register_base);
+    uint8_t comparator_bit = (uint8_t)(1u << comparator);
+    uint16_t positive_level;
+    uint16_t negative_level;
+    bool output_high;
+
     if (!comparator_operating(cpu, comparator)) {
         if (!dspic33_device_internal_comparator_configuration_supported(cpu, comparator) ||
             cpu->io.comparator.pmd_disabled) {
             comparator_set_output(cpu, comparator, false);
-            cpu->io.comparator.raw_high &= (uint8_t)~bit;
+            cpu->io.comparator.raw_high &= (uint8_t)~comparator_bit;
             cpu->io.comparator.filter_count[comparator] = 0u;
         }
         return;
     }
-    if (!comparator_reference_level(cpu, control, true, &positive)) {
-        positive = cpu->io.comparator.input[comparator][DSPIC33_COMPARATOR_INPUT_POSITIVE];
+    if (!comparator_reference_level(cpu, control, true, &positive_level)) {
+        positive_level = cpu->io.comparator.input[comparator][DSPIC33_COMPARATOR_INPUT_POSITIVE];
     }
-    if (!comparator_reference_level(cpu, control, false, &negative)) {
-        negative = cpu->io.comparator.input[comparator][(control & COMPARATOR_CHANNEL_MASK) + 1u];
+    if (!comparator_reference_level(cpu, control, false, &negative_level)) {
+        negative_level =
+            cpu->io.comparator.input[comparator][(control & COMPARATOR_CHANNEL_MASK) + 1u];
     }
-    current = positive > negative;
+    output_high = positive_level > negative_level;
     if ((control & COMPARATOR_POLARITY) != 0u) {
-        current = !current;
+        output_high = !output_high;
     }
     if (comparator_mask_active(cpu, comparator)) {
-        current = (dspic33_device_internal_raw_word(cpu, (uint16_t)(base + 4u)) & 0x8000u) != 0u;
+        output_high =
+            (dspic33_device_internal_raw_word(cpu, (uint16_t)(register_base + 4u)) & 0x8000u) != 0u;
     }
-    if (current) {
-        cpu->io.comparator.raw_high |= bit;
+    if (output_high) {
+        cpu->io.comparator.raw_high |= comparator_bit;
     } else {
-        cpu->io.comparator.raw_high &= (uint8_t)~bit;
+        cpu->io.comparator.raw_high &= (uint8_t)~comparator_bit;
     }
     if (!comparator_filter_enabled(cpu, comparator)) {
         cpu->io.comparator.filter_count[comparator] = 0u;
-        comparator_publish_output(cpu, comparator, current);
+        comparator_publish_output(cpu, comparator, output_high);
     }
 }
 
@@ -429,8 +434,8 @@ void dspic33_device_internal_comparator_evaluate_all(Dspic33* cpu) {
 
 void dspic33_device_internal_run_comparator(Dspic33* cpu, uint16_t source, uint32_t value) {
     if (source == COMPARATOR_EVENT_PMD_SOURCE) {
-        uint16_t generation = (uint16_t)(value >> 1u);
-        if (generation != cpu->io.comparator.pmd_generation) {
+        uint16_t pmd_generation = (uint16_t)(value >> 1u);
+        if (pmd_generation != cpu->io.comparator.pmd_generation) {
             return;
         }
         cpu->io.comparator.pmd_disabled = (value & 1u) != 0u;
@@ -440,8 +445,8 @@ void dspic33_device_internal_run_comparator(Dspic33* cpu, uint16_t source, uint3
     }
     if (source < COMPARATOR_EVENT_INPUT_COUNT) {
         uint8_t comparator = (uint8_t)(source / DSPIC33_COMPARATOR_INPUT_COUNT);
-        uint8_t input = (uint8_t)(source % DSPIC33_COMPARATOR_INPUT_COUNT);
-        cpu->io.comparator.input[comparator][input] = (uint16_t)value;
+        uint8_t input_index = (uint8_t)(source % DSPIC33_COMPARATOR_INPUT_COUNT);
+        cpu->io.comparator.input[comparator][input_index] = (uint16_t)value;
         comparator_evaluate(cpu, comparator);
         return;
     }
@@ -454,15 +459,15 @@ void dspic33_device_internal_run_comparator(Dspic33* cpu, uint16_t source, uint3
     if (source >= COMPARATOR_EVENT_FILTER_FIRST &&
         source < COMPARATOR_EVENT_FILTER_FIRST + DSPIC33_COMPARATOR_COUNT) {
         uint8_t comparator = (uint8_t)(source - COMPARATOR_EVENT_FILTER_FIRST);
-        uint64_t samples = comparator_filter_source(cpu, comparator) == 1u &&
-                                   comparator_filter_divider(cpu, comparator) == 1u
-                               ? 2u
-                               : 1u;
+        uint64_t sample_count = comparator_filter_source(cpu, comparator) == 1u &&
+                                        comparator_filter_divider(cpu, comparator) == 1u
+                                    ? 2u
+                                    : 1u;
         if (value != cpu->io.comparator.filter_generation[comparator] ||
             !comparator_internal_filter_clock_available(cpu, comparator)) {
             return;
         }
-        comparator_filter_samples(cpu, comparator, samples);
+        comparator_filter_samples(cpu, comparator, sample_count);
         if (!comparator_schedule_filter(cpu, comparator, value)) {
             cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
         }
