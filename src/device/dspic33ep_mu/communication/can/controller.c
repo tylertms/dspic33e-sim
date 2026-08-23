@@ -955,29 +955,31 @@ bool dspic33_device_internal_can_schedule_intermission(Dspic33* cpu, uint8_t cha
 }
 
 void dspic33_device_internal_can_start_overload(Dspic33* cpu, uint8_t channel) {
-    uint8_t bit = (uint8_t)(1u << channel);
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+
     if (cpu->io.can_overload_count[channel] >= 2u) {
         return;
     }
     cpu->io.can_intermission_generation[channel]++;
-    cpu->io.can_intermission_active &= (uint8_t)~bit;
-    cpu->io.can_overload_active |= bit;
+    cpu->io.can_intermission_active &= (uint8_t)~channel_mask;
+    cpu->io.can_overload_active |= channel_mask;
     cpu->io.can_overload_start_cycle[channel] = cpu->device_cycles;
     cpu->io.can_overload_count[channel]++;
-    uint32_t value =
+    uint32_t overload_event =
         CAN_EVENT_OVERLOAD_FINISH |
         ((uint32_t)cpu->io.can_intermission_generation[channel] << CAN_EVENT_GENERATION_SHIFT);
-    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, value,
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, overload_event,
                           14u * dspic33_device_internal_can_bit_cycles(cpu, channel))) {
-        cpu->io.can_overload_active &= (uint8_t)~bit;
+        cpu->io.can_overload_active &= (uint8_t)~channel_mask;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
 }
 
 void dspic33_device_internal_can_intermission_finish(Dspic33* cpu, uint8_t channel,
-                                                     uint32_t value) {
-    uint16_t generation = (uint16_t)(value >> CAN_EVENT_GENERATION_SHIFT);
-    if (generation != cpu->io.can_intermission_generation[channel]) {
+                                                     uint32_t event_value) {
+    uint16_t event_generation = (uint16_t)(event_value >> CAN_EVENT_GENERATION_SHIFT);
+
+    if (event_generation != cpu->io.can_intermission_generation[channel]) {
         return;
     }
     cpu->io.can_intermission_active &= (uint8_t)~(uint8_t)(1u << channel);
@@ -985,51 +987,53 @@ void dspic33_device_internal_can_intermission_finish(Dspic33* cpu, uint8_t chann
 }
 
 void dspic33_device_internal_can_overload_finish(Dspic33* cpu, uint8_t channel, uint32_t value) {
-    uint8_t bit = (uint8_t)(1u << channel);
-    uint16_t generation = (uint16_t)(value >> CAN_EVENT_GENERATION_SHIFT);
-    if (generation != cpu->io.can_intermission_generation[channel]) {
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+    uint16_t event_generation = (uint16_t)(value >> CAN_EVENT_GENERATION_SHIFT);
+
+    if (event_generation != cpu->io.can_intermission_generation[channel]) {
         return;
     }
-    cpu->io.can_overload_active &= (uint8_t)~bit;
+    cpu->io.can_overload_active &= (uint8_t)~channel_mask;
     if (!dspic33_device_internal_can_schedule_intermission(cpu, channel)) {
-        cpu->io.can_intermission_active &= (uint8_t)~bit;
+        cpu->io.can_intermission_active &= (uint8_t)~channel_mask;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
 }
 
-static void can_receive_pin_level(Dspic33* cpu, uint8_t pin, bool high) {
+static void can_receive_pin_level(Dspic33* cpu, uint8_t pin, bool input_is_high) {
     for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-        uint8_t bit = (uint8_t)(1u << channel);
-        bool previous = (cpu->io.can_rx_pin_high & bit) != 0u;
+        uint8_t channel_mask = (uint8_t)(1u << channel);
+        bool was_high = (cpu->io.can_rx_pin_high & channel_mask) != 0u;
+
         if (can_receive_pps_pin(cpu, channel) != pin ||
             !dspic33_device_internal_pps_physical_input_enabled(cpu, pin)) {
             continue;
         }
-        cpu->io.can_rx_physical_active |= bit;
-        if (high) {
-            cpu->io.can_rx_pin_high |= bit;
+        cpu->io.can_rx_physical_active |= channel_mask;
+        if (input_is_high) {
+            cpu->io.can_rx_pin_high |= channel_mask;
         } else {
-            cpu->io.can_rx_pin_high &= (uint8_t)~bit;
+            cpu->io.can_rx_pin_high &= (uint8_t)~channel_mask;
         }
         uint8_t requested_mode =
             (uint8_t)((dspic33_device_internal_raw_word(cpu, dspic33_device_can_bases[channel]) &
                        CAN_MODE_MASK) >>
                       CAN_MODE_SHIFT);
-        if (!high && requested_mode != dspic33_device_internal_can_mode(cpu, channel)) {
+        if (!input_is_high && requested_mode != dspic33_device_internal_can_mode(cpu, channel)) {
             cpu->io.can_mode_generation[channel]++;
             if (!dspic33_device_internal_can_schedule_mode_transition(cpu, channel,
                                                                       requested_mode)) {
                 cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
             }
         }
-        if (can_bus_off_input(cpu, channel, high)) {
+        if (can_bus_off_input(cpu, channel, input_is_high)) {
             continue;
         }
-        if (previous && !high && (cpu->io.can_intermission_active & bit) != 0u) {
+        if (was_high && !input_is_high && (cpu->io.can_intermission_active & channel_mask) != 0u) {
             dspic33_device_internal_can_start_overload(cpu, channel);
             continue;
         }
-        if (previous && !high && cpu->power_state == DSPIC33_POWER_SLEEP &&
+        if (was_high && !input_is_high && cpu->power_state == DSPIC33_POWER_SLEEP &&
             (dspic33_device_internal_raw_word(
                  cpu, (uint16_t)(dspic33_device_can_bases[channel] + 0x12u)) &
              CAN_WAKE_FILTER) != 0u &&
@@ -1037,20 +1041,20 @@ static void can_receive_pin_level(Dspic33* cpu, uint8_t pin, bool high) {
             dspic33_device_internal_can_raise_event(cpu, channel, CAN_INTERRUPT_WAKE, 0u, 0u);
             continue;
         }
-        if (previous && !high && (cpu->io.can_rx_serial_active & bit) != 0u) {
+        if (was_high && !input_is_high && (cpu->io.can_rx_serial_active & channel_mask) != 0u) {
             can_resynchronize(cpu, channel);
         }
-        if (previous && !high && (cpu->io.can_rx_serial_active & bit) == 0u &&
-            (cpu->io.can_rx_error_active & bit) == 0u &&
-            (cpu->io.can_tx_error_active & bit) == 0u &&
+        if (was_high && !input_is_high && (cpu->io.can_rx_serial_active & channel_mask) == 0u &&
+            (cpu->io.can_rx_error_active & channel_mask) == 0u &&
+            (cpu->io.can_tx_error_active & channel_mask) == 0u &&
             dspic33_device_internal_can_serial_receive_enabled(cpu, channel)) {
-            cpu->io.can_rx_serial_active |= bit;
+            cpu->io.can_rx_serial_active |= channel_mask;
             cpu->io.can_rx_serial_count[channel] = 0u;
             cpu->io.can_resync_count[channel] = 0u;
             cpu->io.can_rx_sample_high[channel] = 0u;
             if (!dspic33_device_internal_can_schedule_receive_sample(
                     cpu, channel, dspic33_device_internal_can_first_sample_delay(cpu, channel))) {
-                cpu->io.can_rx_serial_active &= (uint8_t)~bit;
+                cpu->io.can_rx_serial_active &= (uint8_t)~channel_mask;
                 cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
             }
         }
@@ -1060,13 +1064,14 @@ static void can_receive_pin_level(Dspic33* cpu, uint8_t pin, bool high) {
 void dspic33_device_internal_refresh_can_pps_inputs(Dspic33* cpu) {
     for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
         uint8_t pin = can_receive_pps_pin(cpu, channel);
-        const Dspic33PpsPin* mapping = dspic33_device_internal_pps_pin(pin);
-        if (mapping == NULL) {
+        const Dspic33PpsPin* pps_pin = dspic33_device_internal_pps_pin(pin);
+
+        if (pps_pin == NULL) {
             continue;
         }
-        uint16_t mask = (uint16_t)(1u << mapping->bit);
-        if ((cpu->io.gpio_driven[mapping->port] & mask) != 0u) {
-            can_receive_pin_level(cpu, pin, (cpu->io.gpio[mapping->port] & mask) != 0u);
+        uint16_t pin_mask = (uint16_t)(1u << pps_pin->bit);
+        if ((cpu->io.gpio_driven[pps_pin->port] & pin_mask) != 0u) {
+            can_receive_pin_level(cpu, pin, (cpu->io.gpio[pps_pin->port] & pin_mask) != 0u);
         }
     }
 }
