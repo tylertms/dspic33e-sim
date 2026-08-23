@@ -92,11 +92,11 @@ bool dspic33_i2c_internal_pin_mapping(const Dspic33* cpu, uint8_t channel,
                                       Dspic33I2cPinMapping* mapping);
 bool dspic33_i2c_internal_response_push(Dspic33I2cResponseQueue* queue,
                                         const Dspic33I2cResponse* response);
-bool dspic33_i2c_internal_schedule_event(Dspic33* cpu, uint8_t channel, uint32_t value,
-                                         uint64_t delay, bool external);
-bool dspic33_i2c_internal_schedule_external_event(Dspic33* cpu, uint8_t channel, uint8_t kind,
+bool dspic33_i2c_internal_schedule_event(Dspic33* cpu, uint8_t channel, uint32_t event_value,
+                                         uint64_t delay, bool is_external);
+bool dspic33_i2c_internal_schedule_external_event(Dspic33* cpu, uint8_t channel, uint8_t event_kind,
                                                   uint16_t payload, uint64_t delay);
-bool dspic33_i2c_internal_slave_acknowledges(uint16_t status);
+bool dspic33_i2c_internal_slave_acknowledges(uint16_t status_word);
 bool dspic33_i2c_internal_transfer_pop(Dspic33I2cQueue* queue, Dspic33I2cTransfer* transfer);
 uint16_t dspic33_i2c_internal_raw_word(const Dspic33* cpu, uint16_t address);
 void dspic33_i2c_internal_begin_control(Dspic33* cpu, uint8_t channel, uint16_t operation);
@@ -111,15 +111,15 @@ void dspic33_i2c_internal_pin_run(Dspic33* cpu, uint8_t channel);
 void dspic33_i2c_internal_pin_set_low(Dspic33* cpu, uint8_t channel, bool clock, bool low);
 void dspic33_i2c_internal_raise_master(Dspic33* cpu, uint8_t channel);
 void dspic33_i2c_internal_raise_slave(Dspic33* cpu, uint8_t channel);
-void dspic33_i2c_internal_raw_write_word(Dspic33* cpu, uint16_t address, uint16_t value);
+void dspic33_i2c_internal_raw_write_word(Dspic33* cpu, uint16_t address, uint16_t write_value);
 void dspic33_i2c_internal_record_slave_acknowledgement(Dspic33* cpu, uint8_t channel,
                                                        bool acknowledge);
 void dspic33_i2c_internal_record_transfer(Dspic33* cpu, uint8_t channel,
-                                          Dspic33I2cTransferType type, uint16_t value,
+                                          Dspic33I2cTransferType type, uint16_t transfer_value,
                                           bool acknowledge, bool master);
 void dspic33_i2c_internal_reset_runtime(Dspic33* cpu, uint8_t channel);
 void dspic33_i2c_internal_resume_events(Dspic33* cpu, uint8_t channel);
-void dspic33_i2c_internal_write_transmit(Dspic33* cpu, uint8_t channel, uint16_t previous,
-                                         uint8_t value);
+void dspic33_i2c_internal_write_transmit(Dspic33* cpu, uint8_t channel, uint16_t previous_word,
+                                         uint8_t transmit_value);
 
 #endif

@@ -13,9 +13,9 @@ uint16_t dspic33_i2c_internal_raw_word(const Dspic33* cpu, uint16_t address) {
     return (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[(uint16_t)(address + 1u)] << 8u));
 }
 
-void dspic33_i2c_internal_raw_write_word(Dspic33* cpu, uint16_t address, uint16_t value) {
-    cpu->data[address] = (uint8_t)value;
-    cpu->data[(uint16_t)(address + 1u)] = (uint8_t)(value >> 8u);
+void dspic33_i2c_internal_raw_write_word(Dspic33* cpu, uint16_t address, uint16_t write_value) {
+    cpu->data[address] = (uint8_t)write_value;
+    cpu->data[(uint16_t)(address + 1u)] = (uint8_t)(write_value >> 8u);
 }
 
 bool dspic33_i2c_internal_channel_for_address(uint16_t address, uint8_t* channel,
@@ -263,14 +263,14 @@ static uint32_t build_internal_event_value(const Dspic33* cpu, uint8_t channel, 
            ((uint32_t)cpu->io.i2c_generation[channel] << I2C_EVENT_GENERATION_SHIFT) | payload;
 }
 
-bool dspic33_i2c_internal_schedule_event(Dspic33* cpu, uint8_t channel, uint32_t value,
-                                         uint64_t delay, bool external) {
+bool dspic33_i2c_internal_schedule_event(Dspic33* cpu, uint8_t channel, uint32_t event_value,
+                                         uint64_t delay, bool is_external) {
     uint64_t sequence = cpu->events.sequence;
     Dspic33Event* event;
 
     bool event_scheduled =
-        external ? dspic33_schedule_external(cpu, DSPIC33_EVENT_I2C, channel, value, delay)
-                 : dspic33_schedule(cpu, DSPIC33_EVENT_I2C, channel, value, delay);
+        is_external ? dspic33_schedule_external(cpu, DSPIC33_EVENT_I2C, channel, event_value, delay)
+                    : dspic33_schedule(cpu, DSPIC33_EVENT_I2C, channel, event_value, delay);
     if (!event_scheduled) {
         return false;
     }
@@ -282,7 +282,7 @@ bool dspic33_i2c_internal_schedule_event(Dspic33* cpu, uint8_t channel, uint32_t
     event->paused_remaining = 0u;
     event->paused = false;
     if (dspic33_i2c_internal_module_disabled(cpu, channel) &&
-        (uint8_t)(value >> I2C_EVENT_KIND_SHIFT) <= I2C_EVENT_TRANSMIT_SHIFT) {
+        (uint8_t)(event_value >> I2C_EVENT_KIND_SHIFT) <= I2C_EVENT_TRANSMIT_SHIFT) {
         event->paused_remaining = delay;
         event->paused = true;
         dspic33_reorder_events(cpu);
@@ -316,23 +316,24 @@ void dspic33_i2c_internal_raise_slave(Dspic33* cpu, uint8_t channel) {
 }
 
 void dspic33_i2c_internal_reset_runtime(Dspic33* cpu, uint8_t channel) {
-    uint8_t bit = (uint8_t)(1u << channel);
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+
     cpu->io.i2c_generation[channel]++;
-    cpu->io.i2c_master_active &= (uint8_t)~bit;
-    cpu->io.i2c_slave_active &= (uint8_t)~bit;
-    cpu->io.i2c_slave_read &= (uint8_t)~bit;
-    cpu->io.i2c_slave_rejected &= (uint8_t)~bit;
-    cpu->io.i2c_pin_active &= (uint8_t)~bit;
-    cpu->io.i2c_pin_physical &= (uint8_t)~bit;
-    cpu->io.i2c_pin_clock_low &= (uint8_t)~bit;
-    cpu->io.i2c_pin_data_low &= (uint8_t)~bit;
+    cpu->io.i2c_master_active &= (uint8_t)~channel_mask;
+    cpu->io.i2c_slave_active &= (uint8_t)~channel_mask;
+    cpu->io.i2c_slave_read &= (uint8_t)~channel_mask;
+    cpu->io.i2c_slave_rejected &= (uint8_t)~channel_mask;
+    cpu->io.i2c_pin_active &= (uint8_t)~channel_mask;
+    cpu->io.i2c_pin_physical &= (uint8_t)~channel_mask;
+    cpu->io.i2c_pin_clock_low &= (uint8_t)~channel_mask;
+    cpu->io.i2c_pin_data_low &= (uint8_t)~channel_mask;
     cpu->io.i2c_pin_operation[channel] = 0u;
     cpu->io.i2c_pin_phase[channel] = 0u;
     cpu->io.i2c_pin_receive[channel] = 0u;
-    cpu->io.i2c_slave_pin_active &= (uint8_t)~bit;
-    cpu->io.i2c_slave_pin_acknowledge &= (uint8_t)~bit;
-    cpu->io.i2c_slave_pin_interrupt &= (uint8_t)~bit;
-    cpu->io.i2c_slave_pin_stretch &= (uint8_t)~bit;
+    cpu->io.i2c_slave_pin_active &= (uint8_t)~channel_mask;
+    cpu->io.i2c_slave_pin_acknowledge &= (uint8_t)~channel_mask;
+    cpu->io.i2c_slave_pin_interrupt &= (uint8_t)~channel_mask;
+    cpu->io.i2c_slave_pin_stretch &= (uint8_t)~channel_mask;
     cpu->io.i2c_slave_pin_state[channel] = I2C_SLAVE_PIN_IDLE;
     cpu->io.i2c_slave_pin_next[channel] = I2C_SLAVE_PIN_IDLE;
     cpu->io.i2c_slave_pin_bits[channel] = 0u;
@@ -350,12 +351,13 @@ bool dspic33_i2c_internal_pin_input_high(const Dspic33* cpu, const Dspic33I2cPin
 }
 
 void dspic33_i2c_internal_pin_set_low(Dspic33* cpu, uint8_t channel, bool clock, bool low) {
-    uint8_t bit = (uint8_t)(1u << channel);
+    uint8_t channel_mask = (uint8_t)(1u << channel);
     uint8_t* state = clock ? &cpu->io.i2c_pin_clock_low : &cpu->io.i2c_pin_data_low;
+
     if (low) {
-        *state |= bit;
+        *state |= channel_mask;
     } else {
-        *state &= (uint8_t)~bit;
+        *state &= (uint8_t)~channel_mask;
     }
 }
 
