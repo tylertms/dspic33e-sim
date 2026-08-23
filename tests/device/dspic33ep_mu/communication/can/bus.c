@@ -763,18 +763,20 @@ void dspic33_can_test_receive_pps_cases(TestState* state, Dspic33* cpu) {
 }
 
 void dspic33_can_test_receive_pps_qualification_cases(TestState* state, Dspic33* cpu) {
-    static const uint8_t modes[] = {0u, 3u, 7u, 2u, 4u, 1u};
-    for (uint8_t index = 0u; index < sizeof(modes); index++) {
-        uint8_t mode = modes[index];
+    static const uint8_t receive_modes[] = {0u, 3u, 7u, 2u, 4u, 1u};
+
+    for (uint8_t mode_index = 0u; mode_index < sizeof(receive_modes); mode_index++) {
+        const uint8_t receive_mode = receive_modes[mode_index];
+
         dspic33_reset(cpu, 0u);
         dspic33_write_word(cpu, 0x0e30u, 0xffffu);
         dspic33_write_word(cpu, 0x0e3eu, 0u);
         dspic33_write_word(cpu, 0x06d4u, 64u);
-        dspic33_can_test_set_mode(cpu, 0u, mode);
+        dspic33_can_test_set_mode(cpu, 0u, receive_mode);
         expect(state,
                dspic33_can_input_pin(cpu, 64u, false, 0u) && dspic33_device_advance(cpu, 0u) &&
                    (((cpu->io.can_rx_serial_active & 1u) != 0u) ==
-                    (mode == 0u || mode == 3u || mode == 7u)),
+                    (receive_mode == 0u || receive_mode == 3u || receive_mode == 7u)),
                "CAN receive mode qualifies physical start of frame");
     }
 
