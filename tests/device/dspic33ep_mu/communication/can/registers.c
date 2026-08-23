@@ -477,45 +477,45 @@ void dspic33_can_test_extended_filter_cases(TestState* state, Dspic33* cpu) {
 }
 
 void dspic33_can_test_payload_and_remote_cases(TestState* state, Dspic33* cpu) {
-    uint8_t channel;
-    uint8_t length;
-    uint8_t extended;
-    uint8_t remote;
-    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-        for (extended = 0u; extended < 2u; extended++) {
-            for (remote = 0u; remote < 2u; remote++) {
-                for (length = 0u; length <= 8u; length++) {
-                    uint32_t identifier = extended != 0u ? 0x1234567u : 0x567u;
-                    Dspic33CanFrame input =
-                        dspic33_can_test_frame(identifier, extended != 0u, remote != 0u, length,
-                                               (uint8_t)(0x20u + length));
-                    uint8_t index;
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
+        for (uint8_t extended_format = 0u; extended_format < 2u; extended_format++) {
+            for (uint8_t remote_frame = 0u; remote_frame < 2u; remote_frame++) {
+                for (uint8_t payload_length = 0u; payload_length <= 8u; payload_length++) {
+                    const uint32_t identifier_value = extended_format != 0u ? 0x1234567u : 0x567u;
+                    const Dspic33CanFrame received_frame = dspic33_can_test_frame(
+                        identifier_value, extended_format != 0u, remote_frame != 0u, payload_length,
+                        (uint8_t)(0x20u + payload_length));
+
                     dspic33_reset(cpu, 0u);
-                    dspic33_can_test_configure_receive(cpu, channel, 0x4000u, 4u, 0u);
-                    dspic33_can_test_configure_filter(cpu, channel, 0u, identifier, extended != 0u,
-                                                      extended != 0u ? 0x1fffffffu : 0x7ffu, true,
-                                                      2u, 0u);
-                    dspic33_can_test_enable_filter(cpu, channel, 1u);
-                    dspic33_can_test_select_window(cpu, channel, false);
-                    dspic33_can_test_set_mode(cpu, channel, 0u);
+                    dspic33_can_test_configure_receive(cpu, channel_index, 0x4000u, 4u, 0u);
+                    dspic33_can_test_configure_filter(
+                        cpu, channel_index, 0u, identifier_value, extended_format != 0u,
+                        extended_format != 0u ? 0x1fffffffu : 0x7ffu, true, 2u, 0u);
+                    dspic33_can_test_enable_filter(cpu, channel_index, 1u);
+                    dspic33_can_test_select_window(cpu, channel_index, false);
+                    dspic33_can_test_set_mode(cpu, channel_index, 0u);
                     expect(state,
-                           dspic33_can_receive(cpu, channel, &input, 0u) &&
+                           dspic33_can_receive(cpu, channel_index, &received_frame, 0u) &&
                                dspic33_device_advance(cpu, 32u),
                            "payload transfer");
-                    expect(state, (dspic33_can_test_memory_word(cpu, 0x4024u) & 0x0fu) == length,
+                    expect(state,
+                           (dspic33_can_test_memory_word(cpu, 0x4024u) & 0x0fu) == payload_length,
                            "payload length");
-                    for (index = 0u; index < length; index++) {
-                        uint16_t word = dspic33_can_test_memory_word(
-                            cpu, (uint32_t)(0x4026u + (index / 2u) * 2u));
-                        expect(state, (uint8_t)(word >> ((index & 1u) * 8u)) == input.data[index],
+                    for (uint8_t byte_index = 0u; byte_index < payload_length; byte_index++) {
+                        const uint16_t packed_word = dspic33_can_test_memory_word(
+                            cpu, (uint32_t)(0x4026u + (byte_index / 2u) * 2u));
+
+                        expect(state,
+                               (uint8_t)(packed_word >> ((byte_index & 1u) * 8u)) ==
+                                   received_frame.data[byte_index],
                                "payload byte");
                     }
                     expect(state,
-                           extended != 0u
+                           extended_format != 0u
                                ? ((dspic33_can_test_memory_word(cpu, 0x4024u) & 0x0200u) != 0u) ==
-                                     (remote != 0u)
+                                     (remote_frame != 0u)
                                : ((dspic33_can_test_memory_word(cpu, 0x4020u) & 2u) != 0u) ==
-                                     (remote != 0u),
+                                     (remote_frame != 0u),
                            "remote encoding");
                 }
             }
