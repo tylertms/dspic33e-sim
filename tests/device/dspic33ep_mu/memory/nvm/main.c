@@ -137,9 +137,11 @@ static void deferred_reset_cases(TestState* state, Dspic33* cpu) {
            "deferred security-reset erase starts");
     dspic33_nvm_test_load_codeguard_configuration(cpu, 0x03u, 0x31u);
     dspic33_load_program_word(cpu, cpu->pc, OPCODE_COMPUTED_GOTO_W0);
-    dspic33_set_working_register(cpu, 0u, (uint16_t)(DSPIC33_AUXILIARY_PROGRAM_BASE + 0x100u));
-    dspic33_set_working_register(cpu, 1u,
-                                 (uint16_t)((DSPIC33_AUXILIARY_PROGRAM_BASE + 0x100u) >> 16u));
+    {
+        const uint32_t auxiliary_address = DSPIC33_AUXILIARY_PROGRAM_BASE + UINT32_C(0x100);
+        dspic33_set_working_register(cpu, 0u, (uint16_t)auxiliary_address);
+        dspic33_set_working_register(cpu, 1u, (uint16_t)(auxiliary_address >> 16u));
+    }
     {
         uint64_t reset_count = cpu->illegal_reset_count;
         expect(state,

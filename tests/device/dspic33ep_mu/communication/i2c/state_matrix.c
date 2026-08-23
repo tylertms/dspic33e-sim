@@ -61,7 +61,7 @@ static void ten_bit_restart_matrix(TestState* state, Dspic33* cpu) {
 static void pin_admission_matrix(TestState* state, Dspic33* cpu) {
     bool is_high;
     dspic33_reset(cpu, 0u);
-    cpu->configuration[12u] &= (uint8_t)~0x10u;
+    cpu->configuration[12u] &= (uint8_t)~(uint8_t)0x10u;
     dspic33_i2c_test_enable(cpu, 0u, I2C_SCLREL, 0u);
     dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(bases[0] + I2C_CON),
                                         (uint16_t)(I2C_ENABLE | I2C_SEN));
@@ -100,7 +100,7 @@ static PinMatrixResult run_pin_transition_matrix(Dspic33* cpu) {
             for (uint8_t pin_levels = 0u; pin_levels < 4u; pin_levels++) {
                 for (uint8_t queue_case = 0u; queue_case < 2u; queue_case++) {
                     dspic33_reset(cpu, 0u);
-                    cpu->configuration[12u] &= (uint8_t)~0x10u;
+                    cpu->configuration[12u] &= (uint8_t)~(uint8_t)0x10u;
                     dspic33_i2c_internal_raw_write_word(
                         cpu, (uint16_t)(bases[0] + I2C_CON),
                         (uint16_t)(I2C_ENABLE | ((pin_levels & 1u) != 0u ? I2C_ACKDT : 0u)));
@@ -149,7 +149,7 @@ static PinMatrixResult run_slave_pin_matrix(Dspic33* cpu) {
             for (uint8_t edge_case = 0u; edge_case < 4u; edge_case++) {
                 for (uint8_t status_flags = 0u; status_flags < 4u; status_flags++) {
                     dspic33_reset(cpu, 0u);
-                    cpu->configuration[12u] &= (uint8_t)~0x10u;
+                    cpu->configuration[12u] &= (uint8_t)~(uint8_t)0x10u;
                     dspic33_i2c_internal_raw_write_word(
                         cpu, (uint16_t)(bases[0] + I2C_CON),
                         (uint16_t)(I2C_ENABLE | ((status_flags & 1u) != 0u ? I2C_SCLREL : 0u)));

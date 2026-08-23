@@ -36,8 +36,8 @@ static bool interrupt_flag(Dspic33* cpu);
 
 static void empty_active_case(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
-    cpu->data[CRC_CONTROL] = (uint8_t)(CRC_ENABLE | CRC_GO);
-    cpu->data[CRC_CONTROL + 1u] = (uint8_t)((CRC_ENABLE | CRC_GO) >> 8u);
+    cpu->data[CRC_CONTROL] = (uint8_t)CRC_GO;
+    cpu->data[CRC_CONTROL + 1u] = (uint8_t)(CRC_ENABLE >> 8u);
     cpu->io.crc.active = true;
     cpu->io.crc.count = 0u;
     cpu->io.crc.bits_remaining = 0u;

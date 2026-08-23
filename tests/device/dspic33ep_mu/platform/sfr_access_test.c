@@ -99,7 +99,7 @@ static void inspect_map_condition(SfrMapCensus* census, bool condition, uint16_t
 }
 
 static void inspect_absent_word(SfrMapCensus* census, Dspic33* cpu, uint16_t address) {
-    uint32_t events = cpu->events.count;
+    uint32_t events = (uint32_t)cpu->events.count;
     cpu->data[address] = 0xa5u;
     cpu->data[address + 1u] = 0x5au;
     cpu->address_error = false;

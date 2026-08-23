@@ -131,7 +131,7 @@ void dspic33_fault_test_program_target_address_error_cases(TestState* state, Dsp
     reset_processor_test(cpu, 0u);
     load_instruction(state, cpu, 0x557dau, OPCODE_BRA_Z_0X55800);
     cpu->pc = 0x557dau;
-    cpu->sr &= (uint16_t)~0x0002u;
+    cpu->sr &= (uint16_t)~(uint16_t)0x0002u;
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x557dcu && cpu->cycles == 1u &&
                cpu->last_trap == UINT16_MAX,

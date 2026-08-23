@@ -140,6 +140,8 @@ set(dspic33ep_mu_targets dspic33ep_mu_simulator dspic33ep_mu_firmware_image
                          dspic33ep_mu_firmware_runner)
 
 if(MSVC)
+  target_compile_definitions(dspic33ep_mu_firmware_image
+                             PRIVATE _CRT_SECURE_NO_WARNINGS)
   foreach(simulator_target IN LISTS dspic33ep_mu_targets)
     target_compile_options(${simulator_target} PRIVATE /W4 /WX)
   endforeach()

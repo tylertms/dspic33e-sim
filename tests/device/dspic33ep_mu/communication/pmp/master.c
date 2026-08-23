@@ -1,7 +1,7 @@
 #include "device/dspic33ep_mu/communication/pmp/internal.h"
 
 void dspic33_pmp_test_dma_chain_cases(TestState* state, Dspic33* cpu) {
-    Dspic33PmpTransfer transfer;
+    Dspic33PmpTransfer transfer = {0};
     uint16_t index;
     dspic33_reset(cpu, 0u);
     for (index = 0u; index < PMP_TRANSFER_COUNT; index++) {
@@ -32,7 +32,7 @@ void dspic33_pmp_test_dma_chain_cases(TestState* state, Dspic33* cpu) {
 }
 
 void dspic33_pmp_test_dma_negative_cases(TestState* state, Dspic33* cpu) {
-    Dspic33PmpTransfer transfer;
+    Dspic33PmpTransfer transfer = {0};
     uint8_t value;
     dspic33_reset(cpu, 0u);
     for (value = 0u; value < 4u; value++) {
@@ -203,7 +203,7 @@ void dspic33_pmp_test_legacy_slave_cases(TestState* state, Dspic33* cpu) {
 
 void dspic33_pmp_test_buffered_slave_cases(TestState* state, Dspic33* cpu) {
     static const uint8_t values[4] = {0x11u, 0x22u, 0x33u, 0x44u};
-    Dspic33PmpTransfer transfer;
+    Dspic33PmpTransfer transfer = {0};
     uint8_t index;
     dspic33_reset(cpu, 0u);
     dspic33_pmp_test_configure_pmp_slave(cpu, 0u,

@@ -86,7 +86,7 @@ void dspic33_timing_test_instruction_cycle_cases(TestState* state, Dspic33* cpu)
 void dspic33_timing_test_register_move_instruction_cases(TestState* state, Dspic33* cpu) {
     reset_processor_test(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_SWAP_W1);
-    cpu->initialized_working_registers &= (uint16_t)~0x0002u;
+    cpu->initialized_working_registers &= (uint16_t)~(uint16_t)0x0002u;
     cpu->w[1] = 0xa587u;
     cpu->sr = 0x0105u;
     expect(state,
@@ -96,7 +96,7 @@ void dspic33_timing_test_register_move_instruction_cases(TestState* state, Dspic
 
     reset_processor_test(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_SWAP_BYTE_W1);
-    cpu->initialized_working_registers &= (uint16_t)~0x0002u;
+    cpu->initialized_working_registers &= (uint16_t)~(uint16_t)0x0002u;
     cpu->w[1] = 0xa587u;
     cpu->sr = 0x0105u;
     expect(state,
@@ -124,7 +124,7 @@ void dspic33_timing_test_register_move_instruction_cases(TestState* state, Dspic
 
     reset_processor_test(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_EXCH_W1_W2);
-    cpu->initialized_working_registers &= (uint16_t)~0x0006u;
+    cpu->initialized_working_registers &= (uint16_t)~(uint16_t)0x0006u;
     cpu->w[1] = 0x1234u;
     cpu->w[2] = 0xa5a5u;
     cpu->sr = 0x0105u;
@@ -136,7 +136,7 @@ void dspic33_timing_test_register_move_instruction_cases(TestState* state, Dspic
 
     reset_processor_test(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_EXCH_W1_W1);
-    cpu->initialized_working_registers &= (uint16_t)~0x0002u;
+    cpu->initialized_working_registers &= (uint16_t)~(uint16_t)0x0002u;
     cpu->w[1] = 0xa5a5u;
     cpu->sr = 0x0105u;
     expect(state,
@@ -175,7 +175,7 @@ void dspic33_timing_test_direct_file_move_cases(TestState* state, Dspic33* cpu) 
     reset_processor_test(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_MOV_FILE_WORD_W0);
     cpu->w[0] = 0u;
-    cpu->initialized_working_registers &= (uint16_t)~0x0001u;
+    cpu->initialized_working_registers &= (uint16_t)~(uint16_t)0x0001u;
     cpu->sr = 0x010du;
     cpu->io.cpu_write_valid = false;
     expect(state,
@@ -188,7 +188,7 @@ void dspic33_timing_test_direct_file_move_cases(TestState* state, Dspic33* cpu) 
     reset_processor_test(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_MOV_FILE_BYTE_W0);
     cpu->w[0] = 0x0080u;
-    cpu->initialized_working_registers &= (uint16_t)~0x0001u;
+    cpu->initialized_working_registers &= (uint16_t)~(uint16_t)0x0001u;
     cpu->sr = 0x0107u;
     cpu->io.cpu_write_valid = false;
     expect(state,

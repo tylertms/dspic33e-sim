@@ -477,7 +477,7 @@ static void transmit_timing_cases(TestState* state, Dspic33* cpu) {
     for (mode_index = 0u; mode_index < sizeof(modes) / sizeof(modes[0]); mode_index++) {
         for (baud_index = 0u; baud_index < sizeof(bauds) / sizeof(bauds[0]); baud_index++) {
             Dspic33UartFrame expected;
-            Dspic33UartFrame output;
+            Dspic33UartFrame output = {0};
             uint64_t cycles;
             uint16_t mode = modes[mode_index];
             uint16_t baud = bauds[baud_index];

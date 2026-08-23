@@ -254,7 +254,7 @@ static uint16_t move_matrix_logic_status(uint16_t status, uint16_t value, bool b
     uint16_t mask = byte_mode ? 0x00ffu : 0xffffu;
     uint16_t sign = byte_mode ? 0x0080u : 0x8000u;
     value &= mask;
-    status &= (uint16_t)~0x000au;
+    status &= (uint16_t)~(uint16_t)0x000au;
     if (value == 0u) {
         status |= 0x0002u;
     }
