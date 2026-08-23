@@ -355,21 +355,25 @@ void dspic33_can_test_acknowledge_error_cases(TestState* state, Dspic33* cpu) {
 }
 
 void dspic33_can_test_transmit_error_variant_cases(TestState* state, Dspic33* cpu) {
-    bool high;
-    Dspic33CanFrame input = dspic33_can_test_frame(0u, false, false, 0u, 0u);
+    bool pin_level;
+    Dspic33CanFrame transmitted_frame = dspic33_can_test_frame(0u, false, false, 0u, 0u);
+
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, 0x0e30u, 0xffffu);
     dspic33_write_word(cpu, 0x0e3eu, 0u);
     dspic33_write_word(cpu, 0x0680u, 14u);
     dspic33_write_word(cpu, 0x06d4u, 65u);
+
     dspic33_can_test_configure_transmit(cpu, 0u, 0xdc00u);
-    dspic33_can_test_write_transmit_frame(cpu, 0xdc00u, &input);
+    dspic33_can_test_write_transmit_frame(cpu, 0xdc00u, &transmitted_frame);
     dspic33_can_test_select_window(cpu, 0u, false);
     dspic33_write_word(cpu, 0x0410u, 0u);
     dspic33_write_word(cpu, 0x0412u, 0u);
     dspic33_can_test_set_mode(cpu, 0u, 0u);
     dspic33_write_word(cpu, 0x0430u, 0x008bu);
-    expect(state, dspic33_device_advance(cpu, 8u) && dspic33_can_pin(cpu, 64u, &high) && !high,
+
+    expect(state,
+           dspic33_device_advance(cpu, 8u) && dspic33_can_pin(cpu, 64u, &pin_level) && !pin_level,
            "CAN dominant-bit mismatch test reaches SOF");
     expect(state, dspic33_can_input_pin(cpu, 65u, true, 0u) && dspic33_device_advance(cpu, 4u),
            "CAN transmitter samples recessive while driving dominant");
@@ -378,7 +382,7 @@ void dspic33_can_test_transmit_error_variant_cases(TestState* state, Dspic33* cp
                (dspic33_read_word(cpu, 0x040eu) >> 8u) == 8u &&
                (cpu->io.can_tx_error_active & 1u) != 0u,
            "dominant CAN mismatch is a bit error rather than arbitration loss");
-    expect(state, dspic33_can_pin(cpu, 64u, &high) && !high,
+    expect(state, dspic33_can_pin(cpu, 64u, &pin_level) && !pin_level,
            "active CAN bit error drives a dominant error flag");
     dspic33_write_word(cpu, 0x0430u, 0x0093u);
 
@@ -388,7 +392,7 @@ void dspic33_can_test_transmit_error_variant_cases(TestState* state, Dspic33* cp
     dspic33_write_word(cpu, 0x0680u, 14u);
     dspic33_write_word(cpu, 0x06d4u, 65u);
     dspic33_can_test_configure_transmit(cpu, 0u, 0xdc00u);
-    dspic33_can_test_write_transmit_frame(cpu, 0xdc00u, &input);
+    dspic33_can_test_write_transmit_frame(cpu, 0xdc00u, &transmitted_frame);
     dspic33_can_test_select_window(cpu, 0u, false);
     dspic33_write_word(cpu, 0x0410u, 0u);
     dspic33_write_word(cpu, 0x0412u, 0u);
@@ -407,7 +411,8 @@ void dspic33_can_test_transmit_error_variant_cases(TestState* state, Dspic33* cp
                (dspic33_read_word(cpu, 0x0430u) & 0x0018u) == 0x0018u,
            "missing ACK transitions the CAN transmitter to error-passive");
     expect(state,
-           dspic33_can_pin(cpu, 64u, &high) && high && (cpu->io.can_tx_error_active & 1u) != 0u,
+           dspic33_can_pin(cpu, 64u, &pin_level) && pin_level &&
+               (cpu->io.can_tx_error_active & 1u) != 0u,
            "error-passive CAN flag remains recessive");
     expect(state, dspic33_device_advance(cpu, 99u),
            "error-passive CAN Suspend Transmission advances");
@@ -419,12 +424,13 @@ void dspic33_can_test_transmit_error_variant_cases(TestState* state, Dspic33* cp
            dspic33_device_advance(cpu, 1u) && (cpu->io.can_tx_error_active & 1u) == 0u &&
                (cpu->io.can_tx_on_bus & 1u) == 0u,
            "error-passive CAN suspension ends after eight additional bits");
+
     expect(state, dspic33_device_advance(cpu, 8u) && (cpu->io.can_tx_on_bus & 1u) != 0u,
            "error-passive CAN transmission retries after suspension");
     dspic33_write_word(cpu, 0x0430u, 0x0093u);
     expect(state,
            cpu->io.can_tx_busy == 0u && cpu->io.can_tx_retry_wait == 0u &&
-               dspic33_can_pin(cpu, 64u, &high) && high,
+               dspic33_can_pin(cpu, 64u, &pin_level) && pin_level,
            "aborting an error-passive retry releases the CAN bus");
 }
 
