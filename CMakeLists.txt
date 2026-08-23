@@ -140,12 +140,13 @@ set(dspic33ep_mu_targets dspic33ep_mu_simulator dspic33ep_mu_firmware_image
                          dspic33ep_mu_firmware_runner)
 
 if(MSVC)
-  foreach(target IN LISTS dspic33ep_mu_targets)
-    target_compile_options(${target} PRIVATE /W4 /WX)
+  foreach(simulator_target IN LISTS dspic33ep_mu_targets)
+    target_compile_options(${simulator_target} PRIVATE /W4 /WX)
   endforeach()
 else()
-  foreach(target IN LISTS dspic33ep_mu_targets)
-    target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  foreach(simulator_target IN LISTS dspic33ep_mu_targets)
+    target_compile_options(${simulator_target} PRIVATE -Wall -Wextra -Wpedantic
+                           -Werror)
   endforeach()
 endif()
 
