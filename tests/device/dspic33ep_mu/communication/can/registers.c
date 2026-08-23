@@ -568,30 +568,30 @@ void dspic33_can_test_devicenet_cases(TestState* state, Dspic33* cpu) {
 }
 
 void dspic33_can_test_direct_buffer_cases(TestState* state, Dspic33* cpu) {
-    uint8_t channel;
-    uint8_t buffer;
-    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-        for (buffer = 0u; buffer <= 14u; buffer++) {
-            Dspic33CanFrame input =
-                dspic33_can_test_frame((uint32_t)(0x200u + buffer), false, false, 4u, buffer);
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
+        for (uint8_t buffer_index = 0u; buffer_index <= 14u; buffer_index++) {
+            const Dspic33CanFrame received_frame = dspic33_can_test_frame(
+                (uint32_t)(0x200u + buffer_index), false, false, 4u, buffer_index);
+
             dspic33_reset(cpu, 0u);
-            dspic33_can_test_configure_receive(cpu, channel, 0x6000u, 6u, 0u);
-            dspic33_can_test_configure_filter(cpu, channel, 0u, input.identifier, false, 0x7ffu,
-                                              true, buffer, 0u);
-            dspic33_can_test_enable_filter(cpu, channel, 1u);
-            dspic33_can_test_select_window(cpu, channel, false);
-            dspic33_can_test_set_mode(cpu, channel, 0u);
+            dspic33_can_test_configure_receive(cpu, channel_index, 0x6000u, 6u, 0u);
+            dspic33_can_test_configure_filter(cpu, channel_index, 0u, received_frame.identifier,
+                                              false, 0x7ffu, true, buffer_index, 0u);
+            dspic33_can_test_enable_filter(cpu, channel_index, 1u);
+            dspic33_can_test_select_window(cpu, channel_index, false);
+            dspic33_can_test_set_mode(cpu, channel_index, 0u);
             expect(state,
-                   dspic33_can_receive(cpu, channel, &input, 0u) &&
+                   dspic33_can_receive(cpu, channel_index, &received_frame, 0u) &&
                        dspic33_device_advance(cpu, 32u),
                    "direct buffer transfer");
-            expect(state, dspic33_can_test_receive_full(cpu, channel, buffer),
+            expect(state, dspic33_can_test_receive_full(cpu, channel_index, buffer_index),
                    "direct buffer full");
             expect(state,
-                   dspic33_can_test_memory_word(cpu, (uint32_t)(0x6000u + buffer * 16u)) ==
-                       (uint16_t)(input.identifier << 2u),
+                   dspic33_can_test_memory_word(cpu, (uint32_t)(0x6000u + buffer_index * 16u)) ==
+                       (uint16_t)(received_frame.identifier << 2u),
                    "direct buffer address");
-            expect(state, (dspic33_read_word(cpu, (uint16_t)(bases[channel] + 0x0au)) & 2u) != 0u,
+            expect(state,
+                   (dspic33_read_word(cpu, (uint16_t)(bases[channel_index] + 0x0au)) & 2u) != 0u,
                    "direct receive event");
         }
     }
@@ -599,46 +599,50 @@ void dspic33_can_test_direct_buffer_cases(TestState* state, Dspic33* cpu) {
 
 void dspic33_can_test_fifo_cases(TestState* state, Dspic33* cpu) {
     static const uint8_t sizes[] = {4u, 6u, 8u, 12u, 16u, 24u, 32u};
-    uint8_t selection;
-    for (selection = 0u; selection < sizeof(sizes); selection++) {
-        uint8_t size = sizes[selection];
-        uint8_t start = (uint8_t)(size / 2u);
-        uint8_t count = (uint8_t)(size - start);
-        uint8_t index;
+    for (uint8_t selection_index = 0u; selection_index < sizeof(sizes); selection_index++) {
+        const uint8_t fifo_size = sizes[selection_index];
+        const uint8_t fifo_start_index = (uint8_t)(fifo_size / 2u);
+        const uint8_t fifo_capacity = (uint8_t)(fifo_size - fifo_start_index);
+
         dspic33_reset(cpu, 0u);
-        dspic33_can_test_configure_receive(cpu, 0u, 0x7000u, selection, start);
+        dspic33_can_test_configure_receive(cpu, 0u, 0x7000u, selection_index, fifo_start_index);
         dspic33_can_test_configure_filter(cpu, 0u, 0u, 0x456u, false, 0x7ffu, true, 15u, 0u);
         dspic33_can_test_enable_filter(cpu, 0u, 1u);
         dspic33_can_test_select_window(cpu, 0u, false);
         dspic33_can_test_set_mode(cpu, 0u, 0u);
-        for (index = 0u; index < count; index++) {
-            Dspic33CanFrame input = dspic33_can_test_frame(0x456u, false, false, 1u, index);
-            uint8_t buffer = (uint8_t)(start + index);
+        for (uint8_t fifo_offset = 0u; fifo_offset < fifo_capacity; fifo_offset++) {
+            const Dspic33CanFrame received_frame =
+                dspic33_can_test_frame(0x456u, false, false, 1u, fifo_offset);
+            const uint8_t buffer_index = (uint8_t)(fifo_start_index + fifo_offset);
+
             expect(state,
-                   dspic33_can_receive(cpu, 0u, &input, 0u) && dspic33_device_advance(cpu, 32u),
+                   dspic33_can_receive(cpu, 0u, &received_frame, 0u) &&
+                       dspic33_device_advance(cpu, 32u),
                    "FIFO transfer");
-            expect(state, dspic33_can_test_receive_full(cpu, 0u, buffer), "FIFO full sequence");
+            expect(state, dspic33_can_test_receive_full(cpu, 0u, buffer_index),
+                   "FIFO full sequence");
             expect(state,
-                   dspic33_can_test_memory_word(cpu, (uint32_t)(0x7000u + buffer * 16u + 6u)) ==
-                       index,
+                   dspic33_can_test_memory_word(
+                       cpu, (uint32_t)(0x7000u + buffer_index * 16u + 6u)) == fifo_offset,
                    "FIFO payload sequence");
         }
-        expect(state, ((dspic33_read_word(cpu, 0x0408u) >> 8u) & 0x3fu) == start,
+        expect(state, ((dspic33_read_word(cpu, 0x0408u) >> 8u) & 0x3fu) == fifo_start_index,
                "FIFO write pointer wrap");
         {
             Dspic33CanFrame overflow = dspic33_can_test_frame(0x456u, false, false, 1u, 0xeeu);
             expect(state,
                    dspic33_can_receive(cpu, 0u, &overflow, 0u) && dspic33_device_advance(cpu, 2u),
                    "FIFO overflow transfer attempt");
-            expect(state,
-                   (dspic33_read_word(cpu, (uint16_t)(0x0428u + (start >= 16u ? 2u : 0u))) &
-                    (uint16_t)(1u << (start & 15u))) != 0u,
-                   "FIFO overflow flag");
+            expect(
+                state,
+                (dspic33_read_word(cpu, (uint16_t)(0x0428u + (fifo_start_index >= 16u ? 2u : 0u))) &
+                 (uint16_t)(1u << (fifo_start_index & 15u))) != 0u,
+                "FIFO overflow flag");
             expect(state, (dspic33_read_word(cpu, 0x040au) & 4u) != 0u,
                    "FIFO overflow interrupt flag");
         }
-        clear_receive_flag(cpu, 0u, start);
-        expect(state, (dspic33_read_word(cpu, 0x0408u) & 0x3fu) == start + 1u,
+        clear_receive_flag(cpu, 0u, fifo_start_index);
+        expect(state, (dspic33_read_word(cpu, 0x0408u) & 0x3fu) == fifo_start_index + 1u,
                "FIFO next read pointer");
     }
 }
