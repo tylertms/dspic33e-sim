@@ -439,7 +439,8 @@ static uint16_t can_arbitration_bit_count(const Dspic33CanFrame* frame) {
     return can_stuff_bits(raw_bits, raw_bit_count, stuffed_bits);
 }
 
-uint16_t dspic33_device_internal_can_frame_bits(const Dspic33CanFrame* frame, bool bits[160]) {
+uint16_t dspic33_device_internal_can_frame_bits(const Dspic33CanFrame* frame,
+                                                bool encoded_bits[160]) {
     bool raw_bits[128];
     uint8_t raw_bit_count = 0u;
     uint8_t data_length_code = frame->length > 15u ? 15u : frame->length;
@@ -464,30 +465,31 @@ uint16_t dspic33_device_internal_can_frame_bits(const Dspic33CanFrame* frame, bo
         }
     }
     can_append_bits(raw_bits, &raw_bit_count, can_crc(raw_bits, raw_bit_count), 15u);
-    stuffed_bit_count = can_stuff_bits(raw_bits, raw_bit_count, bits);
+    stuffed_bit_count = can_stuff_bits(raw_bits, raw_bit_count, encoded_bits);
 
     for (uint8_t bit_index = 0u; bit_index < 13u; bit_index++) {
-        bits[stuffed_bit_count++] = true;
+        encoded_bits[stuffed_bit_count++] = true;
     }
     return stuffed_bit_count;
 }
 
 static uint16_t can_frame_bit_count(const Dspic33CanFrame* frame) {
-    bool bits[160];
-    return dspic33_device_internal_can_frame_bits(frame, bits);
+    bool encoded_bits[160];
+    return dspic33_device_internal_can_frame_bits(frame, encoded_bits);
 }
 
 uint64_t dspic33_device_internal_can_bit_cycles(const Dspic33* cpu, uint8_t channel) {
-    uint16_t config1 = dspic33_device_internal_raw_word(
+    uint16_t timing_config1 = dspic33_device_internal_raw_word(
         cpu, (uint16_t)(dspic33_device_can_bases[channel] + 0x10u));
-    uint16_t config2 = dspic33_device_internal_raw_word(
+    uint16_t timing_config2 = dspic33_device_internal_raw_word(
         cpu, (uint16_t)(dspic33_device_can_bases[channel] + 0x12u));
-    uint16_t control = dspic33_device_internal_raw_word(cpu, dspic33_device_can_bases[channel]);
-    uint64_t prescaler = (config1 & 0x003fu) + 1u;
-    uint64_t quanta =
-        1u + (config2 & 7u) + 1u + ((config2 >> 3u) & 7u) + 1u + ((config2 >> 8u) & 7u) + 1u;
-    uint64_t clock_divisor = (control & 0x0800u) != 0u ? 2u : 1u;
-    return prescaler * quanta * clock_divisor;
+    uint16_t control_word =
+        dspic33_device_internal_raw_word(cpu, dspic33_device_can_bases[channel]);
+    uint64_t prescaler = (timing_config1 & 0x003fu) + 1u;
+    uint64_t time_quanta = 1u + (timing_config2 & 7u) + 1u + ((timing_config2 >> 3u) & 7u) + 1u +
+                           ((timing_config2 >> 8u) & 7u) + 1u;
+    uint64_t peripheral_clock_divisor = (control_word & 0x0800u) != 0u ? 2u : 1u;
+    return prescaler * time_quanta * peripheral_clock_divisor;
 }
 
 uint64_t dspic33_device_internal_can_frame_cycles(const Dspic33* cpu, uint8_t channel,
@@ -695,16 +697,16 @@ bool dspic33_device_internal_can_schedule_mode_transition(Dspic33* cpu, uint8_t 
 }
 
 void dspic33_device_internal_can_remove_transmit_events(Dspic33* cpu, uint8_t channel);
-void dspic33_device_internal_can_error_event(Dspic33* cpu, uint8_t channel, uint32_t value);
+void dspic33_device_internal_can_error_event(Dspic33* cpu, uint8_t channel, uint32_t event_value);
 void dspic33_device_internal_can_invalid_event(Dspic33* cpu, uint8_t channel);
 void dspic33_device_internal_can_refresh_error_status(Dspic33* cpu, uint8_t channel);
 
 bool dspic33_device_internal_can_schedule_receive_sample(Dspic33* cpu, uint8_t channel,
                                                          uint64_t delay) {
-    uint32_t event = dspic33_device_internal_can_triple_sample(cpu, channel)
-                         ? CAN_EVENT_RECEIVE_SAMPLE_FIRST
-                         : CAN_EVENT_RECEIVE_SAMPLE;
-    return dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, event, delay);
+    uint32_t sample_event = dspic33_device_internal_can_triple_sample(cpu, channel)
+                                ? CAN_EVENT_RECEIVE_SAMPLE_FIRST
+                                : CAN_EVENT_RECEIVE_SAMPLE;
+    return dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, sample_event, delay);
 }
 
 uint64_t dspic33_device_internal_can_first_sample_delay(const Dspic33* cpu, uint8_t channel) {
@@ -716,10 +718,10 @@ uint64_t dspic33_device_internal_can_first_sample_delay(const Dspic33* cpu, uint
 
 bool dspic33_device_internal_can_schedule_transmit_sample(Dspic33* cpu, uint8_t channel,
                                                           uint64_t delay) {
-    uint32_t event = dspic33_device_internal_can_triple_sample(cpu, channel)
-                         ? CAN_EVENT_TRANSMIT_SAMPLE_FIRST
-                         : CAN_EVENT_TRANSMIT_SAMPLE;
-    return dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, event, delay);
+    uint32_t sample_event = dspic33_device_internal_can_triple_sample(cpu, channel)
+                                ? CAN_EVENT_TRANSMIT_SAMPLE_FIRST
+                                : CAN_EVENT_TRANSMIT_SAMPLE;
+    return dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, sample_event, delay);
 }
 
 static bool can_receive_sample_event(uint32_t event_kind) {
@@ -986,9 +988,10 @@ void dspic33_device_internal_can_intermission_finish(Dspic33* cpu, uint8_t chann
     cpu->io.can_overload_count[channel] = 0u;
 }
 
-void dspic33_device_internal_can_overload_finish(Dspic33* cpu, uint8_t channel, uint32_t value) {
+void dspic33_device_internal_can_overload_finish(Dspic33* cpu, uint8_t channel,
+                                                 uint32_t event_value) {
     uint8_t channel_mask = (uint8_t)(1u << channel);
-    uint16_t event_generation = (uint16_t)(value >> CAN_EVENT_GENERATION_SHIFT);
+    uint16_t event_generation = (uint16_t)(event_value >> CAN_EVENT_GENERATION_SHIFT);
 
     if (event_generation != cpu->io.can_intermission_generation[channel]) {
         return;
