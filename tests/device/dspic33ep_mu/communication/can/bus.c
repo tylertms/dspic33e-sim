@@ -660,66 +660,76 @@ void dspic33_can_test_error_counter_recovery_cases(TestState* state, Dspic33* cp
 void dspic33_can_test_receive_pps_cases(TestState* state, Dspic33* cpu) {
     expect(state, !dspic33_can_input_pin(cpu, 63u, true, 0u),
            "CAN input rejects non-remappable pin");
-    for (uint8_t transmit_channel = 0u; transmit_channel < DSPIC33_CAN_COUNT; transmit_channel++) {
-        uint8_t receive_channel = (uint8_t)(transmit_channel ^ 1u);
-        uint8_t pin = (uint8_t)(64u + transmit_channel);
-        uint16_t transmit_base = bases[transmit_channel];
-        uint16_t receive_base = bases[receive_channel];
-        uint32_t transmit_memory = (uint32_t)(0xd800u + transmit_channel * 0x100u);
-        uint32_t receive_memory = (uint32_t)(0xda00u + transmit_channel * 0x100u);
-        Dspic33CanFrame input = dspic33_can_test_frame(transmit_channel == 0u ? 0x345u : 0x1234567u,
-                                                       transmit_channel != 0u, false, 3u,
-                                                       (uint8_t)(0x60u + transmit_channel * 0x10u));
+    for (uint8_t transmit_channel_index = 0u; transmit_channel_index < DSPIC33_CAN_COUNT;
+         transmit_channel_index++) {
+        const uint8_t receive_channel_index = (uint8_t)(transmit_channel_index ^ 1u);
+        const uint8_t pin_number = (uint8_t)(64u + transmit_channel_index);
+        const uint16_t transmit_can_base = bases[transmit_channel_index];
+        const uint16_t receive_can_base = bases[receive_channel_index];
+        const uint32_t transmit_memory_address =
+            (uint32_t)(0xd800u + transmit_channel_index * 0x100u);
+        const uint32_t receive_memory_address =
+            (uint32_t)(0xda00u + transmit_channel_index * 0x100u);
+        Dspic33CanFrame transmitted_frame = dspic33_can_test_frame(
+            transmit_channel_index == 0u ? 0x345u : 0x1234567u, transmit_channel_index != 0u, false,
+            3u, (uint8_t)(0x60u + transmit_channel_index * 0x10u));
+
         dspic33_reset(cpu, 0u);
         dspic33_write_word(cpu, 0x0e30u, 0xffffu);
         dspic33_write_word(cpu, 0x0e3eu, 0u);
         dspic33_write_word(cpu, 0x0680u, 0x0f0eu);
-        dspic33_write_word(cpu, 0x06d4u, (uint16_t)(pin | ((uint16_t)pin << 8u)));
-        dspic33_can_test_configure_receive(cpu, receive_channel, receive_memory, 4u, 0u);
-        dspic33_can_test_configure_filter(cpu, receive_channel, 0u, input.identifier,
-                                          input.extended, input.extended ? 0x1fffffffu : 0x7ffu,
-                                          true, 0u, 0u);
-        dspic33_can_test_enable_filter(cpu, receive_channel, 1u);
-        dspic33_can_test_configure_transmit(cpu, transmit_channel, transmit_memory);
-        dspic33_can_test_write_transmit_frame(cpu, transmit_memory, &input);
-        dspic33_can_test_select_window(cpu, transmit_channel, false);
-        dspic33_can_test_select_window(cpu, receive_channel, false);
-        dspic33_write_word(cpu, (uint16_t)(transmit_base + 0x10u), 0u);
-        dspic33_write_word(cpu, (uint16_t)(transmit_base + 0x12u),
-                           transmit_channel == 0u ? 0u : 0x0311u);
-        dspic33_write_word(cpu, (uint16_t)(receive_base + 0x10u), 0u);
-        dspic33_write_word(cpu, (uint16_t)(receive_base + 0x12u),
-                           transmit_channel == 0u ? 0u : 0x0311u);
-        dspic33_can_test_set_mode(cpu, transmit_channel, 0u);
-        dspic33_can_test_set_mode(cpu, receive_channel, 0u);
-        dspic33_write_word(cpu, (uint16_t)(transmit_base + 0x30u), 0x008bu);
+        dspic33_write_word(cpu, 0x06d4u, (uint16_t)(pin_number | ((uint16_t)pin_number << 8u)));
+
+        dspic33_can_test_configure_receive(cpu, receive_channel_index, receive_memory_address, 4u,
+                                           0u);
+        dspic33_can_test_configure_filter(cpu, receive_channel_index, 0u,
+                                          transmitted_frame.identifier, transmitted_frame.extended,
+                                          transmitted_frame.extended ? 0x1fffffffu : 0x7ffu, true,
+                                          0u, 0u);
+        dspic33_can_test_enable_filter(cpu, receive_channel_index, 1u);
+        dspic33_can_test_configure_transmit(cpu, transmit_channel_index, transmit_memory_address);
+        dspic33_can_test_write_transmit_frame(cpu, transmit_memory_address, &transmitted_frame);
+        dspic33_can_test_select_window(cpu, transmit_channel_index, false);
+        dspic33_can_test_select_window(cpu, receive_channel_index, false);
+        dspic33_write_word(cpu, (uint16_t)(transmit_can_base + 0x10u), 0u);
+        dspic33_write_word(cpu, (uint16_t)(transmit_can_base + 0x12u),
+                           transmit_channel_index == 0u ? 0u : 0x0311u);
+        dspic33_write_word(cpu, (uint16_t)(receive_can_base + 0x10u), 0u);
+        dspic33_write_word(cpu, (uint16_t)(receive_can_base + 0x12u),
+                           transmit_channel_index == 0u ? 0u : 0x0311u);
+        dspic33_can_test_set_mode(cpu, transmit_channel_index, 0u);
+        dspic33_can_test_set_mode(cpu, receive_channel_index, 0u);
+        dspic33_write_word(cpu, (uint16_t)(transmit_can_base + 0x30u), 0x008bu);
         bool acknowledge_observed = false;
         expect(state,
                dspic33_device_advance(cpu, 8u) &&
-                   dspic33_can_test_bridge_can_pins(
-                       cpu, transmit_channel, pin, (uint8_t)(65u - transmit_channel),
-                       transmit_channel == 0u ? 4u : 10u, -1, &acknowledge_observed),
+                   dspic33_can_test_bridge_can_pins(cpu, transmit_channel_index, pin_number,
+                                                    (uint8_t)(65u - transmit_channel_index),
+                                                    transmit_channel_index == 0u ? 4u : 10u, -1,
+                                                    &acknowledge_observed),
                "CAN PPS serial frame bridge advances");
         expect(state,
-               dspic33_can_test_receive_full(cpu, receive_channel, 0u) &&
-                   cpu->io.can_rx_serial_count[receive_channel] != 0u &&
-                   (cpu->io.can_rx_serial_active & (uint8_t)(1u << receive_channel)) == 0u,
+               dspic33_can_test_receive_full(cpu, receive_channel_index, 0u) &&
+                   cpu->io.can_rx_serial_count[receive_channel_index] != 0u &&
+                   (cpu->io.can_rx_serial_active & (uint8_t)(1u << receive_channel_index)) == 0u,
                "CAN PPS receiver accepts a complete stuffed frame");
         expect(state,
-               dspic33_can_test_memory_word(cpu, receive_memory) ==
-                       (uint16_t)(((input.extended ? (input.identifier >> 18u) & 0x7ffu
-                                                   : input.identifier)
+               dspic33_can_test_memory_word(cpu, receive_memory_address) ==
+                       (uint16_t)(((transmitted_frame.extended
+                                        ? (transmitted_frame.identifier >> 18u) & 0x7ffu
+                                        : transmitted_frame.identifier)
                                    << 2u) |
-                                  (input.extended ? 3u : 0u)) &&
-                   (uint8_t)dspic33_can_test_memory_word(cpu, receive_memory + 6u) ==
-                       input.data[0] &&
-                   (uint8_t)(dspic33_can_test_memory_word(cpu, receive_memory + 6u) >> 8u) ==
-                       input.data[1],
+                                  (transmitted_frame.extended ? 3u : 0u)) &&
+                   (uint8_t)dspic33_can_test_memory_word(cpu, receive_memory_address + 6u) ==
+                       transmitted_frame.data[0] &&
+                   (uint8_t)(dspic33_can_test_memory_word(cpu, receive_memory_address + 6u) >>
+                             8u) == transmitted_frame.data[1],
                "CAN PPS receiver preserves header and payload bits");
         expect(state,
                acknowledge_observed &&
-                   (dspic33_read_word(cpu, (uint16_t)(transmit_base + 0x30u)) & 0x0010u) == 0u &&
-                   (dspic33_read_word(cpu, (uint16_t)(transmit_base + 0x0eu)) >> 8u) == 0u,
+                   (dspic33_read_word(cpu, (uint16_t)(transmit_can_base + 0x30u)) & 0x0010u) ==
+                       0u &&
+                   (dspic33_read_word(cpu, (uint16_t)(transmit_can_base + 0x0eu)) >> 8u) == 0u,
                "CAN PPS receiver drives the acknowledge slot dominant");
     }
 
