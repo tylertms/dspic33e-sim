@@ -253,44 +253,52 @@ static void controller_boundary_cases(TestState* state, Dspic33* cpu) {
 }
 
 static void serial_decode_matrix_cases(TestState* state, Dspic33* cpu) {
-    uint32_t valid = 0u;
-    uint32_t incomplete = 0u;
-    uint32_t invalid = 0u;
-    const uint8_t lengths[] = {0u, 1u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u};
-    for (uint8_t extended = 0u; extended < 2u; extended++) {
-        for (uint8_t remote = 0u; remote < 2u; remote++) {
-            for (uint8_t length_index = 0u; length_index < sizeof(lengths) / sizeof(lengths[0]);
+    uint32_t valid_count = 0u;
+    uint32_t incomplete_count = 0u;
+    uint32_t invalid_count = 0u;
+    const uint8_t payload_lengths[] = {0u, 1u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u};
+
+    for (uint8_t is_extended = 0u; is_extended < 2u; is_extended++) {
+        for (uint8_t is_remote = 0u; is_remote < 2u; is_remote++) {
+            for (uint8_t length_index = 0u;
+                 length_index < sizeof(payload_lengths) / sizeof(payload_lengths[0]);
                  length_index++) {
-                Dspic33CanFrame frame =
-                    dspic33_can_test_frame(extended != 0u ? 0x1234567u : 0x456u, extended != 0u,
-                                           remote != 0u, lengths[length_index], 0x20u);
-                Dspic33CanFrame decoded;
-                uint16_t tail = 0u;
-                bool bits[160];
-                const uint16_t count = dspic33_device_internal_can_frame_bits(&frame, bits);
+                Dspic33CanFrame input_frame = dspic33_can_test_frame(
+                    is_extended != 0u ? 0x1234567u : 0x456u, is_extended != 0u, is_remote != 0u,
+                    payload_lengths[length_index], 0x20u);
+                Dspic33CanFrame decoded_frame;
+                uint16_t tail_index = 0u;
+                bool frame_bits[160];
+                const uint16_t bit_count =
+                    dspic33_device_internal_can_frame_bits(&input_frame, frame_bits);
+
                 dspic33_reset(cpu, 0u);
-                for (uint16_t index = 0u; index < count; index++) {
-                    cpu->io.can_rx_serial_bits[0][index] = bits[index];
+                for (uint16_t bit_index = 0u; bit_index < bit_count; bit_index++) {
+                    cpu->io.can_rx_serial_bits[0][bit_index] = frame_bits[bit_index];
                 }
-                cpu->io.can_rx_serial_count[0] = count;
-                int status = dspic33_device_internal_can_decode_serial(cpu, 0u, &decoded, &tail);
-                valid += status == CAN_TEST_SERIAL_VALID;
+                cpu->io.can_rx_serial_count[0] = bit_count;
+                int decode_status =
+                    dspic33_device_internal_can_decode_serial(cpu, 0u, &decoded_frame, &tail_index);
+                valid_count += decode_status == CAN_TEST_SERIAL_VALID;
                 expect(state,
-                       status != CAN_TEST_SERIAL_VALID ||
-                           decoded.length ==
-                               (lengths[length_index] > 8u ? 8u : lengths[length_index]),
+                       decode_status != CAN_TEST_SERIAL_VALID ||
+                           decoded_frame.length == (payload_lengths[length_index] > 8u
+                                                        ? 8u
+                                                        : payload_lengths[length_index]),
                        "CAN serial decoder applies classical DLC length");
-                cpu->io.can_rx_serial_count[0] = (uint16_t)(tail + 5u);
-                incomplete += dspic33_device_internal_can_decode_serial(cpu, 0u, &decoded, &tail) ==
-                              CAN_TEST_SERIAL_INCOMPLETE;
-                cpu->io.can_rx_serial_count[0] = count;
-                cpu->io.can_rx_serial_bits[0][tail] = false;
-                invalid += dspic33_device_internal_can_decode_serial(cpu, 0u, &decoded, &tail) ==
-                           CAN_TEST_SERIAL_INVALID;
+                cpu->io.can_rx_serial_count[0] = (uint16_t)(tail_index + 5u);
+                incomplete_count +=
+                    dspic33_device_internal_can_decode_serial(
+                        cpu, 0u, &decoded_frame, &tail_index) == CAN_TEST_SERIAL_INCOMPLETE;
+                cpu->io.can_rx_serial_count[0] = bit_count;
+                cpu->io.can_rx_serial_bits[0][tail_index] = false;
+                invalid_count += dspic33_device_internal_can_decode_serial(cpu, 0u, &decoded_frame,
+                                                                           &tail_index) ==
+                                 CAN_TEST_SERIAL_INVALID;
             }
         }
     }
-    expect(state, valid == 40u && incomplete == 40u && invalid == 40u,
+    expect(state, valid_count == 40u && incomplete_count == 40u && invalid_count == 40u,
            "CAN serial decode matrix matches");
 }
 
