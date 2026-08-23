@@ -379,93 +379,97 @@ Dspic33CanFrame dspic33_device_internal_can_decode_frame(const uint16_t encoded_
     return decoded_frame;
 }
 
-static void can_append_bits(bool* bits, uint8_t* count, uint32_t value, uint8_t width) {
-    while (width != 0u) {
-        width--;
-        bits[(*count)++] = (value & (uint32_t)(1u << width)) != 0u;
+static void can_append_bits(bool* bit_stream, uint8_t* bit_count, uint32_t field_value,
+                            uint8_t field_width) {
+    while (field_width != 0u) {
+        field_width--;
+        bit_stream[(*bit_count)++] = (field_value & (uint32_t)(1u << field_width)) != 0u;
     }
 }
 
-static uint16_t can_crc(const bool bits[128], uint8_t count) {
-    uint16_t crc = 0u;
-    for (uint8_t index = 0u; index < count; index++) {
-        bool feedback = ((crc & 0x4000u) != 0u) != bits[index];
-        crc = (uint16_t)((crc << 1u) & 0x7fffu);
-        if (feedback) {
-            crc ^= 0x4599u;
+static uint16_t can_crc(const bool bit_stream[128], uint8_t bit_count) {
+    uint16_t crc_value = 0u;
+
+    for (uint8_t bit_index = 0u; bit_index < bit_count; bit_index++) {
+        const bool crc_feedback = ((crc_value & 0x4000u) != 0u) != bit_stream[bit_index];
+        crc_value = (uint16_t)((crc_value << 1u) & 0x7fffu);
+        if (crc_feedback) {
+            crc_value ^= 0x4599u;
         }
     }
-    return crc;
+    return crc_value;
 }
 
-static uint16_t can_stuff_bits(const bool* raw, uint8_t raw_count, bool* bits) {
-    uint16_t count = 0u;
-    bool previous = raw[0];
-    uint8_t run = 0u;
-    for (uint8_t index = 0u; index < raw_count; index++) {
-        bits[count++] = raw[index];
-        if (raw[index] == previous) {
-            run++;
+static uint16_t can_stuff_bits(const bool* raw_bits, uint8_t raw_count, bool* stuffed_bits) {
+    uint16_t stuffed_count = 0u;
+    bool previous_bit = raw_bits[0];
+    uint8_t same_bit_count = 0u;
+
+    for (uint8_t bit_index = 0u; bit_index < raw_count; bit_index++) {
+        stuffed_bits[stuffed_count++] = raw_bits[bit_index];
+        if (raw_bits[bit_index] == previous_bit) {
+            same_bit_count++;
         } else {
-            previous = raw[index];
-            run = 1u;
+            previous_bit = raw_bits[bit_index];
+            same_bit_count = 1u;
         }
-        if (run == 5u) {
-            bits[count++] = !previous;
-            previous = !previous;
-            run = 1u;
+        if (same_bit_count == 5u) {
+            stuffed_bits[stuffed_count++] = !previous_bit;
+            previous_bit = !previous_bit;
+            same_bit_count = 1u;
         }
     }
-    return count;
+    return stuffed_count;
 }
 
 static uint16_t can_arbitration_bit_count(const Dspic33CanFrame* frame) {
-    bool raw[40];
-    bool bits[48];
-    uint8_t raw_count = 0u;
-    can_append_bits(raw, &raw_count, 0u, 1u);
+    bool raw_bits[40];
+    bool stuffed_bits[48];
+    uint8_t raw_bit_count = 0u;
+    can_append_bits(raw_bits, &raw_bit_count, 0u, 1u);
     if (frame->extended) {
-        can_append_bits(raw, &raw_count, frame->identifier >> 18u, 11u);
-        can_append_bits(raw, &raw_count, 3u, 2u);
-        can_append_bits(raw, &raw_count, frame->identifier & 0x3ffffu, 18u);
-        can_append_bits(raw, &raw_count, frame->remote ? 1u : 0u, 1u);
+        can_append_bits(raw_bits, &raw_bit_count, frame->identifier >> 18u, 11u);
+        can_append_bits(raw_bits, &raw_bit_count, 3u, 2u);
+        can_append_bits(raw_bits, &raw_bit_count, frame->identifier & 0x3ffffu, 18u);
+        can_append_bits(raw_bits, &raw_bit_count, frame->remote ? 1u : 0u, 1u);
     } else {
-        can_append_bits(raw, &raw_count, frame->identifier, 11u);
-        can_append_bits(raw, &raw_count, frame->remote ? 1u : 0u, 1u);
+        can_append_bits(raw_bits, &raw_bit_count, frame->identifier, 11u);
+        can_append_bits(raw_bits, &raw_bit_count, frame->remote ? 1u : 0u, 1u);
     }
-    return can_stuff_bits(raw, raw_count, bits);
+    return can_stuff_bits(raw_bits, raw_bit_count, stuffed_bits);
 }
 
 uint16_t dspic33_device_internal_can_frame_bits(const Dspic33CanFrame* frame, bool bits[160]) {
-    bool raw[128];
-    uint8_t raw_count = 0u;
-    uint8_t dlc = frame->length > 15u ? 15u : frame->length;
-    uint8_t length = dlc > 8u ? 8u : dlc;
-    uint16_t count;
-    can_append_bits(raw, &raw_count, 0u, 1u);
+    bool raw_bits[128];
+    uint8_t raw_bit_count = 0u;
+    uint8_t data_length_code = frame->length > 15u ? 15u : frame->length;
+    uint8_t data_length = data_length_code > 8u ? 8u : data_length_code;
+    uint16_t stuffed_bit_count;
+    can_append_bits(raw_bits, &raw_bit_count, 0u, 1u);
     if (frame->extended) {
-        can_append_bits(raw, &raw_count, frame->identifier >> 18u, 11u);
-        can_append_bits(raw, &raw_count, 3u, 2u);
-        can_append_bits(raw, &raw_count, frame->identifier & 0x3ffffu, 18u);
-        can_append_bits(raw, &raw_count, frame->remote ? 1u : 0u, 1u);
-        can_append_bits(raw, &raw_count, 0u, 2u);
+        can_append_bits(raw_bits, &raw_bit_count, frame->identifier >> 18u, 11u);
+        can_append_bits(raw_bits, &raw_bit_count, 3u, 2u);
+        can_append_bits(raw_bits, &raw_bit_count, frame->identifier & 0x3ffffu, 18u);
+        can_append_bits(raw_bits, &raw_bit_count, frame->remote ? 1u : 0u, 1u);
+        can_append_bits(raw_bits, &raw_bit_count, 0u, 2u);
     } else {
-        can_append_bits(raw, &raw_count, frame->identifier, 11u);
-        can_append_bits(raw, &raw_count, frame->remote ? 1u : 0u, 1u);
-        can_append_bits(raw, &raw_count, 0u, 2u);
+        can_append_bits(raw_bits, &raw_bit_count, frame->identifier, 11u);
+        can_append_bits(raw_bits, &raw_bit_count, frame->remote ? 1u : 0u, 1u);
+        can_append_bits(raw_bits, &raw_bit_count, 0u, 2u);
     }
-    can_append_bits(raw, &raw_count, dlc, 4u);
+    can_append_bits(raw_bits, &raw_bit_count, data_length_code, 4u);
     if (!frame->remote) {
-        for (uint8_t index = 0u; index < length; index++) {
-            can_append_bits(raw, &raw_count, frame->data[index], 8u);
+        for (uint8_t data_index = 0u; data_index < data_length; data_index++) {
+            can_append_bits(raw_bits, &raw_bit_count, frame->data[data_index], 8u);
         }
     }
-    can_append_bits(raw, &raw_count, can_crc(raw, raw_count), 15u);
-    count = can_stuff_bits(raw, raw_count, bits);
-    for (uint8_t index = 0u; index < 13u; index++) {
-        bits[count++] = true;
+    can_append_bits(raw_bits, &raw_bit_count, can_crc(raw_bits, raw_bit_count), 15u);
+    stuffed_bit_count = can_stuff_bits(raw_bits, raw_bit_count, bits);
+
+    for (uint8_t bit_index = 0u; bit_index < 13u; bit_index++) {
+        bits[stuffed_bit_count++] = true;
     }
-    return count;
+    return stuffed_bit_count;
 }
 
 static uint16_t can_frame_bit_count(const Dspic33CanFrame* frame) {
