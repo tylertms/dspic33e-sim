@@ -316,37 +316,42 @@ void dspic33_spi_test_mode_transition_cases(TestState* state, Dspic33* cpu) {
 }
 
 void dspic33_spi_test_selection_and_frame_cases(TestState* state, Dspic33* cpu) {
-    uint8_t channel;
-    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-        uint16_t base = bases[channel];
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_SPI_COUNT; channel_index++) {
+        const uint16_t spi_base = bases[channel_index];
+
         dspic33_reset(cpu, 0u);
-        dspic33_spi_test_configure_spi(cpu, channel, 0x0480u, 0u, 0u);
+        dspic33_spi_test_configure_spi(cpu, channel_index, 0x0480u, 0u, 0u);
         expect(state,
-               dspic33_spi_receive(cpu, channel, 0x1111u, 1u) && dspic33_device_advance(cpu, 1u),
+               dspic33_spi_receive(cpu, channel_index, 0x1111u, 1u) &&
+                   dspic33_device_advance(cpu, 1u),
                "unselected slave transaction advance");
-        expect(state, (dspic33_read_word(cpu, base) & 1u) == 0u,
+        expect(state, (dspic33_read_word(cpu, spi_base) & 1u) == 0u,
                "unselected slave transaction ignored");
-        expect(state, dspic33_spi_select(cpu, channel, true, 0u) && dspic33_device_advance(cpu, 0u),
+        expect(state,
+               dspic33_spi_select(cpu, channel_index, true, 0u) && dspic33_device_advance(cpu, 0u),
                "select slave");
         expect(state,
-               dspic33_spi_receive(cpu, channel, 0x2222u, 1u) && dspic33_device_advance(cpu, 1u),
+               dspic33_spi_receive(cpu, channel_index, 0x2222u, 1u) &&
+                   dspic33_device_advance(cpu, 1u),
                "selected slave transaction advance");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0x2222u,
+        expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) == 0x2222u,
                "selected slave transaction received");
 
         dspic33_reset(cpu, 0u);
-        dspic33_spi_test_configure_spi(cpu, channel, 0x0400u, 0xc000u, 0u);
+        dspic33_spi_test_configure_spi(cpu, channel_index, 0x0400u, 0xc000u, 0u);
         expect(state,
-               dspic33_spi_receive(cpu, channel, 0x3333u, 1u) && dspic33_device_advance(cpu, 1u),
+               dspic33_spi_receive(cpu, channel_index, 0x3333u, 1u) &&
+                   dspic33_device_advance(cpu, 1u),
                "inactive frame transaction advance");
-        expect(state, (dspic33_read_word(cpu, base) & 1u) == 0u,
+        expect(state, (dspic33_read_word(cpu, spi_base) & 1u) == 0u,
                "inactive frame transaction ignored");
         expect(state,
-               dspic33_spi_select(cpu, channel, true, 0u) && dspic33_device_advance(cpu, 0u) &&
-                   dspic33_spi_receive(cpu, channel, 0x4444u, 1u) &&
+               dspic33_spi_select(cpu, channel_index, true, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   dspic33_spi_receive(cpu, channel_index, 0x4444u, 1u) &&
                    dspic33_device_advance(cpu, 1u),
                "active frame transaction advance");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0x4444u,
+        expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) == 0x4444u,
                "active frame transaction received");
     }
 }
