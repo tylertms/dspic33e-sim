@@ -316,7 +316,7 @@ static void direct_event_cases(TestState* state, Dspic33* cpu) {
     cpu->io.dci.started = true;
     cpu->io.dci.slot = 1u;
     cpu->io.dci.input = UINT16_MAX;
-    for (uint8_t bit = 0u; bit < 20u; bit++) {
+    for (uint8_t bit_index = 0u; bit_index < 20u; bit_index++) {
         dspic33_device_internal_run_dci(cpu, DCI_TEST_EVENT_SAMPLE, 3u);
     }
     expect(state, cpu->io.dci.serial_bits == 20u && cpu->io.dci.serial_input == UINT16_MAX,
@@ -324,7 +324,8 @@ static void direct_event_cases(TestState* state, Dspic33* cpu) {
 }
 
 static void frame_output_cases(TestState* state, Dspic33* cpu) {
-    bool high = false;
+    bool is_high = false;
+
     dspic33_reset(cpu, 0u);
     dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL1,
                                            DCI_ENABLE | DCI_EXTERNAL_CLOCK | DCI_DATA_JUSTIFY);
@@ -337,7 +338,7 @@ static void frame_output_cases(TestState* state, Dspic33* cpu) {
     dspic33_device_internal_raw_write_word(
         cpu, DCI_CONTROL1, DCI_ENABLE | DCI_EXTERNAL_CLOCK | DCI_DATA_JUSTIFY | DCI_MODE_I2S);
     cpu->io.dci.output_frame_high = true;
-    expect(state, dspic33_device_internal_dci_frame_output(cpu, &high) && high,
+    expect(state, dspic33_device_internal_dci_frame_output(cpu, &is_high) && is_high,
            "external I2S frame reports its stored level");
 
     dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL2,
@@ -346,10 +347,10 @@ static void frame_output_cases(TestState* state, Dspic33* cpu) {
                                            DCI_ENABLE | DCI_EXTERNAL_CLOCK | DCI_DATA_JUSTIFY |
                                                DCI_MODE_AC_LINK_16);
     cpu->io.dci.serial_frame_bits = 15u;
-    expect(state, dspic33_device_internal_dci_frame_output(cpu, &high) && high,
+    expect(state, dspic33_device_internal_dci_frame_output(cpu, &is_high) && is_high,
            "external AC-link frame remains high for its first word");
     cpu->io.dci.serial_frame_bits = 16u;
-    expect(state, dspic33_device_internal_dci_frame_output(cpu, &high) && !high,
+    expect(state, dspic33_device_internal_dci_frame_output(cpu, &is_high) && !is_high,
            "external AC-link frame falls after its first word");
 
     dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL2,
@@ -359,7 +360,7 @@ static void frame_output_cases(TestState* state, Dspic33* cpu) {
     cpu->io.dci.slot = 0u;
     cpu->io.dci.serial_bits = 0u;
     cpu->io.dci.serial_delay = false;
-    expect(state, dspic33_device_internal_dci_frame_output(cpu, &high) && high,
+    expect(state, dspic33_device_internal_dci_frame_output(cpu, &is_high) && is_high,
            "immediate external frame is high at the first slot boundary");
 
     dspic33_reset(cpu, 0u);
@@ -374,49 +375,52 @@ static void frame_output_cases(TestState* state, Dspic33* cpu) {
     cpu->io.dci.output_frame_high = true;
     expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_DCI, DCI_TEST_EVENT_INTERNAL, 1u, 0u),
            "schedule final I2S slot phase");
-    expect(state, dspic33_device_internal_dci_frame_output(cpu, &high) && !high,
+    expect(state, dspic33_device_internal_dci_frame_output(cpu, &is_high) && !is_high,
            "final internal I2S slot previews the next frame polarity");
 }
 
 static void internal_output_phase_cases(TestState* state, Dspic33* cpu) {
-    uint32_t high_count = 0u;
-    uint32_t driven_count = 0u;
+    uint32_t high_output_count = 0u;
+    uint32_t driven_output_count = 0u;
     for (uint8_t mode = 0u; mode < 4u; mode++) {
-        for (uint8_t immediate = 0u; immediate < 2u; immediate++) {
-            for (uint8_t source = DCI_TEST_EVENT_START; source <= DCI_TEST_EVENT_INTERNAL;
-                 source++) {
-                for (uint8_t phase = 0u; phase < 4u; phase++) {
-                    bool high = false;
+        for (uint8_t data_justified = 0u; data_justified < 2u; data_justified++) {
+            for (uint8_t event_source = DCI_TEST_EVENT_START;
+                 event_source <= DCI_TEST_EVENT_INTERNAL; event_source++) {
+                for (uint8_t output_phase = 0u; output_phase < 4u; output_phase++) {
+                    bool is_high = false;
                     dspic33_reset(cpu, 0u);
                     dspic33_device_internal_raw_write_word(
                         cpu, DCI_CONTROL1,
-                        (uint16_t)(DCI_ENABLE | mode | (immediate != 0u ? DCI_DATA_JUSTIFY : 0u) |
-                                   (phase & 1u ? DCI_SAMPLE_RISING : 0u)));
+                        (uint16_t)(DCI_ENABLE | mode |
+                                   (data_justified != 0u ? DCI_DATA_JUSTIFY : 0u) |
+                                   (output_phase & 1u ? DCI_SAMPLE_RISING : 0u)));
                     dspic33_device_internal_raw_write_word(
                         cpu, DCI_CONTROL2, dspic33_dci_test_configuration(16u, 2u, mode));
                     dspic33_device_internal_raw_write_word(cpu, DCI_CONTROL3, 1u);
                     cpu->io.dci.generation = 3u;
                     cpu->io.dci.initialized = true;
                     cpu->io.dci.started = true;
-                    cpu->io.dci.slot = phase >= 2u ? 1u : 0u;
+                    cpu->io.dci.slot = output_phase >= 2u ? 1u : 0u;
                     cpu->io.dci.buffer = 0u;
                     cpu->io.dci.transmit[0] = 0xa55au;
-                    cpu->io.dci.output_frame_high = (phase & 1u) != 0u;
+                    cpu->io.dci.output_frame_high = (output_phase & 1u) != 0u;
                     dspic33_device_internal_raw_write_word(cpu, DCI_TRANSMIT_SLOTS, 3u);
-                    const uint64_t delay = source == DCI_TEST_EVENT_START ? (uint64_t)phase * 4u
-                                                                          : (uint64_t)phase * 16u;
-                    expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_DCI, source, 3u, delay),
+                    const uint64_t event_delay = event_source == DCI_TEST_EVENT_START
+                                                     ? (uint64_t)output_phase * 4u
+                                                     : (uint64_t)output_phase * 16u;
+                    expect(state,
+                           dspic33_schedule(cpu, DSPIC33_EVENT_DCI, event_source, 3u, event_delay),
                            "schedule internal DCI output phase");
-                    expect(state, dspic33_device_internal_dci_frame_output(cpu, &high),
+                    expect(state, dspic33_device_internal_dci_frame_output(cpu, &is_high),
                            "internal DCI frame output is available");
-                    high_count += high;
-                    driven_count += dspic33_device_internal_dci_data_output(cpu, &high);
-                    high_count += high;
+                    high_output_count += is_high;
+                    driven_output_count += dspic33_device_internal_dci_data_output(cpu, &is_high);
+                    high_output_count += is_high;
                 }
             }
         }
     }
-    expect(state, high_count == 62u && driven_count == 64u,
+    expect(state, high_output_count == 62u && driven_output_count == 64u,
            "internal DCI output phase census matches");
 }
 
