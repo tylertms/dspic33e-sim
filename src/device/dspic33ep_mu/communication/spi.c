@@ -22,40 +22,40 @@ bool dspic33_device_internal_spi_enhanced(const Dspic33* cpu, uint8_t channel) {
 }
 
 void dspic33_device_internal_spi_refresh_status(Dspic33* cpu, uint8_t channel) {
-    uint16_t base = dspic33_device_spi_bases[channel];
-    uint16_t status = dspic33_device_internal_raw_word(cpu, base);
-    uint8_t pending;
-    status &= (uint16_t)~(SPI_BUFFER_COUNT_MASK | SPI_SHIFT_EMPTY | SPI_RX_EMPTY | SPI_TX_FULL |
-                          SPI_RX_FULL);
+    uint16_t register_base = dspic33_device_spi_bases[channel];
+    uint16_t status_word = dspic33_device_internal_raw_word(cpu, register_base);
+
+    status_word &= (uint16_t)~(SPI_BUFFER_COUNT_MASK | SPI_SHIFT_EMPTY | SPI_RX_EMPTY |
+                               SPI_TX_FULL | SPI_RX_FULL);
     if (dspic33_device_internal_spi_enhanced(cpu, channel)) {
         if ((cpu->io.spi_busy & (uint8_t)(1u << channel)) == 0u) {
-            status |= SPI_SHIFT_EMPTY;
+            status_word |= SPI_SHIFT_EMPTY;
         }
         if (cpu->io.spi_rx_fifo[channel].count == 0u) {
-            status |= SPI_RX_EMPTY;
+            status_word |= SPI_RX_EMPTY;
         }
         if (cpu->io.spi_tx_fifo[channel].count == 8u) {
-            status |= SPI_TX_FULL;
+            status_word |= SPI_TX_FULL;
         }
         if (cpu->io.spi_rx_fifo[channel].count == 8u) {
-            status |= SPI_RX_FULL;
+            status_word |= SPI_RX_FULL;
         }
-        pending = dspic33_device_internal_spi_master(cpu, channel)
-                      ? cpu->io.spi_tx_fifo[channel].count
-                      : cpu->io.spi_rx_fifo[channel].count;
-        if (pending > 7u) {
-            pending = 7u;
+        uint8_t pending_count = dspic33_device_internal_spi_master(cpu, channel)
+                                    ? cpu->io.spi_tx_fifo[channel].count
+                                    : cpu->io.spi_rx_fifo[channel].count;
+        if (pending_count > 7u) {
+            pending_count = 7u;
         }
-        status |= (uint16_t)pending << 8u;
+        status_word |= (uint16_t)pending_count << 8u;
     } else {
         if (cpu->io.spi_tx_fifo[channel].count != 0u) {
-            status |= SPI_TX_FULL;
+            status_word |= SPI_TX_FULL;
         }
         if (cpu->io.spi_rx_fifo[channel].count != 0u) {
-            status |= SPI_RX_FULL;
+            status_word |= SPI_RX_FULL;
         }
     }
-    dspic33_device_internal_raw_write_word(cpu, base, status);
+    dspic33_device_internal_raw_write_word(cpu, register_base, status_word);
 }
 
 void dspic33_device_internal_spi_clear_buffers(Dspic33* cpu, uint8_t channel) {
@@ -78,45 +78,46 @@ void dspic33_device_internal_spi_clear_buffers(Dspic33* cpu, uint8_t channel) {
 }
 
 static void spi_begin_frame(Dspic33* cpu, uint8_t channel) {
-    uint16_t control =
+    uint16_t control_word =
         dspic33_device_internal_raw_word(cpu, (uint16_t)(dspic33_device_spi_bases[channel] + 4u));
-    uint8_t bit = (uint8_t)(1u << channel);
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+
     if (dspic33_device_internal_spi_master(cpu, channel) &&
-        (control & (SPI_FRAME_ENABLE | SPI_FRAME_SLAVE)) == SPI_FRAME_ENABLE) {
+        (control_word & (SPI_FRAME_ENABLE | SPI_FRAME_SLAVE)) == SPI_FRAME_ENABLE) {
         return;
     }
     if (!dspic33_device_internal_spi_master(cpu, channel) &&
-        (control & (SPI_FRAME_ENABLE | SPI_FRAME_SLAVE)) == SPI_FRAME_ENABLE) {
-        cpu->io.spi_frame_output_pending |= bit;
-        cpu->io.spi_frame_output_clear_pending &= (uint8_t)~bit;
-        cpu->io.spi_frame_active &= (uint8_t)~bit;
-        cpu->io.spi_pin_output_started &= (uint8_t)~bit;
+        (control_word & (SPI_FRAME_ENABLE | SPI_FRAME_SLAVE)) == SPI_FRAME_ENABLE) {
+        cpu->io.spi_frame_output_pending |= channel_mask;
+        cpu->io.spi_frame_output_clear_pending &= (uint8_t)~channel_mask;
+        cpu->io.spi_frame_active &= (uint8_t)~channel_mask;
+        cpu->io.spi_pin_output_started &= (uint8_t)~channel_mask;
         return;
     }
-    cpu->io.spi_frame_active &= (uint8_t)~bit;
+    cpu->io.spi_frame_active &= (uint8_t)~channel_mask;
 }
 
 bool dspic33_device_internal_spi_power_enabled(const Dspic33* cpu, uint8_t channel) {
-    uint16_t status = dspic33_device_internal_raw_word(cpu, dspic33_device_spi_bases[channel]);
+    uint16_t status_word = dspic33_device_internal_raw_word(cpu, dspic33_device_spi_bases[channel]);
     if (!dspic33_device_internal_spi_master(cpu, channel)) {
-        return cpu->power_state != DSPIC33_POWER_IDLE || (status & SPI_STOP_IDLE) == 0u;
+        return cpu->power_state != DSPIC33_POWER_IDLE || (status_word & SPI_STOP_IDLE) == 0u;
     }
     if (cpu->power_state == DSPIC33_POWER_ACTIVE) {
         return true;
     }
-    return cpu->power_state == DSPIC33_POWER_IDLE && (status & SPI_STOP_IDLE) == 0u;
+    return cpu->power_state == DSPIC33_POWER_IDLE && (status_word & SPI_STOP_IDLE) == 0u;
 }
 
 bool dspic33_device_internal_spi_selected(const Dspic33* cpu, uint8_t channel) {
-    uint16_t control1 =
+    uint16_t control_word1 =
         dspic33_device_internal_raw_word(cpu, (uint16_t)(dspic33_device_spi_bases[channel] + 2u));
-    uint16_t control2 =
+    uint16_t control_word2 =
         dspic33_device_internal_raw_word(cpu, (uint16_t)(dspic33_device_spi_bases[channel] + 4u));
-    bool required =
-        (control2 & SPI_FRAME_ENABLE) != 0u
-            ? (control2 & SPI_FRAME_SLAVE) != 0u
-            : !dspic33_device_internal_spi_master(cpu, channel) && (control1 & 0x0080u) != 0u;
-    return !required || (cpu->io.spi_selected & (uint8_t)(1u << channel)) != 0u;
+    bool selection_required =
+        (control_word2 & SPI_FRAME_ENABLE) != 0u
+            ? (control_word2 & SPI_FRAME_SLAVE) != 0u
+            : !dspic33_device_internal_spi_master(cpu, channel) && (control_word1 & 0x0080u) != 0u;
+    return !selection_required || (cpu->io.spi_selected & (uint8_t)(1u << channel)) != 0u;
 }
 
 bool dspic33_device_internal_spi_master_frame_slave(const Dspic33* cpu, uint8_t channel) {
@@ -141,8 +142,9 @@ bool dspic33_device_internal_spi_slave_frame_master(const Dspic33* cpu, uint8_t 
 }
 
 static bool spi_pps_input_high(const Dspic33* cpu, uint8_t selection) {
-    bool high;
-    return dspic33_device_internal_pps_physical_input_high(cpu, selection, &high) && high;
+    bool input_is_high;
+    return dspic33_device_internal_pps_physical_input_high(cpu, selection, &input_is_high) &&
+           input_is_high;
 }
 
 static bool spi_master_input_high(const Dspic33* cpu, uint8_t channel) {
@@ -166,28 +168,31 @@ void dspic33_device_internal_spi_refresh_pps_inputs(Dspic33* cpu) {
     static const uint8_t channels[] = {0u, 2u, 3u};
     static const uint16_t input_registers[] = {0x06c8u, 0x06dau, 0x06deu};
     static const uint16_t select_registers[] = {0x06cau, 0x06dcu, 0x06e0u};
-    size_t index;
-    for (index = 0u; index < sizeof(channels) / sizeof(channels[0]); index++) {
-        uint16_t inputs = dspic33_device_internal_raw_word(cpu, input_registers[index]);
-        uint16_t select = dspic33_device_internal_raw_word(cpu, select_registers[index]);
-        uint8_t channel = channels[index];
-        if (inputs == 0u && select == 0u) {
+    for (size_t mapping_index = 0u; mapping_index < sizeof(channels) / sizeof(channels[0]);
+         mapping_index++) {
+        uint16_t input_mapping =
+            dspic33_device_internal_raw_word(cpu, input_registers[mapping_index]);
+        uint16_t select_mapping =
+            dspic33_device_internal_raw_word(cpu, select_registers[mapping_index]);
+        uint8_t channel = channels[mapping_index];
+
+        if (input_mapping == 0u && select_mapping == 0u) {
             continue;
         }
-        bool data_high = spi_pps_input_high(cpu, (uint8_t)(inputs & 0x007fu));
-        bool clock_high = spi_pps_input_high(cpu, (uint8_t)((inputs >> 8u) & 0x007fu));
-        bool select_high = spi_pps_input_high(cpu, (uint8_t)(select & 0x007fu));
-        dspic33_spi_pin_input(cpu, channel, clock_high, data_high, select_high);
+        bool data_is_high = spi_pps_input_high(cpu, (uint8_t)(input_mapping & 0x007fu));
+        bool clock_is_high = spi_pps_input_high(cpu, (uint8_t)((input_mapping >> 8u) & 0x007fu));
+        bool select_is_high = spi_pps_input_high(cpu, (uint8_t)(select_mapping & 0x007fu));
+        dspic33_spi_pin_input(cpu, channel, clock_is_high, data_is_high, select_is_high);
     }
 }
 
 uint64_t dspic33_device_internal_spi_transfer_cycles(const Dspic33* cpu, uint8_t channel) {
-    static const uint8_t primary[] = {64u, 16u, 4u, 1u};
-    uint16_t control =
+    static const uint8_t primary_divisors[] = {64u, 16u, 4u, 1u};
+    uint16_t control_word =
         dspic33_device_internal_raw_word(cpu, (uint16_t)(dspic33_device_spi_bases[channel] + 2u));
-    uint8_t secondary = (uint8_t)(8u - ((control >> 2u) & 7u));
-    uint8_t bits = (control & SPI_MODE_16) != 0u ? 16u : 8u;
-    return (uint64_t)bits * primary[control & 3u] * secondary;
+    uint8_t secondary_divisor = (uint8_t)(8u - ((control_word >> 2u) & 7u));
+    uint8_t transfer_bit_count = (control_word & SPI_MODE_16) != 0u ? 16u : 8u;
+    return (uint64_t)transfer_bit_count * primary_divisors[control_word & 3u] * secondary_divisor;
 }
 
 static uint8_t spi_interrupt_mode(const Dspic33* cpu, uint8_t channel) {
