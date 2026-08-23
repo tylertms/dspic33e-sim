@@ -663,13 +663,13 @@ void dspic33_can_test_triple_sample_cases(TestState* state, Dspic33* cpu) {
     }
 }
 
-static void prepare_resynchronization(Dspic33* cpu, uint16_t config1, uint16_t config2) {
+static void prepare_resynchronization(Dspic33* cpu, uint16_t can_config1, uint16_t can_config2) {
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, 0x0e30u, 0xffffu);
     dspic33_write_word(cpu, 0x0e3eu, 0u);
     dspic33_write_word(cpu, 0x06d4u, 64u);
-    dspic33_write_word(cpu, 0x0410u, config1);
-    dspic33_write_word(cpu, 0x0412u, config2);
+    dspic33_write_word(cpu, 0x0410u, can_config1);
+    dspic33_write_word(cpu, 0x0412u, can_config2);
     dspic33_can_test_set_mode(cpu, 0u, 0u);
     dspic33_can_input_pin(cpu, 64u, false, 0u);
     dspic33_device_advance(cpu, 3u);
@@ -712,16 +712,17 @@ void dspic33_can_test_resynchronization_cases(TestState* state, Dspic33* cpu) {
 }
 
 static bool drive_can_to_intermission(Dspic33* cpu) {
-    for (uint16_t bit = 0u; bit < 160u; bit++) {
-        bool transmit_high;
-        bool acknowledge_high;
+    for (uint16_t bit_index = 0u; bit_index < 160u; bit_index++) {
+        bool transmit_level;
+        bool acknowledge_level;
+
         if ((cpu->io.can_intermission_active & 2u) != 0u) {
             return true;
         }
-        if (!dspic33_can_pin(cpu, 64u, &transmit_high) ||
-            !dspic33_can_pin(cpu, 65u, &acknowledge_high) ||
-            !dspic33_can_input_pin(cpu, 66u, transmit_high && acknowledge_high, 0u) ||
-            !dspic33_can_input_pin(cpu, 64u, transmit_high && acknowledge_high, 0u) ||
+        if (!dspic33_can_pin(cpu, 64u, &transmit_level) ||
+            !dspic33_can_pin(cpu, 65u, &acknowledge_level) ||
+            !dspic33_can_input_pin(cpu, 66u, transmit_level && acknowledge_level, 0u) ||
+            !dspic33_can_input_pin(cpu, 64u, transmit_level && acknowledge_level, 0u) ||
             !dspic33_device_advance(cpu, 4u)) {
             return false;
         }
@@ -729,22 +730,25 @@ static bool drive_can_to_intermission(Dspic33* cpu) {
     return false;
 }
 
-static bool drive_can_with_dominant_final_eof(Dspic33* cpu, const Dspic33CanFrame* input) {
-    bool bits[160];
-    const uint16_t final_eof = dspic33_device_internal_can_frame_bits(input, bits) - 4u;
-    for (uint16_t bit = 0u; bit < 160u; bit++) {
-        bool transmit_high;
-        bool acknowledge_high;
+static bool drive_can_with_dominant_final_eof(Dspic33* cpu, const Dspic33CanFrame* input_frame) {
+    bool frame_bits[160];
+    const uint16_t final_eof_index =
+        dspic33_device_internal_can_frame_bits(input_frame, frame_bits) - 4u;
+
+    for (uint16_t bit_index = 0u; bit_index < 160u; bit_index++) {
+        bool transmit_level;
+        bool acknowledge_level;
+
         if ((cpu->io.can_overload_active & 2u) != 0u) {
             return true;
         }
-        if (!dspic33_can_pin(cpu, 64u, &transmit_high) ||
-            !dspic33_can_pin(cpu, 65u, &acknowledge_high) ||
-            !dspic33_can_input_pin(cpu, 66u, transmit_high && acknowledge_high, 0u) ||
+        if (!dspic33_can_pin(cpu, 64u, &transmit_level) ||
+            !dspic33_can_pin(cpu, 65u, &acknowledge_level) ||
+            !dspic33_can_input_pin(cpu, 66u, transmit_level && acknowledge_level, 0u) ||
             !dspic33_can_input_pin(cpu, 64u,
-                                   cpu->io.can_rx_serial_count[1] == final_eof
+                                   cpu->io.can_rx_serial_count[1] == final_eof_index
                                        ? false
-                                       : transmit_high && acknowledge_high,
+                                       : transmit_level && acknowledge_level,
                                    0u) ||
             !dspic33_device_advance(cpu, 4u)) {
             return false;
@@ -753,17 +757,18 @@ static bool drive_can_with_dominant_final_eof(Dspic33* cpu, const Dspic33CanFram
     return false;
 }
 
-static void configure_overload_pair(Dspic33* cpu, const Dspic33CanFrame* input) {
+static void configure_overload_pair(Dspic33* cpu, const Dspic33CanFrame* input_frame) {
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, 0x0e30u, 0xffffu);
     dspic33_write_word(cpu, 0x0e3eu, 0u);
     dspic33_write_word(cpu, 0x0680u, 0x0f0eu);
     dspic33_write_word(cpu, 0x06d4u, 0x4042u);
     dspic33_can_test_configure_receive(cpu, 1u, 0xda00u, 4u, 0u);
-    dspic33_can_test_configure_filter(cpu, 1u, 0u, input->identifier, false, 0x7ffu, true, 0u, 0u);
+    dspic33_can_test_configure_filter(cpu, 1u, 0u, input_frame->identifier, false, 0x7ffu, true, 0u,
+                                      0u);
     dspic33_can_test_enable_filter(cpu, 1u, 1u);
     dspic33_can_test_configure_transmit(cpu, 0u, 0xd800u);
-    dspic33_can_test_write_transmit_frame(cpu, 0xd800u, input);
+    dspic33_can_test_write_transmit_frame(cpu, 0xd800u, input_frame);
     dspic33_can_test_select_window(cpu, 0u, false);
     dspic33_can_test_select_window(cpu, 1u, false);
     dspic33_write_word(cpu, 0x0410u, 0u);
@@ -776,9 +781,10 @@ static void configure_overload_pair(Dspic33* cpu, const Dspic33CanFrame* input) 
 }
 
 void dspic33_can_test_overload_frame_cases(TestState* state, Dspic33* cpu) {
-    Dspic33CanFrame input = dspic33_can_test_frame(0x365u, false, false, 1u, 0xa0u);
-    bool high;
-    configure_overload_pair(cpu, &input);
+    Dspic33CanFrame input_frame = dspic33_can_test_frame(0x365u, false, false, 1u, 0xa0u);
+    bool pin_level;
+
+    configure_overload_pair(cpu, &input_frame);
     expect(state, dspic33_device_advance(cpu, 8u), "CAN overload source reaches the bus");
     expect(state, drive_can_to_intermission(cpu), "valid CAN frame reaches Intermission");
     expect(state, cpu->io.can_rx_serial_count[1] != 0u,
@@ -786,11 +792,14 @@ void dspic33_can_test_overload_frame_cases(TestState* state, Dspic33* cpu) {
     expect(state,
            dspic33_can_input_pin(cpu, 64u, false, 0u) && dspic33_device_advance(cpu, 0u) &&
                dspic33_can_input_pin(cpu, 64u, true, 0u) && dspic33_device_advance(cpu, 0u) &&
-               dspic33_can_pin(cpu, 65u, &high) && !high && cpu->io.can_overload_count[1] == 1u,
+               dspic33_can_pin(cpu, 65u, &pin_level) && !pin_level &&
+               cpu->io.can_overload_count[1] == 1u,
            "dominant Intermission edge starts a CAN overload flag");
-    expect(state, dspic33_device_advance(cpu, 23u) && dspic33_can_pin(cpu, 65u, &high) && !high,
+    expect(state,
+           dspic33_device_advance(cpu, 23u) && dspic33_can_pin(cpu, 65u, &pin_level) && !pin_level,
            "CAN overload flag remains dominant for six bits");
-    expect(state, dspic33_device_advance(cpu, 1u) && dspic33_can_pin(cpu, 65u, &high) && high,
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && dspic33_can_pin(cpu, 65u, &pin_level) && pin_level,
            "CAN overload delimiter becomes recessive after six bits");
     expect(state, dspic33_device_advance(cpu, 32u) && (cpu->io.can_intermission_active & 2u) != 0u,
            "CAN overload delimiter is followed by Intermission");
@@ -801,16 +810,18 @@ void dspic33_can_test_overload_frame_cases(TestState* state, Dspic33* cpu) {
            "CAN permits two sequential overload frames");
     expect(state,
            dspic33_can_input_pin(cpu, 64u, false, 0u) && dspic33_device_advance(cpu, 0u) &&
-               dspic33_can_pin(cpu, 65u, &high) && high && (cpu->io.can_overload_active & 2u) == 0u,
+               dspic33_can_pin(cpu, 65u, &pin_level) && pin_level &&
+               (cpu->io.can_overload_active & 2u) == 0u,
            "CAN suppresses a third sequential overload frame");
 
-    configure_overload_pair(cpu, &input);
+    configure_overload_pair(cpu, &input_frame);
     expect(state, dspic33_device_advance(cpu, 8u), "CAN EOF overload source reaches the bus");
-    expect(state, drive_can_with_dominant_final_eof(cpu, &input) && dspic33_device_advance(cpu, 9u),
+    expect(state,
+           drive_can_with_dominant_final_eof(cpu, &input_frame) && dspic33_device_advance(cpu, 9u),
            "dominant final EOF bit completes CAN reception");
     expect(state, dspic33_can_test_receive_full(cpu, 1u, 0u),
            "dominant final EOF bit marks the CAN receive buffer full");
-    expect(state, (uint8_t)dspic33_can_test_memory_word(cpu, 0xda06u) == input.data[0],
+    expect(state, (uint8_t)dspic33_can_test_memory_word(cpu, 0xda06u) == input_frame.data[0],
            "dominant final EOF bit stores the CAN frame");
     expect(state, cpu->io.can_overload_count[1] == 1u,
            "dominant final EOF bit starts CAN overload");
