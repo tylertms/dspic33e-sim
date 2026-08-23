@@ -748,8 +748,9 @@ void dspic33_device_internal_update_input_capture_pmd(Dspic33* cpu, uint16_t add
 }
 
 void dspic33_device_internal_input_capture_read_complete(Dspic33* cpu, uint8_t channel) {
-    uint16_t discarded;
-    if (!input_capture_fifo_pop(&cpu->io.input_capture.fifo[channel], &discarded)) {
+    uint16_t discarded_value;
+
+    if (!input_capture_fifo_pop(&cpu->io.input_capture.fifo[channel], &discarded_value)) {
         return;
     }
     if (cpu->io.input_capture.fifo[channel].count == 0u) {
@@ -763,36 +764,44 @@ void dspic33_device_internal_input_capture_read_complete(Dspic33* cpu, uint8_t c
 }
 
 static bool input_capture_sync_held(const Dspic33* cpu, uint8_t channel) {
-    uint16_t control2 =
+    const uint16_t control2_word =
         dspic33_device_internal_raw_word(cpu, (uint16_t)(input_capture_base(channel) + 2u));
-    uint8_t source = (uint8_t)(control2 & INPUT_CAPTURE_SYNC_MASK);
-    return (control2 & INPUT_CAPTURE_TRIGGER) == 0u && source >= INPUT_CAPTURE_SYNC_IC_FIRST &&
-           source < INPUT_CAPTURE_SYNC_COMPARATOR_FIRST &&
+    const uint8_t sync_source = (uint8_t)(control2_word & INPUT_CAPTURE_SYNC_MASK);
+
+    return (control2_word & INPUT_CAPTURE_TRIGGER) == 0u &&
+           sync_source >= INPUT_CAPTURE_SYNC_IC_FIRST &&
+           sync_source < INPUT_CAPTURE_SYNC_COMPARATOR_FIRST &&
            (cpu->io.input_capture.sync_output_high &
-            (uint16_t)(1u << (source - INPUT_CAPTURE_SYNC_IC_FIRST))) != 0u;
+            (uint16_t)(1u << (sync_source - INPUT_CAPTURE_SYNC_IC_FIRST))) != 0u;
 }
 
 static uint64_t input_capture_sync_transition(const Dspic33* cpu, uint8_t channel,
                                               uint16_t timer_source) {
-    uint16_t control1 = dspic33_device_internal_raw_word(cpu, input_capture_base(channel));
+    const uint16_t control1_word =
+        dspic33_device_internal_raw_word(cpu, input_capture_base(channel));
+
     if (channel >= 8u || !input_capture_timer_running(cpu, channel) ||
-        (control1 & INPUT_CAPTURE_TIMER_SOURCE_MASK) != timer_source ||
+        (control1_word & INPUT_CAPTURE_TIMER_SOURCE_MASK) != timer_source ||
         input_capture_sync_held(cpu, channel)) {
         return UINT64_MAX;
     }
     if (input_capture_pair_enabled(cpu, (uint8_t)(channel & 0xfeu))) {
-        uint8_t first = (uint8_t)(channel & 0xfeu);
-        uint32_t timer = (uint32_t)cpu->io.input_capture.timer[first] |
-                         ((uint32_t)cpu->io.input_capture.timer[first + 1u] << 16u);
-        if (channel == first) {
-            uint16_t low = (uint16_t)timer;
-            return low == UINT16_MAX ? 1u : UINT16_MAX - low;
+        const uint8_t first_channel = (uint8_t)(channel & 0xfeu);
+        const uint32_t timer_value =
+            (uint32_t)cpu->io.input_capture.timer[first_channel] |
+            ((uint32_t)cpu->io.input_capture.timer[first_channel + 1u] << 16u);
+
+        if (channel == first_channel) {
+            const uint16_t low_word = (uint16_t)timer_value;
+
+            return low_word == UINT16_MAX ? 1u : UINT16_MAX - low_word;
         }
         {
-            uint16_t low = (uint16_t)timer;
-            uint16_t high = (uint16_t)(timer >> 16u);
-            return high == UINT16_MAX ? UINT16_MAX + 1ull - low
-                                      : ((uint64_t)(UINT16_MAX - high) << 16u) - low;
+            const uint16_t low_word = (uint16_t)timer_value;
+            const uint16_t high_word = (uint16_t)(timer_value >> 16u);
+
+            return high_word == UINT16_MAX ? UINT16_MAX + 1ull - low_word
+                                           : ((uint64_t)(UINT16_MAX - high_word) << 16u) - low_word;
         }
     }
     return cpu->io.input_capture.timer[channel] == UINT16_MAX
@@ -800,14 +809,15 @@ static uint64_t input_capture_sync_transition(const Dspic33* cpu, uint8_t channe
                : UINT16_MAX - cpu->io.input_capture.timer[channel];
 }
 
-static void input_capture_advance_step(Dspic33* cpu, uint8_t channel, uint64_t cycles) {
-    uint16_t bit = (uint16_t)(1u << channel);
-    if ((cpu->io.input_capture.sync_reset_pending & bit) != 0u) {
-        cpu->io.input_capture.sync_reset_pending &= (uint16_t)~bit;
+static void input_capture_advance_step(Dspic33* cpu, uint8_t channel, uint64_t cycle_count) {
+    const uint16_t channel_mask = (uint16_t)(1u << channel);
+
+    if ((cpu->io.input_capture.sync_reset_pending & channel_mask) != 0u) {
+        cpu->io.input_capture.sync_reset_pending &= (uint16_t)~channel_mask;
         input_capture_reset_timer(cpu, channel);
-        cycles--;
+        cycle_count--;
     }
-    if (cycles == 0u || input_capture_sync_held(cpu, channel) ||
+    if (cycle_count == 0u || input_capture_sync_held(cpu, channel) ||
         !input_capture_timer_running(cpu, channel)) {
         if (input_capture_sync_held(cpu, channel)) {
             input_capture_reset_timer(cpu, channel);
@@ -815,74 +825,78 @@ static void input_capture_advance_step(Dspic33* cpu, uint8_t channel, uint64_t c
         return;
     }
     cpu->io.input_capture.timer[channel] =
-        (uint16_t)(cpu->io.input_capture.timer[channel] + cycles);
+        (uint16_t)(cpu->io.input_capture.timer[channel] + cycle_count);
     dspic33_device_internal_raw_write_word(cpu, (uint16_t)(input_capture_base(channel) + 6u),
                                            cpu->io.input_capture.timer[channel]);
 }
 
-static void input_capture_advance_pair(Dspic33* cpu, uint8_t channel, uint64_t cycles) {
-    uint16_t bits = (uint16_t)(3u << channel);
-    bool reset = (cpu->io.input_capture.sync_reset_pending & bits) != 0u;
-    bool held = input_capture_sync_held(cpu, channel) ||
-                input_capture_sync_held(cpu, (uint8_t)(channel + 1u));
-    uint32_t timer;
-    if (reset) {
-        cpu->io.input_capture.sync_reset_pending &= (uint16_t)~bits;
+static void input_capture_advance_pair(Dspic33* cpu, uint8_t channel, uint64_t cycle_count) {
+    const uint16_t channel_mask = (uint16_t)(3u << channel);
+    const bool reset_pending = (cpu->io.input_capture.sync_reset_pending & channel_mask) != 0u;
+    const bool sync_held = input_capture_sync_held(cpu, channel) ||
+                           input_capture_sync_held(cpu, (uint8_t)(channel + 1u));
+
+    if (reset_pending) {
+        cpu->io.input_capture.sync_reset_pending &= (uint16_t)~channel_mask;
         input_capture_reset_timer(cpu, channel);
         input_capture_reset_timer(cpu, (uint8_t)(channel + 1u));
-        cycles--;
+        cycle_count--;
     }
-    if (cycles == 0u || held || !input_capture_pair_timer_running(cpu, channel)) {
-        if (held) {
+    if (cycle_count == 0u || sync_held || !input_capture_pair_timer_running(cpu, channel)) {
+        if (sync_held) {
             input_capture_reset_timer(cpu, channel);
             input_capture_reset_timer(cpu, (uint8_t)(channel + 1u));
         }
         return;
     }
-    timer = (uint32_t)cpu->io.input_capture.timer[channel] |
-            ((uint32_t)cpu->io.input_capture.timer[channel + 1u] << 16u);
-    timer += (uint32_t)cycles;
-    cpu->io.input_capture.timer[channel] = (uint16_t)timer;
-    cpu->io.input_capture.timer[channel + 1u] = (uint16_t)(timer >> 16u);
+    uint32_t timer_value = (uint32_t)cpu->io.input_capture.timer[channel] |
+                           ((uint32_t)cpu->io.input_capture.timer[channel + 1u] << 16u);
+    timer_value += (uint32_t)cycle_count;
+    cpu->io.input_capture.timer[channel] = (uint16_t)timer_value;
+    cpu->io.input_capture.timer[channel + 1u] = (uint16_t)(timer_value >> 16u);
     dspic33_device_internal_raw_write_word(cpu, (uint16_t)(input_capture_base(channel) + 6u),
-                                           (uint16_t)timer);
+                                           (uint16_t)timer_value);
     dspic33_device_internal_raw_write_word(
         cpu, (uint16_t)(input_capture_base((uint8_t)(channel + 1u)) + 6u),
-        (uint16_t)(timer >> 16u));
+        (uint16_t)(timer_value >> 16u));
 }
 
 void dspic33_device_internal_input_capture_advance_clock(Dspic33* cpu, uint16_t timer_source,
-                                                         uint64_t cycles) {
-    uint64_t remaining = cycles;
+                                                         uint64_t cycle_count) {
+    uint64_t remaining_cycles = cycle_count;
+
     input_capture_refresh_sync_outputs(cpu);
-    while (remaining != 0u) {
-        uint64_t step = remaining;
-        uint8_t source;
+    while (remaining_cycles != 0u) {
+        uint64_t step_cycles = remaining_cycles;
         uint8_t channel = 0u;
-        for (source = 0u; source < 8u; source++) {
-            uint64_t transition = input_capture_sync_transition(cpu, source, timer_source);
-            if (transition < step) {
-                step = transition;
+        for (uint8_t sync_channel = 0u; sync_channel < 8u; sync_channel++) {
+            const uint64_t transition_cycles =
+                input_capture_sync_transition(cpu, sync_channel, timer_source);
+            if (transition_cycles < step_cycles) {
+                step_cycles = transition_cycles;
             }
         }
-        if (step == 0u) {
-            step = 1u;
+        if (step_cycles == 0u) {
+            step_cycles = 1u;
         }
         while (channel < DSPIC33_INPUT_CAPTURE_COUNT) {
-            bool paired = dspic33_device_internal_input_capture_pair_configured(cpu, channel);
-            if (paired && (dspic33_device_internal_raw_word(cpu, input_capture_base(channel)) &
-                           INPUT_CAPTURE_TIMER_SOURCE_MASK) == timer_source) {
-                input_capture_advance_pair(cpu, channel, step);
+            const bool is_paired =
+                dspic33_device_internal_input_capture_pair_configured(cpu, channel);
+            const bool timer_source_matches =
+                (dspic33_device_internal_raw_word(cpu, input_capture_base(channel)) &
+                 INPUT_CAPTURE_TIMER_SOURCE_MASK) == timer_source;
+
+            if (is_paired && timer_source_matches) {
+                input_capture_advance_pair(cpu, channel, step_cycles);
                 channel += 2u;
                 continue;
             }
-            if (!paired && (dspic33_device_internal_raw_word(cpu, input_capture_base(channel)) &
-                            INPUT_CAPTURE_TIMER_SOURCE_MASK) == timer_source) {
-                input_capture_advance_step(cpu, channel, step);
+            if (!is_paired && timer_source_matches) {
+                input_capture_advance_step(cpu, channel, step_cycles);
             }
-            channel += paired ? 2u : 1u;
+            channel += is_paired ? 2u : 1u;
         }
-        remaining -= step;
+        remaining_cycles -= step_cycles;
         input_capture_refresh_sync_outputs(cpu);
     }
 }
