@@ -284,7 +284,8 @@ void dspic33_can_test_receive_flag_hardware_event_cases(TestState* state, Dspic3
 }
 
 void dspic33_can_test_overflow_and_fallback_cases(TestState* state, Dspic33* cpu) {
-    Dspic33CanFrame input = dspic33_can_test_frame(0x123u, false, false, 2u, 0x40u);
+    Dspic33CanFrame input_frame = dspic33_can_test_frame(0x123u, false, false, 2u, 0x40u);
+
     dspic33_reset(cpu, 0u);
     dspic33_can_test_configure_receive(cpu, 0u, 0x8000u, 4u, 0u);
     dspic33_can_test_configure_filter(cpu, 0u, 0u, 0x123u, false, 0x7ffu, true, 1u, 0u);
@@ -292,58 +293,62 @@ void dspic33_can_test_overflow_and_fallback_cases(TestState* state, Dspic33* cpu
     dspic33_can_test_enable_filter(cpu, 0u, 3u);
     dspic33_can_test_select_window(cpu, 0u, false);
     dspic33_can_test_set_mode(cpu, 0u, 0u);
-    expect(state, dspic33_can_receive(cpu, 0u, &input, 0u) && dspic33_device_advance(cpu, 32u),
+    expect(state,
+           dspic33_can_receive(cpu, 0u, &input_frame, 0u) && dspic33_device_advance(cpu, 32u),
            "fallback first transfer");
     expect(state, dspic33_can_test_receive_full(cpu, 0u, 1u), "fallback first buffer");
-    expect(state, dspic33_can_receive(cpu, 0u, &input, 0u) && dspic33_device_advance(cpu, 32u),
+    expect(state,
+           dspic33_can_receive(cpu, 0u, &input_frame, 0u) && dspic33_device_advance(cpu, 32u),
            "fallback second transfer");
     expect(state, dspic33_can_test_receive_full(cpu, 0u, 2u), "fallback second buffer");
-    expect(state, dspic33_can_receive(cpu, 0u, &input, 0u) && dspic33_device_advance(cpu, 2u),
+    expect(state, dspic33_can_receive(cpu, 0u, &input_frame, 0u) && dspic33_device_advance(cpu, 2u),
            "fallback overflow attempt");
     expect(state, (dspic33_read_word(cpu, 0x0428u) & 2u) != 0u, "fallback lowest overflow");
 }
 
 void dspic33_can_test_transmission_cases(TestState* state, Dspic33* cpu) {
     uint8_t channel_index;
-    uint8_t extended_flag;
-    uint8_t remote_flag;
+    uint8_t is_extended;
+    uint8_t is_remote;
 
     for (channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
-        for (extended_flag = 0u; extended_flag < 2u; extended_flag++) {
-            for (remote_flag = 0u; remote_flag < 2u; remote_flag++) {
+        for (is_extended = 0u; is_extended < 2u; is_extended++) {
+            for (is_remote = 0u; is_remote < 2u; is_remote++) {
                 uint16_t can_base = bases[channel_index];
                 uint32_t transmit_memory = (uint32_t)(0x9000u + channel_index * 0x1000u);
                 Dspic33CanFrame expected_frame = dspic33_can_test_frame(
-                    extended_flag != 0u ? 0x1234567u : 0x345u, extended_flag != 0u,
-                    remote_flag != 0u, 8u, (uint8_t)(0x50u + extended_flag * 8u));
+                    is_extended != 0u ? 0x1234567u : 0x345u, is_extended != 0u, is_remote != 0u, 8u,
+                    (uint8_t)(0x50u + is_extended * 8u));
                 Dspic33CanFrame actual_frame;
-                uint16_t words[8] = {0};
+                uint16_t transmit_words[8] = {0};
                 uint8_t word_index;
+
                 uint32_t standard_identifier = expected_frame.extended
                                                    ? (expected_frame.identifier >> 18u) & 0x7ffu
                                                    : expected_frame.identifier;
                 uint32_t extended_identifier = expected_frame.identifier & 0x3ffffu;
-                words[0] = (uint16_t)(standard_identifier << 2u);
+                transmit_words[0] = (uint16_t)(standard_identifier << 2u);
                 if (expected_frame.extended) {
-                    words[0] |= 3u;
-                    words[1] = (uint16_t)(extended_identifier >> 6u);
-                    words[2] = (uint16_t)((extended_identifier & 0x3fu) << 10u);
+                    transmit_words[0] |= 3u;
+                    transmit_words[1] = (uint16_t)(extended_identifier >> 6u);
+                    transmit_words[2] = (uint16_t)((extended_identifier & 0x3fu) << 10u);
                     if (expected_frame.remote) {
-                        words[2] |= 0x0200u;
+                        transmit_words[2] |= 0x0200u;
                     }
                 } else if (expected_frame.remote) {
-                    words[0] |= 2u;
+                    transmit_words[0] |= 2u;
                 }
-                words[2] |= expected_frame.length;
+                transmit_words[2] |= expected_frame.length;
                 for (word_index = 0u; word_index < expected_frame.length; word_index++) {
-                    words[3u + word_index / 2u] |= (uint16_t)expected_frame.data[word_index]
-                                                   << ((word_index & 1u) * 8u);
+                    transmit_words[3u + word_index / 2u] |=
+                        (uint16_t)expected_frame.data[word_index] << ((word_index & 1u) * 8u);
                 }
+
                 dspic33_reset(cpu, 0u);
                 dspic33_can_test_configure_transmit(cpu, channel_index, transmit_memory);
                 for (word_index = 0u; word_index < 8u; word_index++) {
                     dspic33_can_test_write_memory_word(cpu, transmit_memory + word_index * 2u,
-                                                       words[word_index]);
+                                                       transmit_words[word_index]);
                 }
                 dspic33_can_test_select_window(cpu, channel_index, false);
                 dspic33_can_test_set_mode(cpu, channel_index, 0u);
