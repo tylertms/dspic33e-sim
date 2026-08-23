@@ -18,68 +18,71 @@ static void schedule_stack_error(Dspic33* cpu, uint8_t delay) {
     dspic33_internal_schedule_soft_trap(cpu, 3u, 0x00000au, 12u, delay);
 }
 
-void dspic33_check_stack_address(Dspic33* cpu, int32_t address, bool wrapped, uint8_t delay) {
-    uint16_t effective_address = (uint16_t)address;
-    bool underflow = address < 0x1000;
-    bool overflow = cpu->splim_enabled && effective_address > cpu->splim;
-    if (!underflow && !overflow && !(cpu->splim_enabled && wrapped)) {
+void dspic33_check_stack_address(Dspic33* cpu, int32_t stack_address, bool limit_wrapped,
+                                 uint8_t trap_delay) {
+    const uint16_t effective_stack_address = (uint16_t)stack_address;
+    const bool stack_underflow = stack_address < 0x1000;
+    const bool stack_overflow = cpu->splim_enabled && effective_stack_address > cpu->splim;
+    if (!stack_underflow && !stack_overflow && !(cpu->splim_enabled && limit_wrapped)) {
         return;
     }
-    schedule_stack_error(cpu, delay);
+    schedule_stack_error(cpu, trap_delay);
 }
 
-void dspic33_internal_check_stack_address(Dspic33* cpu, int32_t address, bool wrapped) {
-    dspic33_check_stack_address(cpu, address, wrapped, 2u);
+void dspic33_internal_check_stack_address(Dspic33* cpu, int32_t stack_address, bool limit_wrapped) {
+    dspic33_check_stack_address(cpu, stack_address, limit_wrapped, 2u);
 }
 
 bool dspic33_internal_service_pending_soft_trap(Dspic33* cpu) {
     Dspic33PendingSoftTrap* selected_trap = NULL;
-    uint8_t current_priority;
-    size_t trap_index;
+    uint8_t current_trap_priority;
+    size_t pending_index;
 
-    current_priority =
+    current_trap_priority =
         (uint8_t)(((cpu->corcon & 0x0008u) != 0u ? 8u : 0u) | ((cpu->sr >> 5u) & 0x07u));
 
-    for (trap_index = 0u; trap_index < 4u; trap_index++) {
-        Dspic33PendingSoftTrap* pending = &cpu->pending_soft_traps[trap_index];
-        if (pending->active && pending->delay == 0u && pending->priority >= 13u &&
-            pending->priority < current_priority) {
+    for (pending_index = 0u; pending_index < 4u; pending_index++) {
+        Dspic33PendingSoftTrap* pending_trap = &cpu->pending_soft_traps[pending_index];
+        if (pending_trap->active && pending_trap->delay == 0u && pending_trap->priority >= 13u &&
+            pending_trap->priority < current_trap_priority) {
             dspic33_internal_perform_warm_reset(cpu, 0x8000u, DSPIC33_RESET_HARDWARE);
             return true;
         }
     }
 
-    for (trap_index = 0u; trap_index < 4u; trap_index++) {
-        Dspic33PendingSoftTrap* pending = &cpu->pending_soft_traps[trap_index];
-        if (pending->active && pending->delay == 0u && pending->priority > current_priority &&
-            (selected_trap == NULL || pending->priority > selected_trap->priority)) {
-            selected_trap = pending;
+    for (pending_index = 0u; pending_index < 4u; pending_index++) {
+        Dspic33PendingSoftTrap* pending_trap = &cpu->pending_soft_traps[pending_index];
+        if (pending_trap->active && pending_trap->delay == 0u &&
+            pending_trap->priority > current_trap_priority &&
+            (selected_trap == NULL || pending_trap->priority > selected_trap->priority)) {
+            selected_trap = pending_trap;
         }
     }
 
     if (selected_trap != NULL) {
-        uint16_t trap = selected_trap->trap;
-        uint32_t vector = selected_trap->vector;
-        uint8_t priority = selected_trap->priority;
-        bool source_active = (trap == 2u && ((dspic33_read_word(cpu, 0x08c2u) & 0x2000u) != 0u ||
-                                             (dspic33_read_word(cpu, 0x08c6u) & 0x0001u) != 0u)) ||
-                             (trap == 4u && (dspic33_read_word(cpu, 0x08c0u) & 0x0010u) != 0u) ||
-                             (trap == 6u && (dspic33_read_word(cpu, 0x08c4u) & 0x0070u) != 0u);
-        if (!source_active) {
+        const uint16_t selected_trap_code = selected_trap->trap;
+        const uint32_t selected_vector = selected_trap->vector;
+        const uint8_t selected_priority = selected_trap->priority;
+        const bool trap_source_active =
+            (selected_trap_code == 2u && ((dspic33_read_word(cpu, 0x08c2u) & 0x2000u) != 0u ||
+                                          (dspic33_read_word(cpu, 0x08c6u) & 0x0001u) != 0u)) ||
+            (selected_trap_code == 4u && (dspic33_read_word(cpu, 0x08c0u) & 0x0010u) != 0u) ||
+            (selected_trap_code == 6u && (dspic33_read_word(cpu, 0x08c4u) & 0x0070u) != 0u);
+        if (!trap_source_active) {
             selected_trap->active = false;
         }
-        dspic33_internal_enter_trap(cpu, trap, vector, priority, 0u, cpu->pc,
-                                    selected_trap->auxiliary_program);
+        dspic33_internal_enter_trap(cpu, selected_trap_code, selected_vector, selected_priority, 0u,
+                                    cpu->pc, selected_trap->auxiliary_program);
         return true;
     }
     return false;
 }
 
 static bool soft_exception_pending(const Dspic33* cpu) {
-    size_t trap_index;
+    size_t pending_index;
 
-    for (trap_index = 0u; trap_index < 4u; trap_index++) {
-        if (cpu->pending_soft_traps[trap_index].active) {
+    for (pending_index = 0u; pending_index < 4u; pending_index++) {
+        if (cpu->pending_soft_traps[pending_index].active) {
             return true;
         }
     }

@@ -16,7 +16,7 @@ void dspic33_internal_enter_trap(Dspic33* cpu, uint16_t trap, uint32_t vector, u
 void dspic33_internal_enter_address_trap(Dspic33* cpu, uint32_t return_pc);
 void dspic33_internal_schedule_soft_trap(Dspic33* cpu, uint16_t trap, uint32_t vector,
                                          uint8_t priority, uint8_t delay);
-void dspic33_internal_check_stack_address(Dspic33* cpu, int32_t address, bool wrapped);
+void dspic33_internal_check_stack_address(Dspic33* cpu, int32_t stack_address, bool limit_wrapped);
 
 bool dspic33_program_range_implemented(uint32_t address, uint32_t size) {
     return (address < DSPIC33_PROGRAM_LIMIT && size <= DSPIC33_PROGRAM_LIMIT - address) ||

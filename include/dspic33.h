@@ -957,7 +957,8 @@ bool dspic33_reference_clock_pin(const Dspic33* cpu, uint8_t pin, uint64_t prima
                                  uint64_t* edges);
 void dspic33_gpio_input(Dspic33* cpu, uint8_t port, uint16_t value);
 void dspic33_set_async_events(Dspic33* cpu, bool enabled);
-void dspic33_check_stack_address(Dspic33* cpu, int32_t address, bool wrapped, uint8_t delay);
+void dspic33_check_stack_address(Dspic33* cpu, int32_t stack_address, bool limit_wrapped,
+                                 uint8_t trap_delay);
 void dspic33_set_math_error_source(Dspic33* cpu, bool active);
 Dspic33StopReason dspic33_step(Dspic33* cpu);
 Dspic33StopReason dspic33_run(Dspic33* cpu, uint64_t instruction_limit);

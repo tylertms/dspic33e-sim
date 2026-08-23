@@ -195,7 +195,7 @@ void dspic33_internal_advance_instruction(Dspic33* cpu, uint64_t cycles, bool se
                                           uint64_t device_ratio);
 void dspic33_internal_advance_pending_nvm_reset(Dspic33* cpu);
 void dspic33_internal_apply_accumulator_result(Dspic33* cpu, uint8_t accumulator, int64_t result);
-void dspic33_internal_check_stack_address(Dspic33* cpu, int32_t address, bool wrapped);
+void dspic33_internal_check_stack_address(Dspic33* cpu, int32_t stack_address, bool limit_wrapped);
 void dspic33_internal_clear_accumulator_status(Dspic33* cpu, uint8_t accumulator);
 void dspic33_internal_clear_instruction_transients(Dspic33* cpu);
 void dspic33_internal_clear_watchdog(Dspic33* cpu);
