@@ -324,51 +324,55 @@ static bool slave_pin_operating(const Dspic33* cpu, uint8_t channel) {
 
 static bool resolved_pin_high(const Dspic33* cpu, uint8_t channel,
                               const Dspic33I2cPinMapping* mapping, bool clock) {
-    uint8_t bit = (uint8_t)(1u << channel);
-    if (((clock ? cpu->io.i2c_pin_clock_low : cpu->io.i2c_pin_data_low) & bit) != 0u) {
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+
+    if (((clock ? cpu->io.i2c_pin_clock_low : cpu->io.i2c_pin_data_low) & channel_mask) != 0u) {
         return false;
     }
     return dspic33_i2c_internal_pin_input_high(cpu, mapping, clock);
 }
 
 static void slave_pin_baseline(Dspic33* cpu, uint8_t channel, const Dspic33I2cPinMapping* mapping) {
-    uint8_t bit = (uint8_t)(1u << channel);
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+
     if (resolved_pin_high(cpu, channel, mapping, true)) {
-        cpu->io.i2c_pin_clock_high |= bit;
+        cpu->io.i2c_pin_clock_high |= channel_mask;
     } else {
-        cpu->io.i2c_pin_clock_high &= (uint8_t)~bit;
+        cpu->io.i2c_pin_clock_high &= (uint8_t)~channel_mask;
     }
     if (resolved_pin_high(cpu, channel, mapping, false)) {
-        cpu->io.i2c_pin_data_high |= bit;
+        cpu->io.i2c_pin_data_high |= channel_mask;
     } else {
-        cpu->io.i2c_pin_data_high &= (uint8_t)~bit;
+        cpu->io.i2c_pin_data_high &= (uint8_t)~channel_mask;
     }
 }
 
 static void slave_pin_prepare_transmit(Dspic33* cpu, uint8_t channel) {
-    uint16_t base = dspic33_i2c_bases[channel];
-    uint16_t status = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(base + I2C_STAT));
-    uint8_t bit_index = cpu->io.i2c_slave_pin_bits[channel];
+    uint16_t register_base = dspic33_i2c_bases[channel];
+    uint16_t status_word = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(register_base + I2C_STAT));
+    uint8_t transmit_bit_index = cpu->io.i2c_slave_pin_bits[channel];
+
     if (cpu->io.i2c_slave_pin_state[channel] != I2C_SLAVE_PIN_TRANSMIT) {
         return;
     }
-    if (bit_index >= 8u || (status & I2C_TBF) == 0u) {
+    if (transmit_bit_index >= 8u || (status_word & I2C_TBF) == 0u) {
         dspic33_i2c_internal_pin_set_low(cpu, channel, false, false);
         return;
     }
     dspic33_i2c_internal_pin_set_low(
         cpu, channel, false,
-        (dspic33_i2c_internal_raw_word(cpu, (uint16_t)(base + I2C_TRN)) &
-         (uint16_t)(0x0080u >> bit_index)) == 0u);
+        (dspic33_i2c_internal_raw_word(cpu, (uint16_t)(register_base + I2C_TRN)) &
+         (uint16_t)(0x0080u >> transmit_bit_index)) == 0u);
 }
 
 static void slave_pin_start(Dspic33* cpu, uint8_t channel) {
-    uint8_t bit = (uint8_t)(1u << channel);
-    cpu->io.i2c_pin_physical |= bit;
-    cpu->io.i2c_slave_pin_active |= bit;
-    cpu->io.i2c_slave_pin_acknowledge &= (uint8_t)~bit;
-    cpu->io.i2c_slave_pin_interrupt &= (uint8_t)~bit;
-    cpu->io.i2c_slave_pin_stretch &= (uint8_t)~bit;
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+
+    cpu->io.i2c_pin_physical |= channel_mask;
+    cpu->io.i2c_slave_pin_active |= channel_mask;
+    cpu->io.i2c_slave_pin_acknowledge &= (uint8_t)~channel_mask;
+    cpu->io.i2c_slave_pin_interrupt &= (uint8_t)~channel_mask;
+    cpu->io.i2c_slave_pin_stretch &= (uint8_t)~channel_mask;
     cpu->io.i2c_slave_pin_state[channel] = I2C_SLAVE_PIN_ADDRESS;
     cpu->io.i2c_slave_pin_next[channel] = I2C_SLAVE_PIN_IDLE;
     cpu->io.i2c_slave_pin_bits[channel] = 0u;
@@ -378,13 +382,14 @@ static void slave_pin_start(Dspic33* cpu, uint8_t channel) {
 }
 
 static void slave_pin_stop(Dspic33* cpu, uint8_t channel) {
-    uint8_t bit = (uint8_t)(1u << channel);
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+
     slave_stop(cpu, channel);
-    cpu->io.i2c_pin_physical &= (uint8_t)~bit;
-    cpu->io.i2c_slave_pin_active &= (uint8_t)~bit;
-    cpu->io.i2c_slave_pin_acknowledge &= (uint8_t)~bit;
-    cpu->io.i2c_slave_pin_interrupt &= (uint8_t)~bit;
-    cpu->io.i2c_slave_pin_stretch &= (uint8_t)~bit;
+    cpu->io.i2c_pin_physical &= (uint8_t)~channel_mask;
+    cpu->io.i2c_slave_pin_active &= (uint8_t)~channel_mask;
+    cpu->io.i2c_slave_pin_acknowledge &= (uint8_t)~channel_mask;
+    cpu->io.i2c_slave_pin_interrupt &= (uint8_t)~channel_mask;
+    cpu->io.i2c_slave_pin_stretch &= (uint8_t)~channel_mask;
     cpu->io.i2c_slave_pin_state[channel] = I2C_SLAVE_PIN_IDLE;
     cpu->io.i2c_slave_pin_next[channel] = I2C_SLAVE_PIN_IDLE;
     cpu->io.i2c_slave_pin_bits[channel] = 0u;
@@ -392,9 +397,9 @@ static void slave_pin_stop(Dspic33* cpu, uint8_t channel) {
     dspic33_i2c_internal_pin_set_low(cpu, channel, false, false);
 }
 
-static void slave_pin_receive_rising(Dspic33* cpu, uint8_t channel, bool data_high) {
+static void slave_pin_receive_rising(Dspic33* cpu, uint8_t channel, bool input_data_high) {
     cpu->io.i2c_slave_pin_shift[channel] =
-        (uint8_t)((cpu->io.i2c_slave_pin_shift[channel] << 1u) | (data_high ? 1u : 0u));
+        (uint8_t)((cpu->io.i2c_slave_pin_shift[channel] << 1u) | (input_data_high ? 1u : 0u));
     cpu->io.i2c_slave_pin_bits[channel]++;
     if (cpu->io.i2c_slave_pin_bits[channel] != 8u) {
         return;
@@ -404,109 +409,113 @@ static void slave_pin_receive_rising(Dspic33* cpu, uint8_t channel, bool data_hi
 }
 
 static void slave_pin_receive_falling(Dspic33* cpu, uint8_t channel) {
-    uint16_t base = dspic33_i2c_bases[channel];
-    uint16_t status = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(base + I2C_STAT));
-    uint8_t bit = (uint8_t)(1u << channel);
-    uint8_t state = cpu->io.i2c_slave_pin_next[channel];
-    bool acknowledge;
-    bool interrupt = false;
-    uint16_t resulting_control;
-    acknowledge = dspic33_i2c_internal_slave_acknowledges(status);
-    if (state == I2C_SLAVE_PIN_ADDRESS) {
-        uint8_t byte = cpu->io.i2c_slave_pin_shift[channel];
-        bool read = (byte & 1u) != 0u;
-        if ((byte & 0xf8u) == 0xf0u) {
-            uint16_t address = (uint16_t)((byte & 6u) << 7u);
-            if (read) {
+    uint16_t register_base = dspic33_i2c_bases[channel];
+    uint16_t status_word = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(register_base + I2C_STAT));
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+    uint8_t next_state = cpu->io.i2c_slave_pin_next[channel];
+    bool is_acknowledged = dspic33_i2c_internal_slave_acknowledges(status_word);
+    bool raise_interrupt = false;
+    uint16_t resulting_control_word;
+
+    if (next_state == I2C_SLAVE_PIN_ADDRESS) {
+        uint8_t address_byte = cpu->io.i2c_slave_pin_shift[channel];
+        bool is_read = (address_byte & 1u) != 0u;
+
+        if ((address_byte & 0xf8u) == 0xf0u) {
+            uint16_t address = (uint16_t)((address_byte & 6u) << 7u);
+            if (is_read) {
                 address = cpu->io.i2c_slave_address[channel];
                 slave_ten_restart(cpu, channel, address, false);
             } else {
                 slave_start(cpu, channel, (uint16_t)(address | I2C_EXTERNAL_TEN_BIT), false, false);
             }
         } else {
-            uint8_t address = (uint8_t)(byte >> 1u);
-            slave_start(cpu, channel, (uint16_t)(address | (read ? I2C_EXTERNAL_READ : 0u)), true,
-                        false);
+            uint8_t address = (uint8_t)(address_byte >> 1u);
+            slave_start(cpu, channel, (uint16_t)(address | (is_read ? I2C_EXTERNAL_READ : 0u)),
+                        true, false);
         }
-        acknowledge = acknowledge && (cpu->io.i2c_slave_active & bit) != 0u &&
-                      (cpu->io.i2c_slave_rejected & bit) == 0u;
-        interrupt = acknowledge;
-        if (acknowledge && (byte & 0xf8u) == 0xf0u && !read) {
+        is_acknowledged = is_acknowledged && (cpu->io.i2c_slave_active & channel_mask) != 0u &&
+                          (cpu->io.i2c_slave_rejected & channel_mask) == 0u;
+        raise_interrupt = is_acknowledged;
+        if (is_acknowledged && (address_byte & 0xf8u) == 0xf0u && !is_read) {
             cpu->io.i2c_slave_pin_next[channel] = I2C_SLAVE_PIN_TEN_SECOND;
         } else {
             cpu->io.i2c_slave_pin_next[channel] =
-                acknowledge ? (read ? I2C_SLAVE_PIN_TRANSMIT : I2C_SLAVE_PIN_RECEIVE)
-                            : I2C_SLAVE_PIN_REJECTED;
+                is_acknowledged ? (is_read ? I2C_SLAVE_PIN_TRANSMIT : I2C_SLAVE_PIN_RECEIVE)
+                                : I2C_SLAVE_PIN_REJECTED;
         }
-    } else if (state == I2C_SLAVE_PIN_TEN_SECOND) {
+    } else if (next_state == I2C_SLAVE_PIN_TEN_SECOND) {
         uint16_t address = (uint16_t)((cpu->io.i2c_slave_address[channel] & 0x0300u) |
                                       cpu->io.i2c_slave_pin_shift[channel]);
         cpu->io.i2c_slave_address[channel] = address;
         slave_ten_second(cpu, channel, address, false);
-        acknowledge = acknowledge && (cpu->io.i2c_slave_active & bit) != 0u &&
-                      (cpu->io.i2c_slave_rejected & bit) == 0u;
-        interrupt = acknowledge;
+        is_acknowledged = is_acknowledged && (cpu->io.i2c_slave_active & channel_mask) != 0u &&
+                          (cpu->io.i2c_slave_rejected & channel_mask) == 0u;
+        raise_interrupt = is_acknowledged;
         cpu->io.i2c_slave_pin_next[channel] =
-            acknowledge ? I2C_SLAVE_PIN_RECEIVE : I2C_SLAVE_PIN_REJECTED;
+            is_acknowledged ? I2C_SLAVE_PIN_RECEIVE : I2C_SLAVE_PIN_REJECTED;
     } else {
         slave_write(cpu, channel, cpu->io.i2c_slave_pin_shift[channel], false);
-        acknowledge = acknowledge && (cpu->io.i2c_slave_active & bit) != 0u;
-        interrupt = (cpu->io.i2c_slave_active & bit) != 0u;
+        is_acknowledged = is_acknowledged && (cpu->io.i2c_slave_active & channel_mask) != 0u;
+        raise_interrupt = (cpu->io.i2c_slave_active & channel_mask) != 0u;
         cpu->io.i2c_slave_pin_next[channel] = I2C_SLAVE_PIN_RECEIVE;
     }
-    if (acknowledge) {
-        cpu->io.i2c_slave_pin_acknowledge |= bit;
+    if (is_acknowledged) {
+        cpu->io.i2c_slave_pin_acknowledge |= channel_mask;
     } else {
-        cpu->io.i2c_slave_pin_acknowledge &= (uint8_t)~bit;
+        cpu->io.i2c_slave_pin_acknowledge &= (uint8_t)~channel_mask;
     }
-    if (interrupt) {
-        cpu->io.i2c_slave_pin_interrupt |= bit;
+    if (raise_interrupt) {
+        cpu->io.i2c_slave_pin_interrupt |= channel_mask;
     } else {
-        cpu->io.i2c_slave_pin_interrupt &= (uint8_t)~bit;
+        cpu->io.i2c_slave_pin_interrupt &= (uint8_t)~channel_mask;
     }
-    resulting_control = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(base + I2C_CON));
-    if ((resulting_control & I2C_SCLREL) == 0u) {
-        cpu->io.i2c_slave_pin_stretch |= bit;
-        dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(base + I2C_CON),
-                                            (uint16_t)(resulting_control | I2C_SCLREL));
+    resulting_control_word =
+        dspic33_i2c_internal_raw_word(cpu, (uint16_t)(register_base + I2C_CON));
+    if ((resulting_control_word & I2C_SCLREL) == 0u) {
+        cpu->io.i2c_slave_pin_stretch |= channel_mask;
+        dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(register_base + I2C_CON),
+                                            (uint16_t)(resulting_control_word | I2C_SCLREL));
     } else {
-        cpu->io.i2c_slave_pin_stretch &= (uint8_t)~bit;
+        cpu->io.i2c_slave_pin_stretch &= (uint8_t)~channel_mask;
     }
     cpu->io.i2c_slave_pin_state[channel] = I2C_SLAVE_PIN_ACKNOWLEDGE;
     cpu->io.i2c_slave_pin_bits[channel] = 0u;
     cpu->io.i2c_slave_pin_shift[channel] = 0u;
-    dspic33_i2c_internal_pin_set_low(cpu, channel, false, acknowledge);
+    dspic33_i2c_internal_pin_set_low(cpu, channel, false, is_acknowledged);
     cpu->io.i2c_slave_pin_bits[channel] = 1u;
 }
 
-static void slave_pin_rising(Dspic33* cpu, uint8_t channel, bool data_high) {
-    uint8_t state = cpu->io.i2c_slave_pin_state[channel];
-    if (state == I2C_SLAVE_PIN_ADDRESS || state == I2C_SLAVE_PIN_RECEIVE ||
-        state == I2C_SLAVE_PIN_TEN_SECOND) {
-        slave_pin_receive_rising(cpu, channel, data_high);
-    } else if (state == I2C_SLAVE_PIN_ACKNOWLEDGE) {
+static void slave_pin_rising(Dspic33* cpu, uint8_t channel, bool input_data_high) {
+    uint8_t pin_state = cpu->io.i2c_slave_pin_state[channel];
+
+    if (pin_state == I2C_SLAVE_PIN_ADDRESS || pin_state == I2C_SLAVE_PIN_RECEIVE ||
+        pin_state == I2C_SLAVE_PIN_TEN_SECOND) {
+        slave_pin_receive_rising(cpu, channel, input_data_high);
+    } else if (pin_state == I2C_SLAVE_PIN_ACKNOWLEDGE) {
         if (cpu->io.i2c_slave_pin_bits[channel] == 1u) {
             cpu->io.i2c_slave_pin_bits[channel] = 2u;
         }
-    } else if (state == I2C_SLAVE_PIN_TRANSMIT) {
+    } else if (pin_state == I2C_SLAVE_PIN_TRANSMIT) {
         cpu->io.i2c_slave_pin_bits[channel]++;
         if (cpu->io.i2c_slave_pin_bits[channel] == 8u) {
             cpu->io.i2c_slave_pin_state[channel] = I2C_SLAVE_PIN_MASTER_ACKNOWLEDGE;
             cpu->io.i2c_slave_pin_bits[channel] = 0u;
         }
-    } else if (state == I2C_SLAVE_PIN_MASTER_ACKNOWLEDGE &&
+    } else if (pin_state == I2C_SLAVE_PIN_MASTER_ACKNOWLEDGE &&
                cpu->io.i2c_slave_pin_bits[channel] == 1u) {
-        cpu->io.i2c_slave_pin_shift[channel] = data_high ? 0u : 1u;
+        cpu->io.i2c_slave_pin_shift[channel] = input_data_high ? 0u : 1u;
         cpu->io.i2c_slave_pin_bits[channel] = 2u;
     }
 }
 
 static void slave_pin_falling(Dspic33* cpu, uint8_t channel) {
-    uint8_t bit = (uint8_t)(1u << channel);
-    uint8_t state = cpu->io.i2c_slave_pin_state[channel];
-    if (state == I2C_SLAVE_PIN_RECEIVED) {
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+    uint8_t pin_state = cpu->io.i2c_slave_pin_state[channel];
+
+    if (pin_state == I2C_SLAVE_PIN_RECEIVED) {
         slave_pin_receive_falling(cpu, channel);
-    } else if (state == I2C_SLAVE_PIN_ACKNOWLEDGE) {
+    } else if (pin_state == I2C_SLAVE_PIN_ACKNOWLEDGE) {
         if (cpu->io.i2c_slave_pin_bits[channel] == 0u) {
             dspic33_i2c_internal_pin_set_low(
                 cpu, channel, false,
@@ -516,28 +525,30 @@ static void slave_pin_falling(Dspic33* cpu, uint8_t channel) {
             dspic33_i2c_internal_pin_set_low(cpu, channel, false, false);
             cpu->io.i2c_slave_pin_state[channel] = cpu->io.i2c_slave_pin_next[channel];
             cpu->io.i2c_slave_pin_bits[channel] = 0u;
-            if ((cpu->io.i2c_slave_pin_stretch & bit) != 0u) {
-                uint16_t base = dspic33_i2c_bases[channel];
-                uint16_t control = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(base + I2C_CON));
-                cpu->io.i2c_slave_pin_stretch &= (uint8_t)~bit;
-                dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(base + I2C_CON),
-                                                    (uint16_t)(control & ~I2C_SCLREL));
+            if ((cpu->io.i2c_slave_pin_stretch & channel_mask) != 0u) {
+                uint16_t register_base = dspic33_i2c_bases[channel];
+                uint16_t control_word =
+                    dspic33_i2c_internal_raw_word(cpu, (uint16_t)(register_base + I2C_CON));
+                cpu->io.i2c_slave_pin_stretch &= (uint8_t)~channel_mask;
+                dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(register_base + I2C_CON),
+                                                    (uint16_t)(control_word & ~I2C_SCLREL));
                 dspic33_i2c_internal_pin_set_low(cpu, channel, true, true);
             }
-            if ((cpu->io.i2c_slave_pin_interrupt & bit) != 0u) {
-                cpu->io.i2c_slave_pin_interrupt &= (uint8_t)~bit;
+            if ((cpu->io.i2c_slave_pin_interrupt & channel_mask) != 0u) {
+                cpu->io.i2c_slave_pin_interrupt &= (uint8_t)~channel_mask;
                 dspic33_i2c_internal_raise_slave(cpu, channel);
             }
             slave_pin_prepare_transmit(cpu, channel);
         }
-    } else if (state == I2C_SLAVE_PIN_TRANSMIT) {
+    } else if (pin_state == I2C_SLAVE_PIN_TRANSMIT) {
         slave_pin_prepare_transmit(cpu, channel);
-    } else if (state == I2C_SLAVE_PIN_MASTER_ACKNOWLEDGE) {
+    } else if (pin_state == I2C_SLAVE_PIN_MASTER_ACKNOWLEDGE) {
         if (cpu->io.i2c_slave_pin_bits[channel] == 0u) {
-            uint16_t base = dspic33_i2c_bases[channel];
-            uint16_t status = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(base + I2C_STAT));
-            dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(base + I2C_STAT),
-                                                (uint16_t)(status & ~I2C_TBF));
+            uint16_t register_base = dspic33_i2c_bases[channel];
+            uint16_t status_word =
+                dspic33_i2c_internal_raw_word(cpu, (uint16_t)(register_base + I2C_STAT));
+            dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(register_base + I2C_STAT),
+                                                (uint16_t)(status_word & ~I2C_TBF));
             dspic33_i2c_internal_pin_set_low(cpu, channel, false, false);
             cpu->io.i2c_slave_pin_bits[channel] = 1u;
         } else if (cpu->io.i2c_slave_pin_bits[channel] == 2u) {
