@@ -336,98 +336,108 @@ void dspic33_device_internal_pmp_slave_read_event(Dspic33* cpu, uint8_t address)
     pmp_slave_interrupt(cpu, buffer_index);
 }
 
-static void pmp_read_slave_buffer(Dspic33* cpu, uint16_t address) {
-    uint16_t status;
-    uint16_t full;
-    uint8_t first;
-    uint8_t width;
-    if (!pmp_slave_configured(cpu) || address < PMP_DATA || address > PMP_INPUT_2 + 1u) {
+static void pmp_read_slave_buffer(Dspic33* cpu, uint16_t register_address) {
+    uint16_t status_word;
+    uint16_t full_mask;
+    uint8_t first_byte;
+    uint8_t access_width;
+
+    if (!pmp_slave_configured(cpu) || register_address < PMP_DATA ||
+        register_address > PMP_INPUT_2 + 1u) {
         return;
     }
-    first = (uint8_t)(address - PMP_DATA);
-    width = 1u;
+    first_byte = (uint8_t)(register_address - PMP_DATA);
+    access_width = 1u;
     if (cpu->io.cpu_read_valid && cpu->io.cpu_read_width == 2u &&
         cpu->io.cpu_read_address >= PMP_DATA && cpu->io.cpu_read_address <= PMP_INPUT_2) {
-        first = (uint8_t)(cpu->io.cpu_read_address - PMP_DATA);
-        width = 2u;
+        first_byte = (uint8_t)(cpu->io.cpu_read_address - PMP_DATA);
+        access_width = 2u;
     }
-    status = dspic33_device_internal_raw_word(cpu, PMP_STATUS);
-    full =
-        pmp_buffered_slave(cpu) ? (uint16_t)(((1u << width) - 1u) << (8u + first)) : PMP_INPUT_FULL;
-    if (pmp_buffered_slave(cpu) || first == 0u) {
-        dspic33_device_internal_raw_write_word(cpu, PMP_STATUS, (uint16_t)(status & ~full));
+    status_word = dspic33_device_internal_raw_word(cpu, PMP_STATUS);
+    full_mask = pmp_buffered_slave(cpu)
+                    ? (uint16_t)(((1u << access_width) - 1u) << (8u + first_byte))
+                    : PMP_INPUT_FULL;
+    if (pmp_buffered_slave(cpu) || first_byte == 0u) {
+        dspic33_device_internal_raw_write_word(cpu, PMP_STATUS,
+                                               (uint16_t)(status_word & ~full_mask));
         pmp_refresh_slave_status(cpu);
     }
 }
 
-static void pmp_write_slave_buffer(Dspic33* cpu, uint16_t address) {
-    uint16_t status;
-    uint16_t empty;
-    uint8_t first;
-    uint8_t width;
+static void pmp_write_slave_buffer(Dspic33* cpu, uint16_t register_address) {
+    uint16_t status_word;
+    uint16_t empty_mask;
+    uint8_t first_byte;
+    uint8_t access_width;
+
     if (!pmp_slave_configured(cpu)) {
         return;
     }
-    first = (uint8_t)(address - PMP_ADDRESS);
-    width = 1u;
+    first_byte = (uint8_t)(register_address - PMP_ADDRESS);
+    access_width = 1u;
     if (cpu->io.cpu_write_valid && cpu->io.cpu_write_width == 2u &&
         cpu->io.cpu_write_address >= PMP_ADDRESS && cpu->io.cpu_write_address <= PMP_OUTPUT_2) {
-        first = (uint8_t)(cpu->io.cpu_write_address - PMP_ADDRESS);
-        width = 2u;
+        first_byte = (uint8_t)(cpu->io.cpu_write_address - PMP_ADDRESS);
+        access_width = 2u;
     }
-    status = dspic33_device_internal_raw_word(cpu, PMP_STATUS);
-    empty = pmp_buffered_slave(cpu) ? (uint16_t)(((1u << width) - 1u) << first) : PMP_OUTPUT_EMPTY;
-    if (pmp_buffered_slave(cpu) || first == 0u) {
-        dspic33_device_internal_raw_write_word(cpu, PMP_STATUS, (uint16_t)(status & ~empty));
+    status_word = dspic33_device_internal_raw_word(cpu, PMP_STATUS);
+    empty_mask = pmp_buffered_slave(cpu) ? (uint16_t)(((1u << access_width) - 1u) << first_byte)
+                                         : PMP_OUTPUT_EMPTY;
+    if (pmp_buffered_slave(cpu) || first_byte == 0u) {
+        dspic33_device_internal_raw_write_word(cpu, PMP_STATUS,
+                                               (uint16_t)(status_word & ~empty_mask));
         pmp_refresh_slave_status(cpu);
     }
 }
 
-void dspic33_device_internal_run_pmp_pmd(Dspic33* cpu, uint32_t value) {
-    uint16_t generation = (uint16_t)(value >> 1u);
-    if (generation != cpu->io.pmp.pmd_generation) {
+void dspic33_device_internal_run_pmp_pmd(Dspic33* cpu, uint32_t event_value) {
+    uint16_t event_generation = (uint16_t)(event_value >> 1u);
+
+    if (event_generation != cpu->io.pmp.pmd_generation) {
         return;
     }
-    cpu->io.pmp.pmd_disabled = (value & 1u) != 0u;
+    cpu->io.pmp.pmd_disabled = (event_value & 1u) != 0u;
     dspic33_device_power_state_changed(cpu);
 }
 
-void dspic33_device_internal_update_pmp_pmd(Dspic33* cpu, uint16_t previous) {
-    bool disabled = (dspic33_device_internal_raw_word(cpu, PMP_PMD_ADDRESS) & PMP_PMD) != 0u;
-    if (((previous & PMP_PMD) != 0u) == disabled) {
+void dspic33_device_internal_update_pmp_pmd(Dspic33* cpu, uint16_t previous_value) {
+    bool pmd_is_disabled = (dspic33_device_internal_raw_word(cpu, PMP_PMD_ADDRESS) & PMP_PMD) != 0u;
+
+    if (((previous_value & PMP_PMD) != 0u) == pmd_is_disabled) {
         return;
     }
     cpu->io.pmp.pmd_generation++;
     if (!dspic33_schedule(cpu, DSPIC33_EVENT_PMP, PMP_EVENT_PMD,
-                          ((uint32_t)cpu->io.pmp.pmd_generation << 1u) | (disabled ? 1u : 0u),
+                          ((uint32_t)cpu->io.pmp.pmd_generation << 1u) |
+                              (pmd_is_disabled ? 1u : 0u),
                           dspic33_device_instruction_cycles(cpu, 1u))) {
-        dspic33_device_internal_raw_write_word(cpu, PMP_PMD_ADDRESS, previous);
+        dspic33_device_internal_raw_write_word(cpu, PMP_PMD_ADDRESS, previous_value);
         cpu->io.pmp.pmd_generation++;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
 }
 
-static void pmp_start_transfer(Dspic33* cpu, bool reading) {
-    uint64_t delay;
+static void pmp_start_transfer(Dspic33* cpu, bool is_read) {
     cpu->io.pmp.generation++;
     cpu->io.pmp.address = dspic33_device_internal_raw_word(cpu, PMP_ADDRESS);
     cpu->io.pmp.control = dspic33_device_internal_raw_word(cpu, PMP_CONTROL);
     cpu->io.pmp.mode = (uint16_t)(dspic33_device_internal_raw_word(cpu, PMP_MODE) & ~PMP_BUSY);
     cpu->io.pmp.width = pmp_transfer_width(cpu->io.pmp.mode);
-    cpu->io.pmp.value = reading ? 0u
+    cpu->io.pmp.value = is_read ? 0u
                                 : (uint16_t)(dspic33_device_internal_raw_word(cpu, PMP_DATA) &
                                              (cpu->io.pmp.width == 2u ? 0xffffu : 0x00ffu));
-    cpu->io.pmp.reading = reading;
+    cpu->io.pmp.reading = is_read;
     cpu->io.pmp.active = true;
-    delay = pmp_transfer_cycles(cpu->io.pmp.control, cpu->io.pmp.mode);
-    if (delay > 1u) {
+    uint64_t transfer_delay = pmp_transfer_cycles(cpu->io.pmp.control, cpu->io.pmp.mode);
+
+    if (transfer_delay > 1u) {
         dspic33_device_internal_raw_write_word(
             cpu, PMP_MODE, (uint16_t)(dspic33_device_internal_raw_word(cpu, PMP_MODE) | PMP_BUSY));
     }
     if (!dspic33_schedule(cpu, DSPIC33_EVENT_PMP, PMP_EVENT_COMPLETE, cpu->io.pmp.generation,
-                          delay) ||
-        (delay > 1u && !dspic33_schedule(cpu, DSPIC33_EVENT_PMP, PMP_EVENT_CLEAR_BUSY,
-                                         cpu->io.pmp.generation, delay - 1u))) {
+                          transfer_delay) ||
+        (transfer_delay > 1u && !dspic33_schedule(cpu, DSPIC33_EVENT_PMP, PMP_EVENT_CLEAR_BUSY,
+                                                  cpu->io.pmp.generation, transfer_delay - 1u))) {
         pmp_abort(cpu);
     }
 }
