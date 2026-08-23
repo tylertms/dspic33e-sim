@@ -173,44 +173,51 @@ static bool can_devicenet_match(const Dspic33CanFrame* frame, uint32_t expected_
     return (payload_value >> (24u - requested_bits)) == (expected_value >> (18u - requested_bits));
 }
 
-static bool can_filter_matches(const Dspic33* cpu, uint8_t channel, uint8_t filter,
+static bool can_filter_matches(const Dspic33* cpu, uint8_t channel_index, uint8_t filter_index,
                                const Dspic33CanFrame* frame) {
-    uint16_t filter_sid =
-        dspic33_device_internal_can_filter_word(cpu, channel, (uint16_t)(0x40u + filter * 4u));
-    uint16_t filter_eid =
-        dspic33_device_internal_can_filter_word(cpu, channel, (uint16_t)(0x42u + filter * 4u));
-    uint16_t selection = dspic33_device_internal_raw_word(
-        cpu, (uint16_t)(dspic33_device_can_bases[channel] + (filter < 8u ? 0x18u : 0x1au)));
-    uint8_t mask_index = (uint8_t)((selection >> ((filter & 7u) * 2u)) & 3u);
-    uint16_t mask_sid;
-    uint16_t mask_eid;
-    uint32_t sid = can_identifier_sid(frame);
-    uint32_t eid = can_identifier_eid(frame);
-    uint8_t devicenet = (uint8_t)(dspic33_device_internal_raw_word(
-                                      cpu, (uint16_t)(dspic33_device_can_bases[channel] + 2u)) &
-                                  0x001fu);
+    const uint16_t filter_standard_id = dspic33_device_internal_can_filter_word(
+        cpu, channel_index, (uint16_t)(0x40u + filter_index * 4u));
+    const uint16_t filter_extended_id = dspic33_device_internal_can_filter_word(
+        cpu, channel_index, (uint16_t)(0x42u + filter_index * 4u));
+    const uint16_t mask_selection =
+        dspic33_device_internal_raw_word(cpu, (uint16_t)(dspic33_device_can_bases[channel_index] +
+                                                         (filter_index < 8u ? 0x18u : 0x1au)));
+    const uint8_t mask_index = (uint8_t)((mask_selection >> ((filter_index & 7u) * 2u)) & 3u);
+    uint16_t mask_standard_id;
+    uint16_t mask_extended_id;
+    const uint32_t standard_id = can_identifier_sid(frame);
+    const uint32_t extended_id = can_identifier_eid(frame);
+    const uint8_t devicenet_bits =
+        (uint8_t)(dspic33_device_internal_raw_word(
+                      cpu, (uint16_t)(dspic33_device_can_bases[channel_index] + 2u)) &
+                  0x001fu);
+
     if (mask_index >= 3u) {
         return false;
     }
-    mask_sid =
-        dspic33_device_internal_can_filter_word(cpu, channel, (uint16_t)(0x30u + mask_index * 4u));
-    mask_eid =
-        dspic33_device_internal_can_filter_word(cpu, channel, (uint16_t)(0x32u + mask_index * 4u));
-    if ((mask_sid & 0x0008u) != 0u && frame->extended != ((filter_sid & 0x0008u) != 0u)) {
+    mask_standard_id = dspic33_device_internal_can_filter_word(cpu, channel_index,
+                                                               (uint16_t)(0x30u + mask_index * 4u));
+    mask_extended_id = dspic33_device_internal_can_filter_word(cpu, channel_index,
+                                                               (uint16_t)(0x32u + mask_index * 4u));
+    if ((mask_standard_id & 0x0008u) != 0u &&
+        frame->extended != ((filter_standard_id & 0x0008u) != 0u)) {
         return false;
     }
-    if ((((sid << 5u) ^ filter_sid) & mask_sid & 0xffe0u) != 0u) {
+    if ((((standard_id << 5u) ^ filter_standard_id) & mask_standard_id & 0xffe0u) != 0u) {
         return false;
     }
-    if (!frame->extended && devicenet != 0u && (mask_sid & 0x0008u) != 0u &&
-        (filter_sid & 0x0008u) == 0u) {
-        uint32_t expected = ((uint32_t)(filter_sid & 3u) << 16u) | filter_eid;
-        return can_devicenet_match(frame, expected, devicenet);
+    if (!frame->extended && devicenet_bits != 0u && (mask_standard_id & 0x0008u) != 0u &&
+        (filter_standard_id & 0x0008u) == 0u) {
+        const uint32_t expected_value =
+            ((uint32_t)(filter_standard_id & 3u) << 16u) | filter_extended_id;
+        return can_devicenet_match(frame, expected_value, devicenet_bits);
     }
     if (frame->extended) {
-        uint32_t expected = ((uint32_t)(filter_sid & 3u) << 16u) | filter_eid;
-        uint32_t mask = ((uint32_t)(mask_sid & 3u) << 16u) | mask_eid;
-        return ((eid ^ expected) & mask) == 0u;
+        const uint32_t expected_value =
+            ((uint32_t)(filter_standard_id & 3u) << 16u) | filter_extended_id;
+        const uint32_t identifier_mask =
+            ((uint32_t)(mask_standard_id & 3u) << 16u) | mask_extended_id;
+        return ((extended_id ^ expected_value) & identifier_mask) == 0u;
     }
     return true;
 }
