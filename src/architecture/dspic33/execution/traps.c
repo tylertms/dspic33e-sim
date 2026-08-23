@@ -311,14 +311,14 @@ bool dspic33_internal_execute(Dspic33* cpu, uint32_t opcode) {
     }
     if ((opcode & 0xffbff0u) == 0xfd8000u) {
         uint8_t reg = (uint8_t)(opcode & 0x0fu);
-        uint16_t value = cpu->w[reg];
+        uint16_t register_value = cpu->w[reg];
         if ((opcode & 0x004000u) != 0u) {
-            uint8_t low = (uint8_t)value;
-            dspic33_internal_write_working_register_byte(cpu, reg, false,
-                                                         (uint8_t)((low << 4u) | (low >> 4u)));
+            uint8_t low_byte = (uint8_t)register_value;
+            dspic33_internal_write_working_register_byte(
+                cpu, reg, false, (uint8_t)((low_byte << 4u) | (low_byte >> 4u)));
         } else {
-            dspic33_internal_write_working_register(cpu, reg,
-                                                    (uint16_t)((value << 8u) | (value >> 8u)));
+            dspic33_internal_write_working_register(
+                cpu, reg, (uint16_t)((register_value << 8u) | (register_value >> 8u)));
         }
         return true;
     }
@@ -472,14 +472,14 @@ bool dspic33_internal_execute(Dspic33* cpu, uint32_t opcode) {
     }
     if ((opcode & 0xfffff0u) == 0x088000u || (opcode & 0xff8000u) == 0x080000u) {
         uint32_t extension;
-        uint16_t count;
+        uint16_t do_count;
         int16_t displacement;
         uint8_t depth;
         if (!dspic33_device_program_range_implemented(cpu, cpu->pc, 2u)) {
             return false;
         }
-        count = (opcode & 0xfffff0u) == 0x088000u ? cpu->w[opcode & 0x0fu]
-                                                  : (uint16_t)(opcode & 0x7fffu);
+        do_count = (opcode & 0xfffff0u) == 0x088000u ? cpu->w[opcode & 0x0fu]
+                                                     : (uint16_t)(opcode & 0x7fffu);
         extension = dspic33_read_program_word(cpu, cpu->pc);
         if ((extension & 0xff0000u) != 0u) {
             return false;
@@ -491,7 +491,7 @@ bool dspic33_internal_execute(Dspic33* cpu, uint32_t opcode) {
             dspic33_internal_schedule_soft_trap(cpu, 6u, 0x000010u, 9u, 1u);
             return true;
         }
-        if (count == 0u && cpu->do_depth != 0u &&
+        if (do_count == 0u && cpu->do_depth != 0u &&
             !dspic33_internal_nested_zero_do_workaround_present(cpu, cpu->pc)) {
             cpu->stop_reason = DSPIC33_SILICON_RESULT_UNDEFINED;
             return true;
@@ -500,11 +500,11 @@ bool dspic33_internal_execute(Dspic33* cpu, uint32_t opcode) {
         cpu->do_start[depth] = cpu->pc;
         cpu->do_end[depth] =
             dspic33_internal_program_address_add(cpu->pc, (int32_t)displacement * 2);
-        cpu->do_count[depth] = count;
+        cpu->do_count[depth] = do_count;
         cpu->do_terminate[depth] = 0u;
         cpu->dostart = cpu->do_start[depth];
         cpu->doend = cpu->do_end[depth];
-        cpu->dcount = count;
+        cpu->dcount = do_count;
         cpu->corcon = (uint16_t)((cpu->corcon & ~0x0700u) | ((uint16_t)cpu->do_depth << 8u));
         cpu->sr |= 0x0200u;
         if (dspic33_internal_program_target_requires_address_error(cpu, cpu->do_start[depth])) {
@@ -528,31 +528,31 @@ bool dspic33_internal_execute(Dspic33* cpu, uint32_t opcode) {
         return true;
     }
     if ((opcode & 0xfff000u) == 0xfec000u) {
-        uint16_t value = (uint16_t)(opcode & 0x03ffu);
+        uint16_t page_value = (uint16_t)(opcode & 0x03ffu);
         switch ((opcode >> 10u) & 3u) {
         case 0u:
-            cpu->dsrpag = value;
+            cpu->dsrpag = page_value;
             break;
         case 1u:
-            cpu->dswpag = value & 0x01ffu;
+            cpu->dswpag = page_value & 0x01ffu;
             break;
         case 2u:
-            cpu->tblpag = value & 0x00ffu;
+            cpu->tblpag = page_value & 0x00ffu;
             break;
         }
         return true;
     }
     if ((opcode & 0xfff3f0u) == 0xfed000u) {
-        uint16_t value = cpu->w[opcode & 0x0fu];
+        uint16_t page_value = cpu->w[opcode & 0x0fu];
         switch ((opcode >> 10u) & 3u) {
         case 0u:
-            cpu->dsrpag = value & 0x03ffu;
+            cpu->dsrpag = page_value & 0x03ffu;
             break;
         case 1u:
-            cpu->dswpag = value & 0x01ffu;
+            cpu->dswpag = page_value & 0x01ffu;
             break;
         case 2u:
-            cpu->tblpag = value & 0x00ffu;
+            cpu->tblpag = page_value & 0x00ffu;
             break;
         }
         return true;
@@ -632,20 +632,20 @@ bool dspic33_internal_execute(Dspic33* cpu, uint32_t opcode) {
     if ((opcode & 0xff8000u) == 0xbf8000u) {
         uint16_t address = (uint16_t)(opcode & 0x1fffu);
         bool byte_mode = (opcode & 0x004000u) != 0u;
-        uint16_t value = byte_mode ? dspic33_internal_read_data_byte(cpu, address)
-                                   : dspic33_internal_read_file_word(cpu, address);
+        uint16_t read_value = byte_mode ? dspic33_internal_read_data_byte(cpu, address)
+                                        : dspic33_internal_read_file_word(cpu, address);
         if ((opcode & 0x002000u) == 0u) {
             if (byte_mode) {
-                dspic33_internal_write_working_register_byte(cpu, 0u, false, (uint8_t)value);
+                dspic33_internal_write_working_register_byte(cpu, 0u, false, (uint8_t)read_value);
             } else {
-                dspic33_internal_write_working_register(cpu, 0u, value);
+                dspic33_internal_write_working_register(cpu, 0u, read_value);
             }
         } else if (byte_mode) {
-            dspic33_write_byte(cpu, address, (uint8_t)value);
+            dspic33_write_byte(cpu, address, (uint8_t)read_value);
         } else {
-            dspic33_write_word(cpu, address, value);
+            dspic33_write_word(cpu, address, read_value);
         }
-        dspic33_internal_update_logic_flags(cpu, value, byte_mode);
+        dspic33_internal_update_logic_flags(cpu, read_value, byte_mode);
         return true;
     }
     if ((opcode & 0xff0000u) == 0xfb0000u) {
@@ -1094,8 +1094,8 @@ void dspic33_internal_reset_processor(Dspic33* cpu, uint32_t entry, bool clear_m
     memset(&cpu->nvm, 0, sizeof(cpu->nvm));
     memset(&cpu->oscillator, 0, sizeof(cpu->oscillator));
     memset(&cpu->watchdog, 0, sizeof(cpu->watchdog));
-    for (size_t index = 0u; index < DSPIC33_WRITE_LATCH_WORDS; index++) {
-        cpu->write_latches[index] = 0x00ffffffu;
+    for (size_t latch_index = 0u; latch_index < DSPIC33_WRITE_LATCH_WORDS; latch_index++) {
+        cpu->write_latches[latch_index] = 0x00ffffffu;
     }
     cpu->power_state = DSPIC33_POWER_ACTIVE;
     cpu->stop_reason = DSPIC33_RUNNING;
