@@ -149,26 +149,28 @@ static uint32_t can_identifier_eid(const Dspic33CanFrame* frame) {
     return frame->identifier & 0x3ffffu;
 }
 
-static bool can_devicenet_match(const Dspic33CanFrame* frame, uint32_t expected, uint8_t bits) {
-    uint32_t data = 0u;
-    uint8_t available = (uint8_t)(frame->length * 8u);
-    if (bits > 18u) {
-        bits = 18u;
+static bool can_devicenet_match(const Dspic33CanFrame* frame, uint32_t expected_value,
+                                uint8_t requested_bits) {
+    uint32_t payload_value = 0u;
+    const uint8_t available_bits = (uint8_t)(frame->length * 8u);
+
+    if (requested_bits > 18u) {
+        requested_bits = 18u;
     }
-    if (bits > available) {
-        bits = available;
+    if (requested_bits > available_bits) {
+        requested_bits = available_bits;
     }
-    if (bits == 0u) {
+    if (requested_bits == 0u) {
         return true;
     }
-    data = (uint32_t)frame->data[0] << 16u;
+    payload_value = (uint32_t)frame->data[0] << 16u;
     if (frame->length > 1u) {
-        data |= (uint32_t)frame->data[1] << 8u;
+        payload_value |= (uint32_t)frame->data[1] << 8u;
     }
     if (frame->length > 2u) {
-        data |= frame->data[2];
+        payload_value |= frame->data[2];
     }
-    return (data >> (24u - bits)) == (expected >> (18u - bits));
+    return (payload_value >> (24u - requested_bits)) == (expected_value >> (18u - requested_bits));
 }
 
 static bool can_filter_matches(const Dspic33* cpu, uint8_t channel, uint8_t filter,
