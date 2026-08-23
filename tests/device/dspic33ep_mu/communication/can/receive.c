@@ -481,54 +481,68 @@ void dspic33_can_test_transmit_abort_timing_cases(TestState* state, Dspic33* cpu
 }
 
 void dspic33_can_test_transmit_pps_cases(TestState* state, Dspic33* cpu) {
-    bool high;
+    bool pin_level;
+
     expect(state, !dspic33_can_pin(cpu, 64u, NULL), "CAN output rejects null pin level");
-    expect(state, !dspic33_can_pin(cpu, 63u, &high), "CAN output rejects non-remappable pin");
-    for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-        uint16_t base = bases[channel];
-        uint32_t memory = (uint32_t)(0xbe00u + channel * 0x100u);
-        uint8_t function = (uint8_t)(14u + channel);
+    expect(state, !dspic33_can_pin(cpu, 63u, &pin_level), "CAN output rejects non-remappable pin");
+
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
+        uint16_t can_base = bases[channel_index];
+        uint32_t transmit_memory = (uint32_t)(0xbe00u + channel_index * 0x100u);
+        uint8_t pps_output_function = (uint8_t)(14u + channel_index);
+
         dspic33_reset(cpu, 0u);
-        dspic33_write_word(cpu, 0x0680u, function);
-        expect(state, dspic33_can_pin(cpu, 64u, &high) && high,
+        dspic33_write_word(cpu, 0x0680u, pps_output_function);
+        expect(state, dspic33_can_pin(cpu, 64u, &pin_level) && pin_level,
                "mapped CAN transmit pin is recessive while idle");
-        dspic33_can_test_configure_transmit(cpu, channel, memory);
-        for (uint8_t word = 0u; word < 8u; word++) {
-            dspic33_can_test_write_memory_word(cpu, memory + word * 2u, 0u);
+        dspic33_can_test_configure_transmit(cpu, channel_index, transmit_memory);
+        for (uint8_t word_index = 0u; word_index < 8u; word_index++) {
+            dspic33_can_test_write_memory_word(cpu, transmit_memory + word_index * 2u, 0u);
         }
-        dspic33_can_test_select_window(cpu, channel, false);
-        dspic33_can_test_set_mode(cpu, channel, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x008bu);
-        expect(state, dspic33_device_advance(cpu, 8u) && dspic33_can_pin(cpu, 64u, &high) && !high,
+        dspic33_can_test_select_window(cpu, channel_index, false);
+        dspic33_can_test_set_mode(cpu, channel_index, 0u);
+        dspic33_write_word(cpu, (uint16_t)(can_base + 0x30u), 0x008bu);
+        expect(state,
+               dspic33_device_advance(cpu, 8u) && dspic33_can_pin(cpu, 64u, &pin_level) &&
+                   !pin_level,
                "CAN transmit pin drives dominant start of frame");
-        expect(state, dspic33_device_advance(cpu, 20u) && dspic33_can_pin(cpu, 64u, &high) && high,
+        expect(state,
+               dspic33_device_advance(cpu, 20u) && dspic33_can_pin(cpu, 64u, &pin_level) &&
+                   pin_level,
                "CAN transmit pin inserts the sixth complementary stuffed bit");
-        expect(state, dspic33_device_advance(cpu, 4u) && dspic33_can_pin(cpu, 64u, &high) && !high,
+        expect(state,
+               dspic33_device_advance(cpu, 4u) && dspic33_can_pin(cpu, 64u, &pin_level) &&
+                   !pin_level,
                "CAN transmit pin resumes frame data after stuffing");
-        dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x0083u);
-        expect(state, dspic33_can_pin(cpu, 64u, &high) && high,
+        dspic33_write_word(cpu, (uint16_t)(can_base + 0x30u), 0x0083u);
+        expect(state, dspic33_can_pin(cpu, 64u, &pin_level) && pin_level,
                "aborted CAN transmit pin returns recessive");
-        dspic33_write_word(cpu, 0x0680u, (uint16_t)(function << 8u));
-        expect(state, !dspic33_can_pin(cpu, 64u, &high) && dspic33_can_pin(cpu, 65u, &high) && high,
+        dspic33_write_word(cpu, 0x0680u, (uint16_t)(pps_output_function << 8u));
+        expect(state,
+               !dspic33_can_pin(cpu, 64u, &pin_level) && dspic33_can_pin(cpu, 65u, &pin_level) &&
+                   pin_level,
                "CAN transmit output follows PPS remapping");
-        dspic33_write_word(cpu, 0x0760u,
-                           (uint16_t)(dspic33_read_word(cpu, 0x0760u) | (uint16_t)(2u << channel)));
-        expect(state, dspic33_device_advance(cpu, 1u) && !dspic33_can_pin(cpu, 65u, &high),
+        dspic33_write_word(
+            cpu, 0x0760u,
+            (uint16_t)(dspic33_read_word(cpu, 0x0760u) | (uint16_t)(2u << channel_index)));
+        expect(state, dspic33_device_advance(cpu, 1u) && !dspic33_can_pin(cpu, 65u, &pin_level),
                "PMD releases the CAN transmit PPS output");
 
         dspic33_reset(cpu, 0u);
-        dspic33_write_word(cpu, 0x0680u, function);
-        dspic33_can_test_configure_transmit(cpu, channel, memory);
-        for (uint8_t word = 0u; word < 8u; word++) {
-            dspic33_can_test_write_memory_word(cpu, memory + word * 2u, 0u);
+        dspic33_write_word(cpu, 0x0680u, pps_output_function);
+        dspic33_can_test_configure_transmit(cpu, channel_index, transmit_memory);
+        for (uint8_t word_index = 0u; word_index < 8u; word_index++) {
+            dspic33_can_test_write_memory_word(cpu, transmit_memory + word_index * 2u, 0u);
         }
-        dspic33_can_test_select_window(cpu, channel, false);
-        dspic33_can_test_set_mode(cpu, channel, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x008bu);
-        expect(state, dspic33_device_advance(cpu, 8u) && dspic33_can_pin(cpu, 64u, &high) && !high,
+        dspic33_can_test_select_window(cpu, channel_index, false);
+        dspic33_can_test_set_mode(cpu, channel_index, 0u);
+        dspic33_write_word(cpu, (uint16_t)(can_base + 0x30u), 0x008bu);
+        expect(state,
+               dspic33_device_advance(cpu, 8u) && dspic33_can_pin(cpu, 64u, &pin_level) &&
+                   !pin_level,
                "CAN Sleep output test reaches dominant bus phase");
         cpu->power_state = DSPIC33_POWER_SLEEP;
-        expect(state, dspic33_can_pin(cpu, 64u, &high) && high,
+        expect(state, dspic33_can_pin(cpu, 64u, &pin_level) && pin_level,
                "Sleep forces the CAN transmit pin recessive");
     }
 }
@@ -536,26 +550,27 @@ void dspic33_can_test_transmit_pps_cases(TestState* state, Dspic33* cpu) {
 bool dspic33_can_test_bridge_can_pins(Dspic33* cpu, uint8_t transmit_channel, uint8_t pin,
                                       uint8_t acknowledge_pin, uint64_t bit_cycles, int corrupt_bit,
                                       bool* acknowledge_observed) {
-    uint16_t bit = 0u;
-    while ((cpu->io.can_tx_on_bus & (uint8_t)(1u << transmit_channel)) != 0u && bit < 160u) {
-        bool high;
+    uint16_t bit_index = 0u;
+    while ((cpu->io.can_tx_on_bus & (uint8_t)(1u << transmit_channel)) != 0u && bit_index < 160u) {
+        bool transmit_level;
         bool acknowledge_high;
+
         if (dspic33_can_pin(cpu, acknowledge_pin, &acknowledge_high) && !acknowledge_high) {
             *acknowledge_observed = true;
         }
-        if (!dspic33_can_pin(cpu, pin, &high)) {
+        if (!dspic33_can_pin(cpu, pin, &transmit_level)) {
             return false;
         }
-        if (bit == corrupt_bit) {
-            high = !high;
+        if (bit_index == corrupt_bit) {
+            transmit_level = !transmit_level;
         }
-        if (!dspic33_can_input_pin(cpu, pin, high && acknowledge_high, 0u) ||
+        if (!dspic33_can_input_pin(cpu, pin, transmit_level && acknowledge_high, 0u) ||
             !dspic33_device_advance(cpu, bit_cycles)) {
             return false;
         }
-        bit++;
+        bit_index++;
     }
-    return bit != 0u && bit < 160u && dspic33_device_advance(cpu, 32u);
+    return bit_index != 0u && bit_index < 160u && dspic33_device_advance(cpu, 32u);
 }
 
 static bool bridge_can_with_final_sample_glitch(Dspic33* cpu, uint8_t transmit_channel,
