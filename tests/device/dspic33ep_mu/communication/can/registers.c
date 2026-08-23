@@ -173,69 +173,82 @@ void dspic33_can_test_register_groups(TestState* state, Dspic33* cpu) {
     dspic33_can_test_receive_flag_write_zero_domain(state, cpu);
 }
 
-void dspic33_can_test_configure_transmit(Dspic33* cpu, uint8_t channel, uint32_t memory) {
-    configure_dma(cpu, (uint8_t)(channel * 2u + 1u), 0x2020u, transmit_requests[channel], memory,
-                  (uint16_t)(bases[channel] + 0x42u));
+void dspic33_can_test_configure_transmit(Dspic33* cpu, uint8_t channel_index,
+                                         uint32_t memory_address) {
+    configure_dma(cpu, (uint8_t)(channel_index * 2u + 1u), 0x2020u,
+                  transmit_requests[channel_index], memory_address,
+                  (uint16_t)(bases[channel_index] + 0x42u));
 }
 
 Dspic33CanFrame dspic33_can_test_frame(uint32_t identifier, bool extended, bool remote,
-                                       uint8_t length, uint8_t seed) {
-    Dspic33CanFrame result;
-    uint8_t index;
-    memset(&result, 0, sizeof(result));
-    result.identifier = identifier;
-    result.extended = extended;
-    result.remote = remote;
-    result.length = length;
-    for (index = 0u; index < length && index < sizeof(result.data); index++) {
-        result.data[index] = (uint8_t)(seed + index * 17u);
+                                       uint8_t length, uint8_t data_seed) {
+    Dspic33CanFrame frame;
+
+    memset(&frame, 0, sizeof(frame));
+    frame.identifier = identifier;
+    frame.extended = extended;
+    frame.remote = remote;
+    frame.length = length;
+    for (uint8_t byte_index = 0u; byte_index < length && byte_index < sizeof(frame.data);
+         byte_index++) {
+        frame.data[byte_index] = (uint8_t)(data_seed + byte_index * 17u);
     }
-    return result;
+    return frame;
 }
 
-void dspic33_can_test_write_transmit_frame(Dspic33* cpu, uint32_t memory,
-                                           const Dspic33CanFrame* value) {
-    uint16_t words[8] = {0};
-    uint32_t sid = value->extended ? (value->identifier >> 18u) & 0x7ffu : value->identifier;
-    uint32_t eid = value->identifier & 0x3ffffu;
-    words[0] = (uint16_t)(sid << 2u);
-    if (value->extended) {
-        words[0] |= 3u;
-        words[1] = (uint16_t)(eid >> 6u);
-        words[2] = (uint16_t)((eid & 0x3fu) << 10u);
-        if (value->remote) {
-            words[2] |= 0x0200u;
+void dspic33_can_test_write_transmit_frame(Dspic33* cpu, uint32_t memory_address,
+                                           const Dspic33CanFrame* frame) {
+    uint16_t frame_words[8] = {0};
+    const uint32_t standard_identifier =
+        frame->extended ? (frame->identifier >> 18u) & 0x7ffu : frame->identifier;
+    const uint32_t extended_identifier = frame->identifier & 0x3ffffu;
+
+    frame_words[0] = (uint16_t)(standard_identifier << 2u);
+    if (frame->extended) {
+        frame_words[0] |= 3u;
+        frame_words[1] = (uint16_t)(extended_identifier >> 6u);
+        frame_words[2] = (uint16_t)((extended_identifier & 0x3fu) << 10u);
+        if (frame->remote) {
+            frame_words[2] |= 0x0200u;
         }
-    } else if (value->remote) {
-        words[0] |= 2u;
+    } else if (frame->remote) {
+        frame_words[0] |= 2u;
     }
-    words[2] |= value->length;
-    for (uint8_t index = 0u; index < value->length; index++) {
-        words[3u + index / 2u] |= (uint16_t)value->data[index] << ((index & 1u) * 8u);
+    frame_words[2] |= frame->length;
+    for (uint8_t byte_index = 0u; byte_index < frame->length; byte_index++) {
+        frame_words[3u + byte_index / 2u] |= (uint16_t)frame->data[byte_index]
+                                             << ((byte_index & 1u) * 8u);
     }
-    for (uint8_t index = 0u; index < 8u; index++) {
-        dspic33_can_test_write_memory_word(cpu, memory + index * 2u, words[index]);
+    for (uint8_t word_index = 0u; word_index < 8u; word_index++) {
+        dspic33_can_test_write_memory_word(cpu, memory_address + word_index * 2u,
+                                           frame_words[word_index]);
     }
 }
 
-static void clear_receive_flag(Dspic33* cpu, uint8_t channel, uint8_t buffer) {
-    uint16_t address = (uint16_t)(bases[channel] + 0x20u + (buffer >= 16u ? 2u : 0u));
-    uint16_t value = dspic33_read_word(cpu, address);
-    dspic33_write_word(cpu, address, (uint16_t)(value & ~(uint16_t)(1u << (buffer & 15u))));
+static void clear_receive_flag(Dspic33* cpu, uint8_t channel_index, uint8_t buffer_index) {
+    const uint16_t status_address =
+        (uint16_t)(bases[channel_index] + 0x20u + (buffer_index >= 16u ? 2u : 0u));
+    const uint16_t status_value = dspic33_read_word(cpu, status_address);
+
+    dspic33_write_word(cpu, status_address,
+                       (uint16_t)(status_value & ~(uint16_t)(1u << (buffer_index & 15u))));
 }
 
-bool dspic33_can_test_receive_full(Dspic33* cpu, uint8_t channel, uint8_t buffer) {
-    uint16_t address = (uint16_t)(bases[channel] + 0x20u + (buffer >= 16u ? 2u : 0u));
-    return (dspic33_read_word(cpu, address) & (uint16_t)(1u << (buffer & 15u))) != 0u;
+bool dspic33_can_test_receive_full(Dspic33* cpu, uint8_t channel_index, uint8_t buffer_index) {
+    const uint16_t status_address =
+        (uint16_t)(bases[channel_index] + 0x20u + (buffer_index >= 16u ? 2u : 0u));
+
+    return (dspic33_read_word(cpu, status_address) & (uint16_t)(1u << (buffer_index & 15u))) != 0u;
 }
 
-uint16_t dspic33_can_test_memory_word(Dspic33* cpu, uint32_t address) {
-    return (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[address + 1u] << 8u));
+uint16_t dspic33_can_test_memory_word(Dspic33* cpu, uint32_t memory_address) {
+    return (uint16_t)(cpu->data[memory_address] | ((uint16_t)cpu->data[memory_address + 1u] << 8u));
 }
 
-void dspic33_can_test_write_memory_word(Dspic33* cpu, uint32_t address, uint16_t value) {
-    cpu->data[address] = (uint8_t)value;
-    cpu->data[address + 1u] = (uint8_t)(value >> 8u);
+void dspic33_can_test_write_memory_word(Dspic33* cpu, uint32_t memory_address,
+                                        uint16_t word_value) {
+    cpu->data[memory_address] = (uint8_t)word_value;
+    cpu->data[memory_address + 1u] = (uint8_t)(word_value >> 8u);
 }
 
 void dspic33_can_test_register_cases(TestState* state, Dspic33* cpu) {
