@@ -20,16 +20,18 @@ static uint8_t rtcc_bcd_encode(uint8_t decimal_value) {
 
 static bool rtcc_bcd_valid(uint8_t bcd_value, uint8_t minimum, uint8_t maximum) {
     const uint8_t decimal_value = rtcc_bcd_decode(bcd_value);
+
     return (bcd_value & 0x0fu) <= 9u && (bcd_value >> 4u) <= 9u && decimal_value >= minimum &&
            decimal_value <= maximum;
 }
 
 static uint8_t rtcc_month_days(uint8_t calendar_year, uint8_t calendar_month) {
-    static const uint8_t days[] = {31u, 28u, 31u, 30u, 31u, 30u, 31u, 31u, 30u, 31u, 30u, 31u};
+    static const uint8_t month_day_counts[] = {31u, 28u, 31u, 30u, 31u, 30u,
+                                               31u, 31u, 30u, 31u, 30u, 31u};
     if (calendar_month == 2u && calendar_year % 4u == 0u) {
         return 29u;
     }
-    return days[calendar_month - 1u];
+    return month_day_counts[calendar_month - 1u];
 }
 
 static bool rtcc_calendar_valid(const Dspic33Rtcc* rtcc) {
@@ -101,12 +103,12 @@ static void rtcc_increment_calendar(Dspic33* cpu) {
 static void rtcc_apply_calibration(Dspic33* cpu) {
     const uint16_t control_value = dspic33_device_internal_raw_word(cpu, RTCC_CONTROL);
     int16_t calibration_value = (int16_t)(control_value & 0x00ffu);
-    int32_t prescaler;
+    int32_t adjusted_prescaler;
     if (calibration_value >= 0x80) {
         calibration_value -= 0x100;
     }
-    prescaler = (int32_t)cpu->io.rtcc.prescaler + calibration_value * 4;
-    cpu->io.rtcc.prescaler = (uint16_t)prescaler;
+    adjusted_prescaler = (int32_t)cpu->io.rtcc.prescaler + calibration_value * 4;
+    cpu->io.rtcc.prescaler = (uint16_t)adjusted_prescaler;
     cpu->io.rtcc.calibration_pending = false;
 }
 
@@ -116,7 +118,7 @@ static void rtcc_set_status(Dspic33* cpu, uint16_t status) {
         cpu, RTCC_CONTROL, (uint16_t)((control_value & ~(RTCC_SYNC | RTCC_HALF_SECOND)) | status));
 }
 
-static bool rtcc_alarm_matches(const Dspic33* cpu, bool full_second) {
+static bool rtcc_alarm_matches(const Dspic33* cpu, bool is_full_second) {
     const uint16_t alarm_control = dspic33_device_internal_raw_word(cpu, RTCC_ALARM_CONTROL);
     const uint8_t match_mask = (uint8_t)((alarm_control & RTCC_ALARM_MASK) >> 10u);
     const Dspic33Rtcc* rtcc = &cpu->io.rtcc;
@@ -138,8 +140,8 @@ static bool rtcc_alarm_matches(const Dspic33* cpu, bool full_second) {
     if (match_mask == 0u) {
         return true;
     }
-    if (!full_second || match_mask == 1u) {
-        return full_second;
+    if (!is_full_second || match_mask == 1u) {
+        return is_full_second;
     }
     if ((calendar_second & 0x0fu) != (alarm_second & 0x0fu)) {
         return false;
@@ -204,8 +206,8 @@ static bool rtcc_operating(const Dspic33* cpu) {
 }
 
 static void rtcc_clock_edge(Dspic33* cpu) {
-    uint16_t status = 0u;
-    bool full_second = false;
+    uint16_t status_bits = 0u;
+    bool is_full_second = false;
 
     if (!rtcc_operating(cpu)) {
         return;
@@ -213,12 +215,12 @@ static void rtcc_clock_edge(Dspic33* cpu) {
 
     cpu->io.rtcc.prescaler++;
     if (cpu->io.rtcc.prescaler == RTCC_HALF_SECOND_EDGE) {
-        status |= RTCC_HALF_SECOND;
+        status_bits |= RTCC_HALF_SECOND;
     } else if (cpu->io.rtcc.prescaler >= RTCC_PRESCALER_EDGES) {
         const uint8_t previous_second = (uint8_t)cpu->io.rtcc.calendar[0];
 
         cpu->io.rtcc.prescaler = 0u;
-        full_second = true;
+        is_full_second = true;
         rtcc_increment_calendar(cpu);
         cpu->io.rtcc.calibration_pending =
             previous_second == 0x59u && (uint8_t)cpu->io.rtcc.calendar[0] == 0u;
@@ -226,14 +228,14 @@ static void rtcc_clock_edge(Dspic33* cpu) {
                cpu->io.rtcc.calibration_pending) {
         rtcc_apply_calibration(cpu);
     } else {
-        status = dspic33_device_internal_raw_word(cpu, RTCC_CONTROL) & RTCC_HALF_SECOND;
+        status_bits = dspic33_device_internal_raw_word(cpu, RTCC_CONTROL) & RTCC_HALF_SECOND;
     }
     if (cpu->io.rtcc.prescaler >= RTCC_PRESCALER_EDGES - RTCC_SYNC_EDGES) {
-        status |= RTCC_SYNC;
+        status_bits |= RTCC_SYNC;
     }
-    rtcc_set_status(cpu, status);
-    if ((cpu->io.rtcc.prescaler == RTCC_HALF_SECOND_EDGE || full_second) &&
-        rtcc_alarm_matches(cpu, full_second)) {
+    rtcc_set_status(cpu, status_bits);
+    if ((cpu->io.rtcc.prescaler == RTCC_HALF_SECOND_EDGE || is_full_second) &&
+        rtcc_alarm_matches(cpu, is_full_second)) {
         rtcc_alarm_event(cpu);
     }
 }
@@ -268,21 +270,22 @@ static bool rtcc_read_complete(const Dspic33* cpu, uint16_t address) {
            address == cpu->io.cpu_read_address + 1u;
 }
 
-uint8_t dspic33_device_internal_rtcc_read_window(Dspic33* cpu, uint16_t address, bool alarm) {
-    const uint16_t control_address = alarm ? RTCC_ALARM_CONTROL : RTCC_CONTROL;
-    const uint16_t pointer_mask = alarm ? RTCC_ALARM_POINTER_MASK : RTCC_POINTER_MASK;
-    const uint16_t pointer =
+uint8_t dspic33_device_internal_rtcc_read_window(Dspic33* cpu, uint16_t address, bool is_alarm) {
+    const uint16_t control_address = is_alarm ? RTCC_ALARM_CONTROL : RTCC_CONTROL;
+    const uint16_t pointer_mask = is_alarm ? RTCC_ALARM_POINTER_MASK : RTCC_POINTER_MASK;
+    const uint16_t window_index =
         (uint16_t)((dspic33_device_internal_raw_word(cpu, control_address) & pointer_mask) >> 8u);
-    const uint16_t value_mask =
-        alarm ? (pointer < 3u ? rtcc_alarm_masks[pointer] : 0u) : rtcc_calendar_masks[pointer];
-    const uint16_t window_value =
-        alarm ? (pointer < 3u ? cpu->io.rtcc.alarm[pointer] : 0u) : cpu->io.rtcc.calendar[pointer];
+    const uint16_t value_mask = is_alarm ? (window_index < 3u ? rtcc_alarm_masks[window_index] : 0u)
+                                         : rtcc_calendar_masks[window_index];
+    const uint16_t window_value = is_alarm
+                                      ? (window_index < 3u ? cpu->io.rtcc.alarm[window_index] : 0u)
+                                      : cpu->io.rtcc.calendar[window_index];
 
-    const uint8_t result = (uint8_t)((window_value & value_mask) >> ((address & 1u) * 8u));
+    const uint8_t window_byte = (uint8_t)((window_value & value_mask) >> ((address & 1u) * 8u));
     if (rtcc_read_complete(cpu, address)) {
         rtcc_decrement_pointer(cpu, control_address, pointer_mask);
     }
-    return result;
+    return window_byte;
 }
 
 static uint8_t rtcc_write_width(const Dspic33* cpu) {
@@ -307,23 +310,26 @@ static bool rtcc_write_decrements_pointer(const Dspic33* cpu, uint16_t address) 
     return rtcc_write_width(cpu) == 2u || (address & 1u) != 0u;
 }
 
-static void update_rtcc_window(Dspic33* cpu, uint16_t address, bool alarm) {
-    const uint16_t control_address = alarm ? RTCC_ALARM_CONTROL : RTCC_CONTROL;
-    const uint16_t pointer_mask = alarm ? RTCC_ALARM_POINTER_MASK : RTCC_POINTER_MASK;
-    const uint16_t pointer =
+static void update_rtcc_window(Dspic33* cpu, uint16_t address, bool is_alarm) {
+    const uint16_t control_address = is_alarm ? RTCC_ALARM_CONTROL : RTCC_CONTROL;
+    const uint16_t pointer_mask = is_alarm ? RTCC_ALARM_POINTER_MASK : RTCC_POINTER_MASK;
+    const uint16_t window_index =
         (uint16_t)((dspic33_device_internal_raw_word(cpu, control_address) & pointer_mask) >> 8u);
     const uint16_t previous_value =
-        alarm ? (pointer < 3u ? cpu->io.rtcc.alarm[pointer] : 0u) : cpu->io.rtcc.calendar[pointer];
+        is_alarm ? (window_index < 3u ? cpu->io.rtcc.alarm[window_index] : 0u)
+                 : cpu->io.rtcc.calendar[window_index];
     const uint16_t window_value = rtcc_window_write_value(cpu, address, previous_value);
 
-    if (alarm || (dspic33_device_internal_raw_word(cpu, RTCC_CONTROL) & RTCC_WRITE_ENABLE) != 0u) {
-        if (alarm && pointer < 3u) {
-            cpu->io.rtcc.alarm[pointer] = window_value & rtcc_alarm_masks[pointer];
+    if (is_alarm ||
+        (dspic33_device_internal_raw_word(cpu, RTCC_CONTROL) & RTCC_WRITE_ENABLE) != 0u) {
+        if (is_alarm && window_index < 3u) {
+            cpu->io.rtcc.alarm[window_index] = window_value & rtcc_alarm_masks[window_index];
         } else {
-            if (!alarm) {
-                cpu->io.rtcc.calendar[pointer] = window_value & rtcc_calendar_masks[pointer];
+            if (!is_alarm) {
+                cpu->io.rtcc.calendar[window_index] =
+                    window_value & rtcc_calendar_masks[window_index];
             }
-            if (!alarm && pointer == 0u) {
+            if (!is_alarm && window_index == 0u) {
                 cpu->io.rtcc.prescaler = 0u;
                 cpu->io.rtcc.calibration_pending = false;
                 rtcc_set_status(cpu, 0u);
