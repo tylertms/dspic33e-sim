@@ -27,16 +27,16 @@ static void configure(Dspic33* cpu, uint16_t control) {
 static void pmd_event_matrix(TestState* state, Dspic33* cpu) {
     configure(cpu, DCI_ENABLE);
     cpu->io.dci.pmd_generation = 2u;
-    dspic33_device_internal_run_dci(
-        cpu, DCI_MATRIX_EVENT_PMD,
-        (UINT32_C(1) << DCI_MATRIX_EVENT_GENERATION_SHIFT) | DCI_MATRIX_EVENT_DISABLED);
+    dspic33_device_internal_run_dci(cpu, DCI_MATRIX_EVENT_PMD,
+                                    (UINT32_C(1) << DCI_MATRIX_EVENT_GENERATION_SHIFT) |
+                                        DCI_MATRIX_EVENT_DISABLED);
     expect(state, !cpu->io.dci.pmd_disabled, "DCI rejects a stale PMD event");
-    dspic33_device_internal_run_dci(
-        cpu, DCI_MATRIX_EVENT_PMD,
-        (UINT32_C(2) << DCI_MATRIX_EVENT_GENERATION_SHIFT) | DCI_MATRIX_EVENT_DISABLED);
+    dspic33_device_internal_run_dci(cpu, DCI_MATRIX_EVENT_PMD,
+                                    (UINT32_C(2) << DCI_MATRIX_EVENT_GENERATION_SHIFT) |
+                                        DCI_MATRIX_EVENT_DISABLED);
     expect(state, cpu->io.dci.pmd_disabled, "DCI accepts a current PMD disable event");
-    dspic33_device_internal_run_dci(
-        cpu, DCI_MATRIX_EVENT_PMD, UINT32_C(2) << DCI_MATRIX_EVENT_GENERATION_SHIFT);
+    dspic33_device_internal_run_dci(cpu, DCI_MATRIX_EVENT_PMD,
+                                    UINT32_C(2) << DCI_MATRIX_EVENT_GENERATION_SHIFT);
     expect(state, !cpu->io.dci.pmd_disabled, "DCI accepts a current PMD enable event");
 }
 

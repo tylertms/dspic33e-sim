@@ -76,8 +76,8 @@ static void event_filter_matrix(TestState* state, Dspic33* cpu) {
 
 static void scheduling_admission_matrix(TestState* state, Dspic33* cpu) {
     static const uint16_t controls[] = {0u, SPI_DISABLE_CLOCK, SPI_MASTER, SPI_MASTER};
-    static const Dspic33PowerState powers[] = {
-        DSPIC33_POWER_ACTIVE, DSPIC33_POWER_ACTIVE, DSPIC33_POWER_SLEEP, DSPIC33_POWER_ACTIVE};
+    static const Dspic33PowerState powers[] = {DSPIC33_POWER_ACTIVE, DSPIC33_POWER_ACTIVE,
+                                               DSPIC33_POWER_SLEEP, DSPIC33_POWER_ACTIVE};
     static const bool busy[] = {true, true, true, false};
     size_t index;
     for (index = 0u; index < sizeof(controls) / sizeof(controls[0]); index++) {
@@ -91,8 +91,7 @@ static void scheduling_admission_matrix(TestState* state, Dspic33* cpu) {
 
 static void run_admission_matrix(TestState* state, Dspic33* cpu) {
     uint32_t generation;
-    configure(cpu, SPI_ENABLE, SPI_MASTER,
-              (uint16_t)(SPI_FRAME_ENABLE | SPI_FRAME_ACTIVE_HIGH));
+    configure(cpu, SPI_ENABLE, SPI_MASTER, (uint16_t)(SPI_FRAME_ENABLE | SPI_FRAME_ACTIVE_HIGH));
     generation = (uint32_t)cpu->io.spi_generation[0] << SPI_EVENT_GENERATION_SHIFT;
     dspic33_device_internal_run_spi(cpu, 0u, SPI_EVENT_FRAME | generation);
     cpu->io.spi_busy = 1u;
@@ -102,8 +101,8 @@ static void run_admission_matrix(TestState* state, Dspic33* cpu) {
     dspic33_device_internal_raw_write_word(cpu, (uint16_t)(bases[0] + 4u), 0u);
     dspic33_device_internal_run_spi(cpu, 0u, SPI_EVENT_FRAME | generation);
 
-    dspic33_device_internal_run_spi(cpu, 0u,
-                                   SPI_EVENT_SAMPLE | (generation + (1u << SPI_EVENT_GENERATION_SHIFT)));
+    dspic33_device_internal_run_spi(
+        cpu, 0u, SPI_EVENT_SAMPLE | (generation + (1u << SPI_EVENT_GENERATION_SHIFT)));
     cpu->io.spi_busy = 0u;
     dspic33_device_internal_run_spi(cpu, 0u, SPI_EVENT_SAMPLE | generation);
     cpu->io.spi_busy = 1u;

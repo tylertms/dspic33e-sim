@@ -11,8 +11,8 @@ static void fill_event_queue(TestState* state, Dspic33* cpu) {
 
 static void configure_channel(Dspic33* cpu, uint16_t mode, uint16_t synchronization) {
     dspic33_reset(cpu, 0u);
-    dspic33_device_internal_raw_write_word(
-        cpu, OUTPUT_COMPARE_BASE, (uint16_t)(OUTPUT_COMPARE_TIMER_SOURCE_FP | mode));
+    dspic33_device_internal_raw_write_word(cpu, OUTPUT_COMPARE_BASE,
+                                           (uint16_t)(OUTPUT_COMPARE_TIMER_SOURCE_FP | mode));
     dspic33_device_internal_raw_write_word(cpu, (uint16_t)(OUTPUT_COMPARE_BASE + 2u),
                                            synchronization);
 }

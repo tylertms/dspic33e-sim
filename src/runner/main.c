@@ -24,14 +24,14 @@ typedef struct {
     uint8_t program_word_count;
 } Arguments;
 
-static bool parse_u64(const char* text, uint64_t maximum, uint64_t* value) {
+static bool parse_u64(const char* text, uint64_t maximum, uint64_t* parsed_value) {
     char* end = NULL;
     errno = 0;
     const unsigned long long parsed = strtoull(text, &end, 0);
     if (errno != 0 || end == text || *end != '\0' || parsed > maximum) {
         return false;
     }
-    *value = (uint64_t)parsed;
+    *parsed_value = (uint64_t)parsed;
     return true;
 }
 
@@ -43,39 +43,42 @@ static bool parse_arguments(int argc, char** argv, Arguments* arguments) {
     arguments->image_path = argv[1];
     arguments->device = DSPIC33EP_MU_DEVICE_512MU810;
     arguments->limits = (Dspic33RunLimits){1000000u, 10000000u};
-    for (int index = 2; index < argc; index++) {
-        uint64_t value;
-        if (strcmp(argv[index], "--reset-address") == 0 && index + 1 < argc) {
-            arguments->reset_location = argv[++index];
-        } else if (strcmp(argv[index], "--device") == 0 && index + 1 < argc) {
-            if (!dspic33ep_mu_device_from_name(argv[++index], &arguments->device)) {
+    for (int argument_index = 2; argument_index < argc; argument_index++) {
+        uint64_t parsed_value;
+        if (strcmp(argv[argument_index], "--reset-address") == 0 && argument_index + 1 < argc) {
+            arguments->reset_location = argv[++argument_index];
+        } else if (strcmp(argv[argument_index], "--device") == 0 && argument_index + 1 < argc) {
+            if (!dspic33ep_mu_device_from_name(argv[++argument_index], &arguments->device)) {
                 return false;
             }
-        } else if (strcmp(argv[index], "--stop-address") == 0 && index + 1 < argc) {
-            arguments->stop_location = argv[++index];
-        } else if (strcmp(argv[index], "--max-instructions") == 0 && index + 1 < argc) {
-            if (!parse_u64(argv[++index], UINT64_MAX, &value)) {
+        } else if (strcmp(argv[argument_index], "--stop-address") == 0 &&
+                   argument_index + 1 < argc) {
+            arguments->stop_location = argv[++argument_index];
+        } else if (strcmp(argv[argument_index], "--max-instructions") == 0 &&
+                   argument_index + 1 < argc) {
+            if (!parse_u64(argv[++argument_index], UINT64_MAX, &parsed_value)) {
                 return false;
             }
-            arguments->limits.instruction_limit = value;
-        } else if (strcmp(argv[index], "--max-cycles") == 0 && index + 1 < argc) {
-            if (!parse_u64(argv[++index], UINT64_MAX, &value)) {
+            arguments->limits.instruction_limit = parsed_value;
+        } else if (strcmp(argv[argument_index], "--max-cycles") == 0 && argument_index + 1 < argc) {
+            if (!parse_u64(argv[++argument_index], UINT64_MAX, &parsed_value)) {
                 return false;
             }
-            arguments->limits.cycle_limit = value;
-        } else if (strcmp(argv[index], "--program-word") == 0 && index + 2 < argc) {
+            arguments->limits.cycle_limit = parsed_value;
+        } else if (strcmp(argv[argument_index], "--program-word") == 0 &&
+                   argument_index + 2 < argc) {
             if (arguments->program_word_count == PROGRAM_WORD_LIMIT) {
                 return false;
             }
-            ProgramWord* word = &arguments->program_words[arguments->program_word_count];
-            if (!parse_u64(argv[++index], UINT32_MAX, &value)) {
+            ProgramWord* program_word = &arguments->program_words[arguments->program_word_count];
+            if (!parse_u64(argv[++argument_index], UINT32_MAX, &parsed_value)) {
                 return false;
             }
-            word->address = (uint32_t)value;
-            if (!parse_u64(argv[++index], 0x00ffffffu, &value)) {
+            program_word->address = (uint32_t)parsed_value;
+            if (!parse_u64(argv[++argument_index], 0x00ffffffu, &parsed_value)) {
                 return false;
             }
-            word->value = (uint32_t)value;
+            program_word->value = (uint32_t)parsed_value;
             arguments->program_word_count++;
         } else {
             return false;
@@ -160,10 +163,11 @@ int main(int argc, char** argv) {
         firmware_image_close(&image);
         return EXIT_FAILURE;
     }
-    for (uint8_t index = 0u; index < arguments.program_word_count; index++) {
-        const ProgramWord word = arguments.program_words[index];
-        if (!dspic33_load_program_word(cpu, word.address, word.value)) {
-            fprintf(stderr, "invalid program word address: 0x%08" PRIx32 "\n", word.address);
+    for (uint8_t word_index = 0u; word_index < arguments.program_word_count; word_index++) {
+        const ProgramWord program_word = arguments.program_words[word_index];
+        if (!dspic33_load_program_word(cpu, program_word.address, program_word.value)) {
+            fprintf(stderr, "invalid program word address: 0x%08" PRIx32 "\n",
+                    program_word.address);
             dspic33_destroy(cpu);
             firmware_image_close(&image);
             return EXIT_FAILURE;
@@ -184,9 +188,9 @@ int main(int argc, char** argv) {
            " cycles=%" PRIu64 " entry=0x%08" PRIx32 " fault=0x%08" PRIx32 "\n",
            result.stop, result.pc, result.opcode, result.instructions, result.cycles, entry,
            dspic33_get_fault_address(cpu));
-    for (uint8_t index = 0u; index < 16u; index++) {
-        printf("W%u=0x%04" PRIx32 "%c", index, dspic33_get_register(cpu, index),
-               index == 15u ? '\n' : ' ');
+    for (uint8_t register_index = 0u; register_index < 16u; register_index++) {
+        printf("W%u=0x%04" PRIx32 "%c", register_index, dspic33_get_register(cpu, register_index),
+               register_index == 15u ? '\n' : ' ');
     }
     dspic33_destroy(cpu);
     firmware_image_close(&image);

@@ -84,14 +84,12 @@ void dspic33_dci_test_state_census_cases(TestState* state, Dspic33* cpu) {
             dspic33_reset(cpu, 0u);
             configure_state(cpu, scenario);
             if ((scenario & 3u) == 0u) {
-                dspic33_schedule(cpu, DSPIC33_EVENT_DCI,
-                                 (uint16_t)(scenario % 2u), cpu->io.dci.generation,
-                                 scenario & 31u);
+                dspic33_schedule(cpu, DSPIC33_EVENT_DCI, (uint16_t)(scenario % 2u),
+                                 cpu->io.dci.generation, scenario & 31u);
             }
             driven += dspic33_device_internal_dci_data_output(cpu, &high);
             fingerprint = mix(fingerprint, high);
-            fingerprint = mix(fingerprint,
-                              dspic33_device_internal_dci_frame_output(cpu, &high));
+            fingerprint = mix(fingerprint, dspic33_device_internal_dci_frame_output(cpu, &high));
             fingerprint = mix(fingerprint, high);
             dspic33_device_internal_dci_update_power_state(cpu);
             dspic33_device_internal_run_dci(cpu, source,
@@ -104,7 +102,6 @@ void dspic33_dci_test_state_census_cases(TestState* state, Dspic33* cpu) {
             fingerprint = mix(fingerprint, cpu->stop_reason);
         }
     }
-    expect(state,
-           driven == 7680u && fingerprint == UINT64_C(10288385883272939741),
+    expect(state, driven == 7680u && fingerprint == UINT64_C(10288385883272939741),
            "DCI state census matches");
 }

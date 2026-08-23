@@ -5,11 +5,10 @@ void dspic33_device_internal_pmp_clear_busy(Dspic33* cpu, uint16_t generation);
 void dspic33_device_internal_pmp_read_register(Dspic33* cpu, uint16_t address);
 void dspic33_device_internal_raw_write_word(Dspic33* cpu, uint16_t address, uint16_t value);
 void dspic33_device_internal_run_pmp(Dspic33* cpu, uint16_t generation);
-void dspic33_device_internal_update_pmp_register(Dspic33* cpu, uint16_t address,
-                                                 uint16_t previous);
+void dspic33_device_internal_update_pmp_register(Dspic33* cpu, uint16_t address, uint16_t previous);
 
-static void configure(Dspic33* cpu, uint16_t control, uint16_t mode,
-                      Dspic33PowerState power, bool pmd_disabled) {
+static void configure(Dspic33* cpu, uint16_t control, uint16_t mode, Dspic33PowerState power,
+                      bool pmd_disabled) {
     dspic33_reset(cpu, 0u);
     dspic33_device_internal_raw_write_word(cpu, PMP_CONTROL, control);
     dspic33_device_internal_raw_write_word(cpu, PMP_MODE, mode);

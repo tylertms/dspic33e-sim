@@ -27,17 +27,16 @@ static void timing_and_control_cases(TestState* state, Dspic33* cpu) {
                !dspic33_output_compare_fault_pin(cpu, 0u, false, UINT64_MAX),
            "capture and compare APIs reject invalid boundaries");
 
-    expect(state,
-           !dspic33_comparator_input(cpu, DSPIC33_COMPARATOR_COUNT,
-                                     DSPIC33_COMPARATOR_INPUT_POSITIVE, 0u, 0u) &&
-               !dspic33_comparator_input(cpu, 0u, (Dspic33ComparatorInput)4u, 0u, 0u) &&
-               !dspic33_comparator_input(cpu, 0u, DSPIC33_COMPARATOR_INPUT_POSITIVE, 0u,
-                                         UINT64_MAX) &&
-               !dspic33_comparator_reference(cpu, DSPIC33_COMPARATOR_REFERENCE_COUNT, 0u, 0u) &&
-               !dspic33_comparator_reference(cpu, DSPIC33_COMPARATOR_REFERENCE_AVDD, 0u,
-                                             UINT64_MAX) &&
-               !dspic33_rtcc_clock(cpu, 0u, 0u) && !dspic33_rtcc_clock(cpu, 1u, UINT64_MAX),
-           "analog and RTCC APIs reject invalid boundaries");
+    expect(
+        state,
+        !dspic33_comparator_input(cpu, DSPIC33_COMPARATOR_COUNT, DSPIC33_COMPARATOR_INPUT_POSITIVE,
+                                  0u, 0u) &&
+            !dspic33_comparator_input(cpu, 0u, (Dspic33ComparatorInput)4u, 0u, 0u) &&
+            !dspic33_comparator_input(cpu, 0u, DSPIC33_COMPARATOR_INPUT_POSITIVE, 0u, UINT64_MAX) &&
+            !dspic33_comparator_reference(cpu, DSPIC33_COMPARATOR_REFERENCE_COUNT, 0u, 0u) &&
+            !dspic33_comparator_reference(cpu, DSPIC33_COMPARATOR_REFERENCE_AVDD, 0u, UINT64_MAX) &&
+            !dspic33_rtcc_clock(cpu, 0u, 0u) && !dspic33_rtcc_clock(cpu, 1u, UINT64_MAX),
+        "analog and RTCC APIs reject invalid boundaries");
 
     expect(state,
            !dspic33_qei_input(cpu, DSPIC33_QEI_COUNT, DSPIC33_QEI_PHASE_A, false, 0u) &&
@@ -86,8 +85,7 @@ static void can_cases(TestState* state, Dspic33* cpu) {
            "CAN receive rejects an oversized extended identifier");
     frame.identifier = 0u;
     cpu->io.can_rx[0].count = 64u;
-    expect(state, !dspic33_can_receive(cpu, 0u, &frame, 0u),
-           "CAN receive rejects a full queue");
+    expect(state, !dspic33_can_receive(cpu, 0u, &frame, 0u), "CAN receive rejects a full queue");
     cpu->io.can_rx[0].count = 0u;
     expect(state,
            !dspic33_can_receive(cpu, DSPIC33_CAN_COUNT, &frame, 0u) &&
@@ -117,8 +115,7 @@ static void can_output_cases(TestState* state, Dspic33* cpu) {
 
     dspic33_device_internal_raw_write_word(cpu, 0x0760u, 0u);
     dspic33_device_internal_raw_write_word(cpu, 0x040au, 0x2000u);
-    expect(state, dspic33_can_pin(cpu, 64u, &high) && high,
-           "bus-off CAN output remains recessive");
+    expect(state, dspic33_can_pin(cpu, 64u, &high) && high, "bus-off CAN output remains recessive");
 
     dspic33_device_internal_raw_write_word(cpu, 0x040au, 0u);
     cpu->io.can_tx_error_active = 1u;
@@ -133,8 +130,7 @@ static void can_output_cases(TestState* state, Dspic33* cpu) {
     cpu->io.can_rx_error_active = 0u;
     cpu->io.can_overload_active = 1u;
     cpu->io.can_overload_start_cycle[0] = cpu->device_cycles;
-    expect(state, dspic33_can_pin(cpu, 64u, &high) && !high,
-           "active CAN overload starts dominant");
+    expect(state, dspic33_can_pin(cpu, 64u, &high) && !high, "active CAN overload starts dominant");
     cpu->io.can_overload_active = 0u;
     cpu->io.can_rx_ack = 1u;
     expect(state, dspic33_can_pin(cpu, 64u, &high) && !high,
@@ -189,8 +185,7 @@ static void output_state_cases(TestState* state, Dspic33* cpu) {
     dspic33_device_internal_raw_write_word(cpu, RTCC_CONTROL, RTCC_OUTPUT_ENABLE);
     expect(state, dspic33_rtcc_output(cpu, &high), "enabled RTCC exposes its alarm output");
 
-    expect(state,
-           !dspic33_dci_transmit(cpu, &transfer) && !dspic33_dci_transmit(cpu, NULL),
+    expect(state, !dspic33_dci_transmit(cpu, &transfer) && !dspic33_dci_transmit(cpu, NULL),
            "empty and null DCI output requests cannot pop");
 
     cpu->io.pwm_pmd_disabled = 1u;
@@ -214,13 +209,11 @@ static void output_state_cases(TestState* state, Dspic33* cpu) {
     expect(state, !dspic33_pwm_sync_pin(cpu, 64u, &high),
            "PWM synchronization rejects an upper adjacent PPS function");
     cpu->io.pwm_pmd_disabled = 1u;
-    expect(state, !dspic33_pwm_sync_pin(cpu, 64u, &high),
-           "PWM synchronization rejects global PMD");
+    expect(state, !dspic33_pwm_sync_pin(cpu, 64u, &high), "PWM synchronization rejects global PMD");
     cpu->io.pwm_pmd_disabled = 0u;
     cpu->power_state = DSPIC33_POWER_IDLE;
     dspic33_device_internal_raw_write_word(cpu, PWM_GLOBAL_BASE, PWM_STOP_IDLE);
-    expect(state, !dspic33_pwm_sync_pin(cpu, 64u, &high),
-           "PWM synchronization stops in Idle");
+    expect(state, !dspic33_pwm_sync_pin(cpu, 64u, &high), "PWM synchronization stops in Idle");
     expect(state, !dspic33_pwm_sync_pin(cpu, 64u, NULL),
            "PWM synchronization rejects a null output pointer");
     dspic33_device_internal_raw_write_word(cpu, PWM_GLOBAL_BASE, 0u);
@@ -234,8 +227,7 @@ static void usb_state_cases(TestState* state, Dspic33* cpu) {
     cpu->io.usb_host_pending = true;
     cpu->io.usb_host_endpoint = 0u;
     cpu->io.usb_host_pid = DSPIC33_USB_PID_IN;
-    expect(state,
-           dspic33_usb_host_response(cpu, DSPIC33_USB_HANDSHAKE_ACK, &data, 0u, false, 0u),
+    expect(state, dspic33_usb_host_response(cpu, DSPIC33_USB_HANDSHAKE_ACK, &data, 0u, false, 0u),
            "pending USB host token accepts a response");
 
     dspic33_reset(cpu, 0u);

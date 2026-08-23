@@ -20,8 +20,7 @@ static uint16_t changed_value(uint16_t offset, uint16_t control1, uint16_t contr
     }
     if (offset == 2u) {
         static const uint16_t additions[] = {0u, OUTPUT_COMPARE_TRIGGER,
-                                             OUTPUT_COMPARE_TRIGGER_STATUS,
-                                             OUTPUT_COMPARE_INVERT};
+                                             OUTPUT_COMPARE_TRIGGER_STATUS, OUTPUT_COMPARE_INVERT};
         return (uint16_t)(control2 | additions[variant]);
     }
     return (uint16_t)(variant == 0u ? 0u : variant == 1u ? 1u : variant == 2u ? 5u : UINT16_MAX);
@@ -39,8 +38,9 @@ static void configure_pair(Dspic33* cpu, uint8_t channel, uint16_t mode, bool ca
         cpu, (uint16_t)(low_base + 2u),
         cascade ? (uint16_t)(OUTPUT_COMPARE_32_BIT | OUTPUT_COMPARE_TRISTATE)
                 : OUTPUT_COMPARE_SYNC_SELF);
-    dspic33_device_internal_raw_write_word(
-        cpu, (uint16_t)(high_base + 2u), cascade ? OUTPUT_COMPARE_32_BIT : OUTPUT_COMPARE_SYNC_SELF);
+    dspic33_device_internal_raw_write_word(cpu, (uint16_t)(high_base + 2u),
+                                           cascade ? OUTPUT_COMPARE_32_BIT
+                                                   : OUTPUT_COMPARE_SYNC_SELF);
 }
 
 static MatrixResult run_matrix(Dspic33* cpu) {
@@ -71,17 +71,18 @@ static MatrixResult run_matrix(Dspic33* cpu) {
                                 write_case == 1u ? address : (uint16_t)(address + 1u);
                             cpu->io.cpu_write_width = write_case == 1u ? 2u : 1u;
                             dspic33_device_internal_update_output_compare_register(cpu, address,
-                                                                                  previous);
+                                                                                   previous);
                             result.fingerprint = mix(result.fingerprint, cpu->stop_reason);
-                            result.fingerprint = mix(result.fingerprint, (uint32_t)cpu->events.count);
+                            result.fingerprint =
+                                mix(result.fingerprint, (uint32_t)cpu->events.count);
                             result.fingerprint =
                                 mix(result.fingerprint, cpu->io.output_compare.generation[channel]);
-                            result.fingerprint = mix(
-                                result.fingerprint,
-                                cpu->io.output_compare.timer_generation[
-                                    dspic33_device_internal_output_compare_pair_low(channel)]);
                             result.fingerprint =
-                                mix(result.fingerprint, dspic33_device_internal_raw_word(cpu, address));
+                                mix(result.fingerprint,
+                                    cpu->io.output_compare.timer_generation
+                                        [dspic33_device_internal_output_compare_pair_low(channel)]);
+                            result.fingerprint = mix(
+                                result.fingerprint, dspic33_device_internal_raw_word(cpu, address));
                             result.cases++;
                         }
                     }
@@ -100,8 +101,7 @@ int main(void) {
     if (initialized) {
         const MatrixResult result = run_matrix(&cpu);
         expect(&state,
-               result.cases == 10752u &&
-                   result.fingerprint == UINT64_C(18300558673284928389),
+               result.cases == 10752u && result.fingerprint == UINT64_C(18300558673284928389),
                "output compare register matrix matches");
         dspic33_release(&cpu);
     }

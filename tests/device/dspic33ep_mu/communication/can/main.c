@@ -15,10 +15,8 @@ static bool run_group(TestState* state, CanTestGroup group) {
 int main(void) {
     TestState state = {0u, 0u, 0u};
     const CanTestGroup groups[] = {
-        dspic33_can_test_register_groups,
-        dspic33_can_test_receive_groups,
-        dspic33_can_test_bus_groups,
-        dspic33_can_test_error_groups,
+        dspic33_can_test_register_groups, dspic33_can_test_receive_groups,
+        dspic33_can_test_bus_groups,      dspic33_can_test_error_groups,
         dspic33_can_test_boundary_groups,
     };
     for (size_t index = 0u; index < sizeof(groups) / sizeof(groups[0]); index++) {

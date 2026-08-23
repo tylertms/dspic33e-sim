@@ -65,12 +65,10 @@ static void pin_admission_matrix(TestState* state, Dspic33* cpu) {
     dspic33_i2c_test_enable(cpu, 0u, I2C_SCLREL, 0u);
     dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(bases[0] + I2C_CON),
                                         (uint16_t)(I2C_ENABLE | I2C_SEN));
-    expect(state, !dspic33_i2c_pin(cpu, 3u, 10u, &high),
-           "I2C master control hides pin output");
+    expect(state, !dspic33_i2c_pin(cpu, 3u, 10u, &high), "I2C master control hides pin output");
 
     dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(bases[0] + I2C_CON), I2C_ENABLE);
-    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(bases[0] + I2C_STAT),
-                                        I2C_TRANSMIT_ACTIVE);
+    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(bases[0] + I2C_STAT), I2C_TRANSMIT_ACTIVE);
     expect(state, !dspic33_i2c_pin(cpu, 3u, 10u, &high),
            "I2C active transmission hides pin output");
 
@@ -91,8 +89,7 @@ static void pin_admission_matrix(TestState* state, Dspic33* cpu) {
     cpu->io.i2c_master_active = 1u;
     expect(state, dspic33_i2c_pin(cpu, 3u, 10u, &high) && !high,
            "active master holds the clock low");
-    expect(state, !dspic33_i2c_pin(cpu, 3u, 9u, &high),
-           "active master owns the data output");
+    expect(state, !dspic33_i2c_pin(cpu, 3u, 9u, &high), "active master owns the data output");
 }
 
 static PinMatrixResult run_pin_transition_matrix(Dspic33* cpu) {
@@ -106,19 +103,16 @@ static PinMatrixResult run_pin_transition_matrix(Dspic33* cpu) {
                     dspic33_i2c_internal_raw_write_word(
                         cpu, (uint16_t)(bases[0] + I2C_CON),
                         (uint16_t)(I2C_ENABLE | ((levels & 1u) != 0u ? I2C_ACKDT : 0u)));
-                    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(bases[0] + I2C_TRN),
-                                                        0xa5u);
+                    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(bases[0] + I2C_TRN), 0xa5u);
                     cpu->io.gpio_driven[3] |= 0x0600u;
-                    cpu->io.gpio[3] =
-                        (uint16_t)((cpu->io.gpio[3] & ~0x0600u) |
-                                   ((levels & 1u) != 0u ? 0x0400u : 0u) |
-                                   ((levels & 2u) != 0u ? 0x0200u : 0u));
+                    cpu->io.gpio[3] = (uint16_t)((cpu->io.gpio[3] & ~0x0600u) |
+                                                 ((levels & 1u) != 0u ? 0x0400u : 0u) |
+                                                 ((levels & 2u) != 0u ? 0x0200u : 0u));
                     cpu->io.i2c_pin_active = 1u;
                     cpu->io.i2c_pin_physical = 1u;
                     cpu->io.i2c_pin_operation[0] = operation;
                     cpu->io.i2c_pin_phase[0] = phase;
-                    cpu->io.i2c_response[0].count =
-                        queue_case != 0u ? DSPIC33_I2C_QUEUE_SIZE : 0u;
+                    cpu->io.i2c_response[0].count = queue_case != 0u ? DSPIC33_I2C_QUEUE_SIZE : 0u;
                     dspic33_i2c_internal_pin_run(cpu, 0u);
                     result.fingerprint = mix(result.fingerprint, cpu->stop_reason);
                     result.fingerprint = mix(result.fingerprint, cpu->io.i2c_pin_active);
@@ -137,15 +131,13 @@ static PinMatrixResult run_pin_transition_matrix(Dspic33* cpu) {
 
 static void pin_transition_matrix(TestState* state, Dspic33* cpu) {
     const PinMatrixResult result = run_pin_transition_matrix(cpu);
-    expect(state,
-           result.cases == 912u && result.fingerprint == UINT64_C(8281854284848555637),
+    expect(state, result.cases == 912u && result.fingerprint == UINT64_C(8281854284848555637),
            "I2C pin transition matrix matches");
 }
 
 static PinMatrixResult run_slave_pin_matrix(Dspic33* cpu) {
     PinMatrixResult result = {UINT64_C(14695981039346656037), 0u};
-    for (uint8_t pin_state = I2C_SLAVE_PIN_IDLE; pin_state <= I2C_SLAVE_PIN_RECEIVED;
-         pin_state++) {
+    for (uint8_t pin_state = I2C_SLAVE_PIN_IDLE; pin_state <= I2C_SLAVE_PIN_RECEIVED; pin_state++) {
         for (uint8_t bits = 0u; bits <= 9u; bits++) {
             for (uint8_t edge = 0u; edge < 4u; edge++) {
                 for (uint8_t flags = 0u; flags < 4u; flags++) {
@@ -158,16 +150,14 @@ static PinMatrixResult run_slave_pin_matrix(Dspic33* cpu) {
                         cpu, (uint16_t)(bases[0] + I2C_STAT),
                         (uint16_t)(((flags & 1u) != 0u ? I2C_TBF : 0u) |
                                    ((flags & 2u) != 0u ? I2C_RBF : 0u)));
-                    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(bases[0] + I2C_TRN),
-                                                        0xa5u);
+                    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(bases[0] + I2C_TRN), 0xa5u);
                     cpu->io.gpio_driven[3] |= 0x0600u;
                     const bool current_clock = edge != 3u;
                     const bool current_data = edge == 1u || (edge >= 2u && (flags & 1u) != 0u);
                     const bool previous_clock = edge != 2u;
                     const bool previous_data = edge == 0u || (edge >= 2u && current_data);
                     cpu->io.gpio[3] =
-                        (uint16_t)((cpu->io.gpio[3] & ~0x0600u) |
-                                   (current_clock ? 0x0400u : 0u) |
+                        (uint16_t)((cpu->io.gpio[3] & ~0x0600u) | (current_clock ? 0x0400u : 0u) |
                                    (current_data ? 0x0200u : 0u));
                     cpu->io.i2c_pin_clock_high = previous_clock ? 1u : 0u;
                     cpu->io.i2c_pin_data_high = previous_data ? 1u : 0u;
@@ -202,8 +192,7 @@ static PinMatrixResult run_slave_pin_matrix(Dspic33* cpu) {
 
 static void slave_pin_transition_matrix(TestState* state, Dspic33* cpu) {
     const PinMatrixResult result = run_slave_pin_matrix(cpu);
-    expect(state,
-           result.cases == 1440u && result.fingerprint == UINT64_C(2689562037817619653),
+    expect(state, result.cases == 1440u && result.fingerprint == UINT64_C(2689562037817619653),
            "I2C slave pin transition matrix matches");
 }
 

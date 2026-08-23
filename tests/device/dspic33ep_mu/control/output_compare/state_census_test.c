@@ -38,12 +38,10 @@ static void configure_channel(Dspic33* cpu, uint8_t channel, uint16_t mode, bool
     cpu->io.output_compare.phase[low] = phase;
     cpu->io.output_compare.phase[high] = phase;
     cpu->io.output_compare.sync_emitted[low] = (variant & 1u) != 0u;
-    cpu->io.output_compare.sync_reset_pending =
-        variant == 3u ? (uint16_t)(1u << low) : 0u;
+    cpu->io.output_compare.sync_reset_pending = variant == 3u ? (uint16_t)(1u << low) : 0u;
     if (variant == 2u) {
-        dspic33_device_internal_raw_write_word(
-            cpu, (uint16_t)(low_base + 2u),
-            (uint16_t)(low_control2 | OUTPUT_COMPARE_TRIGGER));
+        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(low_base + 2u),
+                                               (uint16_t)(low_control2 | OUTPUT_COMPARE_TRIGGER));
     }
 }
 
@@ -63,12 +61,11 @@ static Census census_states(Dspic33* cpu) {
                                               values[r], values[rs], phase, variant);
                             const uint64_t delay =
                                 dspic33_device_internal_output_compare_next_timer_event(cpu, 0u,
-                                                                                       &kind);
+                                                                                        &kind);
                             census.finite += delay != UINT64_MAX;
                             census.fingerprint = mix(census.fingerprint, kind);
                             census.fingerprint = mix(census.fingerprint, (uint32_t)delay);
-                            census.fingerprint =
-                                mix(census.fingerprint, (uint32_t)(delay >> 32u));
+                            census.fingerprint = mix(census.fingerprint, (uint32_t)(delay >> 32u));
                         }
                     }
                 }
@@ -86,8 +83,7 @@ int main(void) {
     if (initialized) {
         const Census census = census_states(&cpu);
         expect(&state,
-               census.finite == 2016u &&
-                   census.fingerprint == UINT64_C(7503594019394709523),
+               census.finite == 2016u && census.fingerprint == UINT64_C(7503594019394709523),
                "output compare state census matches");
         dspic33_release(&cpu);
     }
