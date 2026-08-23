@@ -216,90 +216,108 @@ void dspic33_spi_test_receive_only_cases(TestState* state, Dspic33* cpu) {
 }
 
 void dspic33_spi_test_physical_slave_input_cases(TestState* state, Dspic33* cpu, Dspic33* copy) {
-    uint8_t channel;
-    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-        uint8_t mode16;
-        for (mode16 = 0u; mode16 < 2u; mode16++) {
-            uint8_t polarity;
-            for (polarity = 0u; polarity < 2u; polarity++) {
-                uint8_t edge;
-                for (edge = 0u; edge < 2u; edge++) {
-                    uint16_t base = bases[channel];
-                    uint16_t control =
-                        (uint16_t)(((uint16_t)mode16 << 10u) | ((uint16_t)edge << 8u) | 0x0080u |
-                                   ((uint16_t)polarity << 6u) | 0x001bu);
-                    uint16_t received =
-                        (uint16_t)(0xa500u | ((uint16_t)channel << 4u) |
-                                   ((uint16_t)polarity << 2u) | ((uint16_t)edge << 1u) | mode16);
-                    uint16_t expected = mode16 != 0u ? received : received & 0x00ffu;
-                    uint8_t width = mode16 != 0u ? 16u : 8u;
-                    bool idle = polarity != 0u;
-                    bool accepted = true;
-                    uint8_t index;
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_SPI_COUNT; channel_index++) {
+        for (uint8_t word_mode = 0u; word_mode < 2u; word_mode++) {
+            for (uint8_t clock_polarity = 0u; clock_polarity < 2u; clock_polarity++) {
+                for (uint8_t clock_edge = 0u; clock_edge < 2u; clock_edge++) {
+                    const uint16_t spi_base = bases[channel_index];
+                    const uint16_t spi_control =
+                        (uint16_t)(((uint16_t)word_mode << 10u) | ((uint16_t)clock_edge << 8u) |
+                                   0x0080u | ((uint16_t)clock_polarity << 6u) | 0x001bu);
+                    const uint16_t received_value =
+                        (uint16_t)(0xa500u | ((uint16_t)channel_index << 4u) |
+                                   ((uint16_t)clock_polarity << 2u) | ((uint16_t)clock_edge << 1u) |
+                                   word_mode);
+                    const uint16_t expected_value =
+                        word_mode != 0u ? received_value : received_value & 0x00ffu;
+                    const uint8_t transfer_width = word_mode != 0u ? 16u : 8u;
+                    const bool idle_clock = clock_polarity != 0u;
+                    bool input_accepted = true;
 
                     dspic33_reset(cpu, 0u);
-                    accepted &= dspic33_spi_pin_input(cpu, channel, idle, false, false);
-                    dspic33_spi_test_configure_spi(cpu, channel, control, 0u, 0u);
-                    for (index = 0u; index < width; index++) {
-                        bool high = (received & (uint16_t)(1u << (width - index - 1u))) != 0u;
-                        accepted &= dspic33_spi_pin_input(cpu, channel, !idle, high, false);
-                        accepted &= dspic33_spi_pin_input(cpu, channel, idle, high, false);
-                        if (index + 1u != width) {
-                            accepted &= !dspic33_spi_test_interrupt_flag(cpu, irqs[channel]);
+                    input_accepted &=
+                        dspic33_spi_pin_input(cpu, channel_index, idle_clock, false, false);
+                    dspic33_spi_test_configure_spi(cpu, channel_index, spi_control, 0u, 0u);
+                    for (uint8_t bit_index = 0u; bit_index < transfer_width; bit_index++) {
+                        const bool data_high =
+                            (received_value &
+                             (uint16_t)(1u << (transfer_width - bit_index - 1u))) != 0u;
+
+                        input_accepted &= dspic33_spi_pin_input(cpu, channel_index, !idle_clock,
+                                                                data_high, false);
+                        input_accepted &=
+                            dspic33_spi_pin_input(cpu, channel_index, idle_clock, data_high, false);
+                        if (bit_index + 1u != transfer_width) {
+                            input_accepted &=
+                                !dspic33_spi_test_interrupt_flag(cpu, irqs[channel_index]);
                         }
                     }
-                    expect(state, accepted, "physical slave accepts exact clock edges");
-                    expect(state,
-                           dspic33_spi_test_transfer_interrupt_after_cycle(cpu, irqs[channel]) &&
-                               dspic33_read_word(cpu, (uint16_t)(base + 8u)) == expected,
-                           "physical slave receives serial input");
 
-                    dspic33_spi_test_clear_interrupt(cpu, irqs[channel]);
-                    accepted = dspic33_spi_pin_input(cpu, channel, idle, false, true);
-                    for (index = 0u; index < width; index++) {
-                        accepted &= dspic33_spi_pin_input(cpu, channel, !idle, true, true);
-                        accepted &= dspic33_spi_pin_input(cpu, channel, idle, true, true);
+                    expect(state, input_accepted, "physical slave accepts exact clock edges");
+                    expect(
+                        state,
+                        dspic33_spi_test_transfer_interrupt_after_cycle(cpu, irqs[channel_index]) &&
+                            dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) == expected_value,
+                        "physical slave receives serial input");
+
+                    dspic33_spi_test_clear_interrupt(cpu, irqs[channel_index]);
+                    input_accepted =
+                        dspic33_spi_pin_input(cpu, channel_index, idle_clock, false, true);
+                    for (uint8_t bit_index = 0u; bit_index < transfer_width; bit_index++) {
+                        input_accepted &=
+                            dspic33_spi_pin_input(cpu, channel_index, !idle_clock, true, true);
+                        input_accepted &=
+                            dspic33_spi_pin_input(cpu, channel_index, idle_clock, true, true);
                     }
                     expect(state,
-                           accepted && !dspic33_spi_test_interrupt_flag(cpu, irqs[channel]) &&
-                               (dspic33_read_word(cpu, base) & 1u) == 0u,
+                           input_accepted &&
+                               !dspic33_spi_test_interrupt_flag(cpu, irqs[channel_index]) &&
+                               (dspic33_read_word(cpu, spi_base) & 1u) == 0u,
                            "deselected physical slave ignores serial input");
                 }
             }
         }
     }
-    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-        uint8_t polarity;
-        for (polarity = 0u; polarity < 2u; polarity++) {
-            uint16_t base = bases[channel];
-            uint16_t received = (uint16_t)(0x0060u | ((uint16_t)channel << 1u) | polarity);
-            bool active = polarity != 0u;
-            bool accepted = true;
-            uint8_t index;
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_SPI_COUNT; channel_index++) {
+        for (uint8_t clock_polarity = 0u; clock_polarity < 2u; clock_polarity++) {
+            const uint16_t spi_base = bases[channel_index];
+            const uint16_t received_value =
+                (uint16_t)(0x0060u | ((uint16_t)channel_index << 1u) | clock_polarity);
+            const bool active_select = clock_polarity != 0u;
+            bool input_accepted = true;
 
             dspic33_reset(cpu, 0u);
-            accepted &= dspic33_spi_pin_input(cpu, channel, false, false, !active);
-            dspic33_spi_test_configure_spi(cpu, channel, 0x001bu,
-                                           (uint16_t)(0xc000u | ((uint16_t)polarity << 13u)), 0u);
-            accepted &= dspic33_spi_pin_input(cpu, channel, false, false, active);
-            for (index = 0u; index < 8u; index++) {
-                bool high = (received & (uint16_t)(0x0080u >> index)) != 0u;
-                accepted &= dspic33_spi_pin_input(cpu, channel, true, high, active);
-                accepted &= dspic33_spi_pin_input(cpu, channel, false, high, active);
+            input_accepted &=
+                dspic33_spi_pin_input(cpu, channel_index, false, false, !active_select);
+            dspic33_spi_test_configure_spi(cpu, channel_index, 0x001bu,
+                                           (uint16_t)(0xc000u | ((uint16_t)clock_polarity << 13u)),
+                                           0u);
+            input_accepted &=
+                dspic33_spi_pin_input(cpu, channel_index, false, false, active_select);
+            for (uint8_t bit_index = 0u; bit_index < 8u; bit_index++) {
+                const bool data_high = (received_value & (uint16_t)(0x0080u >> bit_index)) != 0u;
+                input_accepted &=
+                    dspic33_spi_pin_input(cpu, channel_index, true, data_high, active_select);
+                input_accepted &=
+                    dspic33_spi_pin_input(cpu, channel_index, false, data_high, active_select);
             }
             expect(state,
-                   accepted &&
-                       dspic33_spi_test_transfer_interrupt_after_cycle(cpu, irqs[channel]) &&
-                       dspic33_read_word(cpu, (uint16_t)(base + 8u)) == received,
+                   input_accepted &&
+                       dspic33_spi_test_transfer_interrupt_after_cycle(cpu, irqs[channel_index]) &&
+                       dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) == received_value,
                    "framed slave accepts selected physical input");
 
-            dspic33_spi_test_clear_interrupt(cpu, irqs[channel]);
-            accepted = dspic33_spi_pin_input(cpu, channel, false, false, !active);
-            for (index = 0u; index < 8u; index++) {
-                accepted &= dspic33_spi_pin_input(cpu, channel, true, true, !active);
-                accepted &= dspic33_spi_pin_input(cpu, channel, false, true, !active);
+            dspic33_spi_test_clear_interrupt(cpu, irqs[channel_index]);
+            input_accepted =
+                dspic33_spi_pin_input(cpu, channel_index, false, false, !active_select);
+            for (uint8_t bit_index = 0u; bit_index < 8u; bit_index++) {
+                input_accepted &=
+                    dspic33_spi_pin_input(cpu, channel_index, true, true, !active_select);
+                input_accepted &=
+                    dspic33_spi_pin_input(cpu, channel_index, false, true, !active_select);
             }
-            expect(state, accepted && !dspic33_spi_test_interrupt_flag(cpu, irqs[channel]),
+            expect(state,
+                   input_accepted && !dspic33_spi_test_interrupt_flag(cpu, irqs[channel_index]),
                    "framed slave rejects inactive physical input");
         }
     }
