@@ -355,24 +355,26 @@ static void can_receive_finish(Dspic33* cpu, uint8_t channel_index) {
     }
 }
 
-static int can_transmit_selection(const Dspic33* cpu, uint8_t channel) {
-    int selected = -1;
-    uint8_t priority = 0u;
-    uint8_t buffer;
-    for (buffer = 0u; buffer < 8u; buffer++) {
-        uint16_t control = dspic33_device_internal_can_buffer_control(cpu, channel, buffer);
-        uint8_t current_priority = (uint8_t)(control & 3u);
-        if ((control & (CAN_BUFFER_TRANSMIT | CAN_BUFFER_REQUEST)) !=
+static int can_transmit_selection(const Dspic33* cpu, uint8_t channel_index) {
+    int selected_buffer = -1;
+    uint8_t selected_priority = 0u;
+
+    for (uint8_t buffer_index = 0u; buffer_index < 8u; buffer_index++) {
+        const uint16_t buffer_control =
+            dspic33_device_internal_can_buffer_control(cpu, channel_index, buffer_index);
+        const uint8_t buffer_priority = (uint8_t)(buffer_control & 3u);
+
+        if ((buffer_control & (CAN_BUFFER_TRANSMIT | CAN_BUFFER_REQUEST)) !=
             (CAN_BUFFER_TRANSMIT | CAN_BUFFER_REQUEST)) {
             continue;
         }
-        if (selected < 0 || current_priority > priority ||
-            (current_priority == priority && buffer > (uint8_t)selected)) {
-            selected = buffer;
-            priority = current_priority;
+        if (selected_buffer < 0 || buffer_priority > selected_priority ||
+            (buffer_priority == selected_priority && buffer_index > (uint8_t)selected_buffer)) {
+            selected_buffer = buffer_index;
+            selected_priority = buffer_priority;
         }
     }
-    return selected;
+    return selected_buffer;
 }
 
 static void can_transmit_start(Dspic33* cpu, uint8_t channel) {
