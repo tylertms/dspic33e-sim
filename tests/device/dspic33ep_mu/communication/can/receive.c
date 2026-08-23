@@ -576,10 +576,10 @@ bool dspic33_can_test_bridge_can_pins(Dspic33* cpu, uint8_t transmit_channel, ui
 static bool bridge_can_with_final_sample_glitch(Dspic33* cpu, uint8_t transmit_channel,
                                                 uint8_t transmit_pin, uint8_t acknowledge_pin,
                                                 uint8_t transmit_receive_pin, uint8_t receive_pin,
-                                                bool glitch_transmitter,
+                                                bool transmitter_glitch,
                                                 bool* acknowledge_observed) {
-    uint16_t bit = 0u;
-    while ((cpu->io.can_tx_on_bus & (uint8_t)(1u << transmit_channel)) != 0u && bit < 160u) {
+    uint16_t bit_index = 0u;
+    while ((cpu->io.can_tx_on_bus & (uint8_t)(1u << transmit_channel)) != 0u && bit_index < 160u) {
         bool transmit_high;
         bool acknowledge_high;
         bool bus_high;
@@ -595,66 +595,68 @@ static bool bridge_can_with_final_sample_glitch(Dspic33* cpu, uint8_t transmit_c
             !dspic33_device_advance(cpu, 2u)) {
             return false;
         }
-        if (bit == 0u &&
-            !dspic33_can_input_pin(cpu, glitch_transmitter ? transmit_receive_pin : receive_pin,
+        if (bit_index == 0u &&
+            !dspic33_can_input_pin(cpu, transmitter_glitch ? transmit_receive_pin : receive_pin,
                                    !bus_high, 0u)) {
             return false;
         }
         if (!dspic33_device_advance(cpu, 1u) ||
-            !dspic33_can_input_pin(cpu, glitch_transmitter ? transmit_receive_pin : receive_pin,
+            !dspic33_can_input_pin(cpu, transmitter_glitch ? transmit_receive_pin : receive_pin,
                                    bus_high, 0u) ||
             !dspic33_device_advance(cpu, 1u)) {
             return false;
         }
-        bit++;
+        bit_index++;
     }
-    return bit != 0u && bit < 160u && dspic33_device_advance(cpu, 32u);
+    return bit_index != 0u && bit_index < 160u && dspic33_device_advance(cpu, 32u);
 }
 
 void dspic33_can_test_triple_sample_cases(TestState* state, Dspic33* cpu) {
-    for (uint8_t glitch_transmitter = 0u; glitch_transmitter < 2u; glitch_transmitter++) {
-        Dspic33CanFrame input =
-            dspic33_can_test_frame((uint32_t)(0x360u + glitch_transmitter), false, false, 2u,
-                                   (uint8_t)(0x80u + glitch_transmitter * 0x10u));
-        Dspic33CanFrame output;
+    for (uint8_t transmitter_glitch = 0u; transmitter_glitch < 2u; transmitter_glitch++) {
+        Dspic33CanFrame input_frame =
+            dspic33_can_test_frame((uint32_t)(0x360u + transmitter_glitch), false, false, 2u,
+                                   (uint8_t)(0x80u + transmitter_glitch * 0x10u));
+        Dspic33CanFrame output_frame;
         bool acknowledge_observed = false;
+
         dspic33_reset(cpu, 0u);
         dspic33_write_word(cpu, 0x0e30u, 0xffffu);
         dspic33_write_word(cpu, 0x0e3eu, 0u);
         dspic33_write_word(cpu, 0x0680u, 0x0f0eu);
         dspic33_write_word(cpu, 0x06d4u, 0x4042u);
         dspic33_can_test_configure_receive(cpu, 1u, 0xda00u, 4u, 0u);
-        dspic33_can_test_configure_filter(cpu, 1u, 0u, input.identifier, false, 0x7ffu, true, 0u,
-                                          0u);
+        dspic33_can_test_configure_filter(cpu, 1u, 0u, input_frame.identifier, false, 0x7ffu, true,
+                                          0u, 0u);
         dspic33_can_test_enable_filter(cpu, 1u, 1u);
         dspic33_can_test_configure_transmit(cpu, 0u, 0xd800u);
-        dspic33_can_test_write_transmit_frame(cpu, 0xd800u, &input);
+        dspic33_can_test_write_transmit_frame(cpu, 0xd800u, &input_frame);
         dspic33_can_test_select_window(cpu, 0u, false);
         dspic33_can_test_select_window(cpu, 1u, false);
         dspic33_write_word(cpu, 0x0410u, 0u);
-        dspic33_write_word(cpu, 0x0412u, glitch_transmitter != 0u ? 0x0040u : 0u);
+        dspic33_write_word(cpu, 0x0412u, transmitter_glitch != 0u ? 0x0040u : 0u);
         dspic33_write_word(cpu, 0x0510u, 0u);
-        dspic33_write_word(cpu, 0x0512u, glitch_transmitter == 0u ? 0x0040u : 0u);
+        dspic33_write_word(cpu, 0x0512u, transmitter_glitch == 0u ? 0x0040u : 0u);
         dspic33_can_test_set_mode(cpu, 0u, 0u);
         dspic33_can_test_set_mode(cpu, 1u, 0u);
         dspic33_write_word(cpu, 0x0430u, 0x008bu);
         expect(state,
                dspic33_device_advance(cpu, 8u) &&
                    bridge_can_with_final_sample_glitch(cpu, 0u, 64u, 65u, 66u, 64u,
-                                                       glitch_transmitter != 0u,
+                                                       transmitter_glitch != 0u,
                                                        &acknowledge_observed),
                "CAN triple-sample bridge tolerates one final-sample glitch");
         expect(state,
                dspic33_can_test_receive_full(cpu, 1u, 0u) &&
                    (dspic33_read_word(cpu, 0x050eu) & 0x00ffu) == 0u &&
                    dspic33_can_test_memory_word(cpu, 0xda00u) ==
-                       (uint16_t)(input.identifier << 2u) &&
-                   (uint8_t)dspic33_can_test_memory_word(cpu, 0xda06u) == input.data[0] &&
-                   (uint8_t)(dspic33_can_test_memory_word(cpu, 0xda06u) >> 8u) == input.data[1],
+                       (uint16_t)(input_frame.identifier << 2u) &&
+                   (uint8_t)dspic33_can_test_memory_word(cpu, 0xda06u) == input_frame.data[0] &&
+                   (uint8_t)(dspic33_can_test_memory_word(cpu, 0xda06u) >> 8u) ==
+                       input_frame.data[1],
                "CAN triple-sample receiver uses the majority value");
         expect(state,
-               acknowledge_observed && dspic33_can_transmit(cpu, 0u, &output) &&
-                   output.identifier == input.identifier &&
+               acknowledge_observed && dspic33_can_transmit(cpu, 0u, &output_frame) &&
+                   output_frame.identifier == input_frame.identifier &&
                    (dspic33_read_word(cpu, 0x040eu) >> 8u) == 0u &&
                    (dspic33_read_word(cpu, 0x0430u) & 0x0018u) == 0u,
                "CAN triple-sample transmitter uses the majority value");
