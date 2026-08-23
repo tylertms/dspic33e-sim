@@ -3,13 +3,13 @@
 void dspic33_i2c_test_slave_power_cases(TestState* state, Dspic33* cpu) {
     uint8_t channel;
     for (channel = 0u; channel < DSPIC33_I2C_COUNT; channel++) {
-        uint16_t base = bases[channel];
-        uint16_t vector = (uint16_t)(0x0240u + channel * 0x20u);
+        uint16_t register_base = bases[channel];
+        uint16_t interrupt_vector = (uint16_t)(0x0240u + channel * 0x20u);
 
         dspic33_reset(cpu, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 10u), 0x52u);
         dspic33_i2c_test_enable(cpu, channel, 0u, 0u);
-        dspic33_i2c_test_enable_interrupt(cpu, slave_irqs[channel], 3u, vector);
+        dspic33_i2c_test_enable_interrupt(cpu, slave_irqs[channel], 3u, interrupt_vector);
         cpu->power_state = DSPIC33_POWER_SLEEP;
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x51u, false, false, 0u) &&
@@ -21,9 +21,9 @@ void dspic33_i2c_test_slave_power_cases(TestState* state, Dspic33* cpu) {
                "sleep unmatched slave event cannot wake");
 
         dspic33_reset(cpu, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 10u), 0x52u);
         dspic33_i2c_test_enable(cpu, channel, 0u, 0u);
-        dspic33_i2c_test_enable_interrupt(cpu, slave_irqs[channel], 3u, vector);
+        dspic33_i2c_test_enable_interrupt(cpu, slave_irqs[channel], 3u, interrupt_vector);
         cpu->w[15] = 0x1800u;
         cpu->power_state = DSPIC33_POWER_SLEEP;
         expect(state,
@@ -32,17 +32,17 @@ void dspic33_i2c_test_slave_power_cases(TestState* state, Dspic33* cpu) {
                "sleep matched slave event advances");
         expect(state,
                dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 2u) != 0u &&
-                   dspic33_read_word(cpu, base) == 0x00a4u,
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 2u) != 0u &&
+                   dspic33_read_word(cpu, register_base) == 0x00a4u,
                "sleep matched slave event receives address");
         expect(state,
                dspic33_device_advance(cpu, 1u) && dspic33_device_wake(cpu) &&
-                   cpu->last_interrupt == slave_irqs[channel] && cpu->pc == vector &&
+                   cpu->last_interrupt == slave_irqs[channel] && cpu->pc == interrupt_vector &&
                    cpu->w[15] == 0x1804u,
                "sleep matched slave event wakes through vector");
 
         dspic33_reset(cpu, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 10u), 0x52u);
         dspic33_i2c_test_enable(cpu, channel, 0u, 0u);
         cpu->power_state = DSPIC33_POWER_IDLE;
         expect(state,
@@ -51,8 +51,8 @@ void dspic33_i2c_test_slave_power_cases(TestState* state, Dspic33* cpu) {
                "idle-running slave event advances");
         expect(state,
                dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 2u) != 0u &&
-                   dspic33_read_word(cpu, base) == 0x00a4u,
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 2u) != 0u &&
+                   dspic33_read_word(cpu, register_base) == 0x00a4u,
                "I2CSIDL clear continues slave operation in Idle");
     }
 }
@@ -60,18 +60,21 @@ void dspic33_i2c_test_slave_power_cases(TestState* state, Dspic33* cpu) {
 void dspic33_i2c_test_disable_cases(TestState* state, Dspic33* cpu) {
     static const uint16_t requests[] = {1u, 2u, 4u, 8u, 16u};
     uint8_t channel;
-    size_t index;
+    size_t request_index;
     for (channel = 0u; channel < DSPIC33_I2C_COUNT; channel++) {
-        uint16_t base = bases[channel];
-        for (index = 0u; index < sizeof(requests) / sizeof(requests[0]); index++) {
+        uint16_t register_base = bases[channel];
+        for (request_index = 0u; request_index < sizeof(requests) / sizeof(requests[0]);
+             request_index++) {
             dspic33_reset(cpu, 0u);
-            dspic33_i2c_test_enable(cpu, channel, requests[index], 2u);
-            expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & requests[index]) != 0u,
+            dspic33_i2c_test_enable(cpu, channel, requests[request_index], 2u);
+            expect(state,
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 6u)) &
+                    requests[request_index]) != 0u,
                    "disable request active");
-            dspic33_write_word(cpu, (uint16_t)(base + 6u), 0u);
-            expect(state, dspic33_read_word(cpu, (uint16_t)(base + 6u)) == 0x1000u,
+            dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0u);
+            expect(state, dspic33_read_word(cpu, (uint16_t)(register_base + 6u)) == 0x1000u,
                    "disable clears request and releases clock");
-            expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0u,
+            expect(state, dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) == 0u,
                    "disable clears status");
             expect(state, dspic33_device_advance(cpu, dspic33_i2c_test_receive_cycles(2u)),
                    "disabled request canceled advance");
@@ -81,20 +84,20 @@ void dspic33_i2c_test_disable_cases(TestState* state, Dspic33* cpu) {
             expect(state, dspic33_device_advance(cpu, dspic33_i2c_test_control_cycles(2u)),
                    "disable clean re-enable advance");
             expect(state,
-                   (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 1u) == 0u &&
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 6u)) & 1u) == 0u &&
                        dspic33_i2c_test_interrupt_flag(cpu, master_irqs[channel]),
                    "disable clean re-enable completion");
         }
 
         dspic33_reset(cpu, 0u);
         dspic33_i2c_test_enable(cpu, channel, 0u, 2u);
-        dspic33_write_word(cpu, (uint16_t)(base + 2u), 0x5au);
-        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x4001u) == 0x4001u,
+        dspic33_write_word(cpu, (uint16_t)(register_base + 2u), 0x5au);
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 0x4001u) == 0x4001u,
                "disable transmit active");
-        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0u);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 6u)) == 0x1000u,
+        dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0u);
+        expect(state, dspic33_read_word(cpu, (uint16_t)(register_base + 6u)) == 0x1000u,
                "disable transmit releases clock");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0u,
+        expect(state, dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) == 0u,
                "disable transmit clears status");
         expect(state, dspic33_device_advance(cpu, dspic33_i2c_test_byte_cycles(2u)),
                "disabled transmit canceled advance");
@@ -104,7 +107,7 @@ void dspic33_i2c_test_disable_cases(TestState* state, Dspic33* cpu) {
         expect(state, dspic33_device_advance(cpu, dspic33_i2c_test_control_cycles(2u)),
                "disable transmit clean re-enable advance");
         expect(state,
-               (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 1u) == 0u &&
+               (dspic33_read_word(cpu, (uint16_t)(register_base + 6u)) & 1u) == 0u &&
                    dspic33_i2c_test_interrupt_flag(cpu, master_irqs[channel]),
                "disable transmit clean re-enable completion");
     }
