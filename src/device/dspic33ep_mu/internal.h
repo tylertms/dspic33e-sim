@@ -141,8 +141,8 @@ uint16_t dspic33_device_internal_can_filter_word(const Dspic33* cpu, uint8_t cha
                                                  uint16_t offset);
 uint16_t dspic33_device_internal_can_frame_bits(const Dspic33CanFrame* frame, bool bits[160]);
 uint16_t dspic33_device_internal_comparator_base(uint8_t comparator);
-uint16_t dspic33_device_internal_dma_channel_base(uint8_t channel);
-uint16_t dspic33_device_internal_dma_channel_bit(uint8_t channel);
+uint16_t dspic33_device_internal_dma_channel_base(uint8_t channel_index);
+uint16_t dspic33_device_internal_dma_channel_bit(uint8_t channel_index);
 uint16_t dspic33_device_internal_gpio_pin_values(const Dspic33* cpu, uint8_t port);
 uint16_t dspic33_device_internal_gpio_port_mask(const Dspic33* cpu, uint8_t port);
 uint16_t dspic33_device_internal_output_compare_base(uint8_t channel);
