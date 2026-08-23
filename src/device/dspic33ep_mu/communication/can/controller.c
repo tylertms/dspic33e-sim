@@ -1,8 +1,8 @@
 #include "device/dspic33ep_mu/internal.h"
 
 uint16_t dspic33_device_internal_can_filter_word(const Dspic33* cpu, uint8_t channel_index,
-                                                 uint16_t register_offset) {
-    return cpu->io.can_filter_window[channel_index][(register_offset - 0x20u) / 2u];
+                                                 uint16_t filter_register_offset) {
+    return cpu->io.can_filter_window[channel_index][(filter_register_offset - 0x20u) / 2u];
 }
 
 uint8_t dspic33_device_internal_can_mode(const Dspic33* cpu, uint8_t channel_index) {
@@ -13,7 +13,7 @@ uint8_t dspic33_device_internal_can_mode(const Dspic33* cpu, uint8_t channel_ind
 }
 
 bool dspic33_device_internal_can_power_enabled(const Dspic33* cpu, uint8_t channel_index) {
-    const uint16_t can_control =
+    const uint16_t control_word =
         dspic33_device_internal_raw_word(cpu, dspic33_device_can_bases[channel_index]);
 
     if ((dspic33_device_internal_raw_word(cpu, 0x0760u) & (uint16_t)(2u << channel_index)) != 0u) {
@@ -22,15 +22,15 @@ bool dspic33_device_internal_can_power_enabled(const Dspic33* cpu, uint8_t chann
     if (cpu->power_state == DSPIC33_POWER_ACTIVE) {
         return true;
     }
-    return cpu->power_state == DSPIC33_POWER_IDLE && (can_control & CAN_STOP_IDLE) == 0u;
+    return cpu->power_state == DSPIC33_POWER_IDLE && (control_word & CAN_STOP_IDLE) == 0u;
 }
 
 uint8_t dspic33_device_internal_can_buffer_count(const Dspic33* cpu, uint8_t channel_index) {
-    static const uint8_t buffer_counts[] = {4u, 6u, 8u, 12u, 16u, 24u, 32u, 32u};
-    const uint16_t can_control = dspic33_device_internal_raw_word(
+    static const uint8_t buffer_counts_by_config[] = {4u, 6u, 8u, 12u, 16u, 24u, 32u, 32u};
+    const uint16_t control_word = dspic33_device_internal_raw_word(
         cpu, (uint16_t)(dspic33_device_can_bases[channel_index] + 6u));
 
-    return buffer_counts[(can_control >> 13u) & 7u];
+    return buffer_counts_by_config[(control_word >> 13u) & 7u];
 }
 
 uint16_t dspic33_device_internal_can_buffer_control(const Dspic33* cpu, uint8_t channel_index,
@@ -44,36 +44,36 @@ uint16_t dspic33_device_internal_can_buffer_control(const Dspic33* cpu, uint8_t 
 
 void dspic33_device_internal_can_set_buffer_control(Dspic33* cpu, uint8_t channel_index,
                                                     uint8_t buffer_index,
-                                                    uint16_t requested_value) {
+                                                    uint16_t requested_control) {
     const uint16_t register_address =
         (uint16_t)(dspic33_device_can_bases[channel_index] + 0x30u + (buffer_index / 2u) * 2u);
     const uint8_t byte_shift = (uint8_t)((buffer_index & 1u) * 8u);
     uint16_t control_word = dspic33_device_internal_raw_word(cpu, register_address);
 
     control_word = (uint16_t)((control_word & ~(uint16_t)(0xffu << byte_shift)) |
-                              ((requested_value & 0xffu) << byte_shift));
+                              ((requested_control & 0xffu) << byte_shift));
     dspic33_device_internal_raw_write_word(cpu, register_address, control_word);
 }
 
 static uint16_t can_buffer_flag_address(uint8_t channel_index, uint8_t buffer_index,
-                                        bool overflow) {
-    return (uint16_t)(dspic33_device_can_bases[channel_index] + (overflow ? 0x28u : 0x20u) +
+                                        bool is_overflow) {
+    return (uint16_t)(dspic33_device_can_bases[channel_index] + (is_overflow ? 0x28u : 0x20u) +
                       (buffer_index >= 16u ? 2u : 0u));
 }
 
 bool dspic33_device_internal_can_buffer_flag(const Dspic33* cpu, uint8_t channel_index,
-                                             uint8_t buffer_index, bool overflow) {
+                                             uint8_t buffer_index, bool is_overflow) {
     const uint16_t register_address =
-        can_buffer_flag_address(channel_index, buffer_index, overflow);
+        can_buffer_flag_address(channel_index, buffer_index, is_overflow);
 
     return (dspic33_device_internal_raw_word(cpu, register_address) &
             (uint16_t)(1u << (buffer_index & 15u))) != 0u;
 }
 
 void dspic33_device_internal_can_set_buffer_flag(Dspic33* cpu, uint8_t channel_index,
-                                                 uint8_t buffer_index, bool overflow) {
+                                                 uint8_t buffer_index, bool is_overflow) {
     const uint16_t register_address =
-        can_buffer_flag_address(channel_index, buffer_index, overflow);
+        can_buffer_flag_address(channel_index, buffer_index, is_overflow);
 
     dspic33_device_internal_raw_write_word(
         cpu, register_address,
@@ -83,45 +83,45 @@ void dspic33_device_internal_can_set_buffer_flag(Dspic33* cpu, uint8_t channel_i
 
 void dspic33_device_internal_can_update_vector(Dspic33* cpu, uint8_t channel_index) {
     const uint16_t can_base = dspic33_device_can_bases[channel_index];
-    const uint16_t active_flags =
+    const uint16_t active_interrupt_flags =
         (uint16_t)(dspic33_device_internal_raw_word(cpu, (uint16_t)(can_base + 0x0au)) &
                    dspic33_device_internal_raw_word(cpu, (uint16_t)(can_base + 0x0cu)));
-    uint8_t vector_code = 0x40u;
+    uint8_t vector_value = 0x40u;
 
-    if ((active_flags & (CAN_INTERRUPT_TRANSMIT | CAN_INTERRUPT_RECEIVE)) != 0u) {
-        vector_code = cpu->io.can_last_buffer[channel_index];
-    } else if ((active_flags & CAN_INTERRUPT_ERROR) != 0u) {
-        vector_code = 0x41u;
-    } else if ((active_flags & CAN_INTERRUPT_WAKE) != 0u) {
-        vector_code = 0x42u;
-    } else if ((active_flags & CAN_INTERRUPT_OVERFLOW) != 0u) {
-        vector_code = 0x43u;
-    } else if ((active_flags & CAN_INTERRUPT_FIFO) != 0u) {
-        vector_code = 0x44u;
+    if ((active_interrupt_flags & (CAN_INTERRUPT_TRANSMIT | CAN_INTERRUPT_RECEIVE)) != 0u) {
+        vector_value = cpu->io.can_last_buffer[channel_index];
+    } else if ((active_interrupt_flags & CAN_INTERRUPT_ERROR) != 0u) {
+        vector_value = 0x41u;
+    } else if ((active_interrupt_flags & CAN_INTERRUPT_WAKE) != 0u) {
+        vector_value = 0x42u;
+    } else if ((active_interrupt_flags & CAN_INTERRUPT_OVERFLOW) != 0u) {
+        vector_value = 0x43u;
+    } else if ((active_interrupt_flags & CAN_INTERRUPT_FIFO) != 0u) {
+        vector_value = 0x44u;
     }
     dspic33_device_internal_raw_write_word(
         cpu, (uint16_t)(can_base + 4u),
-        (uint16_t)(((uint16_t)cpu->io.can_last_filter[channel_index] << 8u) | vector_code));
-    if (active_flags != 0u) {
+        (uint16_t)(((uint16_t)cpu->io.can_last_filter[channel_index] << 8u) | vector_value));
+    if (active_interrupt_flags != 0u) {
         dspic33_raise_interrupt(cpu, dspic33_device_can_event_irqs[channel_index]);
     }
 }
 
 void dspic33_device_internal_can_raise_event(Dspic33* cpu, uint8_t channel_index,
-                                             uint16_t interrupt_flag, uint8_t buffer_index,
+                                             uint16_t interrupt_mask, uint8_t buffer_index,
                                              uint8_t filter_index) {
     const uint16_t status_address = (uint16_t)(dspic33_device_can_bases[channel_index] + 0x0au);
 
     dspic33_device_internal_raw_write_word(
         cpu, status_address,
-        (uint16_t)(dspic33_device_internal_raw_word(cpu, status_address) | interrupt_flag));
+        (uint16_t)(dspic33_device_internal_raw_word(cpu, status_address) | interrupt_mask));
     cpu->io.can_last_buffer[channel_index] = buffer_index;
     cpu->io.can_last_filter[channel_index] = filter_index;
     dspic33_device_internal_can_update_vector(cpu, channel_index);
 }
 
-bool dspic33_device_internal_can_dma_ready(const Dspic33* cpu, uint8_t dma_request,
-                                           uint16_t peripheral_address, bool transmit_direction) {
+bool dspic33_device_internal_can_dma_ready(const Dspic33* cpu, uint8_t request_source,
+                                           uint16_t peripheral_address, bool is_transmit) {
     for (uint8_t dma_channel_index = 0u; dma_channel_index < DSPIC33_DMA_COUNT;
          dma_channel_index++) {
         const uint16_t dma_base = dspic33_device_internal_dma_channel_base(dma_channel_index);
@@ -129,12 +129,12 @@ bool dspic33_device_internal_can_dma_ready(const Dspic33* cpu, uint8_t dma_reque
 
         if ((dma_control & DMA_CON_CHEN) != 0u &&
             (dspic33_device_internal_raw_word(cpu, (uint16_t)(dma_base + 2u)) &
-             DMA_REQ_SOURCE_MASK) == dma_request &&
+             DMA_REQ_SOURCE_MASK) == request_source &&
             dspic33_device_internal_raw_word(cpu, (uint16_t)(dma_base + 0x0cu)) ==
                 peripheral_address &&
             (dma_control & DMA_CON_SIZE_BYTE) == 0u &&
             (dma_control & DMA_CON_AMODE_MASK) == DMA_CON_AMODE_PERIPHERAL &&
-            ((dma_control & DMA_CON_RAM_TO_PERIPHERAL) != 0u) == transmit_direction) {
+            ((dma_control & DMA_CON_RAM_TO_PERIPHERAL) != 0u) == is_transmit) {
             return true;
         }
     }
