@@ -722,28 +722,31 @@ bool dspic33_device_internal_can_schedule_transmit_sample(Dspic33* cpu, uint8_t 
     return dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, event, delay);
 }
 
-static bool can_receive_sample_event(uint32_t kind) {
-    return kind == CAN_EVENT_RECEIVE_SAMPLE || kind == CAN_EVENT_RECEIVE_SAMPLE_FIRST ||
-           kind == CAN_EVENT_RECEIVE_SAMPLE_SECOND;
+static bool can_receive_sample_event(uint32_t event_kind) {
+    return event_kind == CAN_EVENT_RECEIVE_SAMPLE || event_kind == CAN_EVENT_RECEIVE_SAMPLE_FIRST ||
+           event_kind == CAN_EVENT_RECEIVE_SAMPLE_SECOND;
 }
 
-static bool can_transmit_timing_event(uint32_t kind) {
-    return kind == CAN_EVENT_TRANSMIT_SAMPLE || kind == CAN_EVENT_TRANSMIT_SAMPLE_FIRST ||
-           kind == CAN_EVENT_TRANSMIT_SAMPLE_SECOND || kind == CAN_EVENT_TRANSMIT_BUS_FINISH;
+static bool can_transmit_timing_event(uint32_t event_kind) {
+    return event_kind == CAN_EVENT_TRANSMIT_SAMPLE ||
+           event_kind == CAN_EVENT_TRANSMIT_SAMPLE_FIRST ||
+           event_kind == CAN_EVENT_TRANSMIT_SAMPLE_SECOND ||
+           event_kind == CAN_EVENT_TRANSMIT_BUS_FINISH;
 }
 
 static uint64_t can_receive_sample_point(const Dspic33* cpu, uint8_t channel) {
-    for (size_t index = 0u; index < cpu->events.count; index++) {
-        const Dspic33Event* event = &cpu->events.items[index];
-        uint32_t kind = event->value & CAN_EVENT_KIND_MASK;
+    for (size_t event_index = 0u; event_index < cpu->events.count; event_index++) {
+        const Dspic33Event* event = &cpu->events.items[event_index];
+        uint32_t event_kind = event->value & CAN_EVENT_KIND_MASK;
+
         if (event->type != DSPIC33_EVENT_CAN || event->source != channel ||
-            !can_receive_sample_event(kind)) {
+            !can_receive_sample_event(event_kind)) {
             continue;
         }
-        if (kind == CAN_EVENT_RECEIVE_SAMPLE_FIRST) {
+        if (event_kind == CAN_EVENT_RECEIVE_SAMPLE_FIRST) {
             return event->cycle + 2u * dspic33_device_internal_can_time_quantum(cpu, channel);
         }
-        if (kind == CAN_EVENT_RECEIVE_SAMPLE_SECOND) {
+        if (event_kind == CAN_EVENT_RECEIVE_SAMPLE_SECOND) {
             return event->cycle + dspic33_device_internal_can_time_quantum(cpu, channel);
         }
         return event->cycle;
@@ -752,11 +755,12 @@ static uint64_t can_receive_sample_point(const Dspic33* cpu, uint8_t channel) {
 }
 
 static void can_shift_timing(Dspic33* cpu, uint8_t channel, int64_t adjustment) {
-    for (size_t index = 0u; index < cpu->events.count; index++) {
-        Dspic33Event* event = &cpu->events.items[index];
-        uint32_t kind = event->value & CAN_EVENT_KIND_MASK;
+    for (size_t event_index = 0u; event_index < cpu->events.count; event_index++) {
+        Dspic33Event* event = &cpu->events.items[event_index];
+        uint32_t event_kind = event->value & CAN_EVENT_KIND_MASK;
+
         if (event->type == DSPIC33_EVENT_CAN && event->source == channel &&
-            (can_receive_sample_event(kind) || can_transmit_timing_event(kind))) {
+            (can_receive_sample_event(event_kind) || can_transmit_timing_event(event_kind))) {
             event->cycle = (uint64_t)((int64_t)event->cycle + adjustment);
         }
     }
@@ -765,65 +769,69 @@ static void can_shift_timing(Dspic33* cpu, uint8_t channel, int64_t adjustment) 
 }
 
 static void can_resynchronize(Dspic33* cpu, uint8_t channel) {
-    uint16_t count = cpu->io.can_rx_serial_count[channel];
-    uint64_t sample = can_receive_sample_point(cpu, channel);
-    if (sample == 0u || cpu->io.can_resync_count[channel] == count) {
+    uint16_t received_bit_count = cpu->io.can_rx_serial_count[channel];
+    uint64_t sample_cycle = can_receive_sample_point(cpu, channel);
+
+    if (sample_cycle == 0u || cpu->io.can_resync_count[channel] == received_bit_count) {
         return;
     }
-    int64_t expected_start =
-        (int64_t)sample - (int64_t)dspic33_device_internal_can_sample_cycles(cpu, channel);
-    int64_t phase_error = (int64_t)cpu->device_cycles - expected_start;
-    uint16_t config1 = dspic33_device_internal_raw_word(
+    int64_t expected_sample_start =
+        (int64_t)sample_cycle - (int64_t)dspic33_device_internal_can_sample_cycles(cpu, channel);
+    int64_t phase_error = (int64_t)cpu->device_cycles - expected_sample_start;
+    uint16_t timing_config1 = dspic33_device_internal_raw_word(
         cpu, (uint16_t)(dspic33_device_can_bases[channel] + 0x10u));
-    int64_t jump = (int64_t)(((config1 >> 6u) & 3u) + 1u) *
-                   (int64_t)dspic33_device_internal_can_time_quantum(cpu, channel);
-    int64_t adjustment = phase_error;
-    if (adjustment > jump) {
-        adjustment = jump;
-    } else if (adjustment < -jump) {
-        adjustment = -jump;
+    int64_t maximum_adjustment = (int64_t)(((timing_config1 >> 6u) & 3u) + 1u) *
+                                 (int64_t)dspic33_device_internal_can_time_quantum(cpu, channel);
+    int64_t phase_adjustment = phase_error;
+
+    if (phase_adjustment > maximum_adjustment) {
+        phase_adjustment = maximum_adjustment;
+    } else if (phase_adjustment < -maximum_adjustment) {
+        phase_adjustment = -maximum_adjustment;
     }
-    cpu->io.can_resync_count[channel] = count;
-    can_shift_timing(cpu, channel, adjustment);
+    cpu->io.can_resync_count[channel] = received_bit_count;
+    can_shift_timing(cpu, channel, phase_adjustment);
 }
 
 static void can_lose_arbitration(Dspic33* cpu, uint8_t channel) {
-    uint8_t bit = (uint8_t)(1u << channel);
-    uint8_t buffer = cpu->io.can_tx_buffer[channel];
-    uint16_t control = dspic33_device_internal_can_buffer_control(cpu, channel, buffer);
-    dspic33_device_internal_can_set_buffer_control(cpu, channel, buffer,
-                                                   (uint16_t)(control | CAN_BUFFER_LOST));
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+    uint8_t tx_buffer = cpu->io.can_tx_buffer[channel];
+    uint16_t buffer_control = dspic33_device_internal_can_buffer_control(cpu, channel, tx_buffer);
+
+    dspic33_device_internal_can_set_buffer_control(cpu, channel, tx_buffer,
+                                                   (uint16_t)(buffer_control | CAN_BUFFER_LOST));
     dspic33_device_internal_can_remove_transmit_events(cpu, channel);
-    cpu->io.can_tx_on_bus &= (uint8_t)~bit;
-    cpu->io.can_tx_busy &= (uint8_t)~bit;
-    cpu->io.can_tx_retry_wait |= bit;
+    cpu->io.can_tx_on_bus &= (uint8_t)~channel_mask;
+    cpu->io.can_tx_busy &= (uint8_t)~channel_mask;
+    cpu->io.can_tx_retry_wait |= channel_mask;
 }
 
 static void can_transmit_error(Dspic33* cpu, uint8_t channel) {
-    uint8_t bit = (uint8_t)(1u << channel);
-    uint8_t buffer = cpu->io.can_tx_buffer[channel];
-    uint16_t control = dspic33_device_internal_can_buffer_control(cpu, channel, buffer);
-    uint64_t remaining = dspic33_device_internal_can_bit_cycles(cpu, channel) -
-                         dspic33_device_internal_can_sample_cycles(cpu, channel);
-    dspic33_device_internal_can_set_buffer_control(cpu, channel, buffer,
-                                                   (uint16_t)(control | CAN_BUFFER_ERROR));
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+    uint8_t tx_buffer = cpu->io.can_tx_buffer[channel];
+    uint16_t buffer_control = dspic33_device_internal_can_buffer_control(cpu, channel, tx_buffer);
+    uint64_t remaining_bit_cycles = dspic33_device_internal_can_bit_cycles(cpu, channel) -
+                                    dspic33_device_internal_can_sample_cycles(cpu, channel);
+
+    dspic33_device_internal_can_set_buffer_control(cpu, channel, tx_buffer,
+                                                   (uint16_t)(buffer_control | CAN_BUFFER_ERROR));
     dspic33_device_internal_can_remove_transmit_events(cpu, channel);
-    cpu->io.can_tx_on_bus &= (uint8_t)~bit;
-    cpu->io.can_tx_busy &= (uint8_t)~bit;
-    cpu->io.can_tx_retry_wait |= bit;
-    cpu->io.can_rx_serial_active &= (uint8_t)~bit;
+    cpu->io.can_tx_on_bus &= (uint8_t)~channel_mask;
+    cpu->io.can_tx_busy &= (uint8_t)~channel_mask;
+    cpu->io.can_tx_retry_wait |= channel_mask;
+    cpu->io.can_rx_serial_active &= (uint8_t)~channel_mask;
     dspic33_device_internal_can_error_event(cpu, channel,
                                             CAN_EVENT_ERROR | CAN_EVENT_TRANSMIT_ERROR |
                                                 (8u << CAN_EVENT_ERROR_COUNT_SHIFT));
     if ((dspic33_device_internal_raw_word(cpu,
                                           (uint16_t)(dspic33_device_can_bases[channel] + 0x0au)) &
          CAN_BUS_OFF) != 0u) {
-        cpu->io.can_tx_retry_wait &= (uint8_t)~bit;
+        cpu->io.can_tx_retry_wait &= (uint8_t)~channel_mask;
         return;
     }
     if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_ERROR_START,
-                          remaining)) {
-        cpu->io.can_tx_retry_wait &= (uint8_t)~bit;
+                          remaining_bit_cycles)) {
+        cpu->io.can_tx_retry_wait &= (uint8_t)~channel_mask;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
 }
