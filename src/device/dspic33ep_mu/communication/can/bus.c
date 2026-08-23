@@ -156,42 +156,47 @@ static void can_receive_error_finish(Dspic33* cpu, uint8_t channel_index) {
     cpu->io.can_rx_error_active &= (uint8_t)~(uint8_t)(1u << channel_index);
 }
 
-static void can_mode_transition(Dspic33* cpu, uint8_t channel, uint32_t value) {
-    uint8_t bit = (uint8_t)(1u << channel);
-    uint8_t mode = (uint8_t)((value >> CAN_EVENT_MODE_SHIFT) & 7u);
-    uint16_t generation = (uint16_t)(value >> CAN_EVENT_MODE_GENERATION_SHIFT);
-    uint16_t control = dspic33_device_internal_raw_word(cpu, dspic33_device_can_bases[channel]);
-    uint8_t requested = (uint8_t)((control & CAN_MODE_MASK) >> CAN_MODE_SHIFT);
-    if (generation != cpu->io.can_mode_generation[channel] || mode != requested ||
-        mode == dspic33_device_internal_can_mode(cpu, channel)) {
+static void can_mode_transition(Dspic33* cpu, uint8_t channel_index, uint32_t event_value) {
+    const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+    const uint8_t requested_mode = (uint8_t)((event_value >> CAN_EVENT_MODE_SHIFT) & 7u);
+    const uint16_t mode_generation = (uint16_t)(event_value >> CAN_EVENT_MODE_GENERATION_SHIFT);
+    const uint16_t mode_control =
+        dspic33_device_internal_raw_word(cpu, dspic33_device_can_bases[channel_index]);
+    const uint8_t configured_mode = (uint8_t)((mode_control & CAN_MODE_MASK) >> CAN_MODE_SHIFT);
+
+    if (mode_generation != cpu->io.can_mode_generation[channel_index] ||
+        requested_mode != configured_mode ||
+        requested_mode == dspic33_device_internal_can_mode(cpu, channel_index)) {
         return;
     }
-    if (!dspic33_device_internal_can_power_enabled(cpu, channel) ||
-        (cpu->io.can_rx_pin_high & bit) == 0u ||
+    if (!dspic33_device_internal_can_power_enabled(cpu, channel_index) ||
+        (cpu->io.can_rx_pin_high & channel_bit) == 0u ||
         ((cpu->io.can_tx_busy | cpu->io.can_rx_busy | cpu->io.can_rx_serial_active |
           cpu->io.can_tx_error_active | cpu->io.can_rx_error_active | cpu->io.can_rx_ack) &
-         bit) != 0u) {
-        cpu->io.can_mode_generation[channel]++;
-        if (!dspic33_device_internal_can_schedule_mode_transition(cpu, channel, mode)) {
+         channel_bit) != 0u) {
+        cpu->io.can_mode_generation[channel_index]++;
+        if (!dspic33_device_internal_can_schedule_mode_transition(cpu, channel_index,
+                                                                  requested_mode)) {
             cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
         }
         return;
     }
     dspic33_device_internal_raw_write_word(
-        cpu, dspic33_device_can_bases[channel],
-        (uint16_t)((control & ~0x00e0u) | ((uint16_t)mode << 5u)));
-    if (mode == CAN_MODE_CONFIGURATION) {
+        cpu, dspic33_device_can_bases[channel_index],
+        (uint16_t)((mode_control & ~0x00e0u) | ((uint16_t)requested_mode << 5u)));
+    if (requested_mode == CAN_MODE_CONFIGURATION) {
         dspic33_device_internal_raw_write_word(
-            cpu, (uint16_t)(dspic33_device_can_bases[channel] + 0x0eu), 0u);
+            cpu, (uint16_t)(dspic33_device_can_bases[channel_index] + 0x0eu), 0u);
         dspic33_device_internal_raw_write_word(
-            cpu, (uint16_t)(dspic33_device_can_bases[channel] + 0x0au),
+            cpu, (uint16_t)(dspic33_device_can_bases[channel_index] + 0x0au),
             (uint16_t)(dspic33_device_internal_raw_word(
-                           cpu, (uint16_t)(dspic33_device_can_bases[channel] + 0x0au)) &
+                           cpu, (uint16_t)(dspic33_device_can_bases[channel_index] + 0x0au)) &
                        0x00ffu));
-        dspic33_device_internal_can_refresh_error_status(cpu, channel);
+        dspic33_device_internal_can_refresh_error_status(cpu, channel_index);
     }
-    if (mode == CAN_MODE_NORMAL || mode == CAN_MODE_LOOPBACK) {
-        if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_START, 0u)) {
+    if (requested_mode == CAN_MODE_NORMAL || requested_mode == CAN_MODE_LOOPBACK) {
+        if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_TRANSMIT_START,
+                              0u)) {
             cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
         }
     }
