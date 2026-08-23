@@ -33,48 +33,53 @@ void dspic33_internal_check_stack_address(Dspic33* cpu, int32_t address, bool wr
 }
 
 bool dspic33_internal_service_pending_soft_trap(Dspic33* cpu) {
-    Dspic33PendingSoftTrap* selected = NULL;
+    Dspic33PendingSoftTrap* selected_trap = NULL;
     uint8_t current_priority;
-    size_t index;
+    size_t trap_index;
+
     current_priority =
         (uint8_t)(((cpu->corcon & 0x0008u) != 0u ? 8u : 0u) | ((cpu->sr >> 5u) & 0x07u));
-    for (index = 0u; index < 4u; index++) {
-        Dspic33PendingSoftTrap* pending = &cpu->pending_soft_traps[index];
+
+    for (trap_index = 0u; trap_index < 4u; trap_index++) {
+        Dspic33PendingSoftTrap* pending = &cpu->pending_soft_traps[trap_index];
         if (pending->active && pending->delay == 0u && pending->priority >= 13u &&
             pending->priority < current_priority) {
             dspic33_internal_perform_warm_reset(cpu, 0x8000u, DSPIC33_RESET_HARDWARE);
             return true;
         }
     }
-    for (index = 0u; index < 4u; index++) {
-        Dspic33PendingSoftTrap* pending = &cpu->pending_soft_traps[index];
+
+    for (trap_index = 0u; trap_index < 4u; trap_index++) {
+        Dspic33PendingSoftTrap* pending = &cpu->pending_soft_traps[trap_index];
         if (pending->active && pending->delay == 0u && pending->priority > current_priority &&
-            (selected == NULL || pending->priority > selected->priority)) {
-            selected = pending;
+            (selected_trap == NULL || pending->priority > selected_trap->priority)) {
+            selected_trap = pending;
         }
     }
-    if (selected != NULL) {
-        uint16_t trap = selected->trap;
-        uint32_t vector = selected->vector;
-        uint8_t priority = selected->priority;
+
+    if (selected_trap != NULL) {
+        uint16_t trap = selected_trap->trap;
+        uint32_t vector = selected_trap->vector;
+        uint8_t priority = selected_trap->priority;
         bool source_active = (trap == 2u && ((dspic33_read_word(cpu, 0x08c2u) & 0x2000u) != 0u ||
                                              (dspic33_read_word(cpu, 0x08c6u) & 0x0001u) != 0u)) ||
                              (trap == 4u && (dspic33_read_word(cpu, 0x08c0u) & 0x0010u) != 0u) ||
                              (trap == 6u && (dspic33_read_word(cpu, 0x08c4u) & 0x0070u) != 0u);
         if (!source_active) {
-            selected->active = false;
+            selected_trap->active = false;
         }
         dspic33_internal_enter_trap(cpu, trap, vector, priority, 0u, cpu->pc,
-                                    selected->auxiliary_program);
+                                    selected_trap->auxiliary_program);
         return true;
     }
     return false;
 }
 
 static bool soft_exception_pending(const Dspic33* cpu) {
-    size_t index;
-    for (index = 0u; index < 4u; index++) {
-        if (cpu->pending_soft_traps[index].active) {
+    size_t trap_index;
+
+    for (trap_index = 0u; trap_index < 4u; trap_index++) {
+        if (cpu->pending_soft_traps[trap_index].active) {
             return true;
         }
     }
@@ -96,7 +101,6 @@ static bool advance_instruction_cycles(Dspic33* cpu, uint64_t cycles, uint64_t d
 
 void dspic33_internal_advance_instruction(Dspic33* cpu, uint64_t cycles, bool separate_wait_cycle,
                                           uint64_t device_ratio) {
-    size_t index;
     if (separate_wait_cycle && cycles > 1u) {
         uint16_t nested_interrupt_deferred[DSPIC33_IRQ_GROUP_COUNT];
         if (!advance_instruction_cycles(cpu, cycles - 1u, device_ratio)) {
@@ -108,15 +112,15 @@ void dspic33_internal_advance_instruction(Dspic33* cpu, uint64_t cycles, bool se
             return;
         }
         if (cpu->interrupt_depth != 0u) {
-            for (index = 0u; index < DSPIC33_IRQ_GROUP_COUNT; index++) {
-                cpu->interrupt_deferred[index] |= nested_interrupt_deferred[index];
+            for (size_t group_index = 0u; group_index < DSPIC33_IRQ_GROUP_COUNT; group_index++) {
+                cpu->interrupt_deferred[group_index] |= nested_interrupt_deferred[group_index];
             }
         }
     } else {
         advance_instruction_cycles(cpu, cycles, device_ratio);
     }
-    for (index = 0u; index < 4u; index++) {
-        Dspic33PendingSoftTrap* pending = &cpu->pending_soft_traps[index];
+    for (size_t trap_index = 0u; trap_index < 4u; trap_index++) {
+        Dspic33PendingSoftTrap* pending = &cpu->pending_soft_traps[trap_index];
         if (pending->active && pending->delay != 0u) {
             pending->delay = pending->delay > cycles ? (uint8_t)(pending->delay - cycles) : 0u;
         }
@@ -871,7 +875,6 @@ bool dspic33_internal_execute(Dspic33* cpu, uint32_t opcode) {
 }
 
 bool dspic33_initialize_for_device(Dspic33* cpu, Dspic33epMuDevice device) {
-    size_t index;
     if (dspic33ep_mu_profile(device) == NULL) {
         return false;
     }
@@ -895,15 +898,16 @@ bool dspic33_initialize_for_device(Dspic33* cpu, Dspic33epMuDevice device) {
            DSPIC33_AUXILIARY_PROGRAM_WORDS * sizeof(*cpu->auxiliary_program));
     memset(cpu->persistent_program, 0xff,
            DSPIC33_PERSISTENT_PROGRAM_WORDS * sizeof(*cpu->persistent_program));
-    for (index = 0u; index < DSPIC33_WRITE_LATCH_WORDS; index++) {
-        cpu->write_latches[index] = 0x00ffffffu;
+    for (size_t latch_index = 0u; latch_index < DSPIC33_WRITE_LATCH_WORDS; latch_index++) {
+        cpu->write_latches[latch_index] = 0x00ffffffu;
     }
     memset(cpu->configuration, 0xff, sizeof(cpu->configuration));
-    for (index = 0u; index < sizeof(dspic33_internal_configuration_factory_defaults) /
-                                 sizeof(dspic33_internal_configuration_factory_defaults[0]);
-         index++) {
-        cpu->configuration[4u + index * 2u] =
-            dspic33_internal_configuration_factory_defaults[index];
+    for (size_t configuration_index = 0u;
+         configuration_index < sizeof(dspic33_internal_configuration_factory_defaults) /
+                                   sizeof(dspic33_internal_configuration_factory_defaults[0]);
+         configuration_index++) {
+        cpu->configuration[4u + configuration_index * 2u] =
+            dspic33_internal_configuration_factory_defaults[configuration_index];
     }
     return true;
 }
