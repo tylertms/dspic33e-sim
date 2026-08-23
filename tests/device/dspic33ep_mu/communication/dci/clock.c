@@ -39,8 +39,9 @@ void dspic33_dci_test_pps_disable_timing_cases(TestState* state, Dspic33* cpu) {
 }
 
 void dspic33_dci_test_pps_lifecycle_cases(TestState* state, Dspic33* cpu) {
-    Dspic33 copy;
-    bool high;
+    Dspic33 copied_cpu;
+    bool is_high;
+
     dspic33_reset(cpu, 0u);
     dspic33_dci_test_configure_serial_pins(cpu);
     dspic33_dci_test_configure_external(cpu, DCI_SAMPLE_RISING, 8u, 1u, 1u, 0u, 1u);
@@ -49,7 +50,7 @@ void dspic33_dci_test_pps_lifecycle_cases(TestState* state, Dspic33* cpu) {
                dspic33_dci_test_drive_serial_bit(cpu, false, true) &&
                dspic33_dci_test_drive_serial_bit(cpu, true, true) && cpu->io.dci.serial_bits == 3u,
            "advance PPS DCI before active copy");
-    expect(state, dspic33_initialize(&copy) && dspic33_copy(&copy, cpu),
+    expect(state, dspic33_initialize(&copied_cpu) && dspic33_copy(&copied_cpu, cpu),
            "copy active PPS DCI shift state");
     expect(state,
            dspic33_dci_test_drive_serial_bit(cpu, false, true) &&
@@ -57,17 +58,17 @@ void dspic33_dci_test_pps_lifecycle_cases(TestState* state, Dspic33* cpu) {
                dspic33_dci_test_drive_serial_bit(cpu, true, true) &&
                dspic33_dci_test_drive_serial_bit(cpu, false, true) &&
                dspic33_dci_test_drive_serial_bit(cpu, true, true) &&
-               dspic33_dci_test_drive_serial_bit(&copy, false, true) &&
-               dspic33_dci_test_drive_serial_bit(&copy, false, true) &&
-               dspic33_dci_test_drive_serial_bit(&copy, true, true) &&
-               dspic33_dci_test_drive_serial_bit(&copy, false, true) &&
-               dspic33_dci_test_drive_serial_bit(&copy, true, true),
+               dspic33_dci_test_drive_serial_bit(&copied_cpu, false, true) &&
+               dspic33_dci_test_drive_serial_bit(&copied_cpu, false, true) &&
+               dspic33_dci_test_drive_serial_bit(&copied_cpu, true, true) &&
+               dspic33_dci_test_drive_serial_bit(&copied_cpu, false, true) &&
+               dspic33_dci_test_drive_serial_bit(&copied_cpu, true, true),
            "complete original and copied PPS DCI shifts");
     expect(state,
            dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0xa500u &&
-               dspic33_read_word(&copy, DCI_RECEIVE_BASE) == 0xa500u,
+               dspic33_read_word(&copied_cpu, DCI_RECEIVE_BASE) == 0xa500u,
            "copied PPS DCI shift completes independently");
-    dspic33_release(&copy);
+    dspic33_release(&copied_cpu);
 
     dspic33_reset(cpu, 0u);
     dspic33_dci_test_configure_serial_pins(cpu);
@@ -132,7 +133,7 @@ void dspic33_dci_test_pps_lifecycle_cases(TestState* state, Dspic33* cpu) {
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->io.dci.serial_bits == 0u &&
                dspic33_read_word(cpu, DCI_CONTROL1) == 0u &&
-               dspic33_gpio_pin(cpu, GPIO_PORT_D, 1u, &high) && high,
+               dspic33_gpio_pin(cpu, GPIO_PORT_D, 1u, &is_high) && is_high,
            "warm reset clears PPS shift state and preserves physical levels");
 
     dspic33_reset(cpu, 0u);
@@ -141,17 +142,17 @@ void dspic33_dci_test_pps_lifecycle_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, DCI_CONTROL3, 1u);
     dspic33_write_word(cpu, DCI_CONTROL1, DCI_ENABLE | DCI_DATA_JUSTIFY);
     expect(state,
-           dspic33_device_advance(cpu, 5u) && dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high),
+           dspic33_device_advance(cpu, 5u) && dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &is_high),
            "advance master PPS output before PMD");
     dspic33_write_word(cpu, DCI_PMD, DCI_PMD_MASK);
     expect(state,
            dspic33_device_advance(cpu, 1u) && cpu->io.dci.pmd_disabled &&
-               !dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high),
+               !dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &is_high),
            "PMD releases DCI PPS outputs");
     dspic33_write_word(cpu, DCI_PMD, 0u);
     expect(state,
            dspic33_device_advance(cpu, 1u) && !cpu->io.dci.pmd_disabled &&
-               dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high),
+               dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &is_high),
            "PMD clear restores retained DCI PPS output phase");
 
     dspic33_reset(cpu, 0u);
