@@ -16,10 +16,10 @@ void dspic33_i2c_test_clear_interrupt(Dspic33* cpu, uint8_t irq) {
 void dspic33_i2c_test_enable_interrupt(Dspic33* cpu, uint8_t irq, uint8_t priority,
                                        uint16_t vector) {
     uint16_t enable = (uint16_t)(0x0820u + (irq / 16u) * 2u);
-    uint16_t mask = (uint16_t)(1u << (irq % 16u));
+    uint16_t irq_mask = (uint16_t)(1u << (irq % 16u));
     uint16_t ipc = (uint16_t)(0x0840u + (irq / 4u) * 2u);
     uint16_t shift = (uint16_t)((irq % 4u) * 4u);
-    dspic33_write_word(cpu, enable, (uint16_t)(dspic33_read_word(cpu, enable) | mask));
+    dspic33_write_word(cpu, enable, (uint16_t)(dspic33_read_word(cpu, enable) | irq_mask));
     dspic33_write_word(cpu, ipc,
                        (uint16_t)((dspic33_read_word(cpu, ipc) & ~(uint16_t)(7u << shift)) |
                                   (uint16_t)(priority << shift)));
@@ -52,22 +52,22 @@ static uint64_t condition_cycles(uint16_t baud) {
 
 void dspic33_i2c_test_configure_dma_channel(Dspic33* cpu, uint8_t channel, uint8_t request,
                                             uint16_t start, uint16_t pad) {
-    uint16_t base = (uint16_t)(0x0b00u + channel * 0x10u);
-    dspic33_write_word(cpu, base, 0u);
-    dspic33_write_word(cpu, (uint16_t)(base + 2u), request);
-    dspic33_write_word(cpu, (uint16_t)(base + 4u), start);
-    dspic33_write_word(cpu, (uint16_t)(base + 6u), 0u);
-    dspic33_write_word(cpu, (uint16_t)(base + 8u), 0u);
-    dspic33_write_word(cpu, (uint16_t)(base + 10u), 0u);
-    dspic33_write_word(cpu, (uint16_t)(base + 12u), pad);
-    dspic33_write_word(cpu, (uint16_t)(base + 14u), 0u);
-    dspic33_write_word(cpu, base, 0x8001u);
+    uint16_t channel_base = (uint16_t)(0x0b00u + channel * 0x10u);
+    dspic33_write_word(cpu, channel_base, 0u);
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 2u), request);
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 4u), start);
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 6u), 0u);
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 8u), 0u);
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 10u), 0u);
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 12u), pad);
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 14u), 0u);
+    dspic33_write_word(cpu, channel_base, 0x8001u);
 }
 
-void dspic33_i2c_test_enable(Dspic33* cpu, uint8_t channel, uint16_t options, uint16_t baud) {
-    uint16_t base = bases[channel];
-    dspic33_write_word(cpu, (uint16_t)(base + 4u), baud);
-    dspic33_write_word(cpu, (uint16_t)(base + 6u), (uint16_t)(0x9000u | options));
+void dspic33_i2c_test_enable(Dspic33* cpu, uint8_t channel, uint16_t options, uint16_t baud_rate) {
+    uint16_t register_base = bases[channel];
+    dspic33_write_word(cpu, (uint16_t)(register_base + 4u), baud_rate);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 6u), (uint16_t)(0x9000u | options));
 }
 
 bool dspic33_i2c_test_pop_slave_acknowledgement(Dspic33* cpu, uint8_t channel, bool acknowledge) {
@@ -79,21 +79,23 @@ bool dspic33_i2c_test_pop_slave_acknowledgement(Dspic33* cpu, uint8_t channel, b
 
 bool dspic33_i2c_test_pin_levels(const Dspic33* cpu, uint8_t port, uint8_t clock, uint8_t data,
                                  bool clock_high, bool data_high) {
-    bool high;
-    return dspic33_i2c_pin(cpu, port, clock, &high) && high == clock_high &&
-           dspic33_i2c_pin(cpu, port, data, &high) && high == data_high;
+    bool is_high;
+    return dspic33_i2c_pin(cpu, port, clock, &is_high) && is_high == clock_high &&
+           dspic33_i2c_pin(cpu, port, data, &is_high) && is_high == data_high;
 }
 
-void dspic33_i2c_test_drive_pin(const I2cPinRoute* route, Dspic33* cpu, bool clock, bool high) {
-    uint16_t mask = (uint16_t)(1u << (clock ? route->clock : route->data));
-    dspic33_gpio_drive(cpu, route->port, high ? mask : 0u, mask);
+void dspic33_i2c_test_drive_pin(const I2cPinRoute* route, Dspic33* cpu, bool is_clock_pin,
+                                bool is_high) {
+    uint16_t pin_mask = (uint16_t)(1u << (is_clock_pin ? route->clock : route->data));
+    dspic33_gpio_drive(cpu, route->port, is_high ? pin_mask : 0u, pin_mask);
 }
 
-void dspic33_i2c_test_drive_byte(const I2cPinRoute* route, Dspic33* cpu, uint8_t value) {
-    uint8_t bit;
-    for (bit = 0u; bit < 8u; bit++) {
+void dspic33_i2c_test_drive_byte(const I2cPinRoute* route, Dspic33* cpu, uint8_t byte_value) {
+    uint8_t bit_index;
+    for (bit_index = 0u; bit_index < 8u; bit_index++) {
         dspic33_i2c_test_drive_pin(route, cpu, true, false);
-        dspic33_i2c_test_drive_pin(route, cpu, false, (value & (uint8_t)(0x80u >> bit)) != 0u);
+        dspic33_i2c_test_drive_pin(route, cpu, false,
+                                   (byte_value & (uint8_t)(0x80u >> bit_index)) != 0u);
         dspic33_i2c_test_drive_pin(route, cpu, true, true);
     }
     dspic33_i2c_test_drive_pin(route, cpu, true, false);
@@ -103,35 +105,42 @@ void dspic33_i2c_test_register_cases(TestState* state, Dspic33* cpu) {
     uint8_t channel;
     dspic33_reset(cpu, 0u);
     for (channel = 0u; channel < DSPIC33_I2C_COUNT; channel++) {
-        uint16_t base = bases[channel];
-        expect(state, dspic33_read_word(cpu, base) == 0u, "receive reset");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 2u)) == 0u, "transmit reads zero");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 4u)) == 0u, "baud reset");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 6u)) == 0x1000u, "control reset");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0u, "status reset");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 10u)) == 0u, "address reset");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 12u)) == 0u, "mask reset");
-        dspic33_write_word(cpu, base, 0xffffu);
-        expect(state, dspic33_read_word(cpu, base) == 0u, "receive read only");
-        dspic33_write_word(cpu, (uint16_t)(base + 4u), 0xffffu);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 4u)) == 0x01ffu, "baud mask");
-        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0xbfe0u);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 6u)) == 0xbfe0u, "control mask");
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), 0xffffu);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0u,
+        uint16_t register_base = bases[channel];
+        expect(state, dspic33_read_word(cpu, register_base) == 0u, "receive reset");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(register_base + 2u)) == 0u,
+               "transmit reads zero");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(register_base + 4u)) == 0u, "baud reset");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(register_base + 6u)) == 0x1000u,
+               "control reset");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) == 0u, "status reset");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(register_base + 10u)) == 0u,
+               "address reset");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(register_base + 12u)) == 0u, "mask reset");
+        dspic33_write_word(cpu, register_base, 0xffffu);
+        expect(state, dspic33_read_word(cpu, register_base) == 0u, "receive read only");
+        dspic33_write_word(cpu, (uint16_t)(register_base + 4u), 0xffffu);
+        expect(state, dspic33_read_word(cpu, (uint16_t)(register_base + 4u)) == 0x01ffu,
+               "baud mask");
+        dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0xbfe0u);
+        expect(state, dspic33_read_word(cpu, (uint16_t)(register_base + 6u)) == 0xbfe0u,
+               "control mask");
+        dspic33_write_word(cpu, (uint16_t)(register_base + 8u), 0xffffu);
+        expect(state, dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) == 0u,
                "status clear-only mask");
         expect(state, dspic33_i2c_status(cpu, channel, 0x84c0u),
                "hardware status injection accepts defined bits");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0x84c0u,
+        expect(state, dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) == 0x84c0u,
                "hardware status injection updates defined bits");
         expect(state, dspic33_i2c_status(cpu, channel, 0x0040u),
                "hardware status injection replaces prior bits");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0x0040u,
+        expect(state, dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) == 0x0040u,
                "hardware status injection preserves replacement");
-        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0xffffu);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 10u)) == 0x03ffu, "address mask");
-        dspic33_write_word(cpu, (uint16_t)(base + 12u), 0xffffu);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 12u)) == 0x03ffu, "slave mask mask");
+        dspic33_write_word(cpu, (uint16_t)(register_base + 10u), 0xffffu);
+        expect(state, dspic33_read_word(cpu, (uint16_t)(register_base + 10u)) == 0x03ffu,
+               "address mask");
+        dspic33_write_word(cpu, (uint16_t)(register_base + 12u), 0xffffu);
+        expect(state, dspic33_read_word(cpu, (uint16_t)(register_base + 12u)) == 0x03ffu,
+               "slave mask mask");
     }
     expect(state, !dspic33_i2c_status(cpu, DSPIC33_I2C_COUNT, 0u),
            "hardware status injection rejects invalid channel");
@@ -142,24 +151,25 @@ void dspic33_i2c_test_register_cases(TestState* state, Dspic33* cpu) {
 void dspic33_i2c_test_timing_cases(TestState* state, Dspic33* cpu) {
     static const uint16_t baud_values[] = {2u, 3u, 17u, 0x01ffu};
     uint8_t channel;
-    size_t index;
+    size_t baud_index;
     for (channel = 0u; channel < DSPIC33_I2C_COUNT; channel++) {
-        for (index = 0u; index < sizeof(baud_values) / sizeof(baud_values[0]); index++) {
-            uint16_t base = bases[channel];
-            uint16_t baud = baud_values[index];
-            uint64_t cycles = dspic33_i2c_test_control_cycles(baud);
+        for (baud_index = 0u; baud_index < sizeof(baud_values) / sizeof(baud_values[0]);
+             baud_index++) {
+            uint16_t register_base = bases[channel];
+            uint16_t baud_rate = baud_values[baud_index];
+            uint64_t cycles = dspic33_i2c_test_control_cycles(baud_rate);
             Dspic33I2cTransfer transfer;
             dspic33_reset(cpu, 0u);
-            dspic33_i2c_test_enable(cpu, channel, 1u, baud);
-            expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 1u) != 0u,
+            dspic33_i2c_test_enable(cpu, channel, 1u, baud_rate);
+            expect(state, (dspic33_read_word(cpu, (uint16_t)(register_base + 6u)) & 1u) != 0u,
                    "start active at write");
             expect(state, dspic33_device_advance(cpu, cycles - 1u), "start boundary advance");
             expect(state, !dspic33_i2c_test_interrupt_flag(cpu, master_irqs[channel]),
                    "start not complete early");
             expect(state, dspic33_device_advance(cpu, 1u), "start completion advance");
-            expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 6u)) & 1u) == 0u,
+            expect(state, (dspic33_read_word(cpu, (uint16_t)(register_base + 6u)) & 1u) == 0u,
                    "start clears request");
-            expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 8u) != 0u,
+            expect(state, (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 8u) != 0u,
                    "start sets bus state");
             expect(state, dspic33_i2c_test_interrupt_flag(cpu, master_irqs[channel]),
                    "start interrupt");
