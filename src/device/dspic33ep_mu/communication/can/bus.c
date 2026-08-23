@@ -544,29 +544,34 @@ static void can_transmit_sample_final(Dspic33* cpu, uint8_t channel_index) {
     can_transmit_sample(cpu, channel_index, sample_count >= 2u);
 }
 
-static void can_transmit_retry(Dspic33* cpu, uint8_t channel) {
-    uint8_t bit = (uint8_t)(1u << channel);
-    cpu->io.can_tx_error_active &= (uint8_t)~bit;
-    cpu->io.can_tx_retry_wait &= (uint8_t)~bit;
-    can_transmit_start(cpu, channel);
+static void can_transmit_retry(Dspic33* cpu, uint8_t channel_index) {
+    const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+
+    cpu->io.can_tx_error_active &= (uint8_t)~channel_bit;
+    cpu->io.can_tx_retry_wait &= (uint8_t)~channel_bit;
+    can_transmit_start(cpu, channel_index);
 }
 
-static void can_transmit_error_start(Dspic33* cpu, uint8_t channel) {
-    uint8_t bit = (uint8_t)(1u << channel);
-    if ((cpu->io.can_tx_retry_wait & bit) == 0u) {
+static void can_transmit_error_start(Dspic33* cpu, uint8_t channel_index) {
+    const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+
+    if ((cpu->io.can_tx_retry_wait & channel_bit) == 0u) {
         return;
     }
-    cpu->io.can_tx_error_active |= bit;
-    cpu->io.can_tx_error_start_cycle[channel] = cpu->device_cycles;
-    uint64_t bits = (dspic33_device_internal_raw_word(
-                         cpu, (uint16_t)(dspic33_device_can_bases[channel] + 0x0au)) &
-                     CAN_TRANSMIT_PASSIVE) != 0u
-                        ? 25u
-                        : 17u;
-    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_RETRY,
-                          bits * dspic33_device_internal_can_bit_cycles(cpu, channel))) {
-        cpu->io.can_tx_error_active &= (uint8_t)~bit;
-        cpu->io.can_tx_retry_wait &= (uint8_t)~bit;
+    cpu->io.can_tx_error_active |= channel_bit;
+    cpu->io.can_tx_error_start_cycle[channel_index] = cpu->device_cycles;
+    const uint64_t error_frame_bits =
+        (dspic33_device_internal_raw_word(
+             cpu, (uint16_t)(dspic33_device_can_bases[channel_index] + 0x0au)) &
+         CAN_TRANSMIT_PASSIVE) != 0u
+            ? 25u
+            : 17u;
+
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_TRANSMIT_RETRY,
+                          error_frame_bits *
+                              dspic33_device_internal_can_bit_cycles(cpu, channel_index))) {
+        cpu->io.can_tx_error_active &= (uint8_t)~channel_bit;
+        cpu->io.can_tx_retry_wait &= (uint8_t)~channel_bit;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
 }
