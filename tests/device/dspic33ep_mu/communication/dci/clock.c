@@ -648,9 +648,10 @@ void dspic33_dci_test_internal_clock_lifecycle_cases(TestState* state, Dspic33* 
 }
 
 void dspic33_dci_test_lifecycle_cases(TestState* state, Dspic33* cpu) {
-    Dspic33 copy;
+    Dspic33 copied_cpu;
     Dspic33DciTransfer transfer;
-    bool initialized;
+    bool copy_initialized;
+
     dspic33_reset(cpu, 0u);
     dspic33_dci_test_configure_external(cpu, 0u, 16u, 2u, 1u, 1u, 1u);
     dspic33_write_word(cpu, DCI_TRANSMIT_BASE, 0x1234u);
@@ -679,20 +680,21 @@ void dspic33_dci_test_lifecycle_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_read_word(cpu, DCI_RECEIVE_BASE) == 0u && cpu->io.dci.input == 0u,
            "POR clears deterministic RXBUF and physical input state");
 
-    initialized = dspic33_initialize(&copy);
-    expect(state, initialized, "initialize DCI copy destination");
-    if (initialized) {
+    copy_initialized = dspic33_initialize(&copied_cpu);
+    expect(state, copy_initialized, "initialize DCI copy destination");
+    if (copy_initialized) {
         dspic33_reset(cpu, 0u);
         dspic33_dci_test_configure_external(cpu, 0u, 16u, 1u, 1u, 1u, 1u);
         dspic33_write_word(cpu, DCI_TRANSMIT_BASE, 0x2468u);
-        expect(state, dspic33_dci_clock(cpu, 0x1357u, false, 2u) && dspic33_copy(&copy, cpu),
+        expect(state, dspic33_dci_clock(cpu, 0x1357u, false, 2u) && dspic33_copy(&copied_cpu, cpu),
                "copy DCI state with pending clock event");
         expect(state,
-               dspic33_device_advance(&copy, 2u) && dspic33_dci_transmit(&copy, &transfer) &&
-                   transfer.value == 0x2468u &&
-                   dspic33_read_word(&copy, DCI_RECEIVE_BASE) == 0x1357u && cpu->events.count == 1u,
+               dspic33_device_advance(&copied_cpu, 2u) &&
+                   dspic33_dci_transmit(&copied_cpu, &transfer) && transfer.value == 0x2468u &&
+                   dspic33_read_word(&copied_cpu, DCI_RECEIVE_BASE) == 0x1357u &&
+                   cpu->events.count == 1u,
                "copied DCI event executes independently");
-        dspic33_release(&copy);
+        dspic33_release(&copied_cpu);
     }
 
     dspic33_reset(cpu, 0u);
@@ -707,17 +709,19 @@ void dspic33_dci_test_lifecycle_cases(TestState* state, Dspic33* cpu) {
 
     dspic33_reset(cpu, 0u);
     {
-        uint64_t cycles = cpu->device_cycles;
-        size_t queued = cpu->events.count;
+        uint64_t saved_device_cycles = cpu->device_cycles;
+        size_t queued_event_count = cpu->events.count;
         cpu->device_cycles = UINT64_MAX;
-        expect(state, !dspic33_dci_clock(cpu, 0x1234u, false, 1u) && cpu->events.count == queued,
+        expect(state,
+               !dspic33_dci_clock(cpu, 0x1234u, false, 1u) &&
+                   cpu->events.count == queued_event_count,
                "DCI clock scheduling failure queues no partial event");
-        cpu->device_cycles = cycles;
+        cpu->device_cycles = saved_device_cycles;
     }
 
     dspic33_reset(cpu, 0u);
     {
-        uint64_t cycles = cpu->device_cycles;
+        uint64_t saved_device_cycles = cpu->device_cycles;
         cpu->device_cycles = UINT64_MAX;
         dspic33_write_word(cpu, DCI_CONTROL2, dspic33_dci_test_configuration(4u, 1u, 1u));
         dspic33_write_word(cpu, DCI_CONTROL3, 1u);
@@ -728,23 +732,23 @@ void dspic33_dci_test_lifecycle_cases(TestState* state, Dspic33* cpu) {
                    (dspic33_read_word(cpu, DCI_CONTROL1) & DCI_ENABLE) == 0u &&
                    cpu->events.count == 0u,
                "internal start schedule failure aborts DCI without stale event");
-        cpu->device_cycles = cycles;
+        cpu->device_cycles = saved_device_cycles;
         cpu->stop_reason = DSPIC33_RUNNING;
     }
 
     dspic33_reset(cpu, 0u);
     {
-        uint64_t cycles = cpu->device_cycles;
-        uint16_t generation = cpu->io.dci.pmd_generation;
+        uint64_t saved_device_cycles = cpu->device_cycles;
+        uint16_t pmd_generation = cpu->io.dci.pmd_generation;
         cpu->device_cycles = UINT64_MAX;
         dspic33_write_word(cpu, DCI_PMD, DCI_PMD_MASK);
         expect(state,
                dspic33_read_word(cpu, DCI_PMD) == 0u &&
-                   cpu->io.dci.pmd_generation == (uint16_t)(generation + 2u) &&
+                   cpu->io.dci.pmd_generation == (uint16_t)(pmd_generation + 2u) &&
                    !cpu->io.dci.pmd_disabled && cpu->events.count == 0u &&
                    cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR,
                "DCI PMD schedule failure rolls back and invalidates transition");
-        cpu->device_cycles = cycles;
+        cpu->device_cycles = saved_device_cycles;
         cpu->stop_reason = DSPIC33_RUNNING;
     }
 }
