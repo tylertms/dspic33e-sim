@@ -4,17 +4,21 @@ static void apply_master_clear_sfr_reset(Dspic33* cpu, const uint8_t* previous) 
     size_t reset_count;
     const Dspic33SfrMasterClearReset* resets =
         dspic33ep_mu_master_clear_resets(cpu->device, &reset_count);
-    size_t index;
-    for (index = 0u; index < reset_count; index++) {
-        const Dspic33SfrMasterClearReset* reset = &resets[index];
-        uint16_t address = reset->address;
-        uint16_t current =
-            (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[address + 1u] << 8u));
-        uint16_t prior = (uint16_t)(previous[address] | ((uint16_t)previous[address + 1u] << 8u));
-        uint16_t mask = (uint16_t)(reset->known_mask | reset->unchanged);
-        uint16_t value = (uint16_t)((current & ~mask) | reset->value | (prior & reset->unchanged));
-        cpu->data[address] = (uint8_t)value;
-        cpu->data[address + 1u] = (uint8_t)(value >> 8u);
+    size_t reset_index;
+
+    for (reset_index = 0u; reset_index < reset_count; reset_index++) {
+        const Dspic33SfrMasterClearReset* reset = &resets[reset_index];
+        uint16_t sfr_address = reset->address;
+        uint16_t current_value =
+            (uint16_t)(cpu->data[sfr_address] | ((uint16_t)cpu->data[sfr_address + 1u] << 8u));
+        uint16_t previous_value =
+            (uint16_t)(previous[sfr_address] | ((uint16_t)previous[sfr_address + 1u] << 8u));
+        uint16_t reset_mask = (uint16_t)(reset->known_mask | reset->unchanged);
+        uint16_t reset_value = (uint16_t)((current_value & ~reset_mask) | reset->value |
+                                          (previous_value & reset->unchanged));
+
+        cpu->data[sfr_address] = (uint8_t)reset_value;
+        cpu->data[sfr_address + 1u] = (uint8_t)(reset_value >> 8u);
     }
 }
 
@@ -26,22 +30,23 @@ typedef struct {
 } Dspic33ExternalQueues;
 
 static bool external_queues_pending(const Dspic33* cpu) {
-    size_t index;
+    size_t queue_index;
+
     if (cpu->io.pmp.input.count != 0u) {
         return true;
     }
-    for (index = 0u; index < DSPIC33_I2C_COUNT; index++) {
-        if (cpu->io.i2c_response[index].count != 0u) {
+    for (queue_index = 0u; queue_index < DSPIC33_I2C_COUNT; queue_index++) {
+        if (cpu->io.i2c_response[queue_index].count != 0u) {
             return true;
         }
     }
-    for (index = 0u; index < DSPIC33_CAN_COUNT; index++) {
-        if (cpu->io.can_rx[index].count != 0u) {
+    for (queue_index = 0u; queue_index < DSPIC33_CAN_COUNT; queue_index++) {
+        if (cpu->io.can_rx[queue_index].count != 0u) {
             return true;
         }
     }
-    for (index = 0u; index < cpu->events.count; index++) {
-        const Dspic33Event* event = &cpu->events.items[index];
+    for (queue_index = 0u; queue_index < cpu->events.count; queue_index++) {
+        const Dspic33Event* event = &cpu->events.items[queue_index];
         if (event->external && event->type == DSPIC33_EVENT_USB &&
             event->source < DSPIC33_USB_PENDING_COUNT) {
             return true;
@@ -51,7 +56,8 @@ static bool external_queues_pending(const Dspic33* cpu) {
 }
 
 static bool capture_external_queues(const Dspic33* cpu, Dspic33ExternalQueues** queues) {
-    size_t index;
+    size_t event_index;
+
     *queues = NULL;
     if (!external_queues_pending(cpu)) {
         return true;
@@ -63,8 +69,8 @@ static bool capture_external_queues(const Dspic33* cpu, Dspic33ExternalQueues** 
     (*queues)->pmp = cpu->io.pmp.input;
     memcpy((*queues)->i2c, cpu->io.i2c_response, sizeof((*queues)->i2c));
     memcpy((*queues)->can, cpu->io.can_rx, sizeof((*queues)->can));
-    for (index = 0u; index < cpu->events.count; index++) {
-        const Dspic33Event* event = &cpu->events.items[index];
+    for (event_index = 0u; event_index < cpu->events.count; event_index++) {
+        const Dspic33Event* event = &cpu->events.items[event_index];
         if (event->external && event->type == DSPIC33_EVENT_USB &&
             event->source < DSPIC33_USB_PENDING_COUNT) {
             (*queues)->usb[event->source] = cpu->io.usb_pending[event->source];
