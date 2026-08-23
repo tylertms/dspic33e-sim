@@ -271,52 +271,60 @@ bool dspic33_spi_data_output(const Dspic33* cpu, uint8_t channel, bool* high) {
 bool dspic33_spi_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
     static const uint8_t data_functions[DSPIC33_SPI_COUNT] = {5u, 0u, 31u, 34u};
     static const uint8_t clock_functions[DSPIC33_SPI_COUNT] = {6u, 0u, 32u, 35u};
-    uint8_t channel;
+    uint8_t channel_index;
+
     if (high == NULL) {
         return false;
     }
-    uint8_t function = dspic33_device_internal_pps_output_function(cpu, pin);
-    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-        if (function == data_functions[channel] && data_functions[channel] != 0u) {
-            return dspic33_spi_data_output(cpu, channel, high);
+    const uint8_t output_function = dspic33_device_internal_pps_output_function(cpu, pin);
+
+    for (channel_index = 0u; channel_index < DSPIC33_SPI_COUNT; channel_index++) {
+        if (output_function == data_functions[channel_index] &&
+            data_functions[channel_index] != 0u) {
+            return dspic33_spi_data_output(cpu, channel_index, high);
         }
-        if (function == clock_functions[channel] && clock_functions[channel] != 0u) {
-            return dspic33_spi_clock_output(cpu, channel, high);
+        if (output_function == clock_functions[channel_index] &&
+            clock_functions[channel_index] != 0u) {
+            return dspic33_spi_clock_output(cpu, channel_index, high);
         }
     }
     return false;
 }
 
 bool dspic33_spi_frame_output(const Dspic33* cpu, uint8_t channel, bool* high) {
-    uint16_t control;
-    uint8_t bit;
+    uint16_t frame_control;
+    uint8_t channel_bit;
+
     if (channel >= DSPIC33_SPI_COUNT || high == NULL ||
         dspic33_device_internal_spi_module_disabled(cpu, channel) ||
         (dspic33_device_internal_raw_word(cpu, dspic33_device_spi_bases[channel]) & SPI_ENABLE) ==
             0u) {
         return false;
     }
-    control =
+    frame_control =
         dspic33_device_internal_raw_word(cpu, (uint16_t)(dspic33_device_spi_bases[channel] + 4u));
-    if ((control & (SPI_FRAME_ENABLE | SPI_FRAME_SLAVE)) != SPI_FRAME_ENABLE) {
+    if ((frame_control & (SPI_FRAME_ENABLE | SPI_FRAME_SLAVE)) != SPI_FRAME_ENABLE) {
         return false;
     }
-    bit = (uint8_t)(1u << channel);
-    *high = (control & SPI_FRAME_ACTIVE_HIGH) != 0u ? (cpu->io.spi_frame_active & bit) != 0u
-                                                    : (cpu->io.spi_frame_active & bit) == 0u;
+    channel_bit = (uint8_t)(1u << channel);
+    *high = (frame_control & SPI_FRAME_ACTIVE_HIGH) != 0u
+                ? (cpu->io.spi_frame_active & channel_bit) != 0u
+                : (cpu->io.spi_frame_active & channel_bit) == 0u;
     return true;
 }
 
 bool dspic33_spi_frame_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
-    static const uint8_t functions[DSPIC33_SPI_COUNT] = {7u, 10u, 33u, 36u};
-    uint8_t channel;
+    static const uint8_t frame_functions[DSPIC33_SPI_COUNT] = {7u, 10u, 33u, 36u};
+    uint8_t channel_index;
+
     if (high == NULL) {
         return false;
     }
-    uint8_t function = dspic33_device_internal_pps_output_function(cpu, pin);
-    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-        if (function == functions[channel]) {
-            return dspic33_spi_frame_output(cpu, channel, high);
+    const uint8_t output_function = dspic33_device_internal_pps_output_function(cpu, pin);
+
+    for (channel_index = 0u; channel_index < DSPIC33_SPI_COUNT; channel_index++) {
+        if (output_function == frame_functions[channel_index]) {
+            return dspic33_spi_frame_output(cpu, channel_index, high);
         }
     }
     return false;
