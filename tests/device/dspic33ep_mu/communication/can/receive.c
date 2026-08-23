@@ -276,60 +276,67 @@ void dspic33_can_test_overflow_and_fallback_cases(TestState* state, Dspic33* cpu
 }
 
 void dspic33_can_test_transmission_cases(TestState* state, Dspic33* cpu) {
-    uint8_t channel;
-    uint8_t extended;
-    uint8_t remote;
-    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-        for (extended = 0u; extended < 2u; extended++) {
-            for (remote = 0u; remote < 2u; remote++) {
-                uint16_t base = bases[channel];
-                uint32_t memory = (uint32_t)(0x9000u + channel * 0x1000u);
-                Dspic33CanFrame expected =
-                    dspic33_can_test_frame(extended != 0u ? 0x1234567u : 0x345u, extended != 0u,
-                                           remote != 0u, 8u, (uint8_t)(0x50u + extended * 8u));
-                Dspic33CanFrame actual;
+    uint8_t channel_index;
+    uint8_t extended_flag;
+    uint8_t remote_flag;
+
+    for (channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
+        for (extended_flag = 0u; extended_flag < 2u; extended_flag++) {
+            for (remote_flag = 0u; remote_flag < 2u; remote_flag++) {
+                uint16_t can_base = bases[channel_index];
+                uint32_t transmit_memory = (uint32_t)(0x9000u + channel_index * 0x1000u);
+                Dspic33CanFrame expected_frame = dspic33_can_test_frame(
+                    extended_flag != 0u ? 0x1234567u : 0x345u, extended_flag != 0u,
+                    remote_flag != 0u, 8u, (uint8_t)(0x50u + extended_flag * 8u));
+                Dspic33CanFrame actual_frame;
                 uint16_t words[8] = {0};
-                uint8_t index;
-                uint32_t sid =
-                    expected.extended ? (expected.identifier >> 18u) & 0x7ffu : expected.identifier;
-                uint32_t eid = expected.identifier & 0x3ffffu;
-                words[0] = (uint16_t)(sid << 2u);
-                if (expected.extended) {
+                uint8_t word_index;
+                uint32_t standard_identifier = expected_frame.extended
+                                                   ? (expected_frame.identifier >> 18u) & 0x7ffu
+                                                   : expected_frame.identifier;
+                uint32_t extended_identifier = expected_frame.identifier & 0x3ffffu;
+                words[0] = (uint16_t)(standard_identifier << 2u);
+                if (expected_frame.extended) {
                     words[0] |= 3u;
-                    words[1] = (uint16_t)(eid >> 6u);
-                    words[2] = (uint16_t)((eid & 0x3fu) << 10u);
-                    if (expected.remote) {
+                    words[1] = (uint16_t)(extended_identifier >> 6u);
+                    words[2] = (uint16_t)((extended_identifier & 0x3fu) << 10u);
+                    if (expected_frame.remote) {
                         words[2] |= 0x0200u;
                     }
-                } else if (expected.remote) {
+                } else if (expected_frame.remote) {
                     words[0] |= 2u;
                 }
-                words[2] |= expected.length;
-                for (index = 0u; index < expected.length; index++) {
-                    words[3u + index / 2u] |= (uint16_t)expected.data[index] << ((index & 1u) * 8u);
+                words[2] |= expected_frame.length;
+                for (word_index = 0u; word_index < expected_frame.length; word_index++) {
+                    words[3u + word_index / 2u] |= (uint16_t)expected_frame.data[word_index]
+                                                   << ((word_index & 1u) * 8u);
                 }
                 dspic33_reset(cpu, 0u);
-                dspic33_can_test_configure_transmit(cpu, channel, memory);
-                for (index = 0u; index < 8u; index++) {
-                    dspic33_can_test_write_memory_word(cpu, memory + index * 2u, words[index]);
+                dspic33_can_test_configure_transmit(cpu, channel_index, transmit_memory);
+                for (word_index = 0u; word_index < 8u; word_index++) {
+                    dspic33_can_test_write_memory_word(cpu, transmit_memory + word_index * 2u,
+                                                       words[word_index]);
                 }
-                dspic33_can_test_select_window(cpu, channel, false);
-                dspic33_can_test_set_mode(cpu, channel, 0u);
-                dspic33_write_word(cpu, (uint16_t)(base + 0x0cu), 1u);
-                dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x008bu);
+                dspic33_can_test_select_window(cpu, channel_index, false);
+                dspic33_can_test_set_mode(cpu, channel_index, 0u);
+                dspic33_write_word(cpu, (uint16_t)(can_base + 0x0cu), 1u);
+                dspic33_write_word(cpu, (uint16_t)(can_base + 0x30u), 0x008bu);
                 expect(state, dspic33_device_advance(cpu, 4096u), "transmit advance");
-                expect(state, dspic33_can_transmit(cpu, channel, &actual), "transmit queue output");
+                expect(state, dspic33_can_transmit(cpu, channel_index, &actual_frame),
+                       "transmit queue output");
                 expect(state,
-                       actual.identifier == expected.identifier &&
-                           actual.extended == expected.extended &&
-                           actual.remote == expected.remote && actual.length == expected.length,
+                       actual_frame.identifier == expected_frame.identifier &&
+                           actual_frame.extended == expected_frame.extended &&
+                           actual_frame.remote == expected_frame.remote &&
+                           actual_frame.length == expected_frame.length,
                        "transmit frame header");
-                expect(state, memcmp(actual.data, expected.data, 8u) == 0, "transmit payload");
-                expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) & 8u) == 0u,
+                expect(state, memcmp(actual_frame.data, expected_frame.data, 8u) == 0,
+                       "transmit payload");
+                expect(state, (dspic33_read_word(cpu, (uint16_t)(can_base + 0x30u)) & 8u) == 0u,
                        "transmit request clear");
-                expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 1u) != 0u,
+                expect(state, (dspic33_read_word(cpu, (uint16_t)(can_base + 0x0au)) & 1u) != 0u,
                        "transmit event flag");
-                expect(state, dspic33_can_test_interrupt_flag(cpu, event_irqs[channel]),
+                expect(state, dspic33_can_test_interrupt_flag(cpu, event_irqs[channel_index]),
                        "transmit event interrupt");
             }
         }
