@@ -618,17 +618,18 @@ void dspic33_spi_test_master_input_cases(TestState* state, Dspic33* cpu, Dspic33
         }
     }
 
-    for (uint8_t sample_end = 0u; sample_end < 2u; sample_end++) {
+    for (uint8_t sample_phase = 0u; sample_phase < 2u; sample_phase++) {
         dspic33_reset(cpu, 0u);
-        dspic33_spi_test_configure_spi(cpu, 1u, (uint16_t)(0x003bu | ((uint16_t)sample_end << 9u)),
-                                       0u, 0u);
+        dspic33_spi_test_configure_spi(
+            cpu, 1u, (uint16_t)(0x003bu | ((uint16_t)sample_phase << 9u)), 0u, 0u);
         set_master_input(cpu, 1u, true);
         dspic33_write_word(cpu, 0x0268u, 0xffu);
         dspic33_device_advance(cpu, 1u);
         set_master_input(cpu, 1u, false);
         dspic33_device_advance(cpu, 1u);
         drive_master_input(cpu, 1u, 0u, 7u);
-        expect(state, dspic33_read_word(cpu, 0x0268u) == (sample_end == 0u ? 0x80u : 0u),
+
+        expect(state, dspic33_read_word(cpu, 0x0268u) == (sample_phase == 0u ? 0x80u : 0u),
                "master sample phase selects middle or end of data period");
     }
 
@@ -636,6 +637,7 @@ void dspic33_spi_test_master_input_cases(TestState* state, Dspic33* cpu, Dspic33
     dspic33_spi_test_configure_spi(cpu, 0u, 0x003bu, 0u, 0u);
     dspic33_write_word(cpu, 0x0248u, 0xa5u);
     dspic33_device_advance(cpu, 16u);
+
     expect(state, dspic33_read_word(cpu, 0x0248u) == 0xa5u,
            "unmapped master retains logical transport loopback");
 
@@ -644,6 +646,7 @@ void dspic33_spi_test_master_input_cases(TestState* state, Dspic33* cpu, Dspic33
     set_master_input(cpu, 1u, false);
     dspic33_write_word(cpu, 0x0268u, 0xffu);
     drive_master_input(cpu, 1u, 0xa5u, 8u);
+
     expect(state,
            dspic33_read_word(cpu, 0x0268u) == 0xa5u &&
                !dspic33_spi_data_output(cpu, 1u, &(bool){false}),
@@ -657,6 +660,7 @@ void dspic33_spi_test_master_input_cases(TestState* state, Dspic33* cpu, Dspic33
     expect(state, dspic33_copy(copy, cpu), "copy partial master physical input");
     drive_master_input(cpu, 1u, 0x5au, 8u);
     drive_master_input(copy, 1u, 0xc3u, 8u);
+
     expect(state, dspic33_read_word(cpu, 0x0268u) == 0xa55au,
            "source master physical input completes independently");
     expect(state, dspic33_read_word(copy, 0x0268u) == 0xa5c3u,
@@ -667,10 +671,11 @@ void dspic33_spi_test_master_input_cases(TestState* state, Dspic33* cpu, Dspic33
     dspic33_write_word(cpu, 0x0e3eu, (uint16_t)(dspic33_read_word(cpu, 0x0e3eu) | 0x0040u));
     dspic33_spi_test_configure_spi(cpu, 0u, 0x003bu, 0u, 0u);
     dspic33_write_word(cpu, 0x0248u, 0xffu);
-    for (uint8_t index = 0u; index < 8u; index++) {
+    for (uint8_t bit_index = 0u; bit_index < 8u; bit_index++) {
         dspic33_gpio_drive(cpu, 3u, 0x0040u, 0x0040u);
         dspic33_device_advance(cpu, 2u);
     }
+
     expect(state, dspic33_read_word(cpu, 0x0248u) == 0u,
            "analog PPS data pin suppresses master input");
 
@@ -679,17 +684,20 @@ void dspic33_spi_test_master_input_cases(TestState* state, Dspic33* cpu, Dspic33
     dspic33_write_word(cpu, 0x06c8u, 64u);
     dspic33_spi_test_configure_spi(cpu, 0u, 0x003bu, 0u, 0u);
     dspic33_write_word(cpu, 0x0248u, 0xffu);
-    for (uint8_t index = 0u; index < 4u; index++) {
-        bool high = (0xa5u & (uint16_t)(1u << (7u - index))) != 0u;
-        dspic33_gpio_drive(cpu, 3u, high ? 1u : 0u, 1u);
+    for (uint8_t bit_index = 0u; bit_index < 4u; bit_index++) {
+        const bool data_high = (0xa5u & (uint16_t)(1u << (7u - bit_index))) != 0u;
+
+        dspic33_gpio_drive(cpu, 3u, data_high ? 1u : 0u, 1u);
         dspic33_device_advance(cpu, 2u);
     }
     dspic33_write_word(cpu, 0x06c8u, 65u);
-    for (uint8_t index = 4u; index < 8u; index++) {
-        bool high = (0xa5u & (uint16_t)(1u << (7u - index))) != 0u;
-        dspic33_gpio_drive(cpu, 3u, high ? 2u : 0u, 2u);
+    for (uint8_t bit_index = 4u; bit_index < 8u; bit_index++) {
+        const bool data_high = (0xa5u & (uint16_t)(1u << (7u - bit_index))) != 0u;
+
+        dspic33_gpio_drive(cpu, 3u, data_high ? 2u : 0u, 2u);
         dspic33_device_advance(cpu, 2u);
     }
+
     expect(state, dspic33_read_word(cpu, 0x0248u) == 0xa5u,
            "live PPS remap changes master input source");
 
@@ -698,6 +706,7 @@ void dspic33_spi_test_master_input_cases(TestState* state, Dspic33* cpu, Dspic33
     set_master_input(cpu, 1u, false);
     cpu->device_cycles = UINT64_MAX;
     dspic33_write_word(cpu, 0x0268u, 0xffu);
+
     expect(state,
            cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR && cpu->events.count == 0u &&
                (cpu->io.spi_busy & 2u) == 0u,
@@ -706,12 +715,14 @@ void dspic33_spi_test_master_input_cases(TestState* state, Dspic33* cpu, Dspic33
     dspic33_reset(cpu, 0u);
     set_master_input(cpu, 1u, true);
     dspic33_load_program_word(cpu, 0u, 0xfe0000u);
+
     expect(state,
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->software_reset_count == 1u &&
                (cpu->io.spi_pin_input_enabled & 2u) != 0u && (cpu->io.spi_pin_data_high & 2u) != 0u,
            "warm reset preserves dedicated master input level");
     dspic33_spi_test_configure_spi(cpu, 1u, 0x003bu, 0u, 0u);
     dspic33_write_word(cpu, 0x0268u, 0u);
+
     expect(state, dspic33_device_advance(cpu, 16u) && dspic33_read_word(cpu, 0x0268u) == 0xffu,
            "retained master input remains observable after warm reset");
 }
