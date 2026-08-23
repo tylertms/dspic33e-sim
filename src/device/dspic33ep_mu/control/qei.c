@@ -1,13 +1,12 @@
 #include "device/dspic33ep_mu/internal.h"
 
-static bool qei_register(uint16_t address, uint8_t* channel, uint16_t* offset) {
-    uint8_t index;
-    uint16_t base = (uint16_t)(address & 0xfffeu);
-    for (index = 0u; index < DSPIC33_QEI_COUNT; index++) {
-        if (base >= dspic33_device_qei_bases[index] &&
-            base <= dspic33_device_qei_bases[index] + QEI_LESS_EQUAL_HIGH) {
-            *channel = index;
-            *offset = (uint16_t)(base - dspic33_device_qei_bases[index]);
+static bool qei_register(uint16_t address, uint8_t* channel, uint16_t* register_offset) {
+    const uint16_t aligned_address = (uint16_t)(address & 0xfffeu);
+    for (uint8_t qei_index = 0u; qei_index < DSPIC33_QEI_COUNT; qei_index++) {
+        if (aligned_address >= dspic33_device_qei_bases[qei_index] &&
+            aligned_address <= dspic33_device_qei_bases[qei_index] + QEI_LESS_EQUAL_HIGH) {
+            *channel = qei_index;
+            *register_offset = (uint16_t)(aligned_address - dspic33_device_qei_bases[qei_index]);
             return true;
         }
     }
@@ -15,16 +14,16 @@ static bool qei_register(uint16_t address, uint8_t* channel, uint16_t* offset) {
 }
 
 static uint32_t qei_read_counter(const Dspic33* cpu, uint8_t channel, uint16_t low_offset) {
-    uint16_t base = dspic33_device_qei_bases[channel];
-    return (uint32_t)dspic33_device_internal_raw_word(cpu, (uint16_t)(base + low_offset)) |
-           ((uint32_t)dspic33_device_internal_raw_word(cpu, (uint16_t)(base + low_offset + 2u))
+    const uint16_t qei_base = dspic33_device_qei_bases[channel];
+    return (uint32_t)dspic33_device_internal_raw_word(cpu, (uint16_t)(qei_base + low_offset)) |
+           ((uint32_t)dspic33_device_internal_raw_word(cpu, (uint16_t)(qei_base + low_offset + 2u))
             << 16u);
 }
 
 static void qei_write_counter(Dspic33* cpu, uint8_t channel, uint16_t low_offset, uint32_t value) {
-    uint16_t base = dspic33_device_qei_bases[channel];
-    dspic33_device_internal_raw_write_word(cpu, (uint16_t)(base + low_offset), (uint16_t)value);
-    dspic33_device_internal_raw_write_word(cpu, (uint16_t)(base + low_offset + 2u),
+    const uint16_t qei_base = dspic33_device_qei_bases[channel];
+    dspic33_device_internal_raw_write_word(cpu, (uint16_t)(qei_base + low_offset), (uint16_t)value);
+    dspic33_device_internal_raw_write_word(cpu, (uint16_t)(qei_base + low_offset + 2u),
                                            (uint16_t)(value >> 16u));
 }
 
@@ -102,19 +101,19 @@ static void qei_update_position(Dspic33* cpu, uint8_t channel, int8_t direction)
     uint32_t position = qei_read_counter(cpu, channel, QEI_POSITION_LOW);
     uint32_t greater_equal = qei_read_counter(cpu, channel, QEI_GREATER_EQUAL_LOW);
     uint32_t less_equal = qei_read_counter(cpu, channel, QEI_LESS_EQUAL_LOW);
-    uint32_t lower = less_equal;
-    uint32_t upper = greater_equal;
+    uint32_t lower_position = less_equal;
+    uint32_t upper_position = greater_equal;
     if ((control & QEI_CONTROL_COUNT_MODE_MASK) >= 2u) {
         mode = 0u;
     }
     if (mode == 6u && (control & QEI_CONTROL_DIRECTION_INVERT) != 0u) {
-        lower = greater_equal;
-        upper = less_equal;
+        lower_position = greater_equal;
+        upper_position = less_equal;
     }
-    if (mode == 6u && direction > 0 && position == upper) {
-        position = lower;
-    } else if (mode == 6u && direction < 0 && position == lower) {
-        position = upper;
+    if (mode == 6u && direction > 0 && position == upper_position) {
+        position = lower_position;
+    } else if (mode == 6u && direction < 0 && position == lower_position) {
+        position = upper_position;
     } else {
         if ((direction > 0 && position == 0x7fffffffu) ||
             (direction < 0 && position == 0x80000000u)) {
@@ -141,17 +140,18 @@ static void qei_update_velocity(Dspic33* cpu, uint8_t channel, int8_t direction)
 }
 
 static void qei_update_index_counter(Dspic33* cpu, uint8_t channel, int8_t direction) {
-    uint32_t value = qei_read_counter(cpu, channel, QEI_INDEX_LOW);
-    qei_write_counter(cpu, channel, QEI_INDEX_LOW, direction > 0 ? value + 1u : value - 1u);
+    const uint32_t index_count = qei_read_counter(cpu, channel, QEI_INDEX_LOW);
+    qei_write_counter(cpu, channel, QEI_INDEX_LOW,
+                      direction > 0 ? index_count + 1u : index_count - 1u);
 }
 
 static void qei_update_interval(Dspic33* cpu, uint8_t channel, uint64_t ticks) {
-    uint32_t value = qei_read_counter(cpu, channel, QEI_INTERVAL_LOW);
-    qei_write_counter(cpu, channel, QEI_INTERVAL_LOW, value + (uint32_t)ticks);
+    const uint32_t interval_count = qei_read_counter(cpu, channel, QEI_INTERVAL_LOW);
+    qei_write_counter(cpu, channel, QEI_INTERVAL_LOW, interval_count + (uint32_t)ticks);
 }
 
 static void qei_capture_interval(Dspic33* cpu, uint8_t channel) {
-    uint16_t base = dspic33_device_qei_bases[channel];
+    const uint16_t qei_base = dspic33_device_qei_bases[channel];
     if (!cpu->io.qei.interval_armed[channel]) {
         cpu->io.qei.interval_armed[channel] = true;
         qei_write_counter(cpu, channel, QEI_INTERVAL_LOW, 0u);
@@ -159,11 +159,11 @@ static void qei_capture_interval(Dspic33* cpu, uint8_t channel) {
     }
     if (!cpu->io.qei.interval_hold_locked[channel]) {
         dspic33_device_internal_raw_write_word(
-            cpu, (uint16_t)(base + QEI_INTERVAL_HOLD_LOW),
-            dspic33_device_internal_raw_word(cpu, (uint16_t)(base + QEI_INTERVAL_LOW)));
+            cpu, (uint16_t)(qei_base + QEI_INTERVAL_HOLD_LOW),
+            dspic33_device_internal_raw_word(cpu, (uint16_t)(qei_base + QEI_INTERVAL_LOW)));
         dspic33_device_internal_raw_write_word(
-            cpu, (uint16_t)(base + QEI_INTERVAL_HOLD_HIGH),
-            dspic33_device_internal_raw_word(cpu, (uint16_t)(base + QEI_INTERVAL_HIGH)));
+            cpu, (uint16_t)(qei_base + QEI_INTERVAL_HOLD_HIGH),
+            dspic33_device_internal_raw_word(cpu, (uint16_t)(qei_base + QEI_INTERVAL_HIGH)));
     }
     qei_write_counter(cpu, channel, QEI_INTERVAL_LOW, 0u);
 }
@@ -329,38 +329,40 @@ static void qei_apply_filtered_inputs(Dspic33* cpu, uint8_t channel) {
     uint16_t control = dspic33_device_internal_raw_word(cpu, dspic33_device_qei_bases[channel]);
     uint8_t index_match =
         (uint8_t)((control & QEI_CONTROL_INDEX_MATCH_MASK) >> QEI_CONTROL_INDEX_MATCH_SHIFT);
-    uint8_t previous = cpu->io.qei.logical_inputs[channel];
-    uint8_t logical = qei_logical_inputs(cpu, channel);
+    const uint8_t previous_inputs = cpu->io.qei.logical_inputs[channel];
+    const uint8_t logical_inputs = qei_logical_inputs(cpu, channel);
     uint8_t mode = (uint8_t)(control & QEI_CONTROL_COUNT_MODE_MASK);
-    cpu->io.qei.logical_inputs[channel] = logical;
-    if ((logical & 4u) == 0u) {
+    cpu->io.qei.logical_inputs[channel] = logical_inputs;
+    if ((logical_inputs & 4u) == 0u) {
         cpu->io.qei.index_latched[channel] = false;
     }
     if (!qei_clock_enabled(cpu, channel)) {
         return;
     }
-    if (mode == 0u && (previous & 3u) != (logical & 3u)) {
-        int8_t direction = actions[((previous & 3u) << 2u) | (logical & 3u)];
+    if (mode == 0u && (previous_inputs & 3u) != (logical_inputs & 3u)) {
+        int8_t direction = actions[((previous_inputs & 3u) << 2u) | (logical_inputs & 3u)];
         if ((control & QEI_CONTROL_DIRECTION_INVERT) != 0u) {
             direction = (int8_t)-direction;
         }
         if (direction != 0) {
             qei_count_pulse(cpu, channel, direction);
         }
-    } else if ((mode == 1u || mode == 2u) && (previous & 1u) == 0u && (logical & 1u) != 0u) {
-        bool gate_allows = (control & QEI_CONTROL_GATE_ENABLE) == 0u || (logical & 2u) != 0u;
+    } else if ((mode == 1u || mode == 2u) && (previous_inputs & 1u) == 0u &&
+               (logical_inputs & 1u) != 0u) {
+        const bool gate_allows =
+            (control & QEI_CONTROL_GATE_ENABLE) == 0u || (logical_inputs & 2u) != 0u;
         if (mode == 1u) {
-            int8_t direction = (logical & 2u) != 0u ? 1 : -1;
+            int8_t direction = (logical_inputs & 2u) != 0u ? 1 : -1;
             if ((control & QEI_CONTROL_DIRECTION_INVERT) != 0u) {
                 direction = (int8_t)-direction;
             }
             qei_count_pulse(cpu, channel, direction);
         } else {
             int8_t direction = (control & QEI_CONTROL_DIRECTION_INVERT) != 0u ? -1 : 1;
-            qei_timer_pulse(cpu, channel, direction, gate_allows, logical);
+            qei_timer_pulse(cpu, channel, direction, gate_allows, logical_inputs);
         }
     }
-    if ((previous & 8u) == 0u && (logical & 8u) != 0u) {
+    if ((previous_inputs & 8u) == 0u && (logical_inputs & 8u) != 0u) {
         cpu->io.qei.home_index_count[channel] = 1u;
         qei_raise_status(cpu, channel, QEI_STATUS_HOME);
         if ((dspic33_device_internal_raw_word(cpu,
@@ -370,8 +372,8 @@ static void qei_apply_filtered_inputs(Dspic33* cpu, uint8_t channel) {
                               qei_read_counter(cpu, channel, QEI_POSITION_LOW));
         }
     }
-    if (!cpu->io.qei.index_latched[channel] && (logical & 4u) != 0u &&
-        (logical & 3u) == index_match) {
+    if (!cpu->io.qei.index_latched[channel] && (logical_inputs & 4u) != 0u &&
+        (logical_inputs & 3u) == index_match) {
         cpu->io.qei.index_latched[channel] = true;
         qei_index_event(cpu, channel);
     }
