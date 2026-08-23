@@ -2,6 +2,8 @@
 #include "device/dspic33ep_mu/internal.h"
 #include "test.h"
 
+#ifdef DSPIC33_TEST_ALLOCATION_FAILURE
+
 static void fill_event_queue(TestState* state, Dspic33* cpu) {
     while (cpu->events.capacity == 0u || cpu->events.count < cpu->events.capacity) {
         expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 0u, 0u, 0u),
@@ -27,6 +29,8 @@ static void reject_event(TestState* state, Dspic33* cpu, uint16_t mode, uint16_t
     expect(state, cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR, name);
 }
 
+#endif
+
 int main(void) {
     Dspic33 cpu;
     TestState state = {0};
@@ -34,6 +38,7 @@ int main(void) {
     expect(&state, initialized, "cpu initialized");
     if (initialized) {
         dspic33_device_internal_run_output_compare(&cpu, DSPIC33_OUTPUT_COMPARE_COUNT, 0u);
+#ifdef DSPIC33_TEST_ALLOCATION_FAILURE
         reject_event(&state, &cpu, OUTPUT_COMPARE_MODE_SINGLE_TOGGLE, OUTPUT_COMPARE_SYNC_SELF,
                      OUTPUT_COMPARE_EVENT_PRIMARY, "primary event rejects a full queue");
         reject_event(&state, &cpu, OUTPUT_COMPARE_MODE_DUAL_CONTINUOUS, OUTPUT_COMPARE_SYNC_SELF,
@@ -49,8 +54,11 @@ int main(void) {
         reject_event(&state, &cpu, OUTPUT_COMPARE_MODE_SINGLE_TOGGLE, OUTPUT_COMPARE_SYNC_NONE,
                      OUTPUT_COMPARE_EVENT_EXTERNAL_SYNC,
                      "external synchronization rejects a full queue");
+#endif
         dspic33_release(&cpu);
     }
+#ifdef DSPIC33_TEST_ALLOCATION_FAILURE
     test_reject_reallocation(false);
+#endif
     return test_finish(&state);
 }

@@ -2,12 +2,6 @@
 
 #include <stddef.h>
 
-#ifdef _MSC_VER
-
-void test_reject_reallocation(bool reject) { (void)reject; }
-
-#else
-
 static bool reject_reallocation;
 
 void* __real_realloc(void* pointer, size_t size);
@@ -17,5 +11,3 @@ void* __wrap_realloc(void* pointer, size_t size) {
 }
 
 void test_reject_reallocation(bool reject) { reject_reallocation = reject; }
-
-#endif

@@ -257,7 +257,7 @@ static bool direct_file_trap_register_state_matches(const Dspic33* actual,
     stacked_high = (uint16_t)(((expected->sr & 0x00ffu) << 8u) |
                               ((expected->corcon & 0x0008u) != 0u ? 0x0080u : 0u));
     final_status = (uint16_t)((expected->sr & ~0x00e0u) | ((pending->priority & 7u) << 5u));
-    final_status &= (uint16_t)~0x0010u;
+    final_status &= 0xffefu;
     final_control = pending->priority > 7u ? (uint16_t)((expected->corcon & ~0x0004u) | 0x0008u)
                                            : (uint16_t)(expected->corcon & ~(uint16_t)0x000cu);
     return actual->stop_reason == DSPIC33_TRAPPED && actual->last_trap == pending->trap &&
@@ -333,7 +333,8 @@ static bool run_direct_file_odd_word_case(Dspic33* cpu, Dspic33* reference, uint
               cpu->last_trap == 1u && cpu->last_trap_return == 2u && cpu->pc == 0x000340u &&
               cpu->cycles == expected_cycles && cpu->w[15] == 0x5004u &&
               (dspic33_read_word(cpu, 0x08c0u) & 0x0008u) != 0u &&
-              (dspic33_read_word(cpu, 0x5002u) >> 8u) == (status & 0x00ffu) &&
+               (uint16_t)(dspic33_read_word(cpu, 0x5002u) >> 8u) ==
+                   (uint16_t)(status & 0x00ffu) &&
               (uint16_t)(cpu->data[0x08c8u] | ((uint16_t)cpu->data[0x08c9u] << 8u)) == 0x0e01u &&
               memcmp(cpu->w, reference->w, 15u * sizeof(*cpu->w)) == 0 &&
               memcmp(cpu->data, reference->data, 0x08c0u) == 0 &&

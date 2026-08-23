@@ -14,7 +14,7 @@ void dspic33_data_test_byte_extension_lifecycle_cases(TestState* state, Dspic33*
     reset_processor_test(cpu, 0u);
     load_instruction(state, cpu, 0u, 0xfb8192u);
     cpu->w[2] = 0x5000u;
-    cpu->initialized_working_registers &= (uint16_t)~0x0004u;
+    cpu->initialized_working_registers &= 0xfffbu;
     expect_illegal_reset(state, cpu, "ZE uninitialized source pointer resets processor");
 }
 
@@ -527,7 +527,7 @@ void dspic33_data_test_bit_operand_lifecycle_cases(TestState* state, Dspic33* cp
     reset_processor_test(cpu, 0u);
     load_instruction(state, cpu, 0u, 0xa40012u);
     cpu->w[2] = 0x1000u;
-    cpu->initialized_working_registers &= (uint16_t)~0x0004u;
+    cpu->initialized_working_registers &= 0xfffbu;
     expect_illegal_reset(state, cpu, "BTSTS uninitialized source pointer resets processor");
 }
 
@@ -720,14 +720,14 @@ void dspic33_data_test_table_operand_lifecycle_cases(TestState* state, Dspic33* 
     load_instruction(state, cpu, 0u, 0xbb0982u);
     dspic33_set_working_register(cpu, 2u, 0xa55au);
     cpu->w[3] = 0x5000u;
-    cpu->initialized_working_registers &= (uint16_t)~0x0008u;
+    cpu->initialized_working_registers &= 0xfff7u;
     expect_illegal_reset(state, cpu, "table write uninitialized destination resets processor");
 
     reset_processor_test(cpu, 0u);
     load_instruction(state, cpu, 0u, 0xbb0992u);
     cpu->w[2] = 0x5000u;
     dspic33_set_working_register(cpu, 3u, 0u);
-    cpu->initialized_working_registers &= (uint16_t)~0x0004u;
+    cpu->initialized_working_registers &= 0xfffbu;
     expect_illegal_reset(state, cpu, "table write uninitialized source resets processor");
 }
 

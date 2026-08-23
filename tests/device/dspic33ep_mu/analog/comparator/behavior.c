@@ -692,6 +692,8 @@ int main(void) {
 #endif
         dspic33_release(&cpu);
     }
+#ifdef DSPIC33_TEST_ALLOCATION_FAILURE
     test_reject_reallocation(false);
+#endif
     return test_finish(&state);
 }
