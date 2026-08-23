@@ -504,44 +504,46 @@ uint16_t dspic33_device_internal_dma_channel_bit(uint8_t channel) {
     return (uint16_t)(1u << channel);
 }
 
-static bool dma_channel_event(const Dspic33Event* event, uint8_t channel) {
-    return event->type == DSPIC33_EVENT_DMA && event->source % DSPIC33_DMA_COUNT == channel;
+static bool dma_channel_event(const Dspic33Event* event, uint8_t channel_index) {
+    return event->type == DSPIC33_EVENT_DMA && event->source % DSPIC33_DMA_COUNT == channel_index;
 }
 
-static void dma_remove_channel_events(Dspic33* cpu, uint8_t channel) {
-    size_t source;
-    size_t destination = 0u;
-    for (source = 0u; source < cpu->events.count; source++) {
-        if (!dma_channel_event(&cpu->events.items[source], channel)) {
-            cpu->events.items[destination++] = cpu->events.items[source];
+static void dma_remove_channel_events(Dspic33* cpu, uint8_t channel_index) {
+    size_t event_index;
+    size_t compacted_index = 0u;
+
+    for (event_index = 0u; event_index < cpu->events.count; event_index++) {
+        if (!dma_channel_event(&cpu->events.items[event_index], channel_index)) {
+            cpu->events.items[compacted_index++] = cpu->events.items[event_index];
         }
     }
-    cpu->events.count = destination;
+    cpu->events.count = compacted_index;
     dspic33_reorder_events(cpu);
 }
 
-void dspic33_device_internal_dma_advance_generation(Dspic33* cpu, uint8_t channel) {
-    if ((cpu->io.dma_generation[channel] & DMA_EVENT_GENERATION_MASK) ==
+void dspic33_device_internal_dma_advance_generation(Dspic33* cpu, uint8_t channel_index) {
+    if ((cpu->io.dma_generation[channel_index] & DMA_EVENT_GENERATION_MASK) ==
         DMA_EVENT_GENERATION_MASK) {
-        dma_remove_channel_events(cpu, channel);
+        dma_remove_channel_events(cpu, channel_index);
     }
-    cpu->io.dma_generation[channel]++;
+    cpu->io.dma_generation[channel_index]++;
 }
 
 void dspic33_device_internal_dma_update_power_state(Dspic33* cpu) {
-    size_t index;
-    bool available = cpu->power_state != DSPIC33_POWER_SLEEP;
-    bool changed = false;
-    for (index = 0u; index < cpu->events.count; index++) {
-        Dspic33Event* event = &cpu->events.items[index];
+    size_t event_index;
+    const bool dma_available = cpu->power_state != DSPIC33_POWER_SLEEP;
+    bool events_reordered = false;
+
+    for (event_index = 0u; event_index < cpu->events.count; event_index++) {
+        Dspic33Event* event = &cpu->events.items[event_index];
         if (event->type != DSPIC33_EVENT_DMA) {
             continue;
         }
-        if (!available && !event->paused) {
+        if (!dma_available && !event->paused) {
             event->paused_remaining = event->cycle - cpu->device_cycles;
             event->paused = true;
-            changed = true;
-        } else if (available && event->paused) {
+            events_reordered = true;
+        } else if (dma_available && event->paused) {
             if (event->paused_remaining > UINT64_MAX - cpu->device_cycles) {
                 cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
                 continue;
@@ -549,32 +551,33 @@ void dspic33_device_internal_dma_update_power_state(Dspic33* cpu) {
             event->cycle = cpu->device_cycles + event->paused_remaining;
             event->paused_remaining = 0u;
             event->paused = false;
-            changed = true;
+            events_reordered = true;
         }
     }
-    if (changed) {
+    if (events_reordered) {
         dspic33_reorder_events(cpu);
     }
 }
 
-static uint32_t dma_start_address(const Dspic33* cpu, uint8_t channel) {
-    return (cpu->io.dma_bank & dspic33_device_internal_dma_channel_bit(channel)) != 0u
-               ? cpu->io.dma_start_b[channel]
-               : cpu->io.dma_start_a[channel];
+static uint32_t dma_start_address(const Dspic33* cpu, uint8_t channel_index) {
+    return (cpu->io.dma_bank & dspic33_device_internal_dma_channel_bit(channel_index)) != 0u
+               ? cpu->io.dma_start_b[channel_index]
+               : cpu->io.dma_start_a[channel_index];
 }
 
-static uint32_t dma_transfer_address(const Dspic33* cpu, uint8_t channel, uint16_t control,
-                                     uint16_t indirect_address) {
-    uint32_t start = dma_start_address(cpu, channel);
-    uint16_t mode = control & DMA_CON_AMODE_MASK;
-    if (mode == DMA_CON_AMODE_PERIPHERAL) {
-        return start | indirect_address;
+static uint32_t dma_transfer_address(const Dspic33* cpu, uint8_t channel_index,
+                                     uint16_t dma_control, uint16_t peripheral_offset) {
+    const uint32_t start_address = dma_start_address(cpu, channel_index);
+    const uint16_t address_mode = dma_control & DMA_CON_AMODE_MASK;
+
+    if (address_mode == DMA_CON_AMODE_PERIPHERAL) {
+        return start_address | peripheral_offset;
     }
-    return cpu->io.dma_address[channel];
+    return cpu->io.dma_address[channel_index];
 }
 
-static bool dma_memory_address_valid(uint32_t address, uint8_t width) {
-    return dspic33_data_range_valid(address, width);
+static bool dma_memory_address_valid(uint32_t memory_address, uint8_t transfer_width) {
+    return dspic33_data_range_valid(memory_address, transfer_width);
 }
 
 static bool dma_write_cycle_matches(const Dspic33* cpu) {
@@ -588,86 +591,94 @@ static bool dma_cpu_bus_busy(const Dspic33* cpu) {
            (cpu->io.cpu_bus_cycle != UINT64_MAX && cpu->io.cpu_bus_cycle + 1u == cpu->cycles);
 }
 
-static bool dma_cpu_wrote_byte(const Dspic33* cpu, uint32_t address) {
-    return dma_write_cycle_matches(cpu) && address >= cpu->io.cpu_write_address &&
-           address < cpu->io.cpu_write_address + cpu->io.cpu_write_width;
+static bool dma_cpu_wrote_byte(const Dspic33* cpu, uint32_t memory_address) {
+    return dma_write_cycle_matches(cpu) && memory_address >= cpu->io.cpu_write_address &&
+           memory_address < cpu->io.cpu_write_address + cpu->io.cpu_write_width;
 }
 
-static uint8_t dma_read_memory_byte(const Dspic33* cpu, uint32_t address) {
-    if (dma_cpu_wrote_byte(cpu, address)) {
-        uint8_t shift = (uint8_t)((address - cpu->io.cpu_write_address) * 8u);
-        return (uint8_t)(cpu->io.cpu_write_previous >> shift);
+static uint8_t dma_read_memory_byte(const Dspic33* cpu, uint32_t memory_address) {
+    if (dma_cpu_wrote_byte(cpu, memory_address)) {
+        const uint8_t byte_shift = (uint8_t)((memory_address - cpu->io.cpu_write_address) * 8u);
+        return (uint8_t)(cpu->io.cpu_write_previous >> byte_shift);
     }
-    return cpu->data[address];
+    return cpu->data[memory_address];
 }
 
-static uint16_t dma_read_memory(const Dspic33* cpu, uint32_t address, uint8_t width) {
-    if (width == 1u) {
-        return dma_read_memory_byte(cpu, address);
+static uint16_t dma_read_memory(const Dspic33* cpu, uint32_t memory_address,
+                                uint8_t transfer_width) {
+    if (transfer_width == 1u) {
+        return dma_read_memory_byte(cpu, memory_address);
     }
-    return (uint16_t)(dma_read_memory_byte(cpu, address) |
-                      ((uint16_t)dma_read_memory_byte(cpu, address + 1u) << 8u));
+    return (uint16_t)(dma_read_memory_byte(cpu, memory_address) |
+                      ((uint16_t)dma_read_memory_byte(cpu, memory_address + 1u) << 8u));
 }
 
-static void dma_write_memory(Dspic33* cpu, uint32_t address, uint8_t width, uint16_t value) {
-    if (!dma_cpu_wrote_byte(cpu, address)) {
-        cpu->data[address] = (uint8_t)value;
+static void dma_write_memory(Dspic33* cpu, uint32_t memory_address, uint8_t transfer_width,
+                             uint16_t transfer_value) {
+    if (!dma_cpu_wrote_byte(cpu, memory_address)) {
+        cpu->data[memory_address] = (uint8_t)transfer_value;
     }
-    if (width == 2u && !dma_cpu_wrote_byte(cpu, address + 1u)) {
-        cpu->data[address + 1u] = (uint8_t)(value >> 8u);
+    if (transfer_width == 2u && !dma_cpu_wrote_byte(cpu, memory_address + 1u)) {
+        cpu->data[memory_address + 1u] = (uint8_t)(transfer_value >> 8u);
     }
 }
 
-static void dma_record_transfer(Dspic33* cpu, uint8_t channel, uint16_t control, uint32_t address) {
-    uint16_t bit = dspic33_device_internal_dma_channel_bit(channel);
-    uint16_t base = dspic33_device_internal_dma_channel_base(channel);
-    uint16_t start_offset = (cpu->io.dma_bank & bit) != 0u ? 8u : 4u;
+static void dma_record_transfer(Dspic33* cpu, uint8_t channel_index, uint16_t dma_control,
+                                uint32_t memory_address) {
+    const uint16_t channel_bit = dspic33_device_internal_dma_channel_bit(channel_index);
+    const uint16_t channel_base = dspic33_device_internal_dma_channel_base(channel_index);
+    const uint16_t start_offset = (cpu->io.dma_bank & channel_bit) != 0u ? 8u : 4u;
     uint16_t ping_pong = dspic33_device_internal_raw_word(cpu, DMA_PPS);
-    if ((cpu->io.dma_bank & bit) != 0u) {
-        ping_pong |= bit;
+    if ((cpu->io.dma_bank & channel_bit) != 0u) {
+        ping_pong |= channel_bit;
     } else {
-        ping_pong &= (uint16_t)~bit;
+        ping_pong &= (uint16_t)~channel_bit;
     }
     dspic33_device_internal_raw_write_word(cpu, DMA_PPS, (uint16_t)(ping_pong & DMA_CHANNEL_MASK));
-    dspic33_device_internal_raw_write_word(cpu, DMA_LCA, channel);
-    dspic33_device_internal_raw_write_word(cpu, DMA_SADRL, (uint16_t)address);
-    dspic33_device_internal_raw_write_word(cpu, DMA_SADRH, (uint16_t)((address >> 16u) & 0x00ffu));
-    if ((control & DMA_CON_AMODE_MASK) == DMA_CON_AMODE_PERIPHERAL) {
-        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(base + start_offset),
-                                               (uint16_t)address);
-        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(base + start_offset + 2u),
-                                               (uint16_t)((address >> 16u) & 0x00ffu));
+    dspic33_device_internal_raw_write_word(cpu, DMA_LCA, channel_index);
+    dspic33_device_internal_raw_write_word(cpu, DMA_SADRL, (uint16_t)memory_address);
+    dspic33_device_internal_raw_write_word(cpu, DMA_SADRH,
+                                           (uint16_t)((memory_address >> 16u) & 0x00ffu));
+    if ((dma_control & DMA_CON_AMODE_MASK) == DMA_CON_AMODE_PERIPHERAL) {
+        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(channel_base + start_offset),
+                                               (uint16_t)memory_address);
+        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(channel_base + start_offset + 2u),
+                                               (uint16_t)((memory_address >> 16u) & 0x00ffu));
     }
 }
 
-static bool dma_write_collision(const Dspic33* cpu, uint16_t pad, uint8_t width) {
-    uint32_t previous_end;
-    uint32_t dma_end;
+static bool dma_write_collision(const Dspic33* cpu, uint16_t peripheral_address,
+                                uint8_t transfer_width) {
+    const uint32_t cpu_write_end = cpu->io.cpu_write_address + cpu->io.cpu_write_width;
+    const uint32_t dma_write_end = (uint32_t)peripheral_address + transfer_width;
+
     if (!dma_write_cycle_matches(cpu)) {
         return false;
     }
-    previous_end = cpu->io.cpu_write_address + cpu->io.cpu_write_width;
-    dma_end = (uint32_t)pad + width;
-    return cpu->io.cpu_write_address < dma_end && pad < previous_end;
+    return cpu->io.cpu_write_address < dma_write_end && peripheral_address < cpu_write_end;
 }
 
-static bool dma_can_write_pad(uint16_t pad) { return pad == 0x0442u || pad == 0x0542u; }
+static bool dma_can_write_pad(uint16_t peripheral_address) {
+    return peripheral_address == 0x0442u || peripheral_address == 0x0542u;
+}
 
-static void dma_peripheral_write_collision(Dspic33* cpu, uint8_t channel) {
+static void dma_peripheral_write_collision(Dspic33* cpu, uint8_t channel_index) {
     uint16_t status = dspic33_device_internal_raw_word(cpu, DMA_PWC);
-    uint16_t bit = dspic33_device_internal_dma_channel_bit(channel);
-    if ((status & bit) == 0u) {
-        dspic33_device_internal_raw_write_word(cpu, DMA_PWC, (uint16_t)(status | bit));
+    const uint16_t channel_bit = dspic33_device_internal_dma_channel_bit(channel_index);
+
+    if ((status & channel_bit) == 0u) {
+        dspic33_device_internal_raw_write_word(cpu, DMA_PWC, (uint16_t)(status | channel_bit));
         dspic33_raise_dma_collision_trap(cpu);
     }
 }
 
-static uint16_t uart_dma_error_bits(const Dspic33* cpu, uint16_t address) {
-    uint8_t channel;
-    for (channel = 0u; channel < DSPIC33_UART_COUNT; channel++) {
-        if (address == dspic33_device_uart_bases[channel] + 6u) {
+static uint16_t uart_dma_error_bits(const Dspic33* cpu, uint16_t peripheral_address) {
+    uint8_t uart_channel;
+
+    for (uart_channel = 0u; uart_channel < DSPIC33_UART_COUNT; uart_channel++) {
+        if (peripheral_address == dspic33_device_uart_bases[uart_channel] + 6u) {
             uint16_t status = dspic33_device_internal_raw_word(
-                cpu, (uint16_t)(dspic33_device_uart_bases[channel] + 2u));
+                cpu, (uint16_t)(dspic33_device_uart_bases[uart_channel] + 2u));
             return (uint16_t)(((status & UART_STATUS_PARITY_ERROR) != 0u ? 0x0800u : 0u) |
                               ((status & UART_STATUS_FRAMING_ERROR) != 0u ? 0x0400u : 0u));
         }
@@ -675,32 +686,36 @@ static uint16_t uart_dma_error_bits(const Dspic33* cpu, uint16_t address) {
     return 0u;
 }
 
-static bool dma_pad_in_set(uint16_t pad, const uint16_t* pads, size_t count) {
-    size_t index;
-    for (index = 0u; index < count; index++) {
-        if (pad == pads[index]) {
+static bool dma_pad_in_set(uint16_t peripheral_address, const uint16_t* peripheral_addresses,
+                           size_t address_count) {
+    size_t address_index;
+
+    for (address_index = 0u; address_index < address_count; address_index++) {
+        if (peripheral_address == peripheral_addresses[address_index]) {
             return true;
         }
     }
     return false;
 }
 
-static bool dma_pad_readable(uint16_t pad) {
-    static const uint16_t pads[] = {0x0144u, 0x014cu, 0x0154u, 0x015cu, 0x0226u, 0x0236u,
-                                    0x0248u, 0x0256u, 0x0268u, 0x0290u, 0x02a8u, 0x02b6u,
-                                    0x02c8u, 0x0300u, 0x0340u, 0x0440u, 0x0540u, 0x0608u};
-    return dma_pad_in_set(pad, pads, sizeof(pads) / sizeof(pads[0]));
+static bool dma_pad_readable(uint16_t peripheral_address) {
+    static const uint16_t readable_addresses[] = {
+        0x0144u, 0x014cu, 0x0154u, 0x015cu, 0x0226u, 0x0236u, 0x0248u, 0x0256u, 0x0268u,
+        0x0290u, 0x02a8u, 0x02b6u, 0x02c8u, 0x0300u, 0x0340u, 0x0440u, 0x0540u, 0x0608u};
+    return dma_pad_in_set(peripheral_address, readable_addresses,
+                          sizeof(readable_addresses) / sizeof(readable_addresses[0]));
 }
 
-static bool dma_pad_writable(uint16_t pad) {
-    static const uint16_t pads[] = {0x0224u, 0x0234u, 0x0248u, 0x0254u, 0x0268u, 0x0298u, 0x02a8u,
-                                    0x02b4u, 0x02c8u, 0x0442u, 0x0542u, 0x0608u, 0x0904u, 0x0906u,
-                                    0x090eu, 0x0910u, 0x0918u, 0x091au, 0x0922u, 0x0924u};
-    return dma_pad_in_set(pad, pads, sizeof(pads) / sizeof(pads[0]));
+static bool dma_pad_writable(uint16_t peripheral_address) {
+    static const uint16_t writable_addresses[] = {
+        0x0224u, 0x0234u, 0x0248u, 0x0254u, 0x0268u, 0x0298u, 0x02a8u, 0x02b4u, 0x02c8u, 0x0442u,
+        0x0542u, 0x0608u, 0x0904u, 0x0906u, 0x090eu, 0x0910u, 0x0918u, 0x091au, 0x0922u, 0x0924u};
+    return dma_pad_in_set(peripheral_address, writable_addresses,
+                          sizeof(writable_addresses) / sizeof(writable_addresses[0]));
 }
 
-bool dspic33_device_dma_pad_valid(uint16_t pad, bool write) {
-    return write ? dma_pad_writable(pad) : dma_pad_readable(pad);
+bool dspic33_device_dma_pad_valid(uint16_t peripheral_address, bool is_write) {
+    return is_write ? dma_pad_writable(peripheral_address) : dma_pad_readable(peripheral_address);
 }
 
 static void dma_disable_channel(Dspic33* cpu, uint8_t channel, uint16_t control) {
