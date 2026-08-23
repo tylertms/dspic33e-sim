@@ -135,16 +135,16 @@ void dspic33_can_test_mode_transition_cases(TestState* state, Dspic33* cpu) {
                (dspic33_read_word(cpu, 0x0400u) & 0x07e0u) == 0x0240u,
            "new CAN mode request supersedes a pending transition");
 
-    Dspic33 copy;
-    expect(state, dspic33_initialize(&copy), "initialize pending CAN mode copy");
+    Dspic33 copied_cpu;
+    expect(state, dspic33_initialize(&copied_cpu), "initialize pending CAN mode copy");
     dspic33_can_test_request_mode(cpu, 0u, 3u);
-    expect(state, dspic33_copy(&copy, cpu), "copy pending CAN mode transition");
+    expect(state, dspic33_copy(&copied_cpu, cpu), "copy pending CAN mode transition");
     expect(state,
-           dspic33_device_advance(cpu, cycles) && dspic33_device_advance(&copy, cycles) &&
+           dspic33_device_advance(cpu, cycles) && dspic33_device_advance(&copied_cpu, cycles) &&
                (dspic33_read_word(cpu, 0x0400u) & 0x00e0u) == 0x0060u &&
-               (dspic33_read_word(&copy, 0x0400u) & 0x00e0u) == 0x0060u,
+               (dspic33_read_word(&copied_cpu, 0x0400u) & 0x00e0u) == 0x0060u,
            "copy preserves pending CAN mode transition phase");
-    dspic33_release(&copy);
+    dspic33_release(&copied_cpu);
 
     dspic33_reset(cpu, 0u);
     dspic33_can_test_request_mode(cpu, 0u, 0u);
@@ -561,11 +561,11 @@ void dspic33_can_test_invalid_message_cases(TestState* state, Dspic33* cpu) {
 }
 
 void dspic33_can_test_copy_and_reset_cases(TestState* state, Dspic33* cpu) {
-    Dspic33 copy;
-    bool initialized = dspic33_initialize(&copy);
+    Dspic33 copied_cpu;
+    bool copy_initialized = dspic33_initialize(&copied_cpu);
     Dspic33CanFrame input = dspic33_can_test_frame(0x456u, false, false, 3u, 0x70u);
-    expect(state, initialized, "initialize CAN copy");
-    if (!initialized) {
+    expect(state, copy_initialized, "initialize CAN copy");
+    if (!copy_initialized) {
         return;
     }
     dspic33_reset(cpu, 0u);
@@ -575,16 +575,16 @@ void dspic33_can_test_copy_and_reset_cases(TestState* state, Dspic33* cpu) {
     dspic33_can_test_select_window(cpu, 0u, false);
     dspic33_can_test_set_mode(cpu, 0u, 0u);
     expect(state, dspic33_can_receive(cpu, 0u, &input, 2u), "copy pending receive schedule");
-    expect(state, dspic33_copy(&copy, cpu), "copy pending CAN state");
-    expect(state, dspic33_device_advance(cpu, 32u) && dspic33_device_advance(&copy, 32u),
+    expect(state, dspic33_copy(&copied_cpu, cpu), "copy pending CAN state");
+    expect(state, dspic33_device_advance(cpu, 32u) && dspic33_device_advance(&copied_cpu, 32u),
            "copy advance");
     expect(state,
            dspic33_can_test_receive_full(cpu, 0u, 0u) &&
-               dspic33_can_test_receive_full(&copy, 0u, 0u),
+               dspic33_can_test_receive_full(&copied_cpu, 0u, 0u),
            "copy receives identically");
     expect(state,
            dspic33_can_test_memory_word(cpu, 0xd000u) ==
-               dspic33_can_test_memory_word(&copy, 0xd000u),
+               dspic33_can_test_memory_word(&copied_cpu, 0xd000u),
            "copy DMA contents");
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, 0x0680u, 14u);
@@ -598,23 +598,24 @@ void dspic33_can_test_copy_and_reset_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0430u, 0x008bu);
     expect(state, dspic33_device_advance(cpu, 8u) && (cpu->io.can_tx_busy & 1u) != 0u,
            "copy reaches pending CAN bus completion");
-    expect(state, dspic33_copy(&copy, cpu), "copy pending CAN bus state");
-    expect(state, dspic33_device_advance(cpu, 20u) && dspic33_device_advance(&copy, 20u),
+    expect(state, dspic33_copy(&copied_cpu, cpu), "copy pending CAN bus state");
+    expect(state, dspic33_device_advance(cpu, 20u) && dspic33_device_advance(&copied_cpu, 20u),
            "copied CAN bus phases advance");
-    bool source_high;
-    bool copy_high;
+    bool original_pin_high;
+    bool copied_pin_high;
     expect(state,
-           dspic33_can_pin(cpu, 64u, &source_high) && dspic33_can_pin(&copy, 64u, &copy_high) &&
-               source_high && copy_high,
+           dspic33_can_pin(cpu, 64u, &original_pin_high) &&
+               dspic33_can_pin(&copied_cpu, 64u, &copied_pin_high) && original_pin_high &&
+               copied_pin_high,
            "copy preserves CAN transmit bit phase");
-    expect(state, dspic33_device_advance(cpu, 980u) && dspic33_device_advance(&copy, 980u),
+    expect(state, dspic33_device_advance(cpu, 980u) && dspic33_device_advance(&copied_cpu, 980u),
            "copied CAN bus completions advance");
-    Dspic33CanFrame source_output;
-    Dspic33CanFrame copy_output;
+    Dspic33CanFrame original_output;
+    Dspic33CanFrame copied_output;
     expect(state,
-           dspic33_can_transmit(cpu, 0u, &source_output) &&
-               dspic33_can_transmit(&copy, 0u, &copy_output) &&
-               source_output.identifier == copy_output.identifier,
+           dspic33_can_transmit(cpu, 0u, &original_output) &&
+               dspic33_can_transmit(&copied_cpu, 0u, &copied_output) &&
+               original_output.identifier == copied_output.identifier,
            "copy preserves pending CAN bus completion");
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, 0x0e30u, 0xffffu);
@@ -625,13 +626,13 @@ void dspic33_can_test_copy_and_reset_cases(TestState* state, Dspic33* cpu) {
            dspic33_can_input_pin(cpu, 64u, false, 0u) && dspic33_device_advance(cpu, 3u) &&
                cpu->io.can_rx_serial_count[0] == 1u && (cpu->io.can_rx_serial_active & 1u) != 0u,
            "copy reaches active CAN serial reception");
-    expect(state, dspic33_copy(&copy, cpu), "copy active CAN serial state");
+    expect(state, dspic33_copy(&copied_cpu, cpu), "copy active CAN serial state");
     expect(state,
            dspic33_can_input_pin(cpu, 64u, true, 1u) &&
-               dspic33_can_input_pin(&copy, 64u, true, 1u) && dspic33_device_advance(cpu, 4u) &&
-               dspic33_device_advance(&copy, 4u) && cpu->io.can_rx_serial_count[0] == 2u &&
-               copy.io.can_rx_serial_count[0] == 2u &&
-               cpu->io.can_rx_serial_bits[0][1] == copy.io.can_rx_serial_bits[0][1],
+               dspic33_can_input_pin(&copied_cpu, 64u, true, 1u) &&
+               dspic33_device_advance(cpu, 4u) && dspic33_device_advance(&copied_cpu, 4u) &&
+               cpu->io.can_rx_serial_count[0] == 2u && copied_cpu.io.can_rx_serial_count[0] == 2u &&
+               cpu->io.can_rx_serial_bits[0][1] == copied_cpu.io.can_rx_serial_bits[0][1],
            "copy preserves CAN serial receive phase");
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, 0x0e30u, 0xffffu);
@@ -644,15 +645,15 @@ void dspic33_can_test_copy_and_reset_cases(TestState* state, Dspic33* cpu) {
                dspic33_can_input_pin(cpu, 64u, true, 0u) && dspic33_device_advance(cpu, 1u) &&
                cpu->io.can_rx_sample_high[0] == 1u && cpu->io.can_rx_serial_count[0] == 0u,
            "copy reaches the first CAN majority sample");
-    expect(state, dspic33_copy(&copy, cpu) && copy.io.can_rx_sample_high[0] == 1u,
+    expect(state, dspic33_copy(&copied_cpu, cpu) && copied_cpu.io.can_rx_sample_high[0] == 1u,
            "copy preserves partial CAN majority state");
     expect(state,
            dspic33_can_input_pin(cpu, 64u, false, 0u) &&
-               dspic33_can_input_pin(&copy, 64u, false, 0u) && dspic33_device_advance(cpu, 1u) &&
-               dspic33_device_advance(&copy, 1u) &&
-               cpu->io.can_rx_sample_high[0] == copy.io.can_rx_sample_high[0],
+               dspic33_can_input_pin(&copied_cpu, 64u, false, 0u) &&
+               dspic33_device_advance(cpu, 1u) && dspic33_device_advance(&copied_cpu, 1u) &&
+               cpu->io.can_rx_sample_high[0] == copied_cpu.io.can_rx_sample_high[0],
            "copied CAN majority samples advance together");
-    dspic33_release(&copy);
+    dspic33_release(&copied_cpu);
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, 0x0e30u, 0xffffu);
     dspic33_write_word(cpu, 0x0e3eu, 0u);
