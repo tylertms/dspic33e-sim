@@ -45,8 +45,9 @@ bool dspic33_device_internal_input_capture_pmd_disabled(const Dspic33* cpu, uint
 bool dspic33_device_internal_input_capture_register_write_mask(uint16_t address,
                                                                uint16_t* writable);
 bool dspic33_device_internal_input_capture_source_awaited(const Dspic33* cpu, uint8_t source);
-bool dspic33_device_internal_interrupt_control_write(Dspic33* cpu, uint16_t base, uint16_t previous,
-                                                     uint16_t requested);
+bool dspic33_device_internal_interrupt_control_write(Dspic33* cpu, uint16_t register_address,
+                                                     uint16_t previous_word,
+                                                     uint16_t requested_word);
 bool dspic33_device_internal_interrupt_enabled(const Dspic33* cpu, uint16_t irq);
 bool dspic33_device_internal_nvm_key_authorized(const Dspic33* cpu);
 bool dspic33_device_internal_oscillator_pin_clock_output(const Dspic33* cpu);
@@ -322,8 +323,10 @@ void dspic33_device_internal_update_crc_pmd(Dspic33* cpu, uint16_t previous);
 void dspic33_device_internal_update_crc_register(Dspic33* cpu, uint16_t address, uint16_t previous,
                                                  uint16_t requested);
 void dspic33_device_internal_update_dci_register(Dspic33* cpu, uint16_t address, uint16_t previous);
-void dspic33_device_internal_update_dma_control(Dspic33* cpu, uint8_t channel, uint16_t previous);
-void dspic33_device_internal_update_dma_request(Dspic33* cpu, uint8_t channel, uint16_t previous);
+void dspic33_device_internal_update_dma_control(Dspic33* cpu, uint8_t channel_index,
+                                                uint16_t previous_control);
+void dspic33_device_internal_update_dma_request(Dspic33* cpu, uint8_t channel_index,
+                                                uint16_t previous_request);
 void dspic33_device_internal_update_gpio_latch(Dspic33* cpu, uint16_t address, uint16_t requested);
 void dspic33_device_internal_update_input_capture_pmd(Dspic33* cpu, uint16_t address,
                                                       uint16_t previous);
