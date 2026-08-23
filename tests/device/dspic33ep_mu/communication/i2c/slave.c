@@ -281,14 +281,14 @@ void dspic33_i2c_test_pin_routing_cases(TestState* state, Dspic33* cpu) {
 
 void dspic33_i2c_test_master_pin_sequence_cases(TestState* state, Dspic33* cpu) {
     static const uint8_t received_values[] = {0x3cu, 0xa6u, 0x59u};
-    const uint16_t baud = 2u;
-    const uint64_t half = dspic33_i2c_test_operation_cycles(baud, 1u);
+    const uint16_t baud_rate = 2u;
+    const uint64_t half_period = dspic33_i2c_test_operation_cycles(baud_rate, 1u);
     size_t route_index;
 
     for (route_index = 0u; route_index < sizeof(pin_routes) / sizeof(pin_routes[0]);
          route_index++) {
         const I2cPinRoute* route = &pin_routes[route_index];
-        uint16_t base = bases[route->channel];
+        uint16_t register_base = bases[route->channel];
         uint16_t clock_mask = (uint16_t)(1u << route->clock);
         uint16_t data_mask = (uint16_t)(1u << route->data);
         uint8_t bit_index;
@@ -297,11 +297,11 @@ void dspic33_i2c_test_master_pin_sequence_cases(TestState* state, Dspic33* cpu) 
         dspic33_reset(cpu, 0u);
         dspic33_gpio_drive(cpu, route->port, (uint16_t)(clock_mask | data_mask),
                            (uint16_t)(clock_mask | data_mask));
-        dspic33_i2c_test_enable(cpu, route->channel, 1u, baud);
+        dspic33_i2c_test_enable(cpu, route->channel, 1u, baud_rate);
         expect(state,
                dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, true, true),
                "physical start begins from bus idle");
-        expect(state, dspic33_device_advance(cpu, half - 1u),
+        expect(state, dspic33_device_advance(cpu, half_period - 1u),
                "physical start advances before first boundary");
         expect(state,
                dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, true, true),
@@ -311,7 +311,7 @@ void dspic33_i2c_test_master_pin_sequence_cases(TestState* state, Dspic33* cpu) 
             state,
             dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, true, false),
             "physical start drives data low while clock is high");
-        expect(state, dspic33_device_advance(cpu, half),
+        expect(state, dspic33_device_advance(cpu, half_period),
                "physical start reaches completion boundary");
         expect(state,
                dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, false,
@@ -320,20 +320,20 @@ void dspic33_i2c_test_master_pin_sequence_cases(TestState* state, Dspic33* cpu) 
                "physical start completes in the master wait state");
         dspic33_i2c_test_clear_interrupt(cpu, master_irqs[route->channel]);
 
-        dspic33_write_word(cpu, (uint16_t)(base + 2u), 0x00a5u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 2u), 0x00a5u);
         for (bit_index = 0u; bit_index < 8u; bit_index++) {
             bool bit_high = (0xa5u & (uint8_t)(0x80u >> bit_index)) != 0u;
             expect(state,
                    dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, false,
                                                bit_high),
                    "physical transmit presents data while clock is low");
-            expect(state, dspic33_device_advance(cpu, half),
+            expect(state, dspic33_device_advance(cpu, half_period),
                    "physical transmit reaches rising edge");
             expect(state,
                    dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, true,
                                                bit_high),
                    "physical transmit holds data through clock high");
-            expect(state, dspic33_device_advance(cpu, half),
+            expect(state, dspic33_device_advance(cpu, half_period),
                    "physical transmit reaches falling edge");
         }
         expect(
@@ -341,22 +341,22 @@ void dspic33_i2c_test_master_pin_sequence_cases(TestState* state, Dspic33* cpu) 
             dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, false, true),
             "physical transmit releases data for acknowledgement");
         dspic33_gpio_drive(cpu, route->port, 0u, data_mask);
-        expect(state, dspic33_device_advance(cpu, half),
+        expect(state, dspic33_device_advance(cpu, half_period),
                "physical transmit reaches acknowledgement sample");
         expect(
             state,
             dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, true, false),
             "physical transmit samples a driven acknowledgement");
-        expect(state, dspic33_device_advance(cpu, half),
+        expect(state, dspic33_device_advance(cpu, half_period),
                "physical transmit completes acknowledgement");
         expect(state,
-               (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0xc001u) == 0u &&
+               (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 0xc001u) == 0u &&
                    dspic33_i2c_test_interrupt_flag(cpu, master_irqs[route->channel]),
                "physical acknowledgement completes transmit without NACK");
         dspic33_i2c_test_clear_interrupt(cpu, master_irqs[route->channel]);
         dspic33_gpio_drive(cpu, route->port, data_mask, data_mask);
 
-        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9008u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0x9008u);
         expect(
             state,
             dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, false, true),
@@ -364,32 +364,34 @@ void dspic33_i2c_test_master_pin_sequence_cases(TestState* state, Dspic33* cpu) 
         for (bit_index = 0u; bit_index < 8u; bit_index++) {
             bool bit_high = (received_values[route_index] & (uint8_t)(0x80u >> bit_index)) != 0u;
             dspic33_gpio_drive(cpu, route->port, bit_high ? data_mask : 0u, data_mask);
-            expect(state, dspic33_device_advance(cpu, half),
+            expect(state, dspic33_device_advance(cpu, half_period),
                    "physical receive reaches sampling edge");
             expect(state,
                    dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, true,
                                                bit_high),
                    "physical receive samples selected data level");
-            expect(state, dspic33_device_advance(cpu, half), "physical receive returns clock low");
+            expect(state, dspic33_device_advance(cpu, half_period),
+                   "physical receive returns clock low");
         }
         expect(state,
-               dspic33_read_word(cpu, base) == received_values[route_index] &&
+               dspic33_read_word(cpu, register_base) == received_values[route_index] &&
                    dspic33_i2c_test_interrupt_flag(cpu, master_irqs[route->channel]),
                "physical receive shifts the sampled byte into I2CxRCV");
         dspic33_i2c_test_clear_interrupt(cpu, master_irqs[route->channel]);
         dspic33_gpio_drive(cpu, route->port, data_mask, data_mask);
 
-        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9010u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0x9010u);
         expect(
             state,
             dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, false, false),
             "physical ACK begins with driven data low");
-        expect(state, dspic33_device_advance(cpu, half), "physical ACK reaches clock-high phase");
+        expect(state, dspic33_device_advance(cpu, half_period),
+               "physical ACK reaches clock-high phase");
         expect(
             state,
             dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, true, false),
             "physical ACK holds data low while clock is high");
-        expect(state, dspic33_device_advance(cpu, half), "physical ACK reaches completion");
+        expect(state, dspic33_device_advance(cpu, half_period), "physical ACK reaches completion");
         expect(
             state,
             dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, false, true) &&
@@ -397,21 +399,22 @@ void dspic33_i2c_test_master_pin_sequence_cases(TestState* state, Dspic33* cpu) 
             "physical ACK releases data and raises master interrupt");
         dspic33_i2c_test_clear_interrupt(cpu, master_irqs[route->channel]);
 
-        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9002u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0x9002u);
         expect(
             state,
             dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, false, true),
             "physical restart begins from released data");
-        expect(state, dspic33_device_advance(cpu, half), "physical restart releases clock");
+        expect(state, dspic33_device_advance(cpu, half_period), "physical restart releases clock");
         expect(state,
                dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, true, true),
                "physical restart reaches bus idle level");
-        expect(state, dspic33_device_advance(cpu, half), "physical restart drives data boundary");
+        expect(state, dspic33_device_advance(cpu, half_period),
+               "physical restart drives data boundary");
         expect(
             state,
             dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, true, false),
             "physical restart drives data low while clock is high");
-        expect(state, dspic33_device_advance(cpu, half), "physical restart completes");
+        expect(state, dspic33_device_advance(cpu, half_period), "physical restart completes");
         expect(state,
                dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, false,
                                            false) &&
@@ -419,21 +422,21 @@ void dspic33_i2c_test_master_pin_sequence_cases(TestState* state, Dspic33* cpu) 
                "physical restart returns to master wait state");
         dspic33_i2c_test_clear_interrupt(cpu, master_irqs[route->channel]);
 
-        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9004u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0x9004u);
         expect(
             state,
             dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, false, false),
             "physical stop begins with both lines low");
-        expect(state, dspic33_device_advance(cpu, half), "physical stop releases clock");
+        expect(state, dspic33_device_advance(cpu, half_period), "physical stop releases clock");
         expect(
             state,
             dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, true, false),
             "physical stop holds data low after clock release");
-        expect(state, dspic33_device_advance(cpu, half), "physical stop releases data");
+        expect(state, dspic33_device_advance(cpu, half_period), "physical stop releases data");
         expect(state,
                dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, true, true),
                "physical stop creates the low-to-high data transition");
-        expect(state, dspic33_device_advance(cpu, half), "physical stop completes");
+        expect(state, dspic33_device_advance(cpu, half_period), "physical stop completes");
         expect(
             state,
             dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, true, true) &&
