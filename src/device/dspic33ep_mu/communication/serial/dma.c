@@ -1,15 +1,18 @@
 #include "device/dspic33ep_mu/internal.h"
 
-bool dspic33_uart_receive(Dspic33* cpu, uint8_t channel, uint8_t value, uint64_t delay) {
+bool dspic33_uart_receive(Dspic33* cpu, uint8_t channel, uint8_t received_value,
+                          uint64_t event_delay) {
     Dspic33UartFrame frame;
+
     memset(&frame, 0, sizeof(frame));
-    frame.value = value;
-    return dspic33_uart_receive_frame(cpu, channel, &frame, delay);
+    frame.value = received_value;
+    return dspic33_uart_receive_frame(cpu, channel, &frame, event_delay);
 }
 
 bool dspic33_uart_receive_frame(Dspic33* cpu, uint8_t channel, const Dspic33UartFrame* frame,
-                                uint64_t delay) {
+                                uint64_t event_delay) {
     uint32_t event_value;
+
     if (channel >= DSPIC33_UART_COUNT || frame == NULL || frame->value > 0x01ffu) {
         return false;
     }
@@ -20,30 +23,31 @@ bool dspic33_uart_receive_frame(Dspic33* cpu, uint8_t channel, const Dspic33Uart
     if (frame->framing_error) {
         event_value |= UART_EVENT_FRAMING_ERROR;
     }
-    return dspic33_schedule_external(cpu, DSPIC33_EVENT_UART, channel, event_value, delay);
+    return dspic33_schedule_external(cpu, DSPIC33_EVENT_UART, channel, event_value, event_delay);
 }
 
-bool dspic33_uart_set_cts(Dspic33* cpu, uint8_t channel, bool clear, uint64_t delay) {
+bool dspic33_uart_set_cts(Dspic33* cpu, uint8_t channel, bool clear, uint64_t event_delay) {
     return channel < DSPIC33_UART_COUNT &&
            dspic33_schedule_external(cpu, DSPIC33_EVENT_UART, channel,
-                                     UART_EVENT_CTS | (clear ? 1u : 0u), delay);
+                                     UART_EVENT_CTS | (clear ? 1u : 0u), event_delay);
 }
 
-bool dspic33_uart_transmit(Dspic33* cpu, uint8_t channel, Dspic33UartFrame* frame) {
-    return channel < DSPIC33_UART_COUNT && frame != NULL &&
-           dspic33_device_internal_uart_queue_pop(&cpu->io.uart_tx[channel], frame);
+bool dspic33_uart_transmit(Dspic33* cpu, uint8_t channel, Dspic33UartFrame* output_frame) {
+    return channel < DSPIC33_UART_COUNT && output_frame != NULL &&
+           dspic33_device_internal_uart_queue_pop(&cpu->io.uart_tx[channel], output_frame);
 }
 
-bool dspic33_spi_receive(Dspic33* cpu, uint8_t channel, uint16_t value, uint64_t delay) {
+bool dspic33_spi_receive(Dspic33* cpu, uint8_t channel, uint16_t received_value,
+                         uint64_t event_delay) {
     return channel < DSPIC33_SPI_COUNT &&
-           dspic33_schedule_external(cpu, DSPIC33_EVENT_SPI, channel, SPI_EVENT_EXTERNAL | value,
-                                     delay);
+           dspic33_schedule_external(cpu, DSPIC33_EVENT_SPI, channel,
+                                     SPI_EVENT_EXTERNAL | received_value, event_delay);
 }
 
-bool dspic33_spi_select(Dspic33* cpu, uint8_t channel, bool selected, uint64_t delay) {
+bool dspic33_spi_select(Dspic33* cpu, uint8_t channel, bool selected, uint64_t event_delay) {
     return channel < DSPIC33_SPI_COUNT &&
            dspic33_schedule_external(cpu, DSPIC33_EVENT_SPI_SELECT, channel,
-                                     selected ? SPI_SELECT_ACTIVE : 0u, delay);
+                                     selected ? SPI_SELECT_ACTIVE : 0u, event_delay);
 }
 
 bool dspic33_spi_pin_input(Dspic33* cpu, uint8_t channel, bool clock_high, bool data_high,

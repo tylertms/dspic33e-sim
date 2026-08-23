@@ -858,13 +858,15 @@ void dspic33_raise_oscillator_fail_trap(Dspic33* cpu);
 bool dspic33_oscillator_failure_detected(Dspic33* cpu);
 void dspic33_set_generic_hard_trap_source(Dspic33* cpu, bool active);
 void dspic33_set_generic_soft_trap_source(Dspic33* cpu, bool active);
-bool dspic33_uart_receive(Dspic33* cpu, uint8_t channel, uint8_t value, uint64_t delay);
+bool dspic33_uart_receive(Dspic33* cpu, uint8_t channel, uint8_t received_value,
+                          uint64_t event_delay);
 bool dspic33_uart_receive_frame(Dspic33* cpu, uint8_t channel, const Dspic33UartFrame* frame,
-                                uint64_t delay);
-bool dspic33_uart_set_cts(Dspic33* cpu, uint8_t channel, bool clear, uint64_t delay);
-bool dspic33_uart_transmit(Dspic33* cpu, uint8_t channel, Dspic33UartFrame* frame);
-bool dspic33_spi_receive(Dspic33* cpu, uint8_t channel, uint16_t value, uint64_t delay);
-bool dspic33_spi_select(Dspic33* cpu, uint8_t channel, bool selected, uint64_t delay);
+                                uint64_t event_delay);
+bool dspic33_uart_set_cts(Dspic33* cpu, uint8_t channel, bool clear, uint64_t event_delay);
+bool dspic33_uart_transmit(Dspic33* cpu, uint8_t channel, Dspic33UartFrame* output_frame);
+bool dspic33_spi_receive(Dspic33* cpu, uint8_t channel, uint16_t received_value,
+                         uint64_t event_delay);
+bool dspic33_spi_select(Dspic33* cpu, uint8_t channel, bool selected, uint64_t event_delay);
 bool dspic33_spi_pin_input(Dspic33* cpu, uint8_t channel, bool clock_high, bool data_high,
                            bool select_high);
 bool dspic33_spi_transmit(Dspic33* cpu, uint8_t channel, uint8_t* value);
