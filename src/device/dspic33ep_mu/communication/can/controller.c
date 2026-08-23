@@ -328,52 +328,55 @@ bool dspic33_device_internal_can_select_receive_buffer(Dspic33* cpu, uint8_t cha
     return false;
 }
 
-void dspic33_device_internal_can_encode_frame(const Dspic33CanFrame* frame, uint8_t filter,
-                                              uint16_t words[8]) {
-    uint32_t sid = can_identifier_sid(frame);
-    uint32_t eid = can_identifier_eid(frame);
-    uint8_t index;
-    memset(words, 0, sizeof(uint16_t) * 8u);
-    words[0] = (uint16_t)(sid << 2u);
-    if (frame->extended) {
-        words[0] |= 3u;
-        words[1] = (uint16_t)(eid >> 6u);
-        words[2] = (uint16_t)((eid & 0x3fu) << 10u);
-        if (frame->remote) {
-            words[2] |= 0x0200u;
+void dspic33_device_internal_can_encode_frame(const Dspic33CanFrame* can_frame,
+                                              uint8_t filter_index, uint16_t encoded_words[8]) {
+    const uint32_t standard_id = can_identifier_sid(can_frame);
+    const uint32_t extended_id = can_identifier_eid(can_frame);
+
+    memset(encoded_words, 0, sizeof(uint16_t) * 8u);
+    encoded_words[0] = (uint16_t)(standard_id << 2u);
+    if (can_frame->extended) {
+        encoded_words[0] |= 3u;
+        encoded_words[1] = (uint16_t)(extended_id >> 6u);
+        encoded_words[2] = (uint16_t)((extended_id & 0x3fu) << 10u);
+        if (can_frame->remote) {
+            encoded_words[2] |= 0x0200u;
         }
-    } else if (frame->remote) {
-        words[0] |= 2u;
+    } else if (can_frame->remote) {
+        encoded_words[0] |= 2u;
     }
-    words[2] |= frame->length > 8u ? 8u : frame->length;
-    for (index = 0u; index < frame->length && index < 8u; index++) {
-        words[3u + index / 2u] |= (uint16_t)frame->data[index] << ((index & 1u) * 8u);
+    encoded_words[2] |= can_frame->length > 8u ? 8u : can_frame->length;
+    for (uint8_t data_index = 0u; data_index < can_frame->length && data_index < 8u; data_index++) {
+        encoded_words[3u + data_index / 2u] |= (uint16_t)can_frame->data[data_index]
+                                               << ((data_index & 1u) * 8u);
     }
-    words[7] = (uint16_t)filter << 8u;
+    encoded_words[7] = (uint16_t)filter_index << 8u;
 }
 
-Dspic33CanFrame dspic33_device_internal_can_decode_frame(const uint16_t words[8]) {
-    Dspic33CanFrame frame;
-    uint32_t sid = (words[0] >> 2u) & 0x7ffu;
-    uint8_t index;
-    memset(&frame, 0, sizeof(frame));
-    frame.extended = (words[0] & 1u) != 0u;
-    if (frame.extended) {
-        frame.identifier =
-            (sid << 18u) | ((uint32_t)(words[1] & 0x0fffu) << 6u) | ((words[2] >> 10u) & 0x3fu);
-        frame.remote = (words[2] & 0x0200u) != 0u;
+Dspic33CanFrame dspic33_device_internal_can_decode_frame(const uint16_t encoded_words[8]) {
+    Dspic33CanFrame decoded_frame;
+    const uint32_t standard_id = (encoded_words[0] >> 2u) & 0x7ffu;
+
+    memset(&decoded_frame, 0, sizeof(decoded_frame));
+    decoded_frame.extended = (encoded_words[0] & 1u) != 0u;
+    if (decoded_frame.extended) {
+        decoded_frame.identifier = (standard_id << 18u) |
+                                   ((uint32_t)(encoded_words[1] & 0x0fffu) << 6u) |
+                                   ((encoded_words[2] >> 10u) & 0x3fu);
+        decoded_frame.remote = (encoded_words[2] & 0x0200u) != 0u;
     } else {
-        frame.identifier = sid;
-        frame.remote = (words[0] & 2u) != 0u;
+        decoded_frame.identifier = standard_id;
+        decoded_frame.remote = (encoded_words[0] & 2u) != 0u;
     }
-    frame.length = (uint8_t)(words[2] & 0x0fu);
-    if (frame.length > 8u) {
-        frame.length = 8u;
+    decoded_frame.length = (uint8_t)(encoded_words[2] & 0x0fu);
+    if (decoded_frame.length > 8u) {
+        decoded_frame.length = 8u;
     }
-    for (index = 0u; index < frame.length; index++) {
-        frame.data[index] = (uint8_t)(words[3u + index / 2u] >> ((index & 1u) * 8u));
+    for (uint8_t data_index = 0u; data_index < decoded_frame.length; data_index++) {
+        decoded_frame.data[data_index] =
+            (uint8_t)(encoded_words[3u + data_index / 2u] >> ((data_index & 1u) * 8u));
     }
-    return frame;
+    return decoded_frame;
 }
 
 static void can_append_bits(bool* bits, uint8_t* count, uint32_t value, uint8_t width) {
