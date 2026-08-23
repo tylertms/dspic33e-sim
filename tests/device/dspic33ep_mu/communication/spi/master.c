@@ -204,40 +204,39 @@ void dspic33_spi_test_enhanced_fifo_cases(TestState* state, Dspic33* cpu) {
 }
 
 void dspic33_spi_test_interrupt_mode_cases(TestState* state, Dspic33* cpu) {
-    uint16_t base = bases[0];
-    uint16_t master = 0x043bu;
-    uint64_t cycles = dspic33_spi_test_transfer_cycles(master);
-    uint8_t index;
+    const uint16_t spi_base = bases[0];
+    const uint16_t master_control = 0x043bu;
+    const uint64_t transfer_cycles = dspic33_spi_test_transfer_cycles(master_control);
 
     dspic33_reset(cpu, 0u);
-    dspic33_spi_test_configure_spi(cpu, 0u, master, 1u, 7u);
-    dspic33_write_word(cpu, (uint16_t)(base + 8u), 0x1000u);
-    for (index = 0u; index < 7u; index++) {
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), (uint16_t)(0x1001u + index));
+    dspic33_spi_test_configure_spi(cpu, 0u, master_control, 1u, 7u);
+    dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0x1000u);
+    for (uint8_t transfer_index = 0u; transfer_index < 7u; transfer_index++) {
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), (uint16_t)(0x1001u + transfer_index));
     }
     expect(state, !dspic33_spi_test_interrupt_flag(cpu, irqs[0]), "mode seven not early");
-    dspic33_write_word(cpu, (uint16_t)(base + 8u), 0x1008u);
+    dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0x1008u);
     expect(state, dspic33_spi_test_interrupt_flag(cpu, irqs[0]), "mode seven transmit full");
 
     dspic33_reset(cpu, 0u);
-    dspic33_spi_test_configure_spi(cpu, 0u, master, 1u, 6u);
-    dspic33_write_word(cpu, (uint16_t)(base + 8u), 0x2000u);
+    dspic33_spi_test_configure_spi(cpu, 0u, master_control, 1u, 6u);
+    dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0x2000u);
     expect(state, dspic33_spi_test_interrupt_flag(cpu, irqs[0]), "mode six transmit fifo empty");
 
     dspic33_reset(cpu, 0u);
-    dspic33_spi_test_configure_spi(cpu, 0u, master, 1u, 5u);
-    dspic33_write_word(cpu, (uint16_t)(base + 8u), 0x3000u);
+    dspic33_spi_test_configure_spi(cpu, 0u, master_control, 1u, 5u);
+    dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0x3000u);
     expect(state, !dspic33_spi_test_interrupt_flag(cpu, irqs[0]), "mode five not early");
-    expect(state, dspic33_device_advance(cpu, cycles), "mode five completion advance");
+    expect(state, dspic33_device_advance(cpu, transfer_cycles), "mode five completion advance");
     expect(state, dspic33_spi_test_interrupt_flag(cpu, irqs[0]), "mode five transfer complete");
 
     dspic33_reset(cpu, 0u);
-    dspic33_spi_test_configure_spi(cpu, 0u, master, 1u, 4u);
-    for (index = 0u; index < 9u; index++) {
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), (uint16_t)(0x4000u + index));
+    dspic33_spi_test_configure_spi(cpu, 0u, master_control, 1u, 4u);
+    for (uint8_t transfer_index = 0u; transfer_index < 9u; transfer_index++) {
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), (uint16_t)(0x4000u + transfer_index));
     }
     expect(state, !dspic33_spi_test_interrupt_flag(cpu, irqs[0]), "mode four not early");
-    expect(state, dspic33_device_advance(cpu, cycles), "mode four opening advance");
+    expect(state, dspic33_device_advance(cpu, transfer_cycles), "mode four opening advance");
     expect(state, dspic33_spi_test_interrupt_flag(cpu, irqs[0]), "mode four one opening");
 
     dspic33_reset(cpu, 0u);
@@ -248,8 +247,9 @@ void dspic33_spi_test_interrupt_mode_cases(TestState* state, Dspic33* cpu) {
 
     dspic33_reset(cpu, 0u);
     dspic33_spi_test_configure_spi(cpu, 0u, 0x0400u, 1u, 2u);
-    for (index = 0u; index < 5u; index++) {
-        expect(state, dspic33_spi_receive(cpu, 0u, index, 1u) && dspic33_device_advance(cpu, 1u),
+    for (uint8_t receive_value = 0u; receive_value < 5u; receive_value++) {
+        expect(state,
+               dspic33_spi_receive(cpu, 0u, receive_value, 1u) && dspic33_device_advance(cpu, 1u),
                "mode two below threshold advance");
     }
     expect(state, !dspic33_spi_test_interrupt_flag(cpu, irqs[0]), "mode two below threshold");
@@ -259,8 +259,9 @@ void dspic33_spi_test_interrupt_mode_cases(TestState* state, Dspic33* cpu) {
 
     dspic33_reset(cpu, 0u);
     dspic33_spi_test_configure_spi(cpu, 0u, 0x0400u, 1u, 3u);
-    for (index = 0u; index < 7u; index++) {
-        expect(state, dspic33_spi_receive(cpu, 0u, index, 1u) && dspic33_device_advance(cpu, 1u),
+    for (uint8_t receive_value = 0u; receive_value < 7u; receive_value++) {
+        expect(state,
+               dspic33_spi_receive(cpu, 0u, receive_value, 1u) && dspic33_device_advance(cpu, 1u),
                "mode three below full advance");
     }
     expect(state, !dspic33_spi_test_interrupt_flag(cpu, irqs[0]), "mode three below full");
@@ -273,7 +274,8 @@ void dspic33_spi_test_interrupt_mode_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_spi_receive(cpu, 0u, 0x6000u, 1u) && dspic33_device_advance(cpu, 1u),
            "mode zero receive advance");
     expect(state, !dspic33_spi_test_interrupt_flag(cpu, irqs[0]), "mode zero not on receive");
-    expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0x6000u, "mode zero read value");
+    expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) == 0x6000u,
+           "mode zero read value");
     expect(state, dspic33_spi_test_interrupt_flag(cpu, irqs[0]), "mode zero receive empty");
 }
 
