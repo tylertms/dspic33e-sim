@@ -193,20 +193,21 @@ const Dspic33epMuProfile* dspic33ep_mu_profile(Dspic33epMuDevice device) {
 }
 
 uint16_t dspic33ep_mu_gpio_port_mask(Dspic33epMuDevice device, uint8_t port) {
-    const uint16_t* masks;
+    const uint16_t* gpio_masks;
     if (port >= DSPIC33_GPIO_PORT_COUNT) {
         return 0u;
     }
+
     if (device == DSPIC33EP_MU_DEVICE_256MU806) {
-        masks = gpio_masks_806;
+        gpio_masks = gpio_masks_806;
     } else if (device == DSPIC33EP_MU_DEVICE_256MU810 || device == DSPIC33EP_MU_DEVICE_512MU810) {
-        masks = gpio_masks_810;
+        gpio_masks = gpio_masks_810;
     } else if (device == DSPIC33EP_MU_DEVICE_256MU814 || device == DSPIC33EP_MU_DEVICE_512MU814) {
-        masks = gpio_masks_814;
+        gpio_masks = gpio_masks_814;
     } else {
         return 0u;
     }
-    return masks[port];
+    return gpio_masks[port];
 }
 
 bool dspic33ep_mu_device_from_name(const char* name, Dspic33epMuDevice* device) {
@@ -223,16 +224,17 @@ bool dspic33ep_mu_device_from_name(const char* name, Dspic33epMuDevice* device) 
 }
 
 bool dspic33ep_mu_address_implemented(Dspic33epMuDevice device, uint32_t address) {
-    const Dspic33epMuProfile* profile = dspic33ep_mu_profile(device);
-    const uint8_t* bitmap = dspic33ep_mu_implementation_bitmap(device);
-    if (profile == NULL || bitmap == NULL) {
+    const Dspic33epMuProfile* device_profile = dspic33ep_mu_profile(device);
+    const uint8_t* implementation_bitmap = dspic33ep_mu_implementation_bitmap(device);
+    if (device_profile == NULL || implementation_bitmap == NULL) {
         return false;
     }
     if (address >= 0x1000u) {
-        return address < profile->data_limit;
+        return address < device_profile->data_limit;
     }
-    const uint32_t sfr_slot = (address & 0x0ffeu) >> 1u;
-    return (bitmap[sfr_slot >> 3u] & (uint8_t)(1u << (sfr_slot & 7u))) != 0u;
+    const uint32_t sfr_word_index = (address & 0x0ffeu) >> 1u;
+    return (implementation_bitmap[sfr_word_index >> 3u] & (uint8_t)(1u << (sfr_word_index & 7u))) !=
+           0u;
 }
 
 const Dspic33SfrMasterClearReset* dspic33ep_mu_master_clear_resets(Dspic33epMuDevice device,
