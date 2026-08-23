@@ -44,6 +44,7 @@ function(coverage_read_count coverage_match covered_output total_output)
   if(percent_fraction STREQUAL "")
     set(percent_fraction 0)
   endif()
+
   math(EXPR coverage_basis_points
        "${percent_whole} * 100 + ${percent_fraction}")
   math(EXPR covered_count
@@ -61,6 +62,7 @@ function(coverage_sum_counts metric_label covered_output total_output)
                coverage_matches "${coverage_output}")
   set(covered_count 0)
   set(total_count 0)
+
   foreach(coverage_match IN LISTS coverage_matches)
     coverage_read_count("${coverage_match}" matched_covered matched_total)
     math(EXPR covered_count "${covered_count} + ${matched_covered}")
@@ -95,11 +97,13 @@ function(coverage_print metric_label covered_count total_count)
     math(EXPR coverage_basis_points
          "(${covered_count} * 10000 + ${total_count} / 2) / ${total_count}")
   endif()
+
   math(EXPR percent_whole "${coverage_basis_points} / 100")
   math(EXPR percent_fraction "${coverage_basis_points} % 100")
   if(percent_fraction LESS 10)
     set(percent_fraction "0${percent_fraction}")
   endif()
+
   coverage_pad("${metric_label}" 12 LEFT padded_label)
   coverage_pad("${covered_count}" 9 RIGHT padded_covered)
   coverage_pad("${total_count}" 9 RIGHT padded_total)
