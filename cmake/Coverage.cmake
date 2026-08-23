@@ -1,19 +1,20 @@
-foreach(required_variable IN
+foreach(required_name IN
         ITEMS COVERAGE_BUILD_DIRECTORY COVERAGE_SOURCE_DIRECTORY
               COVERAGE_TARGET_PREFIX GCOV_EXECUTABLE)
-  if(NOT DEFINED ${required_variable})
-    message(FATAL_ERROR "${required_variable} is required")
+  if(NOT DEFINED ${required_name})
+    message(FATAL_ERROR "${required_name} is required")
   endif()
 endforeach()
 
 set(coverage_data)
-foreach(target_suffix IN ITEMS simulator firmware_image firmware_runner)
+
+foreach(target_name IN ITEMS simulator firmware_image firmware_runner)
   file(
-    GLOB_RECURSE target_coverage_data
+    GLOB_RECURSE target_data
     LIST_DIRECTORIES false
-    "${COVERAGE_BUILD_DIRECTORY}/CMakeFiles/${COVERAGE_TARGET_PREFIX}_${target_suffix}.dir/*.gcda"
+    "${COVERAGE_BUILD_DIRECTORY}/CMakeFiles/${COVERAGE_TARGET_PREFIX}_${target_name}.dir/*.gcda"
   )
-  list(APPEND coverage_data ${target_coverage_data})
+  list(APPEND coverage_data ${target_data})
 endforeach()
 
 if(NOT coverage_data)
@@ -33,73 +34,76 @@ if(NOT coverage_result EQUAL 0)
   message(FATAL_ERROR "gcov failed:\n${coverage_error}")
 endif()
 
-function(coverage_read_count match covered_variable total_variable)
+function(coverage_read_count coverage_match covered_output total_output)
   string(REGEX REPLACE ".*:([0-9]+)\\.([0-9][0-9])% of ([0-9]+)" "\\1;\\2;\\3"
-                       values "${match}")
-  list(GET values 0 whole)
-  list(GET values 1 fraction)
-  list(GET values 2 total)
-  string(REGEX REPLACE "^0+" "" fraction "${fraction}")
-  if(fraction STREQUAL "")
-    set(fraction 0)
+                       coverage_values "${coverage_match}")
+  list(GET coverage_values 0 percent_whole)
+  list(GET coverage_values 1 percent_fraction)
+  list(GET coverage_values 2 total_count)
+  string(REGEX REPLACE "^0+" "" percent_fraction "${percent_fraction}")
+  if(percent_fraction STREQUAL "")
+    set(percent_fraction 0)
   endif()
-  math(EXPR basis_points "${whole} * 100 + ${fraction}")
-  math(EXPR covered "(${basis_points} * ${total} + 5000) / 10000")
-  set(${covered_variable}
-      "${covered}"
+  math(EXPR coverage_basis_points
+       "${percent_whole} * 100 + ${percent_fraction}")
+  math(EXPR covered_count
+       "(${coverage_basis_points} * ${total_count} + 5000) / 10000")
+  set(${covered_output}
+      "${covered_count}"
       PARENT_SCOPE)
-  set(${total_variable}
-      "${total}"
+  set(${total_output}
+      "${total_count}"
       PARENT_SCOPE)
 endfunction()
 
-function(coverage_sum_counts label covered_variable total_variable)
-  string(REGEX MATCHALL "${label}:[0-9]+\\.[0-9][0-9]% of [0-9]+" matches
-               "${coverage_output}")
-  set(covered 0)
-  set(total 0)
-  foreach(match IN LISTS matches)
-    coverage_read_count("${match}" match_covered match_total)
-    math(EXPR covered "${covered} + ${match_covered}")
-    math(EXPR total "${total} + ${match_total}")
+function(coverage_sum_counts metric_label covered_output total_output)
+  string(REGEX MATCHALL "${metric_label}:[0-9]+\\.[0-9][0-9]% of [0-9]+"
+               coverage_matches "${coverage_output}")
+  set(covered_count 0)
+  set(total_count 0)
+  foreach(coverage_match IN LISTS coverage_matches)
+    coverage_read_count("${coverage_match}" matched_covered matched_total)
+    math(EXPR covered_count "${covered_count} + ${matched_covered}")
+    math(EXPR total_count "${total_count} + ${matched_total}")
   endforeach()
-  set(${covered_variable}
-      "${covered}"
+  set(${covered_output}
+      "${covered_count}"
       PARENT_SCOPE)
-  set(${total_variable}
-      "${total}"
-      PARENT_SCOPE)
-endfunction()
-
-function(coverage_pad value width align output_variable)
-  string(LENGTH "${value}" length)
-  math(EXPR padding "${width} - ${length}")
-  string(REPEAT " " ${padding} spaces)
-  if(align STREQUAL "LEFT")
-    set(value "${value}${spaces}")
-  else()
-    set(value "${spaces}${value}")
-  endif()
-  set(${output_variable}
-      "${value}"
+  set(${total_output}
+      "${total_count}"
       PARENT_SCOPE)
 endfunction()
 
-function(coverage_print label covered total)
-  if(total EQUAL 0)
-    set(basis_points 10000)
+function(coverage_pad text field_width alignment padded_output)
+  string(LENGTH "${text}" text_length)
+  math(EXPR padding_width "${field_width} - ${text_length}")
+  string(REPEAT " " ${padding_width} padding_spaces)
+  if(alignment STREQUAL "LEFT")
+    set(text "${text}${padding_spaces}")
   else()
-    math(EXPR basis_points "(${covered} * 10000 + ${total} / 2) / ${total}")
+    set(text "${padding_spaces}${text}")
   endif()
-  math(EXPR whole "${basis_points} / 100")
-  math(EXPR fraction "${basis_points} % 100")
-  if(fraction LESS 10)
-    set(fraction "0${fraction}")
+  set(${padded_output}
+      "${text}"
+      PARENT_SCOPE)
+endfunction()
+
+function(coverage_print metric_label covered_count total_count)
+  if(total_count EQUAL 0)
+    set(coverage_basis_points 10000)
+  else()
+    math(EXPR coverage_basis_points
+         "(${covered_count} * 10000 + ${total_count} / 2) / ${total_count}")
   endif()
-  coverage_pad("${label}" 12 LEFT padded_label)
-  coverage_pad("${covered}" 9 RIGHT padded_covered)
-  coverage_pad("${total}" 9 RIGHT padded_total)
-  coverage_pad("${whole}.${fraction}%" 8 RIGHT padded_percent)
+  math(EXPR percent_whole "${coverage_basis_points} / 100")
+  math(EXPR percent_fraction "${coverage_basis_points} % 100")
+  if(percent_fraction LESS 10)
+    set(percent_fraction "0${percent_fraction}")
+  endif()
+  coverage_pad("${metric_label}" 12 LEFT padded_label)
+  coverage_pad("${covered_count}" 9 RIGHT padded_covered)
+  coverage_pad("${total_count}" 9 RIGHT padded_total)
+  coverage_pad("${percent_whole}.${percent_fraction}%" 8 RIGHT padded_percent)
   message(
     "  ${padded_label}  ${padded_covered}  ${padded_total}  ${padded_percent}")
 endfunction()
