@@ -73,62 +73,66 @@ void dspic33_spi_test_configure_dma(Dspic33* cpu, uint8_t channel_index, uint16_
 }
 
 void dspic33_spi_test_register_cases(TestState* state, Dspic33* cpu) {
-    uint8_t channel;
     dspic33_reset(cpu, 0u);
-    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-        uint16_t base = bases[channel];
-        expect(state, dspic33_read_word(cpu, base) == 0u, "status reset");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 2u)) == 0u, "control one reset");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 4u)) == 0u, "control two reset");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0u, "buffer reset");
-        dspic33_write_word(cpu, base, 0xffffu);
-        expect(state, dspic33_read_word(cpu, base) == 0xa01cu, "status mask");
-        dspic33_write_word(cpu, (uint16_t)(base + 2u), 0xffffu);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 2u)) == 0x1fffu, "control one mask");
-        dspic33_write_word(cpu, (uint16_t)(base + 4u), 0xffffu);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 4u)) == 0xe003u, "control two mask");
-        dspic33_write_word(cpu, (uint16_t)(base + 2u), 0x0200u);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 2u)) == 0u,
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_SPI_COUNT; channel_index++) {
+        const uint16_t spi_base = bases[channel_index];
+
+        expect(state, dspic33_read_word(cpu, spi_base) == 0u, "status reset");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 2u)) == 0u, "control one reset");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 4u)) == 0u, "control two reset");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) == 0u, "buffer reset");
+        dspic33_write_word(cpu, spi_base, 0xffffu);
+        expect(state, dspic33_read_word(cpu, spi_base) == 0xa01cu, "status mask");
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 2u), 0xffffu);
+        expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 2u)) == 0x1fffu,
+               "control one mask");
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 4u), 0xffffu);
+        expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 4u)) == 0xe003u,
+               "control two mask");
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 2u), 0x0200u);
+        expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 2u)) == 0u,
                "slave sample phase forced clear");
-        dspic33_write_word(cpu, (uint16_t)(base + 2u), 0x0220u);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 2u)) == 0x0220u,
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 2u), 0x0220u);
+        expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 2u)) == 0x0220u,
                "master sample phase writable");
     }
 }
 
 void dspic33_spi_test_split_buffer_cases(TestState* state, Dspic33* cpu) {
-    uint8_t channel;
-    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-        uint16_t base = bases[channel];
-        uint16_t control = 0x043bu;
-        uint16_t first_transmit = (uint16_t)(0xa100u + channel);
-        uint16_t second_transmit = (uint16_t)(0xc200u + channel);
-        uint16_t received = (uint16_t)(0x5b00u + channel);
-        uint64_t cycles = dspic33_spi_test_transfer_cycles(control);
-        bool scheduled;
-        bool advanced;
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_SPI_COUNT; channel_index++) {
+        const uint16_t spi_base = bases[channel_index];
+        const uint16_t spi_control = 0x043bu;
+        const uint16_t first_transmit = (uint16_t)(0xa100u + channel_index);
+        const uint16_t second_transmit = (uint16_t)(0xc200u + channel_index);
+        const uint16_t received_value = (uint16_t)(0x5b00u + channel_index);
+        const uint64_t transfer_cycles = dspic33_spi_test_transfer_cycles(spi_control);
+        bool response_scheduled;
+        bool transfer_advanced;
 
         dspic33_reset(cpu, 0u);
-        dspic33_spi_test_configure_spi(cpu, channel, control, 0u, 0u);
-        scheduled = dspic33_spi_receive(cpu, channel, received, cycles);
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), first_transmit);
-        expect(state, scheduled && dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0u,
+        dspic33_spi_test_configure_spi(cpu, channel_index, spi_control, 0u, 0u);
+        response_scheduled =
+            dspic33_spi_receive(cpu, channel_index, received_value, transfer_cycles);
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), first_transmit);
+        expect(state, response_scheduled && dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) == 0u,
                "accepted transmit is not receive data");
         expect(state,
-               cpu->io.spi_shift[channel] == first_transmit &&
-                   cpu->io.spi_tx[channel].count == 2u &&
-                   cpu->io.spi_tx[channel].bytes[0] == (uint8_t)first_transmit &&
-                   cpu->io.spi_tx[channel].bytes[1] == (uint8_t)(first_transmit >> 8u),
+               cpu->io.spi_shift[channel_index] == first_transmit &&
+                   cpu->io.spi_tx[channel_index].count == 2u &&
+                   cpu->io.spi_tx[channel_index].bytes[0] == (uint8_t)first_transmit &&
+                   cpu->io.spi_tx[channel_index].bytes[1] == (uint8_t)(first_transmit >> 8u),
                "accepted transmit enters transmit path");
-        advanced = dspic33_device_advance(cpu, cycles);
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), second_transmit);
-        expect(state, advanced && dspic33_read_word(cpu, (uint16_t)(base + 8u)) == received,
+        transfer_advanced = dspic33_device_advance(cpu, transfer_cycles);
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), second_transmit);
+        expect(state,
+               transfer_advanced &&
+                   dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) == received_value,
                "queued receive survives transmit write");
         expect(state,
-               cpu->io.spi_rx_fifo[channel].count == 0u &&
-                   (dspic33_read_word(cpu, base) & 0x0001u) == 0u &&
-                   cpu->io.spi_shift[channel] == second_transmit &&
-                   cpu->io.spi_tx[channel].count == 4u,
+               cpu->io.spi_rx_fifo[channel_index].count == 0u &&
+                   (dspic33_read_word(cpu, spi_base) & 0x0001u) == 0u &&
+                   cpu->io.spi_shift[channel_index] == second_transmit &&
+                   cpu->io.spi_tx[channel_index].count == 4u,
                "receive drain preserves next transmit");
     }
 }
