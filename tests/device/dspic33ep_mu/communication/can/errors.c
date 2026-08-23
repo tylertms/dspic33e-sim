@@ -531,45 +531,47 @@ void dspic33_can_test_interrupt_and_error_cases(TestState* state, Dspic33* cpu) 
 void dspic33_can_test_invalid_message_cases(TestState* state, Dspic33* cpu) {
     expect(state, !dspic33_can_invalid(cpu, DSPIC33_CAN_COUNT, 0u),
            "invalid CAN message rejects unavailable channel");
-    for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-        uint16_t base = bases[channel];
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
+        uint16_t can_base = bases[channel_index];
         dspic33_reset(cpu, 0u);
-        dspic33_can_test_set_mode(cpu, channel, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 0x0cu), 0x0080u);
-        dspic33_can_test_clear_interrupt_flag(cpu, event_irqs[channel]);
-        expect(state, dspic33_can_invalid(cpu, channel, 2u), "schedule invalid CAN message");
+        dspic33_can_test_set_mode(cpu, channel_index, 0u);
+        dspic33_write_word(cpu, (uint16_t)(can_base + 0x0cu), 0x0080u);
+        dspic33_can_test_clear_interrupt_flag(cpu, event_irqs[channel_index]);
+        expect(state, dspic33_can_invalid(cpu, channel_index, 2u), "schedule invalid CAN message");
         expect(state,
                dspic33_device_advance(cpu, 1u) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x0080u) == 0u &&
-                   !dspic33_can_test_interrupt_flag(cpu, event_irqs[channel]),
+                   (dspic33_read_word(cpu, (uint16_t)(can_base + 0x0au)) & 0x0080u) == 0u &&
+                   !dspic33_can_test_interrupt_flag(cpu, event_irqs[channel_index]),
                "invalid CAN message waits for its event boundary");
         expect(state,
                dspic33_device_advance(cpu, 1u) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x0080u) != 0u &&
-                   dspic33_can_test_interrupt_flag(cpu, event_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 4u)) & 0x007fu) == 0x40u,
+                   (dspic33_read_word(cpu, (uint16_t)(can_base + 0x0au)) & 0x0080u) != 0u &&
+                   dspic33_can_test_interrupt_flag(cpu, event_irqs[channel_index]) &&
+                   (dspic33_read_word(cpu, (uint16_t)(can_base + 4u)) & 0x007fu) == 0x40u,
                "invalid CAN message raises IVRIF and the event interrupt");
-        dspic33_write_word(cpu, (uint16_t)(base + 0x0au),
-                           (uint16_t)(dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & ~0x0080u));
-        dspic33_can_test_clear_interrupt_flag(cpu, event_irqs[channel]);
+        dspic33_write_word(
+            cpu, (uint16_t)(can_base + 0x0au),
+            (uint16_t)(dspic33_read_word(cpu, (uint16_t)(can_base + 0x0au)) & ~0x0080u));
+        dspic33_can_test_clear_interrupt_flag(cpu, event_irqs[channel_index]);
         expect(state,
-               (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x0080u) == 0u &&
-                   !dspic33_can_test_interrupt_flag(cpu, event_irqs[channel]),
+               (dspic33_read_word(cpu, (uint16_t)(can_base + 0x0au)) & 0x0080u) == 0u &&
+                   !dspic33_can_test_interrupt_flag(cpu, event_irqs[channel_index]),
                "software clears the invalid CAN message event");
 
         dspic33_reset(cpu, 0u);
         expect(state,
-               dspic33_can_invalid(cpu, channel, 0u) && dspic33_device_advance(cpu, 0u) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x0080u) == 0u,
+               dspic33_can_invalid(cpu, channel_index, 0u) && dspic33_device_advance(cpu, 0u) &&
+                   (dspic33_read_word(cpu, (uint16_t)(can_base + 0x0au)) & 0x0080u) == 0u,
                "configuration mode suppresses invalid CAN message events");
 
         dspic33_reset(cpu, 0u);
-        dspic33_can_test_set_mode(cpu, channel, 0u);
-        dspic33_write_word(cpu, 0x0760u,
-                           (uint16_t)(dspic33_read_word(cpu, 0x0760u) | (uint16_t)(2u << channel)));
+        dspic33_can_test_set_mode(cpu, channel_index, 0u);
+        dspic33_write_word(
+            cpu, 0x0760u,
+            (uint16_t)(dspic33_read_word(cpu, 0x0760u) | (uint16_t)(2u << channel_index)));
         expect(state,
-               dspic33_can_invalid(cpu, channel, 0u) && dspic33_device_advance(cpu, 1u) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 0x0au)) & 0x0080u) == 0u,
+               dspic33_can_invalid(cpu, channel_index, 0u) && dspic33_device_advance(cpu, 1u) &&
+                   (dspic33_read_word(cpu, (uint16_t)(can_base + 0x0au)) & 0x0080u) == 0u,
                "PMD-disabled CAN suppresses invalid message events");
     }
 }
