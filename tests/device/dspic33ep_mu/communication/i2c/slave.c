@@ -447,22 +447,23 @@ void dspic33_i2c_test_master_pin_sequence_cases(TestState* state, Dspic33* cpu) 
 }
 
 void dspic33_i2c_test_master_pin_lifecycle_cases(TestState* state, Dspic33* cpu) {
-    const uint16_t base = bases[1];
+    const uint16_t register_base = bases[1];
     const uint16_t clock_mask = 0x0020u;
     const uint16_t data_mask = 0x0010u;
-    const uint64_t half = dspic33_i2c_test_operation_cycles(2u, 1u);
-    Dspic33 copy;
+    const uint64_t half_period = dspic33_i2c_test_operation_cycles(2u, 1u);
+    Dspic33 copied_cpu;
     Dspic33I2cTransfer transfer;
-    bool high;
-    bool initialized;
+    bool is_high;
+    bool copy_initialized;
 
     dspic33_load_configuration_word(cpu, 0xf8000cu, 0xffffu);
     dspic33_reset(cpu, 0u);
     dspic33_gpio_drive(cpu, 5u, clock_mask, (uint16_t)(clock_mask | data_mask));
     dspic33_i2c_test_enable(cpu, 1u, 1u, 2u);
-    expect(state, dspic33_device_advance(cpu, half), "busy physical bus reaches start sample");
+    expect(state, dspic33_device_advance(cpu, half_period),
+           "busy physical bus reaches start sample");
     expect(state,
-           (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0400u) != 0u &&
+           (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 0x0400u) != 0u &&
                dspic33_i2c_test_interrupt_flag(cpu, master_irqs[1]) && cpu->io.i2c_pin_active == 0u,
            "busy physical bus raises collision and aborts start");
     expect(state,
@@ -476,11 +477,12 @@ void dspic33_i2c_test_master_pin_lifecycle_cases(TestState* state, Dspic33* cpu)
     dspic33_device_advance(cpu, dspic33_i2c_test_control_cycles(2u));
     dspic33_i2c_test_clear_interrupt(cpu, master_irqs[1]);
     dspic33_i2c_transmit(cpu, 1u, &transfer);
-    dspic33_write_word(cpu, (uint16_t)(base + 2u), 0x00ffu);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 2u), 0x00ffu);
     dspic33_gpio_drive(cpu, 5u, 0u, data_mask);
-    expect(state, dspic33_device_advance(cpu, half), "arbitration loss reaches transmit sample");
+    expect(state, dspic33_device_advance(cpu, half_period),
+           "arbitration loss reaches transmit sample");
     expect(state,
-           (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0400u) != 0u &&
+           (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 0x0400u) != 0u &&
                dspic33_i2c_test_interrupt_flag(cpu, master_irqs[1]) &&
                (cpu->io.i2c_master_active & 2u) == 0u,
            "released-high transmit detects physical arbitration loss");
@@ -491,9 +493,9 @@ void dspic33_i2c_test_master_pin_lifecycle_cases(TestState* state, Dspic33* cpu)
     dspic33_i2c_test_enable(cpu, 1u, 1u, 2u);
     dspic33_device_advance(cpu, dspic33_i2c_test_control_cycles(2u));
     dspic33_i2c_test_clear_interrupt(cpu, master_irqs[1]);
-    dspic33_write_word(cpu, (uint16_t)(base + 2u), 0u);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 2u), 0u);
     dspic33_gpio_drive(cpu, 5u, 0u, clock_mask);
-    expect(state, dspic33_device_advance(cpu, half),
+    expect(state, dspic33_device_advance(cpu, half_period),
            "physical clock stretch reaches first release");
     expect(state,
            cpu->io.i2c_pin_phase[1] == 0u &&
@@ -513,12 +515,12 @@ void dspic33_i2c_test_master_pin_lifecycle_cases(TestState* state, Dspic33* cpu)
                        (uint16_t)(clock_mask | data_mask));
     dspic33_i2c_test_enable(cpu, 1u, 1u, 2u);
     dspic33_device_advance(cpu, dspic33_i2c_test_control_cycles(2u));
-    dspic33_write_word(cpu, (uint16_t)(base + 2u), 0u);
-    dspic33_device_advance(cpu, half);
+    dspic33_write_word(cpu, (uint16_t)(register_base + 2u), 0u);
+    dspic33_device_advance(cpu, half_period);
     dspic33_write_word(cpu, 0x0764u, 0x0002u);
     expect(state,
            dspic33_device_advance(cpu, 1u) && (cpu->io.i2c_pmd_disabled & 2u) != 0u &&
-               cpu->io.i2c_pin_phase[1] == 1u && !dspic33_i2c_pin(cpu, 5u, 5u, &high),
+               cpu->io.i2c_pin_phase[1] == 1u && !dspic33_i2c_pin(cpu, 5u, 5u, &is_high),
            "PMD disable releases pins and pauses physical byte phase");
     expect(state, dspic33_device_advance(cpu, 8u) && cpu->io.i2c_pin_phase[1] == 1u,
            "PMD-disabled physical byte remains paused");
@@ -532,20 +534,22 @@ void dspic33_i2c_test_master_pin_lifecycle_cases(TestState* state, Dspic33* cpu)
                dspic33_i2c_test_pin_levels(cpu, 5u, 5u, 4u, false, false),
            "PMD-resumed physical byte reaches its next edge");
 
-    initialized = dspic33_initialize(&copy);
-    expect(state, initialized, "initialize active physical I2C copy");
-    if (initialized) {
-        expect(state, dspic33_copy(&copy, cpu), "copy active physical I2C byte");
+    copy_initialized = dspic33_initialize(&copied_cpu);
+    expect(state, copy_initialized, "initialize active physical I2C copy");
+    if (copy_initialized) {
+        expect(state, dspic33_copy(&copied_cpu, cpu), "copy active physical I2C byte");
         expect(state,
-               copy.io.i2c_pin_phase[1] == cpu->io.i2c_pin_phase[1] &&
-                   copy.io.i2c_pin_active == cpu->io.i2c_pin_active &&
-                   copy.events.count == cpu->events.count && copy.events.items != cpu->events.items,
+               copied_cpu.io.i2c_pin_phase[1] == cpu->io.i2c_pin_phase[1] &&
+                   copied_cpu.io.i2c_pin_active == cpu->io.i2c_pin_active &&
+                   copied_cpu.events.count == cpu->events.count &&
+                   copied_cpu.events.items != cpu->events.items,
                "copy retains independent physical I2C phase and events");
         expect(state,
-               dspic33_device_advance(cpu, half) && dspic33_device_advance(&copy, half) &&
-                   copy.io.i2c_pin_phase[1] == cpu->io.i2c_pin_phase[1],
+               dspic33_device_advance(cpu, half_period) &&
+                   dspic33_device_advance(&copied_cpu, half_period) &&
+                   copied_cpu.io.i2c_pin_phase[1] == cpu->io.i2c_pin_phase[1],
                "copied physical I2C engines advance equally");
-        dspic33_release(&copy);
+        dspic33_release(&copied_cpu);
     }
 
     dspic33_load_program_word(cpu, 0u, 0xfe0000u);
@@ -554,7 +558,7 @@ void dspic33_i2c_test_master_pin_lifecycle_cases(TestState* state, Dspic33* cpu)
            "warm reset executes during physical I2C byte");
     expect(state,
            cpu->io.i2c_pin_active == 0u && cpu->io.i2c_pin_physical == 0u &&
-               !dspic33_i2c_pin(cpu, 5u, 5u, &high),
+               !dspic33_i2c_pin(cpu, 5u, 5u, &is_high),
            "warm reset cancels physical I2C phase and releases pins");
 }
 
