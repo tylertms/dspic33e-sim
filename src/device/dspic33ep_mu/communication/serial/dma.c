@@ -1,29 +1,33 @@
 #include "device/dspic33ep_mu/internal.h"
 
-bool dspic33_uart_receive(Dspic33* cpu, uint8_t channel, uint8_t received_value,
+bool dspic33_uart_receive(Dspic33* cpu, uint8_t channel, uint8_t input_value,
                           uint64_t event_delay) {
-    Dspic33UartFrame frame;
+    Dspic33UartFrame input_frame;
 
-    memset(&frame, 0, sizeof(frame));
-    frame.value = received_value;
-    return dspic33_uart_receive_frame(cpu, channel, &frame, event_delay);
+    memset(&input_frame, 0, sizeof(input_frame));
+    input_frame.value = input_value;
+
+    return dspic33_uart_receive_frame(cpu, channel, &input_frame, event_delay);
 }
 
-bool dspic33_uart_receive_frame(Dspic33* cpu, uint8_t channel, const Dspic33UartFrame* frame,
+bool dspic33_uart_receive_frame(Dspic33* cpu, uint8_t channel, const Dspic33UartFrame* input_frame,
                                 uint64_t event_delay) {
-    uint32_t event_value;
+    uint32_t encoded_event;
 
-    if (channel >= DSPIC33_UART_COUNT || frame == NULL || frame->value > 0x01ffu) {
+    if (channel >= DSPIC33_UART_COUNT || input_frame == NULL || input_frame->value > 0x01ffu) {
         return false;
     }
-    event_value = frame->value | ((uint32_t)frame->baud_period << UART_EVENT_BAUD_SHIFT);
-    if (frame->parity_error) {
-        event_value |= UART_EVENT_PARITY_ERROR;
+
+    encoded_event =
+        input_frame->value | ((uint32_t)input_frame->baud_period << UART_EVENT_BAUD_SHIFT);
+    if (input_frame->parity_error) {
+        encoded_event |= UART_EVENT_PARITY_ERROR;
     }
-    if (frame->framing_error) {
-        event_value |= UART_EVENT_FRAMING_ERROR;
+    if (input_frame->framing_error) {
+        encoded_event |= UART_EVENT_FRAMING_ERROR;
     }
-    return dspic33_schedule_external(cpu, DSPIC33_EVENT_UART, channel, event_value, event_delay);
+
+    return dspic33_schedule_external(cpu, DSPIC33_EVENT_UART, channel, encoded_event, event_delay);
 }
 
 bool dspic33_uart_set_cts(Dspic33* cpu, uint8_t channel, bool clear, uint64_t event_delay) {
@@ -37,11 +41,11 @@ bool dspic33_uart_transmit(Dspic33* cpu, uint8_t channel, Dspic33UartFrame* outp
            dspic33_device_internal_uart_queue_pop(&cpu->io.uart_tx[channel], output_frame);
 }
 
-bool dspic33_spi_receive(Dspic33* cpu, uint8_t channel, uint16_t received_value,
+bool dspic33_spi_receive(Dspic33* cpu, uint8_t channel, uint16_t input_value,
                          uint64_t event_delay) {
     return channel < DSPIC33_SPI_COUNT &&
            dspic33_schedule_external(cpu, DSPIC33_EVENT_SPI, channel,
-                                     SPI_EVENT_EXTERNAL | received_value, event_delay);
+                                     SPI_EVENT_EXTERNAL | input_value, event_delay);
 }
 
 bool dspic33_spi_select(Dspic33* cpu, uint8_t channel, bool selected, uint64_t event_delay) {
@@ -176,9 +180,9 @@ bool dspic33_spi_pin_input(Dspic33* cpu, uint8_t channel, bool clock_high, bool 
     return true;
 }
 
-bool dspic33_spi_transmit(Dspic33* cpu, uint8_t channel, uint8_t* value) {
-    return channel < DSPIC33_SPI_COUNT && value != NULL &&
-           dspic33_device_internal_byte_queue_pop(&cpu->io.spi_tx[channel], value);
+bool dspic33_spi_transmit(Dspic33* cpu, uint8_t channel, uint8_t* output_byte) {
+    return channel < DSPIC33_SPI_COUNT && output_byte != NULL &&
+           dspic33_device_internal_byte_queue_pop(&cpu->io.spi_tx[channel], output_byte);
 }
 
 bool dspic33_spi_clock_output(const Dspic33* cpu, uint8_t channel, bool* high) {
