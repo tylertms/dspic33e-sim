@@ -496,23 +496,27 @@ uint8_t dspic33_device_internal_dci_pps_selection(const Dspic33* cpu, uint16_t a
 }
 
 bool dspic33_device_internal_dci_pps_input_high(const Dspic33* cpu, uint8_t selection) {
-    bool high;
+    bool input_is_high;
+
     if (selection == 0u) {
         return false;
     }
-    return dspic33_device_internal_pps_physical_input_high(cpu, selection, &high) && high;
+    return dspic33_device_internal_pps_physical_input_high(cpu, selection, &input_is_high) &&
+           input_is_high;
 }
 
 static void dci_refresh_serial_output(Dspic33* cpu) {
     Dspic33Dci* dci = &cpu->io.dci;
-    uint16_t control = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
+    uint16_t control_word = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
     uint16_t slot_bit = (uint16_t)(1u << dci->slot);
-    bool transmit = (dspic33_device_internal_raw_word(cpu, DCI_TRANSMIT_SLOTS) & slot_bit) != 0u;
-    uint16_t output = transmit ? dci->transmit[dci->buffer] : 0u;
-    dci->serial_output_driven = transmit || (control & DCI_CONTROL_TRISTATE) == 0u;
+    bool is_transmit_slot =
+        (dspic33_device_internal_raw_word(cpu, DCI_TRANSMIT_SLOTS) & slot_bit) != 0u;
+    uint16_t output_word = is_transmit_slot ? dci->transmit[dci->buffer] : 0u;
+
+    dci->serial_output_driven = is_transmit_slot || (control_word & DCI_CONTROL_TRISTATE) == 0u;
     dci->serial_output_high = dci->initialized && dci->started && !dci->serial_delay &&
                               dci->serial_bits < 16u &&
-                              (output & (uint16_t)(0x8000u >> dci->serial_bits)) != 0u;
+                              (output_word & (uint16_t)(0x8000u >> dci->serial_bits)) != 0u;
 }
 
 static void dci_begin_serial_frame(Dspic33* cpu) {
@@ -532,62 +536,64 @@ static void dci_begin_serial_frame(Dspic33* cpu) {
     dci_refresh_status(cpu);
 }
 
-static void dci_sample_serial_input(Dspic33* cpu, bool high) {
+static void dci_sample_serial_input(Dspic33* cpu, bool input_is_high) {
     Dspic33Dci* dci = &cpu->io.dci;
-    uint8_t width = dci_slot_width(cpu, dci->slot);
-    if (dci->serial_bits < 16u && high) {
+    uint8_t slot_width = dci_slot_width(cpu, dci->slot);
+
+    if (dci->serial_bits < 16u && input_is_high) {
         dci->serial_input |= (uint16_t)(0x8000u >> dci->serial_bits);
     }
     dci->serial_bits++;
     dci->serial_frame_bits++;
-    if (dci->serial_bits == width) {
-        uint16_t input = dci->serial_input;
+    if (dci->serial_bits == slot_width) {
+        uint16_t input_word = dci->serial_input;
         dci->serial_input = 0u;
         dci->serial_bits = 0u;
-        dci_process_word(cpu, input);
+        dci_process_word(cpu, input_word);
     }
 }
 
 void dspic33_device_internal_dci_refresh_pps_inputs(Dspic33* cpu) {
     Dspic33Dci* dci = &cpu->io.dci;
-    uint16_t control = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
-    bool external_clock = (control & DCI_CONTROL_EXTERNAL_CLOCK) != 0u;
-    bool operating =
-        ((control & DCI_CONTROL_ENABLE) != 0u || dci->disable_pending) &&
+    uint16_t control_word = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
+    bool uses_external_clock = (control_word & DCI_CONTROL_EXTERNAL_CLOCK) != 0u;
+    bool is_operating =
+        ((control_word & DCI_CONTROL_ENABLE) != 0u || dci->disable_pending) &&
         dspic33_device_internal_dci_configuration_supported(cpu) && !dci->pmd_disabled &&
-        (cpu->power_state != DSPIC33_POWER_IDLE || (control & DCI_CONTROL_STOP_IDLE) == 0u);
-    bool clock_high = dspic33_device_internal_dci_pps_input_high(
+        (cpu->power_state != DSPIC33_POWER_IDLE || (control_word & DCI_CONTROL_STOP_IDLE) == 0u);
+    bool clock_is_high = dspic33_device_internal_dci_pps_input_high(
         cpu, dspic33_device_internal_dci_pps_selection(cpu, DCI_PPS_INPUTS, 8u));
-    bool frame_high = dspic33_device_internal_dci_pps_input_high(
+    bool frame_is_high = dspic33_device_internal_dci_pps_input_high(
         cpu, dspic33_device_internal_dci_pps_selection(cpu, DCI_PPS_FRAME, 0u));
-    bool clock_changed = clock_high != dci->pps_clock_high;
-    bool frame_changed = frame_high != dci->pps_frame_high;
+    bool clock_changed = clock_is_high != dci->pps_clock_high;
+    bool frame_changed = frame_is_high != dci->pps_frame_high;
     bool sample_edge =
-        clock_changed && (((control & DCI_CONTROL_SAMPLE_RISING) != 0u) == clock_high);
-    bool frame_edge = (control & DCI_CONTROL_EXTERNAL_FRAME) != 0u &&
+        clock_changed && (((control_word & DCI_CONTROL_SAMPLE_RISING) != 0u) == clock_is_high);
+    bool frame_edge = (control_word & DCI_CONTROL_EXTERNAL_FRAME) != 0u &&
                       ((dci_mode(cpu) == DCI_MODE_I2S && frame_changed) ||
-                       (dci_mode(cpu) != DCI_MODE_I2S && frame_changed && frame_high));
-    dci->pps_clock_high = clock_high;
-    dci->pps_frame_high = frame_high;
-    if (operating && dci->initialized && frame_edge && !dci->started) {
-        if (external_clock) {
+                       (dci_mode(cpu) != DCI_MODE_I2S && frame_changed && frame_is_high));
+    dci->pps_clock_high = clock_is_high;
+    dci->pps_frame_high = frame_is_high;
+
+    if (is_operating && dci->initialized && frame_edge && !dci->started) {
+        if (uses_external_clock) {
             dci->pps_frame_pending = true;
         } else if (dci_clock_running(cpu) && !dci->internal_scheduled) {
-            uint64_t delay =
-                dci_mode(cpu) < DCI_MODE_AC_LINK_16 && (control & DCI_CONTROL_DATA_JUSTIFY) != 0u
-                    ? 0u
-                    : dci_bit_cycles(cpu);
+            uint64_t frame_start_delay = dci_mode(cpu) < DCI_MODE_AC_LINK_16 &&
+                                                 (control_word & DCI_CONTROL_DATA_JUSTIFY) != 0u
+                                             ? 0u
+                                             : dci_bit_cycles(cpu);
             dci->pps_frame_pending = true;
-            if (delay == 0u) {
+            if (frame_start_delay == 0u) {
                 dci->pps_frame_pending = false;
                 dci_begin_serial_frame(cpu);
                 dci_begin_internal_word(cpu);
             } else {
-                dci_schedule_internal(cpu, DCI_EVENT_FRAME_START, delay);
+                dci_schedule_internal(cpu, DCI_EVENT_FRAME_START, frame_start_delay);
             }
         }
     }
-    if (!clock_changed || !external_clock || !operating) {
+    if (!clock_changed || !uses_external_clock || !is_operating) {
         return;
     }
     if (!sample_edge) {
@@ -599,13 +605,13 @@ void dspic33_device_internal_dci_refresh_pps_inputs(Dspic33* cpu) {
         if (dci->serial_startup_bits != 0u || !dci_startup_transfer(cpu)) {
             return;
         }
-        if ((control & DCI_CONTROL_EXTERNAL_FRAME) != 0u) {
+        if ((control_word & DCI_CONTROL_EXTERNAL_FRAME) != 0u) {
             dci->started = false;
         }
         dci_refresh_serial_output(cpu);
         return;
     }
-    if ((control & DCI_CONTROL_EXTERNAL_FRAME) != 0u) {
+    if ((control_word & DCI_CONTROL_EXTERNAL_FRAME) != 0u) {
         if (dci->pps_frame_pending) {
             dci->pps_frame_pending = false;
             if (!dci->started) {
