@@ -5,47 +5,60 @@ const uint8_t event_irqs[DSPIC33_CAN_COUNT] = {35u, 56u};
 const uint8_t receive_requests[DSPIC33_CAN_COUNT] = {34u, 55u};
 const uint8_t transmit_requests[DSPIC33_CAN_COUNT] = {70u, 71u};
 
-bool dspic33_can_test_interrupt_flag(Dspic33* cpu, uint8_t irq) {
-    uint16_t address = (uint16_t)(0x0800u + (irq / 16u) * 2u);
-    return (dspic33_read_word(cpu, address) & (uint16_t)(1u << (irq % 16u))) != 0u;
+bool dspic33_can_test_interrupt_flag(Dspic33* cpu, uint8_t interrupt_number) {
+    const uint16_t status_address = (uint16_t)(0x0800u + (interrupt_number / 16u) * 2u);
+
+    return (dspic33_read_word(cpu, status_address) & (uint16_t)(1u << (interrupt_number % 16u))) !=
+           0u;
 }
 
-void dspic33_can_test_clear_interrupt_flag(Dspic33* cpu, uint8_t irq) {
-    uint16_t address = (uint16_t)(0x0800u + (irq / 16u) * 2u);
-    uint16_t flag = (uint16_t)(1u << (irq % 16u));
-    dspic33_write_word(cpu, address, (uint16_t)(dspic33_read_word(cpu, address) & ~flag));
+void dspic33_can_test_clear_interrupt_flag(Dspic33* cpu, uint8_t interrupt_number) {
+    const uint16_t status_address = (uint16_t)(0x0800u + (interrupt_number / 16u) * 2u);
+    const uint16_t interrupt_mask = (uint16_t)(1u << (interrupt_number % 16u));
+
+    dspic33_write_word(cpu, status_address,
+                       (uint16_t)(dspic33_read_word(cpu, status_address) & ~interrupt_mask));
 }
 
-static uint16_t dma_base(uint8_t channel) { return (uint16_t)(0x0b00u + channel * 0x10u); }
-
-static void configure_dma(Dspic33* cpu, uint8_t channel, uint16_t control, uint8_t request,
-                          uint32_t memory, uint16_t pad) {
-    uint16_t base = dma_base(channel);
-    dspic33_write_word(cpu, base, 0u);
-    dspic33_write_word(cpu, (uint16_t)(base + 2u), request);
-    dspic33_write_word(cpu, (uint16_t)(base + 4u), (uint16_t)memory);
-    dspic33_write_word(cpu, (uint16_t)(base + 6u), (uint16_t)(memory >> 16u));
-    dspic33_write_word(cpu, (uint16_t)(base + 0x0cu), pad);
-    dspic33_write_word(cpu, (uint16_t)(base + 0x0eu), 7u);
-    dspic33_write_word(cpu, base, (uint16_t)(0x8000u | control));
+static uint16_t dma_channel_base(uint8_t channel_index) {
+    return (uint16_t)(0x0b00u + channel_index * 0x10u);
 }
 
-void dspic33_can_test_select_window(Dspic33* cpu, uint8_t channel, bool filter) {
-    uint16_t base = bases[channel];
-    uint16_t control = dspic33_read_word(cpu, base);
-    dspic33_write_word(cpu, base, filter ? (uint16_t)(control | 1u) : (uint16_t)(control & ~1u));
+static void configure_dma(Dspic33* cpu, uint8_t channel_index, uint16_t dma_control,
+                          uint8_t request_source, uint32_t memory_address,
+                          uint16_t peripheral_address) {
+    const uint16_t channel_base = dma_channel_base(channel_index);
+
+    dspic33_write_word(cpu, channel_base, 0u);
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 2u), request_source);
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 4u), (uint16_t)memory_address);
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 6u), (uint16_t)(memory_address >> 16u));
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 0x0cu), peripheral_address);
+    dspic33_write_word(cpu, (uint16_t)(channel_base + 0x0eu), 7u);
+    dspic33_write_word(cpu, channel_base, (uint16_t)(0x8000u | dma_control));
 }
 
-uint64_t dspic33_can_test_mode_transition_cycles(Dspic33* cpu, uint8_t channel) {
-    uint16_t base = bases[channel];
-    uint16_t config1 = dspic33_read_word(cpu, (uint16_t)(base + 0x10u));
-    uint16_t config2 = dspic33_read_word(cpu, (uint16_t)(base + 0x12u));
-    uint16_t control = dspic33_read_word(cpu, base);
-    uint64_t prescaler = (config1 & 0x003fu) + 1u;
-    uint64_t quanta =
-        1u + (config2 & 7u) + 1u + ((config2 >> 3u) & 7u) + 1u + ((config2 >> 8u) & 7u) + 1u;
-    uint64_t clock_divisor = (control & 0x0800u) != 0u ? 2u : 1u;
-    return 11u * prescaler * quanta * clock_divisor;
+void dspic33_can_test_select_window(Dspic33* cpu, uint8_t channel_index, bool filter_window) {
+    const uint16_t can_base = bases[channel_index];
+    const uint16_t can_control = dspic33_read_word(cpu, can_base);
+
+    dspic33_write_word(cpu, can_base,
+                       filter_window ? (uint16_t)(can_control | 1u)
+                                     : (uint16_t)(can_control & ~1u));
+}
+
+uint64_t dspic33_can_test_mode_transition_cycles(Dspic33* cpu, uint8_t channel_index) {
+    const uint16_t can_base = bases[channel_index];
+    const uint16_t configuration_one = dspic33_read_word(cpu, (uint16_t)(can_base + 0x10u));
+    const uint16_t configuration_two = dspic33_read_word(cpu, (uint16_t)(can_base + 0x12u));
+    const uint16_t can_control = dspic33_read_word(cpu, can_base);
+    const uint64_t prescaler = (configuration_one & 0x003fu) + 1u;
+    const uint64_t time_quanta = 1u + (configuration_two & 7u) + 1u +
+                                 ((configuration_two >> 3u) & 7u) + 1u +
+                                 ((configuration_two >> 8u) & 7u) + 1u;
+    const uint64_t clock_divisor = (can_control & 0x0800u) != 0u ? 2u : 1u;
+
+    return 11u * prescaler * time_quanta * clock_divisor;
 }
 
 void dspic33_can_test_request_mode(Dspic33* cpu, uint8_t channel, uint8_t mode) {
