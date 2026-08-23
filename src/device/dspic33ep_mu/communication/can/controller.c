@@ -259,62 +259,70 @@ uint8_t dspic33_device_internal_can_advance_fifo_write(Dspic33* cpu, uint8_t cha
     return next_buffer;
 }
 
-bool dspic33_device_internal_can_select_receive_buffer(Dspic33* cpu, uint8_t channel,
-                                                       const Dspic33CanFrame* frame,
-                                                       uint8_t* buffer, uint8_t* matched_filter) {
-    uint16_t enabled = dspic33_device_internal_raw_word(
-        cpu, (uint16_t)(dspic33_device_can_bases[channel] + 0x14u));
-    uint8_t first_buffer = 0u;
-    uint8_t first_filter = 0u;
-    bool first_fifo = false;
-    bool matched = false;
-    uint8_t filter;
-    for (filter = 0u; filter < 16u; filter++) {
-        bool fifo;
-        uint8_t target;
-        uint16_t control;
-        if ((enabled & (uint16_t)(1u << filter)) == 0u ||
-            !can_filter_matches(cpu, channel, filter, frame)) {
+bool dspic33_device_internal_can_select_receive_buffer(Dspic33* cpu, uint8_t channel_index,
+                                                       const Dspic33CanFrame* received_frame,
+                                                       uint8_t* selected_buffer,
+                                                       uint8_t* matched_filter_index) {
+    const uint16_t enabled_filters = dspic33_device_internal_raw_word(
+        cpu, (uint16_t)(dspic33_device_can_bases[channel_index] + 0x14u));
+    uint8_t first_receive_buffer = 0u;
+    uint8_t first_filter_index = 0u;
+    bool first_match_is_fifo = false;
+    bool filter_match_found = false;
+
+    for (uint8_t filter_index = 0u; filter_index < 16u; filter_index++) {
+        bool is_fifo_buffer;
+        uint8_t target_buffer;
+        uint16_t buffer_control;
+
+        if ((enabled_filters & (uint16_t)(1u << filter_index)) == 0u ||
+            !can_filter_matches(cpu, channel_index, filter_index, received_frame)) {
             continue;
         }
-        target = dspic33_device_internal_can_filter_buffer(cpu, channel, filter);
-        fifo = target == 15u;
-        if (fifo) {
-            target = cpu->io.can_fifo_write[channel];
+        target_buffer = dspic33_device_internal_can_filter_buffer(cpu, channel_index, filter_index);
+        is_fifo_buffer = target_buffer == 15u;
+        if (is_fifo_buffer) {
+            target_buffer = cpu->io.can_fifo_write[channel_index];
         }
-        if (!matched) {
-            matched = true;
-            first_buffer = target;
-            first_filter = filter;
-            first_fifo = fifo;
+        if (!filter_match_found) {
+            filter_match_found = true;
+            first_receive_buffer = target_buffer;
+            first_filter_index = filter_index;
+            first_match_is_fifo = is_fifo_buffer;
         }
-        if (target >= dspic33_device_internal_can_buffer_count(cpu, channel) || target > 31u) {
+        if (target_buffer >= dspic33_device_internal_can_buffer_count(cpu, channel_index) ||
+            target_buffer > 31u) {
             continue;
         }
-        control =
-            target < 8u ? dspic33_device_internal_can_buffer_control(cpu, channel, target) : 0u;
-        if (target < 8u && (control & CAN_BUFFER_TRANSMIT) != 0u) {
-            if (frame->remote && (control & CAN_BUFFER_REMOTE) != 0u) {
+        buffer_control =
+            target_buffer < 8u
+                ? dspic33_device_internal_can_buffer_control(cpu, channel_index, target_buffer)
+                : 0u;
+        if (target_buffer < 8u && (buffer_control & CAN_BUFFER_TRANSMIT) != 0u) {
+            if (received_frame->remote && (buffer_control & CAN_BUFFER_REMOTE) != 0u) {
                 dspic33_device_internal_can_set_buffer_control(
-                    cpu, channel, target, (uint16_t)(control | CAN_BUFFER_REQUEST));
-                dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_START, 0u);
+                    cpu, channel_index, target_buffer,
+                    (uint16_t)(buffer_control | CAN_BUFFER_REQUEST));
+                dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_TRANSMIT_START,
+                                 0u);
                 return false;
             }
             continue;
         }
-        if (dspic33_device_internal_can_buffer_flag(cpu, channel, target, false)) {
+        if (dspic33_device_internal_can_buffer_flag(cpu, channel_index, target_buffer, false)) {
             continue;
         }
-        *buffer = target;
-        *matched_filter = filter;
+        *selected_buffer = target_buffer;
+        *matched_filter_index = filter_index;
         return true;
     }
-    if (matched && first_buffer < 32u) {
-        dspic33_device_internal_can_set_buffer_flag(cpu, channel, first_buffer, true);
-        dspic33_device_internal_can_raise_event(cpu, channel, CAN_INTERRUPT_OVERFLOW, first_buffer,
-                                                first_filter);
-        if (first_fifo) {
-            dspic33_device_internal_can_advance_fifo_write(cpu, channel, first_buffer);
+    if (filter_match_found && first_receive_buffer < 32u) {
+        dspic33_device_internal_can_set_buffer_flag(cpu, channel_index, first_receive_buffer, true);
+        dspic33_device_internal_can_raise_event(cpu, channel_index, CAN_INTERRUPT_OVERFLOW,
+                                                first_receive_buffer, first_filter_index);
+        if (first_match_is_fifo) {
+            dspic33_device_internal_can_advance_fifo_write(cpu, channel_index,
+                                                           first_receive_buffer);
         }
     }
     return false;
