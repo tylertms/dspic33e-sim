@@ -324,21 +324,21 @@ void dspic33_dci_test_pps_internal_frame_cases(TestState* state, Dspic33* cpu) {
 }
 
 void dspic33_dci_test_pps_external_frame_output_cases(TestState* state, Dspic33* cpu) {
-    bool high;
-    uint8_t immediate;
-    for (immediate = 0u; immediate < 2u; immediate++) {
-        uint16_t justify = immediate != 0u ? DCI_DATA_JUSTIFY : 0u;
+    bool is_high;
+    uint8_t data_justified;
+    for (data_justified = 0u; data_justified < 2u; data_justified++) {
+        uint16_t justify = data_justified != 0u ? DCI_DATA_JUSTIFY : 0u;
         dspic33_reset(cpu, 0u);
         dspic33_dci_test_configure_serial_pins(cpu);
         dspic33_write_word(cpu, DCI_PPS_CLOCK_FRAME_OUTPUT, 0x0d00u);
         dspic33_dci_test_configure_external(cpu, (uint16_t)(DCI_SAMPLE_RISING | justify), 4u, 1u,
                                             1u, 0u, 0u);
         dspic33_dci_test_activate_serial_clock(cpu, true, GPIO_CLOCK_MASK);
-        expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && high,
+        expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high) && is_high,
                "external CSCK multi-channel master asserts COFS");
         expect(state,
                dspic33_dci_test_drive_serial_edge(cpu, false, true, GPIO_CLOCK_MASK) &&
-                   dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && !high,
+                   dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high) && !is_high,
                "external CSCK multi-channel master emits one-clock COFS");
 
         dspic33_reset(cpu, 0u);
@@ -347,37 +347,37 @@ void dspic33_dci_test_pps_external_frame_output_cases(TestState* state, Dspic33*
         dspic33_dci_test_configure_external(
             cpu, (uint16_t)(DCI_MODE_I2S | DCI_SAMPLE_RISING | justify), 4u, 1u, 1u, 0u, 0u);
         dspic33_dci_test_activate_serial_clock(cpu, true, GPIO_CLOCK_MASK);
-        expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && high,
+        expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high) && is_high,
                "external CSCK I2S master starts with right-channel COFS");
-        if (immediate == 0u) {
+        if (data_justified == 0u) {
             dspic33_dci_test_drive_serial_edge(cpu, false, true, GPIO_CLOCK_MASK);
         }
         expect(state,
                dspic33_dci_test_drive_serial_word(cpu, 0u, 4u, true) &&
-                   dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && !high,
+                   dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high) && !is_high,
                "external CSCK I2S master toggles COFS at half-frame boundary");
     }
 
     {
-        uint8_t mode;
-        for (mode = DCI_MODE_AC_LINK_16; mode <= DCI_MODE_AC_LINK_20; mode++) {
-            for (immediate = 0u; immediate < 2u; immediate++) {
-                uint16_t control = (uint16_t)(mode | DCI_SAMPLE_RISING |
-                                              (immediate != 0u ? DCI_DATA_JUSTIFY : 0u));
+        uint8_t dci_mode;
+        for (dci_mode = DCI_MODE_AC_LINK_16; dci_mode <= DCI_MODE_AC_LINK_20; dci_mode++) {
+            for (data_justified = 0u; data_justified < 2u; data_justified++) {
+                uint16_t control_word = (uint16_t)(dci_mode | DCI_SAMPLE_RISING |
+                                                   (data_justified != 0u ? DCI_DATA_JUSTIFY : 0u));
                 dspic33_reset(cpu, 0u);
                 dspic33_dci_test_configure_serial_pins(cpu);
                 dspic33_write_word(cpu, DCI_PPS_CLOCK_FRAME_OUTPUT, 0x0d00u);
-                dspic33_dci_test_configure_external(cpu, control, 4u, 1u, 1u, 0u, 0u);
+                dspic33_dci_test_configure_external(cpu, control_word, 4u, 1u, 1u, 0u, 0u);
                 dspic33_dci_test_activate_serial_clock(cpu, true, GPIO_CLOCK_MASK);
-                expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && high,
+                expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high) && is_high,
                        "external CSCK AC-Link master asserts tag COFS");
                 expect(state,
                        dspic33_dci_test_drive_serial_word(cpu, 0u, 16u, true) &&
-                           dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && !high,
+                           dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high) && !is_high,
                        "AC-Link master negates COFS after sixteen clocks");
                 expect(state,
                        dspic33_dci_test_drive_serial_word(cpu, 0u, 240u, true) &&
-                           dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && high,
+                           dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high) && is_high,
                        "AC-Link master starts next 256-clock frame independent of DJST");
             }
         }
@@ -385,37 +385,37 @@ void dspic33_dci_test_pps_external_frame_output_cases(TestState* state, Dspic33*
 }
 
 void dspic33_dci_test_pps_internal_frame_output_cases(TestState* state, Dspic33* cpu) {
-    bool high;
+    bool is_high;
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, DCI_PPS_CLOCK_FRAME_OUTPUT, 0x0d00u);
     dspic33_dci_test_configure_internal(cpu, DCI_MODE_I2S, 4u, 1u, 1u, 0u, 0u);
     expect(state,
-           dspic33_device_advance(cpu, 7u) && dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) &&
-               !high,
+           dspic33_device_advance(cpu, 7u) &&
+               dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high) && !is_high,
            "default I2S COFS remains low before final startup clock");
     expect(state,
-           dspic33_device_advance(cpu, 1u) && dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) &&
-               high,
+           dspic33_device_advance(cpu, 1u) &&
+               dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high) && is_high,
            "default I2S COFS rises one clock before right-channel data");
     expect(state,
-           dspic33_device_advance(cpu, 4u) && dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) &&
-               high,
+           dspic33_device_advance(cpu, 4u) &&
+               dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high) && is_high,
            "default I2S COFS has no extra transition at data boundary");
 
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, DCI_PPS_CLOCK_FRAME_OUTPUT, 0x0d00u);
     dspic33_dci_test_configure_internal(cpu, DCI_MODE_AC_LINK_16, 4u, 1u, 1u, 0u, 0u);
     expect(state,
-           dspic33_device_advance(cpu, 8u) && dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) &&
-               high,
+           dspic33_device_advance(cpu, 8u) &&
+               dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high) && is_high,
            "internal AC-Link COFS asserts for tag interval");
     expect(state,
-           dspic33_device_advance(cpu, 63u) && dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) &&
-               high,
+           dspic33_device_advance(cpu, 63u) &&
+               dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high) && is_high,
            "internal AC-Link COFS remains high through fifteen data clocks");
     expect(state,
-           dspic33_device_advance(cpu, 1u) && dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) &&
-               !high,
+           dspic33_device_advance(cpu, 1u) &&
+               dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high) && !is_high,
            "internal AC-Link COFS negates after sixteen clocks");
 }
 
