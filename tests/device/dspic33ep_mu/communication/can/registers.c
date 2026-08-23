@@ -61,84 +61,99 @@ uint64_t dspic33_can_test_mode_transition_cycles(Dspic33* cpu, uint8_t channel_i
     return 11u * prescaler * time_quanta * clock_divisor;
 }
 
-void dspic33_can_test_request_mode(Dspic33* cpu, uint8_t channel, uint8_t mode) {
-    uint16_t base = bases[channel];
-    uint16_t control = dspic33_read_word(cpu, base);
-    control = (uint16_t)((control & ~0x0700u) | ((uint16_t)mode << 8u));
-    dspic33_write_word(cpu, base, control);
+void dspic33_can_test_request_mode(Dspic33* cpu, uint8_t channel_index, uint8_t requested_mode) {
+    const uint16_t can_base = bases[channel_index];
+    uint16_t can_control = dspic33_read_word(cpu, can_base);
+
+    can_control = (uint16_t)((can_control & ~0x0700u) | ((uint16_t)requested_mode << 8u));
+    dspic33_write_word(cpu, can_base, can_control);
 }
 
-void dspic33_can_test_set_mode(Dspic33* cpu, uint8_t channel, uint8_t mode) {
-    dspic33_can_test_request_mode(cpu, channel, mode);
-    dspic33_device_advance(cpu, dspic33_can_test_mode_transition_cycles(cpu, channel));
+void dspic33_can_test_set_mode(Dspic33* cpu, uint8_t channel_index, uint8_t requested_mode) {
+    dspic33_can_test_request_mode(cpu, channel_index, requested_mode);
+    dspic33_device_advance(cpu, dspic33_can_test_mode_transition_cycles(cpu, channel_index));
 }
 
-void dspic33_can_test_configure_filter(Dspic33* cpu, uint8_t channel, uint8_t filter,
-                                       uint32_t identifier, bool extended, uint32_t mask,
-                                       bool match_type, uint8_t buffer, uint8_t mask_index) {
-    uint16_t base = bases[channel];
-    uint32_t sid = extended ? (identifier >> 18u) & 0x7ffu : identifier & 0x7ffu;
-    uint32_t eid = identifier & 0x3ffffu;
-    uint32_t mask_sid = extended ? (mask >> 18u) & 0x7ffu : mask & 0x7ffu;
-    uint32_t mask_eid = mask & 0x3ffffu;
-    uint16_t filter_sid = (uint16_t)((sid << 5u) | ((eid >> 16u) & 3u));
-    uint16_t receive_mask = (uint16_t)((mask_sid << 5u) | ((mask_eid >> 16u) & 3u));
-    uint16_t address;
-    uint16_t value;
-    if (extended) {
-        filter_sid |= 8u;
+void dspic33_can_test_configure_filter(Dspic33* cpu, uint8_t channel_index, uint8_t filter_index,
+                                       uint32_t identifier, bool extended_identifier, uint32_t mask,
+                                       bool mask_match_type, uint8_t buffer_index,
+                                       uint8_t mask_index) {
+    const uint16_t can_base = bases[channel_index];
+    const uint32_t standard_identifier =
+        extended_identifier ? (identifier >> 18u) & 0x7ffu : identifier & 0x7ffu;
+    const uint32_t extended_identifier_bits = identifier & 0x3ffffu;
+    const uint32_t mask_standard_identifier =
+        extended_identifier ? (mask >> 18u) & 0x7ffu : mask & 0x7ffu;
+    const uint32_t mask_extended_identifier = mask & 0x3ffffu;
+    uint16_t filter_standard_id =
+        (uint16_t)((standard_identifier << 5u) | ((extended_identifier_bits >> 16u) & 3u));
+    uint16_t receive_mask =
+        (uint16_t)((mask_standard_identifier << 5u) | ((mask_extended_identifier >> 16u) & 3u));
+    uint16_t register_address;
+    uint16_t register_value;
+
+    if (extended_identifier) {
+        filter_standard_id |= 8u;
     }
-    if (match_type) {
+    if (mask_match_type) {
         receive_mask |= 8u;
     }
-    dspic33_can_test_select_window(cpu, channel, true);
-    dspic33_write_word(cpu, (uint16_t)(base + 0x30u + mask_index * 4u), receive_mask);
-    dspic33_write_word(cpu, (uint16_t)(base + 0x32u + mask_index * 4u), (uint16_t)mask_eid);
-    dspic33_write_word(cpu, (uint16_t)(base + 0x40u + filter * 4u), filter_sid);
-    dspic33_write_word(cpu, (uint16_t)(base + 0x42u + filter * 4u), (uint16_t)eid);
-    address = (uint16_t)(base + (filter < 8u ? 0x18u : 0x1au));
-    value = dspic33_read_word(cpu, address);
-    value = (uint16_t)((value & ~(uint16_t)(3u << ((filter & 7u) * 2u))) |
-                       ((uint16_t)mask_index << ((filter & 7u) * 2u)));
-    dspic33_write_word(cpu, address, value);
-    address = (uint16_t)(base + 0x20u + (filter / 4u) * 2u);
-    value = dspic33_read_word(cpu, address);
-    value = (uint16_t)((value & ~(uint16_t)(0x0fu << ((filter & 3u) * 4u))) |
-                       ((uint16_t)buffer << ((filter & 3u) * 4u)));
-    dspic33_write_word(cpu, address, value);
+    dspic33_can_test_select_window(cpu, channel_index, true);
+    dspic33_write_word(cpu, (uint16_t)(can_base + 0x30u + mask_index * 4u), receive_mask);
+    dspic33_write_word(cpu, (uint16_t)(can_base + 0x32u + mask_index * 4u),
+                       (uint16_t)mask_extended_identifier);
+    dspic33_write_word(cpu, (uint16_t)(can_base + 0x40u + filter_index * 4u), filter_standard_id);
+    dspic33_write_word(cpu, (uint16_t)(can_base + 0x42u + filter_index * 4u),
+                       (uint16_t)extended_identifier_bits);
+
+    register_address = (uint16_t)(can_base + (filter_index < 8u ? 0x18u : 0x1au));
+    register_value = dspic33_read_word(cpu, register_address);
+    register_value = (uint16_t)((register_value & ~(uint16_t)(3u << ((filter_index & 7u) * 2u))) |
+                                ((uint16_t)mask_index << ((filter_index & 7u) * 2u)));
+    dspic33_write_word(cpu, register_address, register_value);
+
+    register_address = (uint16_t)(can_base + 0x20u + (filter_index / 4u) * 2u);
+    register_value = dspic33_read_word(cpu, register_address);
+    register_value =
+        (uint16_t)((register_value & ~(uint16_t)(0x0fu << ((filter_index & 3u) * 4u))) |
+                   ((uint16_t)buffer_index << ((filter_index & 3u) * 4u)));
+    dspic33_write_word(cpu, register_address, register_value);
 }
 
-void dspic33_can_test_enable_filter(Dspic33* cpu, uint8_t channel, uint16_t enabled) {
-    dspic33_write_word(cpu, (uint16_t)(bases[channel] + 0x14u), enabled);
+void dspic33_can_test_enable_filter(Dspic33* cpu, uint8_t channel_index, uint16_t enable_mask) {
+    dspic33_write_word(cpu, (uint16_t)(bases[channel_index] + 0x14u), enable_mask);
 }
 
-void dspic33_can_test_configure_receive(Dspic33* cpu, uint8_t channel, uint32_t memory,
-                                        uint8_t dmabs, uint8_t fifo_start) {
-    uint16_t base = bases[channel];
-    configure_dma(cpu, (uint8_t)(channel * 2u), 0x0020u, receive_requests[channel], memory,
-                  (uint16_t)(base + 0x40u));
-    dspic33_write_byte(cpu, (uint16_t)(base + 6u), fifo_start);
-    dspic33_write_byte(cpu, (uint16_t)(base + 7u), (uint8_t)(dmabs << 5u));
+void dspic33_can_test_configure_receive(Dspic33* cpu, uint8_t channel_index,
+                                        uint32_t memory_address, uint8_t dma_buffer_size,
+                                        uint8_t fifo_start_index) {
+    const uint16_t can_base = bases[channel_index];
+
+    configure_dma(cpu, (uint8_t)(channel_index * 2u), 0x0020u, receive_requests[channel_index],
+                  memory_address, (uint16_t)(can_base + 0x40u));
+    dspic33_write_byte(cpu, (uint16_t)(can_base + 6u), fifo_start_index);
+    dspic33_write_byte(cpu, (uint16_t)(can_base + 7u), (uint8_t)(dma_buffer_size << 5u));
 }
 
 void dspic33_can_test_fifo_control_write_cases(TestState* state, Dspic33* cpu) {
-    for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-        uint16_t address = (uint16_t)(bases[channel] + 6u);
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
+        const uint16_t control_address = (uint16_t)(bases[channel_index] + 6u);
+
         dspic33_reset(cpu, 0u);
-        dspic33_write_word(cpu, address, 0xa012u);
-        expect(state, dspic33_read_word(cpu, address) == 0u,
+        dspic33_write_word(cpu, control_address, 0xa012u);
+        expect(state, dspic33_read_word(cpu, control_address) == 0u,
                "CAN FIFO control rejects a word write");
-        dspic33_write_byte(cpu, (uint16_t)(address + 1u), 0xa0u);
-        expect(state, dspic33_read_word(cpu, address) == 0u,
+        dspic33_write_byte(cpu, (uint16_t)(control_address + 1u), 0xa0u);
+        expect(state, dspic33_read_word(cpu, control_address) == 0u,
                "CAN FIFO control rejects DMABS before FSA");
-        dspic33_write_byte(cpu, address, 0x12u);
-        expect(state, dspic33_read_word(cpu, address) == 0x0012u,
+        dspic33_write_byte(cpu, control_address, 0x12u);
+        expect(state, dspic33_read_word(cpu, control_address) == 0x0012u,
                "CAN FIFO control accepts FSA first");
-        dspic33_write_byte(cpu, (uint16_t)(address + 1u), 0xa0u);
+        dspic33_write_byte(cpu, (uint16_t)(control_address + 1u), 0xa0u);
         expect(state,
-               dspic33_read_word(cpu, address) == 0xa012u &&
-                   cpu->io.can_fifo_write[channel] == 0x12u &&
-                   (cpu->io.can_fctrl_fsa_ready & (uint8_t)(1u << channel)) == 0u,
+               dspic33_read_word(cpu, control_address) == 0xa012u &&
+                   cpu->io.can_fifo_write[channel_index] == 0x12u &&
+                   (cpu->io.can_fctrl_fsa_ready & (uint8_t)(1u << channel_index)) == 0u,
                "CAN FIFO control accepts DMABS after FSA");
     }
 }

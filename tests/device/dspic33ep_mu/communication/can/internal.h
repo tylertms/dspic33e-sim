@@ -44,29 +44,32 @@ enum {
 bool dspic33_can_test_bridge_can_pins(Dspic33* cpu, uint8_t transmit_channel, uint8_t pin,
                                       uint8_t acknowledge_pin, uint64_t bit_cycles, int corrupt_bit,
                                       bool* acknowledge_observed);
-bool dspic33_can_test_interrupt_flag(Dspic33* cpu, uint8_t irq);
-bool dspic33_can_test_receive_full(Dspic33* cpu, uint8_t channel, uint8_t buffer);
+bool dspic33_can_test_interrupt_flag(Dspic33* cpu, uint8_t interrupt_number);
+bool dspic33_can_test_receive_full(Dspic33* cpu, uint8_t channel_index, uint8_t buffer_index);
 Dspic33CanFrame dspic33_can_test_frame(uint32_t identifier, bool extended, bool remote,
-                                       uint8_t length, uint8_t seed);
-uint16_t dspic33_can_test_memory_word(Dspic33* cpu, uint32_t address);
-uint64_t dspic33_can_test_mode_transition_cycles(Dspic33* cpu, uint8_t channel);
+                                       uint8_t length, uint8_t data_seed);
+uint16_t dspic33_can_test_memory_word(Dspic33* cpu, uint32_t memory_address);
+uint64_t dspic33_can_test_mode_transition_cycles(Dspic33* cpu, uint8_t channel_index);
 void dspic33_can_test_acknowledge_error_cases(TestState* state, Dspic33* cpu);
 void dspic33_can_test_arbitration_cases(TestState* state, Dspic33* cpu);
 void dspic33_can_test_arbitration_field_cases(TestState* state, Dspic33* cpu);
 void dspic33_can_test_bus_off_recovery_cases(TestState* state, Dspic33* cpu);
 void dspic33_can_test_capture_timestamp_cases(TestState* state, Dspic33* cpu);
-void dspic33_can_test_clear_interrupt_flag(Dspic33* cpu, uint8_t irq);
+void dspic33_can_test_clear_interrupt_flag(Dspic33* cpu, uint8_t interrupt_number);
 void dspic33_can_test_clock_timing_cases(TestState* state, Dspic33* cpu);
-void dspic33_can_test_configure_filter(Dspic33* cpu, uint8_t channel, uint8_t filter,
-                                       uint32_t identifier, bool extended, uint32_t mask,
-                                       bool match_type, uint8_t buffer, uint8_t mask_index);
-void dspic33_can_test_configure_receive(Dspic33* cpu, uint8_t channel, uint32_t memory,
-                                        uint8_t dmabs, uint8_t fifo_start);
-void dspic33_can_test_configure_transmit(Dspic33* cpu, uint8_t channel, uint32_t memory);
+void dspic33_can_test_configure_filter(Dspic33* cpu, uint8_t channel_index, uint8_t filter_index,
+                                       uint32_t identifier, bool extended_identifier, uint32_t mask,
+                                       bool mask_match_type, uint8_t buffer_index,
+                                       uint8_t mask_index);
+void dspic33_can_test_configure_receive(Dspic33* cpu, uint8_t channel_index,
+                                        uint32_t memory_address, uint8_t dma_buffer_size,
+                                        uint8_t fifo_start_index);
+void dspic33_can_test_configure_transmit(Dspic33* cpu, uint8_t channel_index,
+                                         uint32_t memory_address);
 void dspic33_can_test_copy_and_reset_cases(TestState* state, Dspic33* cpu);
 void dspic33_can_test_devicenet_cases(TestState* state, Dspic33* cpu);
 void dspic33_can_test_direct_buffer_cases(TestState* state, Dspic33* cpu);
-void dspic33_can_test_enable_filter(Dspic33* cpu, uint8_t channel, uint16_t enabled);
+void dspic33_can_test_enable_filter(Dspic33* cpu, uint8_t channel_index, uint16_t enable_mask);
 void dspic33_can_test_error_counter_recovery_cases(TestState* state, Dspic33* cpu);
 void dspic33_can_test_extended_filter_cases(TestState* state, Dspic33* cpu);
 void dspic33_can_test_fifo_cases(TestState* state, Dspic33* cpu);
@@ -92,10 +95,10 @@ void dspic33_can_test_receive_pps_cases(TestState* state, Dspic33* cpu);
 void dspic33_can_test_receive_pps_qualification_cases(TestState* state, Dspic33* cpu);
 void dspic33_can_test_register_access_cases(TestState* state, Dspic33* cpu);
 void dspic33_can_test_register_cases(TestState* state, Dspic33* cpu);
-void dspic33_can_test_request_mode(Dspic33* cpu, uint8_t channel, uint8_t mode);
+void dspic33_can_test_request_mode(Dspic33* cpu, uint8_t channel_index, uint8_t requested_mode);
 void dspic33_can_test_resynchronization_cases(TestState* state, Dspic33* cpu);
-void dspic33_can_test_select_window(Dspic33* cpu, uint8_t channel, bool filter);
-void dspic33_can_test_set_mode(Dspic33* cpu, uint8_t channel, uint8_t mode);
+void dspic33_can_test_select_window(Dspic33* cpu, uint8_t channel_index, bool filter_window);
+void dspic33_can_test_set_mode(Dspic33* cpu, uint8_t channel_index, uint8_t requested_mode);
 void dspic33_can_test_standard_filter_domain(TestState* state, Dspic33* cpu);
 void dspic33_can_test_stuffed_frame_timing_cases(TestState* state, Dspic33* cpu);
 void dspic33_can_test_transmission_cases(TestState* state, Dspic33* cpu);
@@ -103,9 +106,9 @@ void dspic33_can_test_transmit_abort_timing_cases(TestState* state, Dspic33* cpu
 void dspic33_can_test_transmit_error_variant_cases(TestState* state, Dspic33* cpu);
 void dspic33_can_test_transmit_pps_cases(TestState* state, Dspic33* cpu);
 void dspic33_can_test_triple_sample_cases(TestState* state, Dspic33* cpu);
-void dspic33_can_test_write_memory_word(Dspic33* cpu, uint32_t address, uint16_t value);
-void dspic33_can_test_write_transmit_frame(Dspic33* cpu, uint32_t memory,
-                                           const Dspic33CanFrame* value);
+void dspic33_can_test_write_memory_word(Dspic33* cpu, uint32_t memory_address, uint16_t word_value);
+void dspic33_can_test_write_transmit_frame(Dspic33* cpu, uint32_t memory_address,
+                                           const Dspic33CanFrame* frame);
 void dspic33_can_test_bus_groups(TestState* state, Dspic33* cpu);
 void dspic33_can_test_boundary_groups(TestState* state, Dspic33* cpu);
 void dspic33_can_test_error_groups(TestState* state, Dspic33* cpu);
