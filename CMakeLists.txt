@@ -146,7 +146,7 @@ if(MSVC)
 else()
   foreach(simulator_target IN LISTS dspic33ep_mu_targets)
     target_compile_options(${simulator_target} PRIVATE -Wall -Wextra -Wpedantic
-                           -Werror)
+                                                       -Werror)
   endforeach()
 endif()
 
@@ -158,12 +158,13 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     add_executable(${test_target} ${test_source} ${ARGN})
     target_compile_features(${test_target} PRIVATE c_std_11)
     target_include_directories(${test_target} PRIVATE tests tests/support src
-                                                 src/image)
+                                                      src/image)
     target_link_libraries(${test_target} PRIVATE dspic33ep_mu_simulator)
     if(MSVC)
       target_compile_options(${test_target} PRIVATE /W4 /WX)
     else()
-      target_compile_options(${test_target} PRIVATE -Wall -Wextra -Wpedantic -Werror)
+      target_compile_options(${test_target} PRIVATE -Wall -Wextra -Wpedantic
+                                                    -Werror)
     endif()
     add_test(NAME ${test_target} COMMAND ${test_target})
     set_tests_properties(${test_target} PROPERTIES LABELS "${test_labels}")
@@ -215,9 +216,8 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     tests/architecture/dspic33/execution/encoding_census_test.c
     "core;unit;integration")
   foreach(shard RANGE 1 15)
-    add_test(
-      NAME dspic33ep_mu_processor_encoding_census_test_shard_${shard}
-      COMMAND dspic33ep_mu_processor_encoding_census_test ${shard})
+    add_test(NAME dspic33ep_mu_processor_encoding_census_test_shard_${shard}
+             COMMAND dspic33ep_mu_processor_encoding_census_test ${shard})
     set_tests_properties(
       dspic33ep_mu_processor_encoding_census_test_shard_${shard}
       PROPERTIES LABELS "core;unit;integration")
@@ -231,8 +231,7 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     tests/architecture/dspic33/execution/uninitialized_data_test.c
     "core;unit;integration")
   dspic33ep_mu_add_test(
-    peripheral_state_census
-    tests/device/dspic33ep_mu/state_census_test.c
+    peripheral_state_census tests/device/dspic33ep_mu/state_census_test.c
     "device;unit;integration")
   dspic33ep_mu_add_test(
     processor_boundary tests/architecture/dspic33/execution/boundary.c
@@ -299,7 +298,8 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     tests/device/dspic33ep_mu/communication/i2c/state_matrix.c)
   dspic33ep_mu_enable_allocation_failure(dspic33ep_mu_i2c_test)
   dspic33ep_mu_add_test(
-    input_capture tests/device/dspic33ep_mu/control/input_capture/registers.c
+    input_capture
+    tests/device/dspic33ep_mu/control/input_capture/registers.c
     "device;integration"
     tests/device/dspic33ep_mu/control/input_capture/events.c
     tests/device/dspic33ep_mu/control/input_capture/boundary.c)
@@ -316,7 +316,8 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     peripheral_api_boundary
     tests/device/dspic33ep_mu/platform/peripheral_api_boundary_test.c
     "device;unit")
-  dspic33ep_mu_enable_allocation_failure(dspic33ep_mu_peripheral_api_boundary_test)
+  dspic33ep_mu_enable_allocation_failure(
+    dspic33ep_mu_peripheral_api_boundary_test)
   dspic33ep_mu_add_test(
     nvm
     tests/device/dspic33ep_mu/memory/nvm/registers.c
@@ -340,7 +341,8 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     output_compare_boundary
     tests/device/dspic33ep_mu/control/output_compare/boundary_test.c
     "device;unit")
-  dspic33ep_mu_enable_allocation_failure(dspic33ep_mu_output_compare_boundary_test)
+  dspic33ep_mu_enable_allocation_failure(
+    dspic33ep_mu_output_compare_boundary_test)
   dspic33ep_mu_add_test(
     output_compare_register_matrix
     tests/device/dspic33ep_mu/control/output_compare/register_matrix_test.c
@@ -368,8 +370,10 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     tests/device/dspic33ep_mu/control/output_compare/state_census_test.c
     "device;unit;integration")
   dspic33ep_mu_add_test(
-    pmp tests/device/dspic33ep_mu/communication/pmp/registers.c
-    "device;integration" tests/device/dspic33ep_mu/communication/pmp/master.c
+    pmp
+    tests/device/dspic33ep_mu/communication/pmp/registers.c
+    "device;integration"
+    tests/device/dspic33ep_mu/communication/pmp/master.c
     tests/device/dspic33ep_mu/communication/pmp/slave.c
     tests/device/dspic33ep_mu/communication/pmp/boundary.c
     tests/device/dspic33ep_mu/communication/pmp/state_matrix.c)
@@ -393,8 +397,10 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
     sfr_reset tests/device/dspic33ep_mu/platform/sfr_reset_test.c
     "device;integration")
   dspic33ep_mu_add_test(
-    spi tests/device/dspic33ep_mu/communication/spi/registers.c
-    "device;integration" tests/device/dspic33ep_mu/communication/spi/master.c
+    spi
+    tests/device/dspic33ep_mu/communication/spi/registers.c
+    "device;integration"
+    tests/device/dspic33ep_mu/communication/spi/master.c
     tests/device/dspic33ep_mu/communication/spi/slave.c
     tests/device/dspic33ep_mu/communication/spi/boundary.c
     tests/device/dspic33ep_mu/communication/spi/state_matrix.c)
@@ -402,12 +408,15 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
   dspic33ep_mu_add_test(timer tests/device/dspic33ep_mu/timing/timer_test.c
                         "device;integration")
   dspic33ep_mu_add_test(
-    uart tests/device/dspic33ep_mu/communication/uart_test.c
-    "device;integration" tests/device/dspic33ep_mu/communication/uart/boundary.c
+    uart
+    tests/device/dspic33ep_mu/communication/uart_test.c
+    "device;integration"
+    tests/device/dspic33ep_mu/communication/uart/boundary.c
     tests/device/dspic33ep_mu/communication/uart/state_matrix.c)
   dspic33ep_mu_enable_allocation_failure(dspic33ep_mu_uart_test)
   dspic33ep_mu_add_test(
-    usb tests/device/dspic33ep_mu/communication/usb/registers.c
+    usb
+    tests/device/dspic33ep_mu/communication/usb/registers.c
     "device;integration"
     tests/device/dspic33ep_mu/communication/usb/transactions.c
     tests/device/dspic33ep_mu/communication/usb/boundary.c)
