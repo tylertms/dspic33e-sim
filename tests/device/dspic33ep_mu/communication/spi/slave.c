@@ -150,22 +150,23 @@ static void clock_and_power_cases(TestState* state, Dspic33* cpu) {
 }
 
 static void pmd_cases(TestState* state, Dspic33* cpu) {
-    uint8_t channel;
-    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-        uint16_t base = bases[channel];
-        uint16_t pmd_address = channel < 2u ? 0x0760u : 0x076au;
-        uint16_t pmd_bit =
-            channel < 2u ? (uint16_t)(0x0008u << channel) : (uint16_t)(1u << (channel - 2u));
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_SPI_COUNT; channel_index++) {
+        const uint16_t spi_base = bases[channel_index];
+        const uint16_t pmd_address = channel_index < 2u ? 0x0760u : 0x076au;
+        const uint16_t pmd_bit = channel_index < 2u ? (uint16_t)(0x0008u << channel_index)
+                                                    : (uint16_t)(1u << (channel_index - 2u));
+
         dspic33_reset(cpu, 0u);
-        dspic33_spi_test_configure_spi(cpu, channel, 0x043bu, 0u, 0u);
+        dspic33_spi_test_configure_spi(cpu, channel_index, 0x043bu, 0u, 0u);
         dspic33_write_word(cpu, pmd_address,
                            (uint16_t)(dspic33_read_word(cpu, pmd_address) | pmd_bit));
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), 0xaaaau);
-        expect(state, (cpu->io.spi_busy & (uint8_t)(1u << channel)) == 0u, "pmd blocks transfer");
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0xaaaau);
+        expect(state, (cpu->io.spi_busy & (uint8_t)(1u << channel_index)) == 0u,
+               "pmd blocks transfer");
         dspic33_write_word(cpu, pmd_address,
                            (uint16_t)(dspic33_read_word(cpu, pmd_address) & ~pmd_bit));
-        dspic33_write_word(cpu, (uint16_t)(base + 8u), 0xbbbbu);
-        expect(state, (cpu->io.spi_busy & (uint8_t)(1u << channel)) != 0u,
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0xbbbbu);
+        expect(state, (cpu->io.spi_busy & (uint8_t)(1u << channel_index)) != 0u,
                "pmd clear restores transfer");
     }
 }
