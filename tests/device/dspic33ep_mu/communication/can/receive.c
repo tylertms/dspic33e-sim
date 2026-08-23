@@ -398,30 +398,32 @@ void dspic33_can_test_stuffed_frame_timing_cases(TestState* state, Dspic33* cpu)
         {0x0123u, 0x0d15u, 0x9c08u, 0x0100u, 0x0302u, 0x0504u, 0x0706u, 0u},
     };
     static const uint64_t completion_cycles[] = {236u, 576u};
-    for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
         for (uint8_t frame_index = 0u;
              frame_index < sizeof(completion_cycles) / sizeof(completion_cycles[0]);
              frame_index++) {
-            uint16_t base = bases[channel];
-            uint32_t memory = (uint32_t)(0xba00u + channel * 0x100u);
-            Dspic33CanFrame output;
+            uint16_t can_base = bases[channel_index];
+            uint32_t transmit_memory = (uint32_t)(0xba00u + channel_index * 0x100u);
+            Dspic33CanFrame output_frame;
+
             dspic33_reset(cpu, 0u);
-            dspic33_can_test_configure_transmit(cpu, channel, memory);
-            for (uint8_t word = 0u; word < 8u; word++) {
-                dspic33_can_test_write_memory_word(cpu, memory + word * 2u,
-                                                   words[frame_index][word]);
+            dspic33_can_test_configure_transmit(cpu, channel_index, transmit_memory);
+            for (uint8_t word_index = 0u; word_index < 8u; word_index++) {
+                dspic33_can_test_write_memory_word(cpu, transmit_memory + word_index * 2u,
+                                                   words[frame_index][word_index]);
             }
-            dspic33_can_test_select_window(cpu, channel, false);
-            dspic33_can_test_set_mode(cpu, channel, 0u);
-            dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x008bu);
+            dspic33_can_test_select_window(cpu, channel_index, false);
+            dspic33_can_test_set_mode(cpu, channel_index, 0u);
+            dspic33_write_word(cpu, (uint16_t)(can_base + 0x30u), 0x008bu);
             expect(state,
                    dspic33_device_advance(cpu, completion_cycles[frame_index] - 1u) &&
-                       !dspic33_can_transmit(cpu, channel, &output),
+                       !dspic33_can_transmit(cpu, channel_index, &output_frame),
                    "stuffed CAN frame remains active before its calculated boundary");
             expect(state,
-                   dspic33_device_advance(cpu, 1u) && dspic33_can_transmit(cpu, channel, &output) &&
-                       output.extended == (frame_index != 0u) &&
-                       output.length == (frame_index == 0u ? 1u : 8u),
+                   dspic33_device_advance(cpu, 1u) &&
+                       dspic33_can_transmit(cpu, channel_index, &output_frame) &&
+                       output_frame.extended == (frame_index != 0u) &&
+                       output_frame.length == (frame_index == 0u ? 1u : 8u),
                    "stuffed CAN frame completes on its calculated boundary");
         }
     }
