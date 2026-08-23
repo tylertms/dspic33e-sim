@@ -103,21 +103,21 @@ bool dspic33_internal_bit_encoding_valid(uint32_t opcode) {
 }
 
 bool dspic33_internal_table_encoding_valid(uint32_t opcode) {
-    bool write = (opcode & 0x010000u) != 0u;
-    uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
-    uint8_t destination_mode = (uint8_t)((opcode >> 11u) & 0x07u);
+    const bool is_write = (opcode & 0x010000u) != 0u;
+    const uint8_t source_mode = (uint8_t)((opcode >> 4u) & 0x07u);
+    const uint8_t destination_mode = (uint8_t)((opcode >> 11u) & 0x07u);
 
-    return write ? source_mode < 6u && destination_mode >= 1u && destination_mode < 6u
-                 : source_mode >= 1u && source_mode < 6u && destination_mode < 6u;
+    return is_write ? source_mode < 6u && destination_mode >= 1u && destination_mode < 6u
+                    : source_mode >= 1u && source_mode < 6u && destination_mode < 6u;
 }
 
 bool dspic33_internal_system_encoding_valid(uint32_t opcode) {
-    uint8_t family = (uint8_t)(opcode >> 16u);
+    const uint8_t opcode_family = (uint8_t)(opcode >> 16u);
 
-    if (family == 0xfcu) {
+    if (opcode_family == 0xfcu) {
         return (opcode & 0x00c000u) == 0u;
     }
-    if (family != 0xfeu) {
+    if (opcode_family != 0xfeu) {
         return true;
     }
     if (opcode == 0xfe0000u || opcode == 0xfe2000u || (opcode & 0xfffffeu) == 0xfe4000u ||
@@ -132,16 +132,16 @@ bool dspic33_internal_system_encoding_valid(uint32_t opcode) {
 }
 
 bool dspic33_internal_divide_encoding_valid(uint32_t opcode) {
-    uint8_t family = (uint8_t)(opcode >> 16u);
-    uint8_t divisor = (uint8_t)(opcode & 0x0fu);
+    const uint8_t opcode_family = (uint8_t)(opcode >> 16u);
+    const uint8_t divisor_code = (uint8_t)(opcode & 0x0fu);
 
-    if (family == 0xd9u) {
+    if (opcode_family == 0xd9u) {
         return (opcode & 0x0087f0u) == 0u;
     }
-    if (divisor < 2u) {
+    if (divisor_code < 2u) {
         return false;
     }
-    if (family != 0xd8u || (opcode & 0x000030u) != 0u) {
+    if (opcode_family != 0xd8u || (opcode & 0x000030u) != 0u) {
         return false;
     }
     uint8_t high = (uint8_t)((opcode >> 11u) & 0x0fu);
