@@ -81,38 +81,43 @@ void dspic33_device_internal_can_set_buffer_flag(Dspic33* cpu, uint8_t channel_i
                    (uint16_t)(1u << (buffer_index & 15u))));
 }
 
-void dspic33_device_internal_can_update_vector(Dspic33* cpu, uint8_t channel) {
-    uint16_t base = dspic33_device_can_bases[channel];
-    uint16_t active = (uint16_t)(dspic33_device_internal_raw_word(cpu, (uint16_t)(base + 0x0au)) &
-                                 dspic33_device_internal_raw_word(cpu, (uint16_t)(base + 0x0cu)));
-    uint8_t code = 0x40u;
-    if ((active & (CAN_INTERRUPT_TRANSMIT | CAN_INTERRUPT_RECEIVE)) != 0u) {
-        code = cpu->io.can_last_buffer[channel];
-    } else if ((active & CAN_INTERRUPT_ERROR) != 0u) {
-        code = 0x41u;
-    } else if ((active & CAN_INTERRUPT_WAKE) != 0u) {
-        code = 0x42u;
-    } else if ((active & CAN_INTERRUPT_OVERFLOW) != 0u) {
-        code = 0x43u;
-    } else if ((active & CAN_INTERRUPT_FIFO) != 0u) {
-        code = 0x44u;
+void dspic33_device_internal_can_update_vector(Dspic33* cpu, uint8_t channel_index) {
+    const uint16_t can_base = dspic33_device_can_bases[channel_index];
+    const uint16_t active_flags =
+        (uint16_t)(dspic33_device_internal_raw_word(cpu, (uint16_t)(can_base + 0x0au)) &
+                   dspic33_device_internal_raw_word(cpu, (uint16_t)(can_base + 0x0cu)));
+    uint8_t vector_code = 0x40u;
+
+    if ((active_flags & (CAN_INTERRUPT_TRANSMIT | CAN_INTERRUPT_RECEIVE)) != 0u) {
+        vector_code = cpu->io.can_last_buffer[channel_index];
+    } else if ((active_flags & CAN_INTERRUPT_ERROR) != 0u) {
+        vector_code = 0x41u;
+    } else if ((active_flags & CAN_INTERRUPT_WAKE) != 0u) {
+        vector_code = 0x42u;
+    } else if ((active_flags & CAN_INTERRUPT_OVERFLOW) != 0u) {
+        vector_code = 0x43u;
+    } else if ((active_flags & CAN_INTERRUPT_FIFO) != 0u) {
+        vector_code = 0x44u;
     }
     dspic33_device_internal_raw_write_word(
-        cpu, (uint16_t)(base + 4u),
-        (uint16_t)(((uint16_t)cpu->io.can_last_filter[channel] << 8u) | code));
-    if (active != 0u) {
-        dspic33_raise_interrupt(cpu, dspic33_device_can_event_irqs[channel]);
+        cpu, (uint16_t)(can_base + 4u),
+        (uint16_t)(((uint16_t)cpu->io.can_last_filter[channel_index] << 8u) | vector_code));
+    if (active_flags != 0u) {
+        dspic33_raise_interrupt(cpu, dspic33_device_can_event_irqs[channel_index]);
     }
 }
 
-void dspic33_device_internal_can_raise_event(Dspic33* cpu, uint8_t channel, uint16_t flag,
-                                             uint8_t buffer, uint8_t filter) {
-    uint16_t address = (uint16_t)(dspic33_device_can_bases[channel] + 0x0au);
+void dspic33_device_internal_can_raise_event(Dspic33* cpu, uint8_t channel_index,
+                                             uint16_t interrupt_flag, uint8_t buffer_index,
+                                             uint8_t filter_index) {
+    const uint16_t status_address = (uint16_t)(dspic33_device_can_bases[channel_index] + 0x0au);
+
     dspic33_device_internal_raw_write_word(
-        cpu, address, (uint16_t)(dspic33_device_internal_raw_word(cpu, address) | flag));
-    cpu->io.can_last_buffer[channel] = buffer;
-    cpu->io.can_last_filter[channel] = filter;
-    dspic33_device_internal_can_update_vector(cpu, channel);
+        cpu, status_address,
+        (uint16_t)(dspic33_device_internal_raw_word(cpu, status_address) | interrupt_flag));
+    cpu->io.can_last_buffer[channel_index] = buffer_index;
+    cpu->io.can_last_filter[channel_index] = filter_index;
+    dspic33_device_internal_can_update_vector(cpu, channel_index);
 }
 
 bool dspic33_device_internal_can_dma_ready(const Dspic33* cpu, uint8_t request, uint16_t pad,
