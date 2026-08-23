@@ -510,9 +510,10 @@ void dspic33_can_test_receive_error_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0e3eu, 0u);
     dspic33_write_word(cpu, 0x0680u, 0x0f0eu);
     dspic33_write_word(cpu, 0x06d4u, 0x4000u);
+
     dspic33_can_test_configure_transmit(cpu, 0u, 0xde00u);
-    Dspic33CanFrame passive = dspic33_can_test_frame(0u, false, false, 0u, 0u);
-    dspic33_can_test_write_transmit_frame(cpu, 0xde00u, &passive);
+    Dspic33CanFrame transmitted_frame = dspic33_can_test_frame(0u, false, false, 0u, 0u);
+    dspic33_can_test_write_transmit_frame(cpu, 0xde00u, &transmitted_frame);
     dspic33_can_test_select_window(cpu, 0u, false);
     dspic33_can_test_select_window(cpu, 1u, false);
     dspic33_write_word(cpu, 0x0410u, 0u);
@@ -529,9 +530,11 @@ void dspic33_can_test_receive_error_cases(TestState* state, Dspic33* cpu) {
                (dspic33_read_word(cpu, 0x050eu) & 0x00ffu) == 128u &&
                (dspic33_read_word(cpu, 0x050au) & 0x0800u) != 0u,
            "physical CAN corruption transitions the receiver to error-passive");
-    bool high;
+
+    bool pin_level;
     expect(state,
-           dspic33_can_pin(cpu, 65u, &high) && high && (cpu->io.can_rx_error_active & 2u) != 0u,
+           dspic33_can_pin(cpu, 65u, &pin_level) && pin_level &&
+               (cpu->io.can_rx_error_active & 2u) != 0u,
            "error-passive CAN receiver flag remains recessive");
 }
 
