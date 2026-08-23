@@ -321,22 +321,22 @@ void dspic33_can_test_acknowledge_error_cases(TestState* state, Dspic33* cpu) {
         expect(state, dspic33_can_pin(cpu, 64u, &pin_level) && !pin_level,
                "CAN acknowledge error emits an active error flag");
         if (channel_index == 0u) {
-            Dspic33 copy_cpu;
-            bool copy_pin_level;
+            Dspic33 copied_cpu;
+            bool copied_pin_level;
 
-            expect(state, dspic33_initialize(&copy_cpu), "initialize CAN error-frame copy");
+            expect(state, dspic33_initialize(&copied_cpu), "initialize CAN error-frame copy");
             expect(state,
-                   dspic33_copy(&copy_cpu, cpu) && copy_cpu.io.can_tx_error_active == 1u &&
-                       copy_cpu.io.can_tx_error_start_cycle[0] ==
+                   dspic33_copy(&copied_cpu, cpu) && copied_cpu.io.can_tx_error_active == 1u &&
+                       copied_cpu.io.can_tx_error_start_cycle[0] ==
                            cpu->io.can_tx_error_start_cycle[0],
                    "copy preserves active CAN error-frame phase");
             expect(state,
-                   dspic33_device_advance(cpu, 24u) && dspic33_device_advance(&copy_cpu, 24u) &&
+                   dspic33_device_advance(cpu, 24u) && dspic33_device_advance(&copied_cpu, 24u) &&
                        dspic33_can_pin(cpu, 64u, &pin_level) && pin_level &&
-                       dspic33_can_pin(&copy_cpu, 64u, &copy_pin_level) && copy_pin_level &&
-                       copy_cpu.io.can_tx_error_active == 1u,
+                       dspic33_can_pin(&copied_cpu, 64u, &copied_pin_level) && copied_pin_level &&
+                       copied_cpu.io.can_tx_error_active == 1u,
                    "copied CAN error frames enter the recessive delimiter together");
-            dspic33_release(&copy_cpu);
+            dspic33_release(&copied_cpu);
         } else {
             expect(state,
                    dspic33_device_advance(cpu, 24u) && dspic33_can_pin(cpu, 64u, &pin_level) &&
