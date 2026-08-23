@@ -570,48 +570,49 @@ void dspic33_spi_test_master_output_cases(TestState* state, Dspic33* cpu, Dspic3
            "copied master output advances independently");
 }
 
-static void set_master_input(Dspic33* cpu, uint8_t channel, bool high) {
-    if (channel == 1u) {
-        dspic33_spi_pin_input(cpu, channel, false, high, false);
+static void set_master_input(Dspic33* cpu, uint8_t channel_index, bool data_high) {
+    if (channel_index == 1u) {
+        dspic33_spi_pin_input(cpu, channel_index, false, data_high, false);
     } else {
-        dspic33_gpio_drive(cpu, 3u, high ? 1u : 0u, 1u);
+        dspic33_gpio_drive(cpu, 3u, data_high ? 1u : 0u, 1u);
     }
 }
 
-static void drive_master_input(Dspic33* cpu, uint8_t channel, uint16_t value, uint8_t width) {
-    uint8_t index;
-    for (index = 0u; index < width; index++) {
-        set_master_input(cpu, channel, (value & (uint16_t)(1u << (width - index - 1u))) != 0u);
+static void drive_master_input(Dspic33* cpu, uint8_t channel_index, uint16_t input_value,
+                               uint8_t transfer_width) {
+    for (uint8_t bit_index = 0u; bit_index < transfer_width; bit_index++) {
+        const bool data_high =
+            (input_value & (uint16_t)(1u << (transfer_width - bit_index - 1u))) != 0u;
+
+        set_master_input(cpu, channel_index, data_high);
         dspic33_device_advance(cpu, 2u);
     }
 }
 
 void dspic33_spi_test_master_input_cases(TestState* state, Dspic33* cpu, Dspic33* copy) {
     static const uint16_t input_registers[DSPIC33_SPI_COUNT] = {0x06c8u, 0u, 0x06dau, 0x06deu};
-    uint8_t channel;
-    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-        uint8_t mode16;
-        for (mode16 = 0u; mode16 < 2u; mode16++) {
-            uint8_t sample_end;
-            for (sample_end = 0u; sample_end < 2u; sample_end++) {
-                uint16_t control =
-                    (uint16_t)(0x003bu | ((uint16_t)mode16 << 10u) | ((uint16_t)sample_end << 9u));
-                uint16_t received = mode16 != 0u ? 0xa55au : 0x005au;
-                uint8_t width = mode16 != 0u ? 16u : 8u;
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_SPI_COUNT; channel_index++) {
+        for (uint8_t word_mode = 0u; word_mode < 2u; word_mode++) {
+            for (uint8_t sample_phase = 0u; sample_phase < 2u; sample_phase++) {
+                const uint16_t spi_control = (uint16_t)(0x003bu | ((uint16_t)word_mode << 10u) |
+                                                        ((uint16_t)sample_phase << 9u));
+                const uint16_t received_value = word_mode != 0u ? 0xa55au : 0x005au;
+                const uint8_t transfer_width = word_mode != 0u ? 16u : 8u;
 
                 dspic33_reset(cpu, 0u);
-                if (input_registers[channel] != 0u) {
+                if (input_registers[channel_index] != 0u) {
                     dspic33_write_word(cpu, 0x0e3eu,
                                        (uint16_t)(dspic33_read_word(cpu, 0x0e3eu) & ~1u));
-                    dspic33_write_word(cpu, input_registers[channel], 64u);
+                    dspic33_write_word(cpu, input_registers[channel_index], 64u);
                 }
-                dspic33_spi_test_configure_spi(cpu, channel, control, 0u, 0u);
-                set_master_input(cpu, channel, false);
-                dspic33_write_word(cpu, (uint16_t)(bases[channel] + 8u), 0xffffu);
-                drive_master_input(cpu, channel, received, width);
+                dspic33_spi_test_configure_spi(cpu, channel_index, spi_control, 0u, 0u);
+                set_master_input(cpu, channel_index, false);
+                dspic33_write_word(cpu, (uint16_t)(bases[channel_index] + 8u), 0xffffu);
+                drive_master_input(cpu, channel_index, received_value, transfer_width);
                 expect(state,
-                       dspic33_spi_test_transfer_interrupt_after_cycle(cpu, irqs[channel]) &&
-                           dspic33_read_word(cpu, (uint16_t)(bases[channel] + 8u)) == received,
+                       dspic33_spi_test_transfer_interrupt_after_cycle(cpu, irqs[channel_index]) &&
+                           dspic33_read_word(cpu, (uint16_t)(bases[channel_index] + 8u)) ==
+                               received_value,
                        "master samples physical serial input");
             }
         }
