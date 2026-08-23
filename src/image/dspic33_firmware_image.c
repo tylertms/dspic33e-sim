@@ -7,13 +7,14 @@
 static bool is_elf_file(const char* path) {
     unsigned char magic[4];
     FILE* file = fopen(path, "rb");
-    bool is_elf_file = false;
+    bool elf_image_detected = false;
     if (file != NULL) {
-        is_elf_file = fread(magic, 1u, sizeof(magic), file) == sizeof(magic) && magic[0] == 0x7fu &&
-                      magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F';
+        elf_image_detected = fread(magic, 1u, sizeof(magic), file) == sizeof(magic) &&
+                             magic[0] == 0x7fu && magic[1] == 'E' && magic[2] == 'L' &&
+                             magic[3] == 'F';
         fclose(file);
     }
-    return is_elf_file;
+    return elf_image_detected;
 }
 
 static bool read_file(const char* path, uint8_t** bytes, size_t* size) {
@@ -116,20 +117,21 @@ bool dspic33_load_binary_data(Dspic33* cpu, const void* image_data, size_t image
         return false;
     }
     for (byte_offset = 0u; byte_offset < image_size; byte_offset += 4u) {
-        uint32_t storage = load_address + (uint32_t)byte_offset;
-        uint32_t program_address = storage / 2u;
-        uint32_t word = (uint32_t)bytes[byte_offset] | ((uint32_t)bytes[byte_offset + 1u] << 8u) |
-                        ((uint32_t)bytes[byte_offset + 2u] << 16u);
-        if (word == 0x00ffffffu && bytes[byte_offset + 3u] == 0xffu) {
+        uint32_t storage_address = load_address + (uint32_t)byte_offset;
+        uint32_t program_address = storage_address / 2u;
+        uint32_t program_word = (uint32_t)bytes[byte_offset] |
+                                ((uint32_t)bytes[byte_offset + 1u] << 8u) |
+                                ((uint32_t)bytes[byte_offset + 2u] << 16u);
+        if (program_word == 0x00ffffffu && bytes[byte_offset + 3u] == 0xffu) {
             continue;
         }
         if (dspic33_program_range_implemented(program_address, 2u) &&
-            !dspic33_load_program_word(cpu, program_address, word)) {
+            !dspic33_load_program_word(cpu, program_address, program_word)) {
             return false;
         }
         if (program_address >= DSPIC33_CONFIGURATION_BASE &&
             program_address < DSPIC33_CONFIGURATION_BASE + DSPIC33_CONFIGURATION_SIZE &&
-            !dspic33_load_configuration_word(cpu, program_address, word)) {
+            !dspic33_load_configuration_word(cpu, program_address, program_word)) {
             return false;
         }
     }

@@ -25,7 +25,7 @@ typedef struct {
     uint32_t byte_size;
     uint32_t linked_section;
     uint32_t entry_size;
-} Section;
+} ElfSection;
 
 static uint16_t read_u16(const uint8_t* bytes) {
     return (uint16_t)(bytes[0] | ((uint16_t)bytes[1] << 8u));
@@ -81,10 +81,11 @@ static bool section_table(const ElfImage* image, uint32_t* table_offset, uint16_
     return true;
 }
 
-static Section read_section(const ElfImage* image, uint32_t table_offset, uint16_t section_index) {
+static ElfSection read_section(const ElfImage* image, uint32_t table_offset,
+                               uint16_t section_index) {
     const uint8_t* section_bytes =
         image->bytes + table_offset + (uint32_t)section_index * ELF_SECTION_SIZE;
-    Section section;
+    ElfSection section;
     section.type = read_u32(section_bytes + 4u);
     section.flags = read_u32(section_bytes + 8u);
     section.virtual_address = read_u32(section_bytes + 12u);
@@ -160,19 +161,21 @@ bool elf_image_load_program(const ElfImage* image, Dspic33* cpu, char* error, si
         return false;
     }
     for (uint16_t section_index = 0u; section_index < section_count; section_index++) {
-        Section section = read_section(image, table_offset, section_index);
-        if (section.type != ELF_SECTION_PROGBITS ||
-            (section.flags & (ELF_FLAG_PROGRAM | ELF_FLAG_PSV)) == 0u) {
+        ElfSection program_section = read_section(image, table_offset, section_index);
+        if (program_section.type != ELF_SECTION_PROGBITS ||
+            (program_section.flags & (ELF_FLAG_PROGRAM | ELF_FLAG_PSV)) == 0u) {
             continue;
         }
-        if ((section.byte_size & 3u) != 0u ||
-            !range_valid(image->size, section.file_offset, section.byte_size)) {
+        if ((program_section.byte_size & 3u) != 0u ||
+            !range_valid(image->size, program_section.file_offset, program_section.byte_size)) {
             set_error(error, error_size, "ELF program section is invalid");
             return false;
         }
-        for (uint32_t byte_offset = 0u; byte_offset < section.byte_size; byte_offset += 4u) {
-            uint32_t program_address = section.virtual_address + byte_offset / 2u;
-            uint32_t program_word = read_u32(image->bytes + section.file_offset + byte_offset);
+        for (uint32_t byte_offset = 0u; byte_offset < program_section.byte_size;
+             byte_offset += 4u) {
+            uint32_t program_address = program_section.virtual_address + byte_offset / 2u;
+            uint32_t program_word =
+                read_u32(image->bytes + program_section.file_offset + byte_offset);
             if (program_address >= DSPIC33_CONFIGURATION_BASE &&
                 program_address < DSPIC33_CONFIGURATION_BASE + DSPIC33_CONFIGURATION_SIZE) {
                 if (!dspic33_load_configuration_word(cpu, program_address, program_word)) {
@@ -202,8 +205,8 @@ bool elf_image_symbol(const ElfImage* image, const char* name, uint32_t* address
         return false;
     }
     for (uint16_t section_index = 0u; section_index < section_count; section_index++) {
-        Section symbol_table = read_section(image, table_offset, section_index);
-        Section string_table;
+        ElfSection symbol_table = read_section(image, table_offset, section_index);
+        ElfSection string_table;
         if (symbol_table.type != ELF_SECTION_SYMTAB || symbol_table.entry_size != ELF_SYMBOL_SIZE ||
             (symbol_table.byte_size % ELF_SYMBOL_SIZE) != 0u ||
             symbol_table.linked_section >= section_count ||
