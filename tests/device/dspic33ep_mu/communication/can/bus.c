@@ -138,58 +138,60 @@ static bool drive_shared_can_bus(Dspic33* can1, Dspic33* can2, uint8_t active_ch
 }
 
 void dspic33_can_test_arbitration_field_cases(TestState* state, Dspic33* cpu) {
-    Dspic33CanFrame contenders[4][2];
-    Dspic33 winner;
-    contenders[0][0] = dspic33_can_test_frame(0x155u, false, false, 0u, 0u);
-    contenders[0][1] = dspic33_can_test_frame(0x155u, false, true, 0u, 0u);
-    contenders[1][0] = dspic33_can_test_frame(0x155u, false, false, 0u, 0u);
-    contenders[1][1] = dspic33_can_test_frame(0x5540000u, true, false, 0u, 0u);
-    contenders[2][0] = dspic33_can_test_frame(0x1550000u, true, false, 0u, 0u);
-    contenders[2][1] = dspic33_can_test_frame(0x1550001u, true, false, 0u, 0u);
-    contenders[3][0] = dspic33_can_test_frame(0x1550000u, true, false, 0u, 0u);
-    contenders[3][1] = dspic33_can_test_frame(0x1550000u, true, true, 0u, 0u);
-    expect(state, dspic33_initialize(&winner), "initialize independent CAN arbitration contender");
-    for (uint8_t index = 0u; index < 4u; index++) {
-        Dspic33CanFrame output;
+    Dspic33CanFrame arbitration_frames[4][2];
+    Dspic33CanFrame transmitted_frame;
+    Dspic33* peer_cpu = &(Dspic33){0};
+
+    arbitration_frames[0][0] = dspic33_can_test_frame(0x155u, false, false, 0u, 0u);
+    arbitration_frames[0][1] = dspic33_can_test_frame(0x155u, false, true, 0u, 0u);
+    arbitration_frames[1][0] = dspic33_can_test_frame(0x155u, false, false, 0u, 0u);
+    arbitration_frames[1][1] = dspic33_can_test_frame(0x5540000u, true, false, 0u, 0u);
+    arbitration_frames[2][0] = dspic33_can_test_frame(0x1550000u, true, false, 0u, 0u);
+    arbitration_frames[2][1] = dspic33_can_test_frame(0x1550001u, true, false, 0u, 0u);
+    arbitration_frames[3][0] = dspic33_can_test_frame(0x1550000u, true, false, 0u, 0u);
+    arbitration_frames[3][1] = dspic33_can_test_frame(0x1550000u, true, true, 0u, 0u);
+    expect(state, dspic33_initialize(peer_cpu), "initialize independent CAN arbitration contender");
+    for (uint8_t case_index = 0u; case_index < 4u; case_index++) {
         dspic33_reset(cpu, 0u);
-        dspic33_reset(&winner, 0u);
+        dspic33_reset(peer_cpu, 0u);
         dspic33_write_word(cpu, 0x0e30u, 0xffffu);
         dspic33_write_word(cpu, 0x0e3eu, 0u);
         dspic33_write_word(cpu, 0x0680u, 0x0e00u);
         dspic33_write_word(cpu, 0x06d4u, 0x0040u);
-        dspic33_write_word(&winner, 0x0e30u, 0xffffu);
-        dspic33_write_word(&winner, 0x0e3eu, 0u);
-        dspic33_write_word(&winner, 0x0682u, 0x000fu);
-        dspic33_write_word(&winner, 0x06d4u, 0x4000u);
+        dspic33_write_word(peer_cpu, 0x0e30u, 0xffffu);
+        dspic33_write_word(peer_cpu, 0x0e3eu, 0u);
+        dspic33_write_word(peer_cpu, 0x0682u, 0x000fu);
+        dspic33_write_word(peer_cpu, 0x06d4u, 0x4000u);
         dspic33_can_test_configure_transmit(cpu, 0u, 0xd400u);
-        dspic33_can_test_configure_transmit(&winner, 1u, 0xd600u);
-        dspic33_can_test_write_transmit_frame(cpu, 0xd400u, &contenders[index][0]);
-        dspic33_can_test_write_transmit_frame(&winner, 0xd600u, &contenders[index][1]);
+        dspic33_can_test_configure_transmit(peer_cpu, 1u, 0xd600u);
+        dspic33_can_test_write_transmit_frame(cpu, 0xd400u, &arbitration_frames[case_index][0]);
+        dspic33_can_test_write_transmit_frame(peer_cpu, 0xd600u,
+                                              &arbitration_frames[case_index][1]);
         dspic33_can_test_select_window(cpu, 0u, false);
-        dspic33_can_test_select_window(&winner, 1u, false);
+        dspic33_can_test_select_window(peer_cpu, 1u, false);
         dspic33_write_word(cpu, 0x0410u, 0u);
         dspic33_write_word(cpu, 0x0412u, 0u);
-        dspic33_write_word(&winner, 0x0510u, 0u);
-        dspic33_write_word(&winner, 0x0512u, 0u);
+        dspic33_write_word(peer_cpu, 0x0510u, 0u);
+        dspic33_write_word(peer_cpu, 0x0512u, 0u);
         dspic33_can_test_set_mode(cpu, 0u, 0u);
-        dspic33_can_test_set_mode(&winner, 1u, 0u);
+        dspic33_can_test_set_mode(peer_cpu, 1u, 0u);
         dspic33_write_word(cpu, 0x0430u, 0x008bu);
-        dspic33_write_word(&winner, 0x0530u, 0x008bu);
+        dspic33_write_word(peer_cpu, 0x0530u, 0x008bu);
         expect(state,
-               dspic33_device_advance(cpu, 8u) && dspic33_device_advance(&winner, 8u) &&
-                   (cpu->io.can_tx_on_bus & 1u) != 0u && (winner.io.can_tx_on_bus & 2u) != 0u,
+               dspic33_device_advance(cpu, 8u) && dspic33_device_advance(peer_cpu, 8u) &&
+                   (cpu->io.can_tx_on_bus & 1u) != 0u && (peer_cpu->io.can_tx_on_bus & 2u) != 0u,
                "CAN arbitration field contenders start together");
-        expect(state, drive_shared_can_bus(cpu, &winner, 0u, 4u),
+        expect(state, drive_shared_can_bus(cpu, peer_cpu, 0u, 4u),
                "CAN arbitration field selects the dominant contender");
         expect(state,
-               (dspic33_read_word(&winner, 0x0530u) & 0x0028u) == 0x0028u &&
-                   dspic33_can_transmit(cpu, 0u, &output) &&
-                   output.identifier == contenders[index][0].identifier &&
-                   output.extended == contenders[index][0].extended &&
-                   output.remote == contenders[index][0].remote,
+               (dspic33_read_word(peer_cpu, 0x0530u) & 0x0028u) == 0x0028u &&
+                   dspic33_can_transmit(cpu, 0u, &transmitted_frame) &&
+                   transmitted_frame.identifier == arbitration_frames[case_index][0].identifier &&
+                   transmitted_frame.extended == arbitration_frames[case_index][0].extended &&
+                   transmitted_frame.remote == arbitration_frames[case_index][0].remote,
                "CAN arbitration field records loss and completes the winner");
     }
-    dspic33_release(&winner);
+    dspic33_release(peer_cpu);
 }
 
 void dspic33_can_test_arbitration_cases(TestState* state, Dspic33* cpu) {
