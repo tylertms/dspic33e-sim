@@ -238,58 +238,58 @@ void dspic33_i2c_test_address_mode_cases(TestState* state, Dspic33* cpu) {
 void dspic33_i2c_test_address_rejection_cases(TestState* state, Dspic33* cpu) {
     uint8_t channel;
     for (channel = 0u; channel < DSPIC33_I2C_COUNT; channel++) {
-        uint16_t base = bases[channel];
-        uint8_t channel_bit = (uint8_t)(1u << channel);
+        uint16_t register_base = bases[channel];
+        uint8_t channel_mask = (uint8_t)(1u << channel);
 
         dspic33_reset(cpu, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 10u), 0x52u);
         dspic33_i2c_test_enable(cpu, channel, 0u, 0u);
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x52u, true, false, 0u) &&
                    dspic33_device_advance(cpu, 0u) &&
                    dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (cpu->io.i2c_slave_active & channel_bit) != 0u &&
-                   (cpu->io.i2c_slave_read & channel_bit) != 0u,
+                   (cpu->io.i2c_slave_active & channel_mask) != 0u &&
+                   (cpu->io.i2c_slave_read & channel_mask) != 0u,
                "seven bit read control before mismatch");
-        dspic33_read_word(cpu, base);
+        dspic33_read_word(cpu, register_base);
         dspic33_i2c_test_clear_interrupt(cpu, slave_irqs[channel]);
-        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9000u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0x9000u);
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x51u, false, false, 0u) &&
                    dspic33_device_advance(cpu, 0u),
                "reject seven bit mismatch");
         expect(state,
                !dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (cpu->io.i2c_slave_rejected & channel_bit) != 0u &&
-                   (cpu->io.i2c_slave_active & channel_bit) == 0u &&
-                   (cpu->io.i2c_slave_read & channel_bit) == 0u,
+                   (cpu->io.i2c_slave_rejected & channel_mask) != 0u &&
+                   (cpu->io.i2c_slave_active & channel_mask) == 0u &&
+                   (cpu->io.i2c_slave_read & channel_mask) == 0u,
                "seven bit mismatch enters rejected state");
         expect(state,
                dspic33_i2c_slave_write(cpu, channel, 0x44u, 0u) &&
                    dspic33_device_advance(cpu, 0u) &&
                    !dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 2u) == 0u,
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 2u) == 0u,
                "ignore data after seven bit mismatch");
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x52u, false, false, 0u) &&
                    dspic33_device_advance(cpu, 0u) &&
                    !dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (cpu->io.i2c_slave_rejected & channel_bit) != 0u,
+                   (cpu->io.i2c_slave_rejected & channel_mask) != 0u,
                "ignore seven bit restart after mismatch");
         expect(state,
                dspic33_i2c_slave_stop(cpu, channel, 0u) && dspic33_device_advance(cpu, 0u) &&
-                   (cpu->io.i2c_slave_rejected & channel_bit) == 0u,
+                   (cpu->io.i2c_slave_rejected & channel_mask) == 0u,
                "seven bit stop clears rejection");
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x52u, false, false, 0u) &&
                    dspic33_device_advance(cpu, 0u) &&
                    dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (cpu->io.i2c_slave_active & channel_bit) != 0u &&
-                   (cpu->io.i2c_slave_rejected & channel_bit) == 0u,
+                   (cpu->io.i2c_slave_active & channel_mask) != 0u &&
+                   (cpu->io.i2c_slave_rejected & channel_mask) == 0u,
                "seven bit stop restores matching");
 
         dspic33_reset(cpu, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x02abu);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 10u), 0x02abu);
         dspic33_i2c_test_enable(cpu, channel, 0x0400u, 0u);
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x01abu, false, true, 0u) &&
@@ -297,51 +297,51 @@ void dspic33_i2c_test_address_rejection_cases(TestState* state, Dspic33* cpu) {
                "reject ten bit high mismatch");
         expect(state,
                !dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (cpu->io.i2c_slave_rejected & channel_bit) != 0u &&
-                   (cpu->io.i2c_slave_active & channel_bit) == 0u &&
-                   (cpu->io.i2c_slave_read & channel_bit) == 0u,
+                   (cpu->io.i2c_slave_rejected & channel_mask) != 0u &&
+                   (cpu->io.i2c_slave_active & channel_mask) == 0u &&
+                   (cpu->io.i2c_slave_read & channel_mask) == 0u,
                "ten bit high mismatch enters rejected state");
         expect(state,
                dspic33_i2c_slave_write(cpu, channel, 0x45u, 0u) &&
                    dspic33_device_advance(cpu, 0u) &&
                    !dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 2u) == 0u,
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 2u) == 0u,
                "ignore data after ten bit high mismatch");
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
                    dspic33_device_advance(cpu, 0u) &&
                    !dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (cpu->io.i2c_slave_rejected & channel_bit) != 0u,
+                   (cpu->io.i2c_slave_rejected & channel_mask) != 0u,
                "ignore ten bit restart after high mismatch");
         expect(state,
                dspic33_device_advance(cpu, 1u) &&
                    !dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 2u) == 0u &&
-                   (cpu->io.i2c_slave_rejected & channel_bit) != 0u,
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 2u) == 0u &&
+                   (cpu->io.i2c_slave_rejected & channel_mask) != 0u,
                "ignore ten bit low bytes after high mismatch");
         expect(state,
                dspic33_i2c_slave_stop(cpu, channel, 0u) && dspic33_device_advance(cpu, 0u) &&
-                   (cpu->io.i2c_slave_rejected & channel_bit) == 0u,
+                   (cpu->io.i2c_slave_rejected & channel_mask) == 0u,
                "ten bit high stop clears rejection");
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
                    dspic33_device_advance(cpu, 0u) &&
                    dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (cpu->io.i2c_slave_active & channel_bit) != 0u,
+                   (cpu->io.i2c_slave_active & channel_mask) != 0u,
                "ten bit stop restores high matching");
-        dspic33_read_word(cpu, base);
+        dspic33_read_word(cpu, register_base);
         dspic33_i2c_test_clear_interrupt(cpu, slave_irqs[channel]);
-        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0x9400u);
         expect(state,
                dspic33_device_advance(cpu, 1u) &&
                    dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0100u) != 0u &&
-                   dspic33_read_word(cpu, base) == 0x00abu &&
-                   (cpu->io.i2c_slave_rejected & channel_bit) == 0u,
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 0x0100u) != 0u &&
+                   dspic33_read_word(cpu, register_base) == 0x00abu &&
+                   (cpu->io.i2c_slave_rejected & channel_mask) == 0u,
                "ten bit stop restores complete matching");
 
         dspic33_reset(cpu, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x02abu);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 10u), 0x02abu);
         dspic33_i2c_test_enable(cpu, channel, 0x0400u, 0u);
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x02acu, false, true, 0u) &&
@@ -349,58 +349,58 @@ void dspic33_i2c_test_address_rejection_cases(TestState* state, Dspic33* cpu) {
                "ten bit low mismatch first address");
         expect(state,
                dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (cpu->io.i2c_slave_rejected & channel_bit) == 0u &&
-                   (cpu->io.i2c_slave_active & channel_bit) != 0u,
+                   (cpu->io.i2c_slave_rejected & channel_mask) == 0u &&
+                   (cpu->io.i2c_slave_active & channel_mask) != 0u,
                "ten bit matching high byte remains active");
-        dspic33_read_word(cpu, base);
+        dspic33_read_word(cpu, register_base);
         dspic33_i2c_test_clear_interrupt(cpu, slave_irqs[channel]);
-        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0x9400u);
         expect(state,
                dspic33_device_advance(cpu, 1u) &&
                    !dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]),
                "reject ten bit low mismatch");
         expect(state,
-               (cpu->io.i2c_slave_rejected & channel_bit) != 0u &&
-                   (cpu->io.i2c_slave_active & channel_bit) == 0u &&
-                   (cpu->io.i2c_slave_read & channel_bit) == 0u,
+               (cpu->io.i2c_slave_rejected & channel_mask) != 0u &&
+                   (cpu->io.i2c_slave_active & channel_mask) == 0u &&
+                   (cpu->io.i2c_slave_read & channel_mask) == 0u,
                "ten bit low mismatch enters rejected state");
         expect(state,
                dspic33_i2c_slave_write(cpu, channel, 0x46u, 0u) &&
                    dspic33_device_advance(cpu, 0u) &&
                    !dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 2u) == 0u,
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 2u) == 0u,
                "ignore data after ten bit low mismatch");
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
                    dspic33_device_advance(cpu, 0u) &&
                    !dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (cpu->io.i2c_slave_rejected & channel_bit) != 0u,
+                   (cpu->io.i2c_slave_rejected & channel_mask) != 0u,
                "ignore ten bit restart after low mismatch");
         expect(state,
                dspic33_device_advance(cpu, 1u) &&
                    !dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 2u) == 0u &&
-                   (cpu->io.i2c_slave_rejected & channel_bit) != 0u,
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 2u) == 0u &&
+                   (cpu->io.i2c_slave_rejected & channel_mask) != 0u,
                "ignore ten bit low byte after low mismatch");
         expect(state,
                dspic33_i2c_slave_stop(cpu, channel, 0u) && dspic33_device_advance(cpu, 0u) &&
-                   (cpu->io.i2c_slave_rejected & channel_bit) == 0u,
+                   (cpu->io.i2c_slave_rejected & channel_mask) == 0u,
                "ten bit low stop clears rejection");
         expect(state,
                dspic33_i2c_slave_start(cpu, channel, 0x02abu, false, true, 0u) &&
                    dspic33_device_advance(cpu, 0u) &&
                    dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (cpu->io.i2c_slave_active & channel_bit) != 0u,
+                   (cpu->io.i2c_slave_active & channel_mask) != 0u,
                "ten bit stop restores low matching");
-        dspic33_read_word(cpu, base);
+        dspic33_read_word(cpu, register_base);
         dspic33_i2c_test_clear_interrupt(cpu, slave_irqs[channel]);
-        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9400u);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0x9400u);
         expect(state,
                dspic33_device_advance(cpu, 1u) &&
                    dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[channel]) &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0100u) != 0u &&
-                   dspic33_read_word(cpu, base) == 0x00abu &&
-                   (cpu->io.i2c_slave_rejected & channel_bit) == 0u,
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 0x0100u) != 0u &&
+                   dspic33_read_word(cpu, register_base) == 0x00abu &&
+                   (cpu->io.i2c_slave_rejected & channel_mask) == 0u,
                "ten bit low stop restores complete matching");
     }
 }
