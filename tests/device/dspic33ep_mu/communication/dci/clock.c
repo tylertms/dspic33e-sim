@@ -205,11 +205,12 @@ void dspic33_dci_test_pps_lifecycle_cases(TestState* state, Dspic33* cpu) {
 
 void dspic33_dci_test_mode_and_status_cases(TestState* state, Dspic33* cpu) {
     Dspic33DciTransfer transfer;
-    uint8_t mode;
-    for (mode = 0u; mode < 2u; mode++) {
+    uint8_t retain_last_transmit;
+
+    for (retain_last_transmit = 0u; retain_last_transmit < 2u; retain_last_transmit++) {
         dspic33_reset(cpu, 0u);
-        dspic33_dci_test_configure_external(cpu, mode != 0u ? DCI_UNDERFLOW_LAST : 0u, 16u, 1u, 1u,
-                                            1u, 0u);
+        dspic33_dci_test_configure_external(
+            cpu, retain_last_transmit != 0u ? DCI_UNDERFLOW_LAST : 0u, 16u, 1u, 1u, 1u, 0u);
         dspic33_write_word(cpu, DCI_TRANSMIT_BASE, 0x5a5au);
         expect(state, dspic33_dci_test_clock_word(cpu, 0u, false),
                "clock initial underflow mode word");
@@ -219,7 +220,7 @@ void dspic33_dci_test_mode_and_status_cases(TestState* state, Dspic33* cpu) {
                "clock underflow replacement word");
         expect(state,
                dspic33_dci_transmit(cpu, &transfer) &&
-                   transfer.value == (mode != 0u ? 0x5a5au : 0u),
+                   transfer.value == (retain_last_transmit != 0u ? 0x5a5au : 0u),
                "UNFM selects last value or zero after underflow");
         expect(state, (dspic33_read_word(cpu, DCI_STATUS) & DCI_TRANSMIT_UNDERFLOW) != 0u,
                "missing TXBUF sets TUNF");
