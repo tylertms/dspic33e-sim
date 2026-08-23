@@ -1,31 +1,32 @@
 #include "device/dspic33ep_mu/internal.h"
 
-static void can_receive_sample(Dspic33* cpu, uint8_t channel_index, bool bus_level) {
-    const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+static void can_receive_sample(Dspic33* cpu, uint8_t channel_index, bool sampled_bus_level) {
+    const uint8_t channel_mask = (uint8_t)(1u << channel_index);
     Dspic33CanFrame received_frame;
-    Dspic33CanSerialResult decode_result;
-    uint16_t bit_count;
-    uint16_t stuffing_tail_index;
+    Dspic33CanSerialResult serial_result;
+    uint16_t received_bit_count;
+    uint16_t stuffing_index;
 
-    if ((cpu->io.can_rx_serial_active & channel_bit) == 0u ||
+    if ((cpu->io.can_rx_serial_active & channel_mask) == 0u ||
         !dspic33_device_internal_can_serial_receive_enabled(cpu, channel_index)) {
-        cpu->io.can_rx_serial_active &= (uint8_t)~channel_bit;
+        cpu->io.can_rx_serial_active &= (uint8_t)~channel_mask;
         return;
     }
-    bit_count = cpu->io.can_rx_serial_count[channel_index];
-    if (bit_count >= sizeof(cpu->io.can_rx_serial_bits[channel_index])) {
-        cpu->io.can_rx_serial_active &= (uint8_t)~channel_bit;
+    received_bit_count = cpu->io.can_rx_serial_count[channel_index];
+    if (received_bit_count >= sizeof(cpu->io.can_rx_serial_bits[channel_index])) {
+        cpu->io.can_rx_serial_active &= (uint8_t)~channel_mask;
         dspic33_device_internal_can_invalid_event(cpu, channel_index);
         return;
     }
-    cpu->io.can_rx_serial_bits[channel_index][bit_count] = bus_level;
+    cpu->io.can_rx_serial_bits[channel_index][received_bit_count] = sampled_bus_level;
     cpu->io.can_rx_serial_count[channel_index]++;
-    decode_result = dspic33_device_internal_can_decode_serial(cpu, channel_index, &received_frame,
-                                                              &stuffing_tail_index);
-    if (decode_result == CAN_SERIAL_INCOMPLETE && stuffing_tail_index != 0u &&
-        cpu->io.can_rx_serial_count[channel_index] == stuffing_tail_index + 1u &&
-        cpu->io.can_rx_serial_bits[channel_index][stuffing_tail_index] != 0u &&
-        (cpu->io.can_tx_on_bus & channel_bit) == 0u &&
+    serial_result = dspic33_device_internal_can_decode_serial(cpu, channel_index, &received_frame,
+                                                              &stuffing_index);
+
+    if (serial_result == CAN_SERIAL_INCOMPLETE && stuffing_index != 0u &&
+        cpu->io.can_rx_serial_count[channel_index] == stuffing_index + 1u &&
+        cpu->io.can_rx_serial_bits[channel_index][stuffing_index] != 0u &&
+        (cpu->io.can_tx_on_bus & channel_mask) == 0u &&
         dspic33_device_internal_can_mode(cpu, channel_index) != CAN_MODE_LISTEN) {
         const uint64_t bit_cycles = dspic33_device_internal_can_bit_cycles(cpu, channel_index);
         const uint64_t sample_cycles =
@@ -33,105 +34,106 @@ static void can_receive_sample(Dspic33* cpu, uint8_t channel_index, bool bus_lev
         if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_ACK_START,
                               bit_cycles - sample_cycles)) {
             cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
-            cpu->io.can_rx_serial_active &= (uint8_t)~channel_bit;
+            cpu->io.can_rx_serial_active &= (uint8_t)~channel_mask;
             return;
         }
     }
-    if (decode_result == CAN_SERIAL_VALID) {
-        const bool overload = !cpu->io.can_rx_serial_bits[channel_index][stuffing_tail_index + 9u];
-        cpu->io.can_rx_serial_active &= (uint8_t)~channel_bit;
+    if (serial_result == CAN_SERIAL_VALID) {
+        const bool overload_detected =
+            !cpu->io.can_rx_serial_bits[channel_index][stuffing_index + 9u];
+        cpu->io.can_rx_serial_active &= (uint8_t)~channel_mask;
         cpu->io.can_intermission_generation[channel_index]++;
         cpu->io.can_overload_count[channel_index] = 0u;
         if (!dspic33_device_internal_can_schedule_intermission(cpu, channel_index)) {
-            cpu->io.can_intermission_active &= (uint8_t)~channel_bit;
+            cpu->io.can_intermission_active &= (uint8_t)~channel_mask;
             cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
             return;
         }
-        if ((cpu->io.can_tx_on_bus & channel_bit) != 0u) {
+        if ((cpu->io.can_tx_on_bus & channel_mask) != 0u) {
             return;
         }
         dspic33_device_internal_can_receive_success(cpu, channel_index);
         if (!dspic33_device_internal_can_queue_push(&cpu->io.can_rx[channel_index],
                                                     &received_frame) ||
             !dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_RECEIVE_START, 0u) ||
-            (((cpu->io.can_tx_retry_wait & channel_bit) != 0u) &&
+            (((cpu->io.can_tx_retry_wait & channel_mask) != 0u) &&
              !dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_TRANSMIT_RETRY,
                                3u * dspic33_device_internal_can_bit_cycles(cpu, channel_index)))) {
             cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
         }
-        if (overload && dspic33_device_internal_can_mode(cpu, channel_index) != CAN_MODE_LISTEN) {
+        if (overload_detected &&
+            dspic33_device_internal_can_mode(cpu, channel_index) != CAN_MODE_LISTEN) {
             dspic33_device_internal_can_start_overload(cpu, channel_index);
         }
         return;
     }
-    if (decode_result == CAN_SERIAL_INVALID) {
+    if (serial_result == CAN_SERIAL_INVALID) {
         dspic33_device_internal_can_receive_error(cpu, channel_index, &received_frame);
         return;
     }
-    uint64_t sample_delay_cycles = dspic33_device_internal_can_bit_cycles(cpu, channel_index);
+    uint64_t sample_delay = dspic33_device_internal_can_bit_cycles(cpu, channel_index);
     if (dspic33_device_internal_can_triple_sample(cpu, channel_index)) {
-        sample_delay_cycles -= 2u * dspic33_device_internal_can_time_quantum(cpu, channel_index);
+        sample_delay -= 2u * dspic33_device_internal_can_time_quantum(cpu, channel_index);
     }
-    if (!dspic33_device_internal_can_schedule_receive_sample(cpu, channel_index,
-                                                             sample_delay_cycles)) {
-        cpu->io.can_rx_serial_active &= (uint8_t)~channel_bit;
+    if (!dspic33_device_internal_can_schedule_receive_sample(cpu, channel_index, sample_delay)) {
+        cpu->io.can_rx_serial_active &= (uint8_t)~channel_mask;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
 }
 
 static void can_receive_sample_first(Dspic33* cpu, uint8_t channel_index) {
-    const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+    const uint8_t channel_mask = (uint8_t)(1u << channel_index);
 
-    if ((cpu->io.can_rx_serial_active & channel_bit) == 0u) {
+    if ((cpu->io.can_rx_serial_active & channel_mask) == 0u) {
         return;
     }
     cpu->io.can_rx_sample_high[channel_index] =
-        (cpu->io.can_rx_pin_high & channel_bit) != 0u ? 1u : 0u;
+        (cpu->io.can_rx_pin_high & channel_mask) != 0u ? 1u : 0u;
     if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_RECEIVE_SAMPLE_SECOND,
                           dspic33_device_internal_can_time_quantum(cpu, channel_index))) {
-        cpu->io.can_rx_serial_active &= (uint8_t)~channel_bit;
+        cpu->io.can_rx_serial_active &= (uint8_t)~channel_mask;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
 }
 
 static void can_receive_sample_second(Dspic33* cpu, uint8_t channel_index) {
-    const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+    const uint8_t channel_mask = (uint8_t)(1u << channel_index);
 
-    if ((cpu->io.can_rx_serial_active & channel_bit) == 0u) {
+    if ((cpu->io.can_rx_serial_active & channel_mask) == 0u) {
         return;
     }
-    if ((cpu->io.can_rx_pin_high & channel_bit) != 0u) {
+    if ((cpu->io.can_rx_pin_high & channel_mask) != 0u) {
         cpu->io.can_rx_sample_high[channel_index]++;
     }
     if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_RECEIVE_SAMPLE,
                           dspic33_device_internal_can_time_quantum(cpu, channel_index))) {
-        cpu->io.can_rx_serial_active &= (uint8_t)~channel_bit;
+        cpu->io.can_rx_serial_active &= (uint8_t)~channel_mask;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
 }
 
 static void can_receive_sample_final(Dspic33* cpu, uint8_t channel_index) {
-    const uint8_t channel_bit = (uint8_t)(1u << channel_index);
-    uint8_t sample_count = cpu->io.can_rx_sample_high[channel_index];
+    const uint8_t channel_mask = (uint8_t)(1u << channel_index);
+    uint8_t high_sample_count = cpu->io.can_rx_sample_high[channel_index];
 
-    if ((cpu->io.can_rx_pin_high & channel_bit) != 0u) {
-        sample_count++;
+    if ((cpu->io.can_rx_pin_high & channel_mask) != 0u) {
+        high_sample_count++;
     }
     cpu->io.can_rx_sample_high[channel_index] = 0u;
-    can_receive_sample(cpu, channel_index, sample_count >= 2u);
+    can_receive_sample(cpu, channel_index, high_sample_count >= 2u);
 }
 
 static void can_ack_start(Dspic33* cpu, uint8_t channel_index) {
-    const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+    const uint8_t channel_mask = (uint8_t)(1u << channel_index);
 
     if (!dspic33_device_internal_can_serial_receive_enabled(cpu, channel_index) ||
         dspic33_device_internal_can_mode(cpu, channel_index) == CAN_MODE_LISTEN) {
         return;
     }
-    cpu->io.can_rx_ack |= channel_bit;
+    cpu->io.can_rx_ack |= channel_mask;
     if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_ACK_FINISH,
                           dspic33_device_internal_can_bit_cycles(cpu, channel_index))) {
-        cpu->io.can_rx_ack &= (uint8_t)~channel_bit;
+        cpu->io.can_rx_ack &= (uint8_t)~channel_mask;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
 }
@@ -141,13 +143,13 @@ static void can_ack_finish(Dspic33* cpu, uint8_t channel_index) {
 }
 
 static void can_receive_error_start(Dspic33* cpu, uint8_t channel_index) {
-    const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+    const uint8_t channel_mask = (uint8_t)(1u << channel_index);
 
-    cpu->io.can_rx_error_active |= channel_bit;
+    cpu->io.can_rx_error_active |= channel_mask;
     cpu->io.can_rx_error_start_cycle[channel_index] = cpu->device_cycles;
     if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_RECEIVE_ERROR_FINISH,
                           14u * dspic33_device_internal_can_bit_cycles(cpu, channel_index))) {
-        cpu->io.can_rx_error_active &= (uint8_t)~channel_bit;
+        cpu->io.can_rx_error_active &= (uint8_t)~channel_mask;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
 }
