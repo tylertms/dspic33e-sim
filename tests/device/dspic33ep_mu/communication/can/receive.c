@@ -430,51 +430,52 @@ void dspic33_can_test_stuffed_frame_timing_cases(TestState* state, Dspic33* cpu)
 }
 
 void dspic33_can_test_transmit_abort_timing_cases(TestState* state, Dspic33* cpu) {
-    for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-        uint16_t base = bases[channel];
-        uint32_t memory = (uint32_t)(0xbc00u + channel * 0x100u);
-        Dspic33CanFrame output;
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
+        uint16_t can_base = bases[channel_index];
+        uint32_t transmit_memory = (uint32_t)(0xbc00u + channel_index * 0x100u);
+        Dspic33CanFrame output_frame;
+
         dspic33_reset(cpu, 0u);
-        dspic33_can_test_configure_transmit(cpu, channel, memory);
-        dspic33_can_test_write_memory_word(cpu, memory, 2u);
-        for (uint8_t word = 1u; word < 8u; word++) {
-            dspic33_can_test_write_memory_word(cpu, memory + word * 2u, 0u);
+        dspic33_can_test_configure_transmit(cpu, channel_index, transmit_memory);
+        dspic33_can_test_write_memory_word(cpu, transmit_memory, 2u);
+        for (uint8_t word_index = 1u; word_index < 8u; word_index++) {
+            dspic33_can_test_write_memory_word(cpu, transmit_memory + word_index * 2u, 0u);
         }
-        dspic33_can_test_select_window(cpu, channel, false);
-        dspic33_can_test_set_mode(cpu, channel, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x008bu);
+        dspic33_can_test_select_window(cpu, channel_index, false);
+        dspic33_can_test_set_mode(cpu, channel_index, 0u);
+        dspic33_write_word(cpu, (uint16_t)(can_base + 0x30u), 0x008bu);
         expect(state,
                dspic33_device_advance(cpu, 8u) &&
-                   (cpu->io.can_tx_busy & (uint8_t)(1u << channel)) != 0u &&
-                   !dspic33_can_transmit(cpu, channel, &output),
+                   (cpu->io.can_tx_busy & (uint8_t)(1u << channel_index)) != 0u &&
+                   !dspic33_can_transmit(cpu, channel_index, &output_frame),
                "CAN abort test reaches the on-bus interval");
-        dspic33_write_word(cpu, base, (uint16_t)(dspic33_read_word(cpu, base) | 0x1000u));
+        dspic33_write_word(cpu, can_base, (uint16_t)(dspic33_read_word(cpu, can_base) | 0x1000u));
         expect(state,
-               (cpu->io.can_tx_busy & (uint8_t)(1u << channel)) == 0u &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) & 0x0048u) == 0x0040u &&
+               (cpu->io.can_tx_busy & (uint8_t)(1u << channel_index)) == 0u &&
+                   (dspic33_read_word(cpu, (uint16_t)(can_base + 0x30u)) & 0x0048u) == 0x0040u &&
                    dspic33_device_advance(cpu, 1000u) &&
-                   !dspic33_can_transmit(cpu, channel, &output),
+                   !dspic33_can_transmit(cpu, channel_index, &output_frame),
                "CAN abort cancels the pending on-bus completion");
 
         dspic33_reset(cpu, 0u);
-        dspic33_can_test_configure_transmit(cpu, channel, memory);
-        dspic33_can_test_write_memory_word(cpu, memory, 2u);
-        for (uint8_t word = 1u; word < 8u; word++) {
-            dspic33_can_test_write_memory_word(cpu, memory + word * 2u, 0u);
+        dspic33_can_test_configure_transmit(cpu, channel_index, transmit_memory);
+        dspic33_can_test_write_memory_word(cpu, transmit_memory, 2u);
+        for (uint8_t word_index = 1u; word_index < 8u; word_index++) {
+            dspic33_can_test_write_memory_word(cpu, transmit_memory + word_index * 2u, 0u);
         }
-        dspic33_can_test_select_window(cpu, channel, false);
-        dspic33_can_test_set_mode(cpu, channel, 0u);
-        dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x008bu);
+        dspic33_can_test_select_window(cpu, channel_index, false);
+        dspic33_can_test_set_mode(cpu, channel_index, 0u);
+        dspic33_write_word(cpu, (uint16_t)(can_base + 0x30u), 0x008bu);
         expect(state,
                dspic33_device_advance(cpu, 8u) &&
-                   (cpu->io.can_tx_busy & (uint8_t)(1u << channel)) != 0u,
+                   (cpu->io.can_tx_busy & (uint8_t)(1u << channel_index)) != 0u,
                "individual CAN abort reaches the on-bus interval");
-        dspic33_write_word(cpu, (uint16_t)(base + 0x30u), 0x0083u);
+        dspic33_write_word(cpu, (uint16_t)(can_base + 0x30u), 0x0083u);
         expect(state,
-               (cpu->io.can_tx_busy & (uint8_t)(1u << channel)) == 0u &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 0x30u)) & 0x0048u) == 0x0040u &&
+               (cpu->io.can_tx_busy & (uint8_t)(1u << channel_index)) == 0u &&
+                   (dspic33_read_word(cpu, (uint16_t)(can_base + 0x30u)) & 0x0048u) == 0x0040u &&
                    dspic33_device_advance(cpu, 1000u) &&
-                   !dspic33_can_transmit(cpu, channel, &output),
+                   !dspic33_can_transmit(cpu, channel_index, &output_frame),
                "clearing TXREQ aborts the active CAN transmission");
     }
 }
