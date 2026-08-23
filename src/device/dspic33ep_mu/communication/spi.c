@@ -431,26 +431,33 @@ void dspic33_device_internal_spi_schedule_frame_input_sample(Dspic33* cpu, uint8
     }
 }
 
-static void spi_receive_word(Dspic33* cpu, uint8_t channel, uint16_t value) {
-    uint16_t base = dspic33_device_spi_bases[channel];
-    uint16_t status = dspic33_device_internal_raw_word(cpu, base);
-    uint8_t capacity = dspic33_device_internal_spi_enhanced(cpu, channel) ? 8u : 1u;
-    if ((dspic33_device_internal_raw_word(cpu, (uint16_t)(base + 2u)) & SPI_MODE_16) == 0u) {
-        value &= 0x00ffu;
+static void spi_receive_word(Dspic33* cpu, uint8_t channel, uint16_t received_word) {
+    uint16_t register_base = dspic33_device_spi_bases[channel];
+    uint16_t status_word = dspic33_device_internal_raw_word(cpu, register_base);
+    uint8_t receive_fifo_capacity = dspic33_device_internal_spi_enhanced(cpu, channel) ? 8u : 1u;
+
+    if ((dspic33_device_internal_raw_word(cpu, (uint16_t)(register_base + 2u)) & SPI_MODE_16) ==
+        0u) {
+        received_word &= 0x00ffu;
     }
-    if ((status & SPI_OVERFLOW) != 0u) {
+
+    if ((status_word & SPI_OVERFLOW) != 0u) {
         return;
     }
-    if (cpu->io.spi_rx_fifo[channel].count >= capacity ||
-        !dspic33_device_internal_word_queue_push(&cpu->io.spi_rx_fifo[channel], value)) {
-        dspic33_device_internal_raw_write_word(cpu, base, (uint16_t)(status | SPI_OVERFLOW));
+
+    if (cpu->io.spi_rx_fifo[channel].count >= receive_fifo_capacity ||
+        !dspic33_device_internal_word_queue_push(&cpu->io.spi_rx_fifo[channel], received_word)) {
+        dspic33_device_internal_raw_write_word(cpu, register_base,
+                                               (uint16_t)(status_word | SPI_OVERFLOW));
         dspic33_raise_interrupt(cpu, dspic33_device_spi_error_irqs[channel]);
         dspic33_raise_interrupt(cpu, dspic33_device_spi_irqs[channel]);
         return;
     }
+
     if (cpu->io.spi_rx_fifo[channel].count == 1u) {
-        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(base + 8u), value);
+        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(register_base + 8u), received_word);
     }
+
     dspic33_device_internal_spi_refresh_status(cpu, channel);
     if (dspic33_device_internal_spi_enhanced(cpu, channel)) {
         dspic33_device_internal_spi_raise_mode(cpu, channel, 1u);
@@ -463,80 +470,104 @@ static void spi_receive_word(Dspic33* cpu, uint8_t channel, uint16_t value) {
     }
 }
 
-void dspic33_device_internal_spi_complete_transfer(Dspic33* cpu, uint8_t channel, uint16_t value) {
-    uint8_t bit = (uint8_t)(1u << channel);
-    cpu->io.spi_busy &= (uint8_t)~bit;
-    cpu->io.spi_frame_active &= (uint8_t)~bit;
-    cpu->io.spi_frame_output_pending &= (uint8_t)~bit;
-    cpu->io.spi_frame_output_clear_pending &= (uint8_t)~bit;
+void dspic33_device_internal_spi_complete_transfer(Dspic33* cpu, uint8_t channel,
+                                                   uint16_t received_word) {
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+
+    cpu->io.spi_busy &= (uint8_t)~channel_mask;
+    cpu->io.spi_frame_active &= (uint8_t)~channel_mask;
+    cpu->io.spi_frame_output_pending &= (uint8_t)~channel_mask;
+    cpu->io.spi_frame_output_clear_pending &= (uint8_t)~channel_mask;
     cpu->io.spi_pin_receive[channel] = 0u;
     cpu->io.spi_pin_bits[channel] = 0u;
     cpu->io.spi_pin_output_index[channel] = 0u;
-    cpu->io.spi_pin_output_started &= (uint8_t)~bit;
-    spi_receive_word(cpu, channel, value);
+    cpu->io.spi_pin_output_started &= (uint8_t)~channel_mask;
+
+    spi_receive_word(cpu, channel, received_word);
     dspic33_dma_request(cpu, dspic33_device_spi_dma_requests[channel],
                         (uint16_t)(dspic33_device_spi_bases[channel] + 8u), 0u);
     dspic33_device_internal_spi_start_next(cpu, channel);
+
     if (!dspic33_device_internal_spi_enhanced(cpu, channel)) {
         spi_raise_transfer_interrupt(cpu, channel);
-    } else if ((cpu->io.spi_busy & bit) == 0u && cpu->io.spi_tx_fifo[channel].count == 0u) {
+    } else if ((cpu->io.spi_busy & channel_mask) == 0u &&
+               cpu->io.spi_tx_fifo[channel].count == 0u) {
         dspic33_device_internal_spi_raise_mode(cpu, channel, 5u);
     }
+
     dspic33_device_internal_spi_refresh_status(cpu, channel);
 }
 
 void dspic33_device_internal_run_spi(Dspic33* cpu, uint8_t channel, uint32_t event_value) {
-    uint16_t base;
-    uint16_t value = (uint16_t)event_value;
-    uint8_t bit;
-    uint32_t kind = event_value & SPI_EVENT_KIND_MASK;
+    uint16_t register_base;
+    uint16_t event_data = (uint16_t)event_value;
+    uint8_t channel_mask;
+    uint32_t event_kind = event_value & SPI_EVENT_KIND_MASK;
+
     if (channel >= DSPIC33_SPI_COUNT) {
         return;
     }
-    base = dspic33_device_spi_bases[channel];
-    bit = (uint8_t)(1u << channel);
-    if (kind == 0u) {
-        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(base + 8u), value);
+
+    register_base = dspic33_device_spi_bases[channel];
+    channel_mask = (uint8_t)(1u << channel);
+
+    if (event_kind == 0u) {
+        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(register_base + 8u), event_data);
         dspic33_device_internal_raw_write_word(
-            cpu, base, (uint16_t)(dspic33_device_internal_raw_word(cpu, base) | SPI_RX_FULL));
+            cpu, register_base,
+            (uint16_t)(dspic33_device_internal_raw_word(cpu, register_base) | SPI_RX_FULL));
         dspic33_raise_interrupt(cpu, dspic33_device_spi_irqs[channel]);
         return;
     }
-    if ((dspic33_device_internal_raw_word(cpu, base) & SPI_ENABLE) == 0u ||
+
+    if ((dspic33_device_internal_raw_word(cpu, register_base) & SPI_ENABLE) == 0u ||
         dspic33_device_internal_spi_module_disabled(cpu, channel)) {
         return;
     }
-    if (kind == SPI_EVENT_FRAME) {
-        uint16_t generation =
+
+    if (event_kind == SPI_EVENT_FRAME) {
+        uint16_t event_generation =
             (uint16_t)((event_value >> SPI_EVENT_GENERATION_SHIFT) & SPI_EVENT_GENERATION_MASK);
-        uint16_t control = dspic33_device_internal_raw_word(cpu, (uint16_t)(base + 4u));
-        if (generation == cpu->io.spi_generation[channel] && (cpu->io.spi_busy & bit) != 0u &&
+        uint16_t frame_control_word =
+            dspic33_device_internal_raw_word(cpu, (uint16_t)(register_base + 4u));
+
+        if (event_generation == cpu->io.spi_generation[channel] &&
+            (cpu->io.spi_busy & channel_mask) != 0u &&
             dspic33_device_internal_spi_power_enabled(cpu, channel) &&
-            (control & (SPI_FRAME_ENABLE | SPI_FRAME_SLAVE | SPI_FRAME_ACTIVE_HIGH)) ==
+            (frame_control_word & (SPI_FRAME_ENABLE | SPI_FRAME_SLAVE | SPI_FRAME_ACTIVE_HIGH)) ==
                 (SPI_FRAME_ENABLE | SPI_FRAME_ACTIVE_HIGH)) {
-            cpu->io.spi_frame_active |= bit;
+            cpu->io.spi_frame_active |= channel_mask;
         }
         return;
     }
-    if (kind == SPI_EVENT_INTERNAL) {
-        uint16_t generation =
+
+    if (event_kind == SPI_EVENT_INTERNAL) {
+        uint16_t event_generation =
             (uint16_t)((event_value >> SPI_EVENT_GENERATION_SHIFT) & SPI_EVENT_GENERATION_MASK);
-        if (generation != cpu->io.spi_generation[channel] || (cpu->io.spi_busy & bit) == 0u) {
+
+        if (event_generation != cpu->io.spi_generation[channel] ||
+            (cpu->io.spi_busy & channel_mask) == 0u) {
             return;
         }
+
         if (!dspic33_device_internal_spi_power_enabled(cpu, channel)) {
             dspic33_device_internal_spi_clear_buffers(cpu, channel);
             return;
         }
-        dspic33_device_internal_spi_complete_transfer(
-            cpu, channel,
-            spi_master_pin_input_enabled(cpu, channel) ? cpu->io.spi_pin_receive[channel] : value);
+
+        dspic33_device_internal_spi_complete_transfer(cpu, channel,
+                                                      spi_master_pin_input_enabled(cpu, channel)
+                                                          ? cpu->io.spi_pin_receive[channel]
+                                                          : event_data);
         return;
     }
-    if (kind == SPI_EVENT_SAMPLE) {
-        uint16_t generation =
+
+    if (event_kind == SPI_EVENT_SAMPLE) {
+        uint16_t event_generation =
             (uint16_t)((event_value >> SPI_EVENT_GENERATION_SHIFT) & SPI_EVENT_GENERATION_MASK);
-        if (generation == cpu->io.spi_generation[channel] && (cpu->io.spi_busy & bit) != 0u &&
+
+        if (event_generation == cpu->io.spi_generation[channel] &&
+            (cpu->io.spi_busy & channel_mask) != 0u &&
             dspic33_device_internal_spi_power_enabled(cpu, channel)) {
             cpu->io.spi_pin_receive[channel] =
                 (uint16_t)((cpu->io.spi_pin_receive[channel] << 1u) |
@@ -545,62 +576,72 @@ void dspic33_device_internal_run_spi(Dspic33* cpu, uint8_t channel, uint32_t eve
         }
         return;
     }
-    if (kind == SPI_EVENT_FRAME_INPUT) {
-        uint16_t generation =
+
+    if (event_kind == SPI_EVENT_FRAME_INPUT) {
+        uint16_t event_generation =
             (uint16_t)((event_value >> SPI_EVENT_GENERATION_SHIFT) & SPI_EVENT_GENERATION_MASK);
-        if (generation == cpu->io.spi_generation[channel] &&
+        if (event_generation == cpu->io.spi_generation[channel] &&
             dspic33_device_internal_spi_master_frame_slave(cpu, channel) &&
             dspic33_device_internal_spi_selected(cpu, channel)) {
-            uint16_t control = dspic33_device_internal_raw_word(cpu, (uint16_t)(base + 2u));
-            uint8_t bits = (control & SPI_MODE_16) != 0u ? 16u : 8u;
-            uint64_t period = dspic33_device_internal_spi_transfer_cycles(cpu, channel) / bits;
-            uint32_t frame_value =
-                SPI_EVENT_FRAME_START | ((uint32_t)generation << SPI_EVENT_GENERATION_SHIFT);
-            if (!dspic33_schedule(cpu, DSPIC33_EVENT_SPI, channel, frame_value,
-                                  period - period / 2u)) {
+            uint16_t control_word =
+                dspic33_device_internal_raw_word(cpu, (uint16_t)(register_base + 2u));
+            uint8_t transfer_bit_count = (control_word & SPI_MODE_16) != 0u ? 16u : 8u;
+            uint64_t bit_period =
+                dspic33_device_internal_spi_transfer_cycles(cpu, channel) / transfer_bit_count;
+            uint32_t frame_event_value =
+                SPI_EVENT_FRAME_START | ((uint32_t)event_generation << SPI_EVENT_GENERATION_SHIFT);
+
+            if (!dspic33_schedule(cpu, DSPIC33_EVENT_SPI, channel, frame_event_value,
+                                  bit_period - bit_period / 2u)) {
                 cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
             }
         }
         return;
     }
-    if (kind == SPI_EVENT_FRAME_START) {
-        uint16_t generation =
+
+    if (event_kind == SPI_EVENT_FRAME_START) {
+        uint16_t event_generation =
             (uint16_t)((event_value >> SPI_EVENT_GENERATION_SHIFT) & SPI_EVENT_GENERATION_MASK);
-        if (generation != cpu->io.spi_generation[channel]) {
+
+        if (event_generation != cpu->io.spi_generation[channel]) {
             return;
         }
         if ((event_value & SPI_EVENT_FRAME_DATA) == 0u) {
-            cpu->io.spi_frame_output_pending &= (uint8_t)~bit;
+            cpu->io.spi_frame_output_pending &= (uint8_t)~channel_mask;
         }
         if (dspic33_device_internal_spi_master_frame_slave(cpu, channel)) {
             spi_start_next_admitted(cpu, channel, true);
         } else if (spi_master_frame_master(cpu, channel)) {
-            uint16_t control = dspic33_device_internal_raw_word(cpu, (uint16_t)(base + 2u));
-            uint16_t frame = dspic33_device_internal_raw_word(cpu, (uint16_t)(base + 4u));
-            uint8_t bits = (control & SPI_MODE_16) != 0u ? 16u : 8u;
-            uint64_t period = dspic33_device_internal_spi_transfer_cycles(cpu, channel) / bits;
-            bool scheduled;
+            uint16_t control_word =
+                dspic33_device_internal_raw_word(cpu, (uint16_t)(register_base + 2u));
+            uint16_t frame_control_word =
+                dspic33_device_internal_raw_word(cpu, (uint16_t)(register_base + 4u));
+            uint8_t transfer_bit_count = (control_word & SPI_MODE_16) != 0u ? 16u : 8u;
+            uint64_t bit_period =
+                dspic33_device_internal_spi_transfer_cycles(cpu, channel) / transfer_bit_count;
+            bool events_scheduled;
+
             if ((event_value & SPI_EVENT_FRAME_DATA) != 0u) {
                 spi_start_next_admitted(cpu, channel, true);
                 return;
             }
-            if ((frame & SPI_FRAME_ACTIVE_HIGH) != 0u) {
-                cpu->io.spi_frame_active |= bit;
+            if ((frame_control_word & SPI_FRAME_ACTIVE_HIGH) != 0u) {
+                cpu->io.spi_frame_active |= channel_mask;
             }
-            scheduled = dspic33_schedule(cpu, DSPIC33_EVENT_SPI, channel,
-                                         SPI_EVENT_FRAME_CLEAR |
-                                             ((uint32_t)generation << SPI_EVENT_GENERATION_SHIFT),
-                                         dspic33_device_internal_spi_transfer_cycles(cpu, channel));
-            if ((frame & SPI_FRAME_DELAY) != 0u) {
+            events_scheduled = dspic33_schedule(
+                cpu, DSPIC33_EVENT_SPI, channel,
+                SPI_EVENT_FRAME_CLEAR | ((uint32_t)event_generation << SPI_EVENT_GENERATION_SHIFT),
+                dspic33_device_internal_spi_transfer_cycles(cpu, channel));
+            if ((frame_control_word & SPI_FRAME_DELAY) != 0u) {
                 spi_start_next_admitted(cpu, channel, true);
             } else {
-                scheduled &=
+                events_scheduled &=
                     dspic33_schedule(cpu, DSPIC33_EVENT_SPI, channel,
                                      SPI_EVENT_FRAME_START | SPI_EVENT_FRAME_DATA |
-                                         ((uint32_t)generation << SPI_EVENT_GENERATION_SHIFT),
-                                     period);
+                                         ((uint32_t)event_generation << SPI_EVENT_GENERATION_SHIFT),
+                                     bit_period);
             }
-            if (!scheduled) {
+            if (!events_scheduled) {
                 cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
                 dspic33_device_internal_spi_remove_internal_events(cpu, channel);
                 dspic33_device_internal_spi_clear_buffers(cpu, channel);
@@ -608,46 +649,56 @@ void dspic33_device_internal_run_spi(Dspic33* cpu, uint8_t channel, uint32_t eve
         }
         return;
     }
-    if (kind == SPI_EVENT_FRAME_CLEAR) {
-        uint16_t generation =
+
+    if (event_kind == SPI_EVENT_FRAME_CLEAR) {
+        uint16_t event_generation =
             (uint16_t)((event_value >> SPI_EVENT_GENERATION_SHIFT) & SPI_EVENT_GENERATION_MASK);
-        if (generation == cpu->io.spi_generation[channel]) {
-            cpu->io.spi_frame_active &= (uint8_t)~bit;
+
+        if (event_generation == cpu->io.spi_generation[channel]) {
+            cpu->io.spi_frame_active &= (uint8_t)~channel_mask;
         }
         return;
     }
+
     if (!dspic33_device_internal_spi_power_enabled(cpu, channel)) {
         return;
     }
     if (!dspic33_device_internal_spi_selected(cpu, channel) ||
-        (dspic33_device_internal_spi_master(cpu, channel) && (cpu->io.spi_busy & bit) == 0u)) {
+        (dspic33_device_internal_spi_master(cpu, channel) &&
+         (cpu->io.spi_busy & channel_mask) == 0u)) {
         return;
     }
+
     if (dspic33_device_internal_spi_master(cpu, channel)) {
         cpu->io.spi_generation[channel] =
             (uint16_t)((cpu->io.spi_generation[channel] + 1u) & SPI_EVENT_GENERATION_MASK);
-    } else if ((cpu->io.spi_busy & bit) == 0u) {
-        cpu->io.spi_busy |= bit;
-        cpu->io.spi_shift[channel] = dspic33_device_internal_raw_word(cpu, (uint16_t)(base + 8u));
+    } else if ((cpu->io.spi_busy & channel_mask) == 0u) {
+        cpu->io.spi_busy |= channel_mask;
+        cpu->io.spi_shift[channel] =
+            dspic33_device_internal_raw_word(cpu, (uint16_t)(register_base + 8u));
     }
-    dspic33_device_internal_spi_complete_transfer(cpu, channel, value);
+    dspic33_device_internal_spi_complete_transfer(cpu, channel, event_data);
 }
 
-void dspic33_device_internal_run_spi_select(Dspic33* cpu, uint8_t channel, bool selected) {
-    uint8_t bit;
-    bool previous;
+void dspic33_device_internal_run_spi_select(Dspic33* cpu, uint8_t channel, bool is_selected) {
+    uint8_t channel_mask;
+    bool was_selected;
+
     if (channel >= DSPIC33_SPI_COUNT) {
         return;
     }
-    bit = (uint8_t)(1u << channel);
-    previous = (cpu->io.spi_selected & bit) != 0u;
-    if (selected) {
-        cpu->io.spi_selected |= bit;
+
+    channel_mask = (uint8_t)(1u << channel);
+    was_selected = (cpu->io.spi_selected & channel_mask) != 0u;
+    if (is_selected) {
+        cpu->io.spi_selected |= channel_mask;
     } else {
-        cpu->io.spi_selected &= (uint8_t)~bit;
+        cpu->io.spi_selected &= (uint8_t)~channel_mask;
     }
-    dspic33_device_internal_spi_update_slave_selection(cpu, channel, previous, selected);
-    if (previous != selected && dspic33_device_internal_spi_master_frame_slave(cpu, channel)) {
+
+    dspic33_device_internal_spi_update_slave_selection(cpu, channel, was_selected, is_selected);
+    if (was_selected != is_selected &&
+        dspic33_device_internal_spi_master_frame_slave(cpu, channel)) {
         dspic33_device_internal_spi_schedule_frame_input_sample(cpu, channel);
     }
 }
