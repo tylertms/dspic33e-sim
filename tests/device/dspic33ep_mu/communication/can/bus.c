@@ -461,17 +461,20 @@ static bool drive_until_receive_error(Dspic33* cpu, uint16_t corruption_bit) {
 }
 
 void dspic33_can_test_receive_error_cases(TestState* state, Dspic33* cpu) {
-    static const uint16_t corrupt_bits[] = {5u, 30u, 42u};
-    for (uint8_t index = 0u; index < 3u; index++) {
-        bool high;
-        Dspic33CanFrame input = dspic33_can_test_frame(0u, false, false, 0u, 0u);
+    static const uint16_t corruption_bits[] = {5u, 30u, 42u};
+
+    for (uint8_t case_index = 0u; case_index < 3u; case_index++) {
+        bool pin_level;
+        Dspic33CanFrame transmitted_frame = dspic33_can_test_frame(0u, false, false, 0u, 0u);
+
         dspic33_reset(cpu, 0u);
         dspic33_write_word(cpu, 0x0e30u, 0xffffu);
         dspic33_write_word(cpu, 0x0e3eu, 0u);
         dspic33_write_word(cpu, 0x0680u, 0x0f0eu);
         dspic33_write_word(cpu, 0x06d4u, 0x4000u);
+
         dspic33_can_test_configure_transmit(cpu, 0u, 0xde00u);
-        dspic33_can_test_write_transmit_frame(cpu, 0xde00u, &input);
+        dspic33_can_test_write_transmit_frame(cpu, 0xde00u, &transmitted_frame);
         dspic33_can_test_select_window(cpu, 0u, false);
         dspic33_can_test_select_window(cpu, 1u, false);
         dspic33_write_word(cpu, 0x0410u, 0u);
@@ -481,9 +484,10 @@ void dspic33_can_test_receive_error_cases(TestState* state, Dspic33* cpu) {
         dspic33_can_test_set_mode(cpu, 0u, 0u);
         dspic33_can_test_set_mode(cpu, 1u, 0u);
         dspic33_write_word(cpu, 0x0430u, 0x008bu);
+
         expect(state,
                dspic33_device_advance(cpu, 8u) &&
-                   drive_until_receive_error(cpu, corrupt_bits[index]),
+                   drive_until_receive_error(cpu, corruption_bits[case_index]),
                "physical CAN corruption activates receiver error handling");
         expect(state,
                (dspic33_read_word(cpu, 0x050eu) & 0x00ffu) == 1u &&
@@ -491,12 +495,13 @@ void dspic33_can_test_receive_error_cases(TestState* state, Dspic33* cpu) {
                    (dspic33_read_word(cpu, 0x050au) & 0x0020u) == 0u &&
                    !dspic33_can_test_receive_full(cpu, 1u, 0u),
                "CAN receiver error updates REC and IVRIF without B1 ERRIF");
-        expect(state, dspic33_can_pin(cpu, 65u, &high) && !high,
+        expect(state, dspic33_can_pin(cpu, 65u, &pin_level) && !pin_level,
                "error-active CAN receiver drives a dominant error flag");
         dspic33_write_word(cpu, 0x0430u, 0x0083u);
         expect(state,
-               dspic33_device_advance(cpu, 24u) && dspic33_can_pin(cpu, 65u, &high) && high &&
-                   dspic33_device_advance(cpu, 32u) && (cpu->io.can_rx_error_active & 2u) == 0u,
+               dspic33_device_advance(cpu, 24u) && dspic33_can_pin(cpu, 65u, &pin_level) &&
+                   pin_level && dspic33_device_advance(cpu, 32u) &&
+                   (cpu->io.can_rx_error_active & 2u) == 0u,
                "CAN receiver error flag ends after its delimiter");
     }
 
