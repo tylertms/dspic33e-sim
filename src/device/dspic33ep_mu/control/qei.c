@@ -655,87 +655,98 @@ static void qei_advance_counters(Dspic33* cpu, uint8_t channel, uint16_t control
 }
 
 static void qei_advance_channel(Dspic33* cpu, uint8_t channel, uint64_t cycles) {
-    uint16_t control = dspic33_device_internal_raw_word(cpu, dspic33_device_qei_bases[channel]);
-    uint16_t io_control =
+    const uint16_t control_word =
+        dspic33_device_internal_raw_word(cpu, dspic33_device_qei_bases[channel]);
+    const uint16_t io_control_word =
         dspic33_device_internal_raw_word(cpu, (uint16_t)(dspic33_device_qei_bases[channel] + 2u));
-    uint64_t divider;
-    uint64_t remaining;
-    bool counters_enabled = qei_clock_enabled(cpu, channel);
+    uint64_t filter_divider;
+    uint64_t remaining_cycles;
+    const bool are_counters_enabled = qei_clock_enabled(cpu, channel);
+
     if (!qei_filter_clock_enabled(cpu, channel) || cycles == 0u) {
         return;
     }
-    if ((io_control & QEI_IO_FILTER_ENABLE) == 0u) {
-        if (counters_enabled) {
-            qei_advance_counters(cpu, channel, control, cycles);
+    if ((io_control_word & QEI_IO_FILTER_ENABLE) == 0u) {
+        if (are_counters_enabled) {
+            qei_advance_counters(cpu, channel, control_word, cycles);
         }
         return;
     }
-    divider = qei_filter_divider(io_control);
-    remaining = cycles;
-    while (remaining != 0u) {
-        uint64_t until_sample = divider - cpu->io.qei.filter_fraction[channel];
-        uint64_t segment = remaining < until_sample ? remaining : until_sample;
-        if (counters_enabled) {
-            qei_advance_counters(cpu, channel, control, segment);
+    filter_divider = qei_filter_divider(io_control_word);
+    remaining_cycles = cycles;
+    while (remaining_cycles != 0u) {
+        const uint64_t until_sample_cycles = filter_divider - cpu->io.qei.filter_fraction[channel];
+        const uint64_t segment_cycles =
+            remaining_cycles < until_sample_cycles ? remaining_cycles : until_sample_cycles;
+
+        if (are_counters_enabled) {
+            qei_advance_counters(cpu, channel, control_word, segment_cycles);
         }
-        cpu->io.qei.filter_fraction[channel] += segment;
-        remaining -= segment;
-        if (cpu->io.qei.filter_fraction[channel] == divider) {
+        cpu->io.qei.filter_fraction[channel] += segment_cycles;
+        remaining_cycles -= segment_cycles;
+        if (cpu->io.qei.filter_fraction[channel] == filter_divider) {
             cpu->io.qei.filter_fraction[channel] = 0u;
             qei_filter_ticks(cpu, channel, 1u);
         }
-        if (cpu->io.qei.filtered_inputs[channel] == cpu->qei_inputs[channel] && remaining != 0u) {
-            if (counters_enabled) {
-                qei_advance_counters(cpu, channel, control, remaining);
+        if (cpu->io.qei.filtered_inputs[channel] == cpu->qei_inputs[channel] &&
+            remaining_cycles != 0u) {
+            if (are_counters_enabled) {
+                qei_advance_counters(cpu, channel, control_word, remaining_cycles);
             }
-            qei_accumulate_ticks(&cpu->io.qei.filter_fraction[channel], remaining, divider);
+            qei_accumulate_ticks(&cpu->io.qei.filter_fraction[channel], remaining_cycles,
+                                 filter_divider);
             memset(cpu->io.qei.filter_stability[channel], 0,
                    sizeof(cpu->io.qei.filter_stability[channel]));
-            remaining = 0u;
+            remaining_cycles = 0u;
         }
     }
 }
 
 void dspic33_device_internal_advance_qei(Dspic33* cpu, uint64_t cycles) {
-    uint8_t channel;
-    bool output_changed = false;
-    for (channel = 0u; channel < DSPIC33_QEI_COUNT; channel++) {
-        bool before = false;
-        bool before_valid = qei_pps_output_mapped(cpu, channel) &&
-                            dspic33_device_internal_qei_compare_output_value(cpu, channel, &before);
+    bool output_state_changed = false;
+
+    for (uint8_t channel = 0u; channel < DSPIC33_QEI_COUNT; channel++) {
+        bool output_was_high = false;
+        const bool output_was_valid =
+            qei_pps_output_mapped(cpu, channel) &&
+            dspic33_device_internal_qei_compare_output_value(cpu, channel, &output_was_high);
+
         qei_advance_channel(cpu, channel, cycles);
-        if (before_valid) {
-            bool after = false;
-            output_changed =
-                output_changed ||
-                (dspic33_device_internal_qei_compare_output_value(cpu, channel, &after) &&
-                 before != after);
+        if (output_was_valid) {
+            bool output_is_high = false;
+            output_state_changed =
+                output_state_changed ||
+                (dspic33_device_internal_qei_compare_output_value(cpu, channel, &output_is_high) &&
+                 output_was_high != output_is_high);
         }
     }
-    if (output_changed) {
+    if (output_state_changed) {
         dspic33_device_internal_refresh_physical_pin_inputs(cpu);
     }
 }
 
-void dspic33_device_internal_run_qei(Dspic33* cpu, uint16_t source, uint32_t value) {
-    if (source >= QEI_PMD_EVENT_BASE) {
-        uint8_t channel = (uint8_t)(source - QEI_PMD_EVENT_BASE);
-        uint16_t generation = (uint16_t)(value >> 1u);
-        if (channel < DSPIC33_QEI_COUNT && generation == cpu->io.qei.pmd_generation[channel]) {
-            cpu->io.qei.pmd_disabled[channel] = (value & 1u) != 0u;
+void dspic33_device_internal_run_qei(Dspic33* cpu, uint16_t event_source, uint32_t event_value) {
+    if (event_source >= QEI_PMD_EVENT_BASE) {
+        const uint8_t channel = (uint8_t)(event_source - QEI_PMD_EVENT_BASE);
+        const uint16_t event_generation = (uint16_t)(event_value >> 1u);
+
+        if (channel < DSPIC33_QEI_COUNT &&
+            event_generation == cpu->io.qei.pmd_generation[channel]) {
+            cpu->io.qei.pmd_disabled[channel] = (event_value & 1u) != 0u;
             if (!cpu->io.qei.pmd_disabled[channel]) {
-                uint16_t io_control = dspic33_device_internal_raw_word(
+                const uint16_t io_control_word = dspic33_device_internal_raw_word(
                     cpu, (uint16_t)(dspic33_device_qei_bases[channel] + 2u));
-                if ((io_control & QEI_IO_FILTER_ENABLE) == 0u) {
-                    uint8_t match = (uint8_t)((dspic33_device_internal_raw_word(
-                                                   cpu, dspic33_device_qei_bases[channel]) &
-                                               QEI_CONTROL_INDEX_MATCH_MASK) >>
-                                              QEI_CONTROL_INDEX_MATCH_SHIFT);
+                if ((io_control_word & QEI_IO_FILTER_ENABLE) == 0u) {
+                    const uint8_t index_match =
+                        (uint8_t)((dspic33_device_internal_raw_word(
+                                       cpu, dspic33_device_qei_bases[channel]) &
+                                   QEI_CONTROL_INDEX_MATCH_MASK) >>
+                                  QEI_CONTROL_INDEX_MATCH_SHIFT);
                     cpu->io.qei.filtered_inputs[channel] = cpu->qei_inputs[channel];
                     cpu->io.qei.logical_inputs[channel] = qei_logical_inputs(cpu, channel);
                     if ((cpu->io.qei.logical_inputs[channel] & 4u) == 0u) {
                         cpu->io.qei.index_latched[channel] = false;
-                    } else if ((cpu->io.qei.logical_inputs[channel] & 3u) == match) {
+                    } else if ((cpu->io.qei.logical_inputs[channel] & 3u) == index_match) {
                         cpu->io.qei.index_latched[channel] = true;
                     }
                 }
@@ -746,98 +757,103 @@ void dspic33_device_internal_run_qei(Dspic33* cpu, uint16_t source, uint32_t val
         }
         return;
     }
-    if (source < DSPIC33_QEI_COUNT * 4u) {
-        uint8_t channel = (uint8_t)(source / 4u);
-        bool before = false;
-        bool mapped = qei_pps_output_mapped(cpu, channel);
-        bool before_valid =
-            mapped && dspic33_device_internal_qei_compare_output_value(cpu, channel, &before);
-        qei_set_physical_input(cpu, channel, (uint8_t)(source % 4u), value != 0u);
-        if (before_valid) {
-            bool after = false;
-            if (dspic33_device_internal_qei_compare_output_value(cpu, channel, &after) &&
-                before != after) {
+    if (event_source < DSPIC33_QEI_COUNT * 4u) {
+        const uint8_t channel = (uint8_t)(event_source / 4u);
+        bool output_was_high = false;
+        const bool output_was_valid =
+            qei_pps_output_mapped(cpu, channel) &&
+            dspic33_device_internal_qei_compare_output_value(cpu, channel, &output_was_high);
+
+        qei_set_physical_input(cpu, channel, (uint8_t)(event_source % 4u), event_value != 0u);
+        if (output_was_valid) {
+            bool output_is_high = false;
+            if (dspic33_device_internal_qei_compare_output_value(cpu, channel, &output_is_high) &&
+                output_was_high != output_is_high) {
                 dspic33_device_internal_refresh_physical_pin_inputs(cpu);
             }
         }
     }
 }
 
-static void qei_update_pmd(Dspic33* cpu, uint16_t address, uint16_t previous) {
-    static const uint16_t addresses[DSPIC33_QEI_COUNT] = {0x0760u, 0x0764u};
-    static const uint16_t masks[DSPIC33_QEI_COUNT] = {0x0400u, 0x0020u};
-    uint8_t channel;
-    for (channel = 0u; channel < DSPIC33_QEI_COUNT; channel++) {
-        bool disabled;
-        if (address != addresses[channel] ||
-            ((previous ^ dspic33_device_internal_raw_word(cpu, address)) & masks[channel]) == 0u) {
+static void qei_update_pmd(Dspic33* cpu, uint16_t address, uint16_t previous_value) {
+    static const uint16_t pmd_addresses[DSPIC33_QEI_COUNT] = {0x0760u, 0x0764u};
+    static const uint16_t pmd_masks[DSPIC33_QEI_COUNT] = {0x0400u, 0x0020u};
+
+    for (uint8_t channel = 0u; channel < DSPIC33_QEI_COUNT; channel++) {
+        if (address != pmd_addresses[channel] ||
+            ((previous_value ^ dspic33_device_internal_raw_word(cpu, address)) &
+             pmd_masks[channel]) == 0u) {
             continue;
         }
-        disabled = (dspic33_device_internal_raw_word(cpu, address) & masks[channel]) != 0u;
+        const bool is_disabled =
+            (dspic33_device_internal_raw_word(cpu, address) & pmd_masks[channel]) != 0u;
         cpu->io.qei.pmd_generation[channel]++;
         if (!dspic33_schedule(cpu, DSPIC33_EVENT_QEI, (uint16_t)(QEI_PMD_EVENT_BASE + channel),
                               ((uint32_t)cpu->io.qei.pmd_generation[channel] << 1u) |
-                                  (disabled ? 1u : 0u),
+                                  (is_disabled ? 1u : 0u),
                               dspic33_device_instruction_cycles(cpu, 1u))) {
-            dspic33_device_internal_raw_write_word(cpu, address, previous);
+            dspic33_device_internal_raw_write_word(cpu, address, previous_value);
             cpu->io.qei.pmd_generation[channel]++;
             cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
         }
     }
 }
 
-void dspic33_device_internal_update_qei_register(Dspic33* cpu, uint16_t address, uint16_t previous,
-                                                 uint16_t requested) {
+void dspic33_device_internal_update_qei_register(Dspic33* cpu, uint16_t address,
+                                                 uint16_t previous_value,
+                                                 uint16_t requested_value) {
     uint8_t channel;
-    uint16_t offset;
+
+    uint16_t register_offset;
     if (address == 0x0760u || address == 0x0764u) {
-        qei_update_pmd(cpu, address, previous);
+        qei_update_pmd(cpu, address, previous_value);
         return;
     }
-    if (!qei_register(address, &channel, &offset)) {
+    if (!qei_register(address, &channel, &register_offset)) {
         return;
     }
     if (cpu->io.qei.pmd_disabled[channel]) {
-        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(address & 0xfffeu), previous);
+        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(address & 0xfffeu), previous_value);
         return;
     }
-    if (offset == 4u) {
-        uint16_t status = dspic33_device_internal_raw_word(
+    if (register_offset == 4u) {
+        uint16_t status_word = dspic33_device_internal_raw_word(
             cpu, (uint16_t)(dspic33_device_qei_bases[channel] + 4u));
-        status = (uint16_t)((status & QEI_STATUS_ENABLE_MASK) |
-                            (previous & requested & QEI_STATUS_FLAG_MASK));
+        status_word = (uint16_t)((status_word & QEI_STATUS_ENABLE_MASK) |
+                                 (previous_value & requested_value & QEI_STATUS_FLAG_MASK));
         dspic33_device_internal_raw_write_word(
-            cpu, (uint16_t)(dspic33_device_qei_bases[channel] + 4u), status);
+            cpu, (uint16_t)(dspic33_device_qei_bases[channel] + 4u), status_word);
         qei_refresh_interrupt(cpu, channel);
-    } else if (offset == 0u || offset == 2u) {
+    } else if (register_offset == 0u || register_offset == 2u) {
         memset(cpu->io.qei.filter_stability[channel], 0,
                sizeof(cpu->io.qei.filter_stability[channel]));
         cpu->io.qei.counter_fraction[channel] = 0u;
         cpu->io.qei.filter_fraction[channel] = 0u;
-        if (offset == 2u && (dspic33_device_internal_raw_word(
-                                 cpu, (uint16_t)(dspic33_device_qei_bases[channel] + 2u)) &
-                             QEI_IO_FILTER_ENABLE) == 0u) {
+        if (register_offset == 2u && (dspic33_device_internal_raw_word(
+                                          cpu, (uint16_t)(dspic33_device_qei_bases[channel] + 2u)) &
+                                      QEI_IO_FILTER_ENABLE) == 0u) {
             cpu->io.qei.filtered_inputs[channel] = cpu->qei_inputs[channel];
         }
         cpu->io.qei.logical_inputs[channel] = qei_logical_inputs(cpu, channel);
-        if (offset == 0u) {
+        if (register_offset == 0u) {
             qei_refresh_comparisons(cpu, channel);
         }
-    } else if (offset == QEI_POSITION_LOW) {
+    } else if (register_offset == QEI_POSITION_LOW) {
         dspic33_device_internal_raw_write_word(
             cpu, (uint16_t)(dspic33_device_qei_bases[channel] + QEI_POSITION_HIGH),
             dspic33_device_internal_raw_word(
                 cpu, (uint16_t)(dspic33_device_qei_bases[channel] + QEI_POSITION_HOLD)));
         qei_refresh_comparisons(cpu, channel);
-    } else if (offset == QEI_POSITION_HIGH) {
+    } else if (register_offset == QEI_POSITION_HIGH) {
         qei_refresh_comparisons(cpu, channel);
-    } else if (offset == QEI_INDEX_LOW) {
+    } else if (register_offset == QEI_INDEX_LOW) {
         dspic33_device_internal_raw_write_word(
             cpu, (uint16_t)(dspic33_device_qei_bases[channel] + QEI_INDEX_HIGH),
             dspic33_device_internal_raw_word(
                 cpu, (uint16_t)(dspic33_device_qei_bases[channel] + QEI_INDEX_HOLD)));
-    } else if (offset == QEI_GREATER_EQUAL_LOW || offset == QEI_GREATER_EQUAL_HIGH ||
-               offset == QEI_LESS_EQUAL_LOW || offset == QEI_LESS_EQUAL_HIGH) {
+    } else if (register_offset == QEI_GREATER_EQUAL_LOW ||
+               register_offset == QEI_GREATER_EQUAL_HIGH || register_offset == QEI_LESS_EQUAL_LOW ||
+               register_offset == QEI_LESS_EQUAL_HIGH) {
         qei_refresh_comparisons(cpu, channel);
     }
 }
@@ -847,38 +863,40 @@ static bool qei_read_complete(const Dspic33* cpu, uint16_t address) {
            address == cpu->io.cpu_read_address + 1u;
 }
 
-bool dspic33_device_internal_qei_read_register(Dspic33* cpu, uint16_t address, uint8_t* value) {
+bool dspic33_device_internal_qei_read_register(Dspic33* cpu, uint16_t address,
+                                               uint8_t* read_value) {
     uint8_t channel;
-    uint16_t offset;
-    if (!qei_register(address, &channel, &offset)) {
+    uint16_t register_offset;
+
+    if (!qei_register(address, &channel, &register_offset)) {
         return false;
     }
     if (cpu->io.qei.pmd_disabled[channel]) {
-        *value = 0u;
+        *read_value = 0u;
         return true;
     }
-    if (offset == 2u) {
-        uint16_t io_control = dspic33_device_internal_raw_word(
+    if (register_offset == 2u) {
+        uint16_t io_control_word = dspic33_device_internal_raw_word(
             cpu, (uint16_t)(dspic33_device_qei_bases[channel] + 2u));
-        io_control =
-            (uint16_t)((io_control & ~QEI_IO_INPUT_MASK) | cpu->io.qei.logical_inputs[channel]);
-        *value = (uint8_t)(io_control >> ((address & 1u) * 8u));
+        io_control_word = (uint16_t)((io_control_word & ~QEI_IO_INPUT_MASK) |
+                                     cpu->io.qei.logical_inputs[channel]);
+        *read_value = (uint8_t)(io_control_word >> ((address & 1u) * 8u));
     }
-    if (offset == QEI_POSITION_LOW && (address & 1u) == 0u) {
+    if (register_offset == QEI_POSITION_LOW && (address & 1u) == 0u) {
         dspic33_device_internal_raw_write_word(
             cpu, (uint16_t)(dspic33_device_qei_bases[channel] + QEI_POSITION_HOLD),
             dspic33_device_internal_raw_word(
                 cpu, (uint16_t)(dspic33_device_qei_bases[channel] + QEI_POSITION_HIGH)));
-    } else if (offset == QEI_INDEX_LOW && (address & 1u) == 0u) {
+    } else if (register_offset == QEI_INDEX_LOW && (address & 1u) == 0u) {
         dspic33_device_internal_raw_write_word(
             cpu, (uint16_t)(dspic33_device_qei_bases[channel] + QEI_INDEX_HOLD),
             dspic33_device_internal_raw_word(
                 cpu, (uint16_t)(dspic33_device_qei_bases[channel] + QEI_INDEX_HIGH)));
-    } else if (offset == QEI_INTERVAL_HOLD_LOW && (address & 1u) == 0u) {
+    } else if (register_offset == QEI_INTERVAL_HOLD_LOW && (address & 1u) == 0u) {
         cpu->io.qei.interval_hold_locked[channel] = true;
-    } else if (offset == QEI_INTERVAL_HOLD_HIGH && qei_read_complete(cpu, address)) {
+    } else if (register_offset == QEI_INTERVAL_HOLD_HIGH && qei_read_complete(cpu, address)) {
         cpu->io.qei.interval_hold_locked[channel] = false;
-    } else if (offset == QEI_VELOCITY && qei_read_complete(cpu, address)) {
+    } else if (register_offset == QEI_VELOCITY && qei_read_complete(cpu, address)) {
         dspic33_device_internal_raw_write_word(
             cpu, (uint16_t)(dspic33_device_qei_bases[channel] + QEI_VELOCITY), 0u);
     }
