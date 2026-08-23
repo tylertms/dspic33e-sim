@@ -1,32 +1,36 @@
 #include "device/dspic33ep_mu/internal.h"
 
-uint16_t dspic33_device_internal_can_filter_word(const Dspic33* cpu, uint8_t channel,
-                                                 uint16_t offset) {
-    return cpu->io.can_filter_window[channel][(offset - 0x20u) / 2u];
+uint16_t dspic33_device_internal_can_filter_word(const Dspic33* cpu, uint8_t channel_index,
+                                                 uint16_t register_offset) {
+    return cpu->io.can_filter_window[channel_index][(register_offset - 0x20u) / 2u];
 }
 
-uint8_t dspic33_device_internal_can_mode(const Dspic33* cpu, uint8_t channel) {
+uint8_t dspic33_device_internal_can_mode(const Dspic33* cpu, uint8_t channel_index) {
     return (
-        uint8_t)((dspic33_device_internal_raw_word(cpu, dspic33_device_can_bases[channel]) >> 5u) &
+        uint8_t)((dspic33_device_internal_raw_word(cpu, dspic33_device_can_bases[channel_index]) >>
+                  5u) &
                  7u);
 }
 
-bool dspic33_device_internal_can_power_enabled(const Dspic33* cpu, uint8_t channel) {
-    uint16_t control = dspic33_device_internal_raw_word(cpu, dspic33_device_can_bases[channel]);
-    if ((dspic33_device_internal_raw_word(cpu, 0x0760u) & (uint16_t)(2u << channel)) != 0u) {
+bool dspic33_device_internal_can_power_enabled(const Dspic33* cpu, uint8_t channel_index) {
+    const uint16_t can_control =
+        dspic33_device_internal_raw_word(cpu, dspic33_device_can_bases[channel_index]);
+
+    if ((dspic33_device_internal_raw_word(cpu, 0x0760u) & (uint16_t)(2u << channel_index)) != 0u) {
         return false;
     }
     if (cpu->power_state == DSPIC33_POWER_ACTIVE) {
         return true;
     }
-    return cpu->power_state == DSPIC33_POWER_IDLE && (control & CAN_STOP_IDLE) == 0u;
+    return cpu->power_state == DSPIC33_POWER_IDLE && (can_control & CAN_STOP_IDLE) == 0u;
 }
 
-uint8_t dspic33_device_internal_can_buffer_count(const Dspic33* cpu, uint8_t channel) {
-    static const uint8_t counts[] = {4u, 6u, 8u, 12u, 16u, 24u, 32u, 32u};
-    uint16_t control =
-        dspic33_device_internal_raw_word(cpu, (uint16_t)(dspic33_device_can_bases[channel] + 6u));
-    return counts[(control >> 13u) & 7u];
+uint8_t dspic33_device_internal_can_buffer_count(const Dspic33* cpu, uint8_t channel_index) {
+    static const uint8_t buffer_counts[] = {4u, 6u, 8u, 12u, 16u, 24u, 32u, 32u};
+    const uint16_t can_control = dspic33_device_internal_raw_word(
+        cpu, (uint16_t)(dspic33_device_can_bases[channel_index] + 6u));
+
+    return buffer_counts[(can_control >> 13u) & 7u];
 }
 
 uint16_t dspic33_device_internal_can_buffer_control(const Dspic33* cpu, uint8_t channel,
