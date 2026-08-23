@@ -509,113 +509,129 @@ void dspic33_device_internal_can_capture_received_frame(Dspic33* cpu, uint8_t ch
     }
 }
 
-static uint32_t can_serial_value(const bool* bits, uint16_t first, uint8_t width) {
-    uint32_t value = 0u;
-    for (uint8_t index = 0u; index < width; index++) {
-        value = (value << 1u) | (bits[first + index] ? 1u : 0u);
+static uint32_t can_serial_value(const bool* serial_bits, uint16_t start_index, uint8_t bit_width) {
+    uint32_t field_value = 0u;
+
+    for (uint8_t bit_index = 0u; bit_index < bit_width; bit_index++) {
+        field_value = (field_value << 1u) | (serial_bits[start_index + bit_index] ? 1u : 0u);
     }
-    return value;
+    return field_value;
 }
 
 Dspic33CanSerialResult dspic33_device_internal_can_decode_serial(const Dspic33* cpu,
                                                                  uint8_t channel,
                                                                  Dspic33CanFrame* frame,
                                                                  uint16_t* tail_start) {
-    bool raw[128];
-    uint16_t serial_count = cpu->io.can_rx_serial_count[channel];
-    uint16_t serial_index = 0u;
-    uint16_t raw_count = 0u;
-    uint16_t expected = 0u;
-    bool previous = false;
-    bool expect_stuff = false;
-    uint8_t run = 0u;
-    bool extended = false;
-    bool remote = false;
-    uint8_t length = 0u;
+    bool raw_bits[128];
+    uint16_t serial_bit_count = cpu->io.can_rx_serial_count[channel];
+    uint16_t serial_bit_index = 0u;
+    uint16_t raw_bit_count = 0u;
+    uint16_t expected_raw_bit_count = 0u;
+    bool previous_bit = false;
+    bool expect_stuffed_bit = false;
+    uint8_t same_bit_count = 0u;
+    bool is_extended = false;
+    bool is_remote = false;
+    uint8_t data_length = 0u;
+
     memset(frame, 0, sizeof(*frame));
     *tail_start = 0u;
-    while (serial_index < serial_count) {
-        bool bit = cpu->io.can_rx_serial_bits[channel][serial_index++] != 0u;
-        if (expect_stuff) {
-            if (bit == previous) {
+    while (serial_bit_index < serial_bit_count) {
+        bool received_bit = cpu->io.can_rx_serial_bits[channel][serial_bit_index++] != 0u;
+
+        if (expect_stuffed_bit) {
+            if (received_bit == previous_bit) {
                 return CAN_SERIAL_INVALID;
             }
-            previous = bit;
-            run = 1u;
-            expect_stuff = false;
-            if (expected != 0u && raw_count == expected) {
+            previous_bit = received_bit;
+            same_bit_count = 1u;
+            expect_stuffed_bit = false;
+            if (expected_raw_bit_count != 0u && raw_bit_count == expected_raw_bit_count) {
                 break;
             }
             continue;
         }
-        raw[raw_count++] = bit;
-        if (raw_count == 1u && bit) {
+
+        raw_bits[raw_bit_count++] = received_bit;
+        if (raw_bit_count == 1u && received_bit) {
             return CAN_SERIAL_INVALID;
         }
-        if (run == 0u || bit != previous) {
-            previous = bit;
-            run = 1u;
+
+        if (same_bit_count == 0u || received_bit != previous_bit) {
+            previous_bit = received_bit;
+            same_bit_count = 1u;
         } else {
-            run++;
+            same_bit_count++;
         }
-        if (run == 5u) {
-            expect_stuff = true;
+
+        if (same_bit_count == 5u) {
+            expect_stuffed_bit = true;
         }
-        if (raw_count >= 14u) {
-            extended = raw[13];
+
+        if (raw_bit_count >= 14u) {
+            is_extended = raw_bits[13];
         }
-        if (!extended && raw_count >= 19u) {
-            remote = raw[12];
-            length = (uint8_t)can_serial_value(raw, 15u, 4u);
-            if (length > 8u) {
-                length = 8u;
+
+        if (!is_extended && raw_bit_count >= 19u) {
+            is_remote = raw_bits[12];
+            data_length = (uint8_t)can_serial_value(raw_bits, 15u, 4u);
+            if (data_length > 8u) {
+                data_length = 8u;
             }
-            expected = (uint16_t)(34u + (remote ? 0u : length * 8u));
-        } else if (extended && raw_count >= 39u) {
-            remote = raw[32];
-            length = (uint8_t)can_serial_value(raw, 35u, 4u);
-            if (length > 8u) {
-                length = 8u;
+            expected_raw_bit_count = (uint16_t)(34u + (is_remote ? 0u : data_length * 8u));
+        } else if (is_extended && raw_bit_count >= 39u) {
+            is_remote = raw_bits[32];
+            data_length = (uint8_t)can_serial_value(raw_bits, 35u, 4u);
+            if (data_length > 8u) {
+                data_length = 8u;
             }
-            expected = (uint16_t)(54u + (remote ? 0u : length * 8u));
+            expected_raw_bit_count = (uint16_t)(54u + (is_remote ? 0u : data_length * 8u));
         }
-        if (expected != 0u && raw_count == expected && !expect_stuff) {
+
+        if (expected_raw_bit_count != 0u && raw_bit_count == expected_raw_bit_count &&
+            !expect_stuffed_bit) {
             break;
         }
-        if (raw_count >= sizeof(raw)) {
+        if (raw_bit_count >= sizeof(raw_bits)) {
             return CAN_SERIAL_INVALID;
         }
     }
-    if (expected == 0u || raw_count < expected || expect_stuff) {
+
+    if (expected_raw_bit_count == 0u || raw_bit_count < expected_raw_bit_count ||
+        expect_stuffed_bit) {
         return CAN_SERIAL_INCOMPLETE;
     }
-    frame->extended = extended;
-    frame->remote = remote;
-    frame->length = length;
-    if (extended) {
+    frame->extended = is_extended;
+    frame->remote = is_remote;
+    frame->length = data_length;
+    if (is_extended) {
         frame->identifier =
-            (can_serial_value(raw, 1u, 11u) << 18u) | can_serial_value(raw, 14u, 18u);
+            (can_serial_value(raw_bits, 1u, 11u) << 18u) | can_serial_value(raw_bits, 14u, 18u);
     } else {
-        frame->identifier = can_serial_value(raw, 1u, 11u);
+        frame->identifier = can_serial_value(raw_bits, 1u, 11u);
     }
-    uint16_t data_index = extended ? 39u : 19u;
-    for (uint8_t index = 0u; index < length && !remote; index++) {
-        frame->data[index] = (uint8_t)can_serial_value(raw, data_index + index * 8u, 8u);
+    uint16_t data_start_index = is_extended ? 39u : 19u;
+
+    for (uint8_t data_index = 0u; data_index < data_length && !is_remote; data_index++) {
+        frame->data[data_index] =
+            (uint8_t)can_serial_value(raw_bits, data_start_index + data_index * 8u, 8u);
     }
-    *tail_start = serial_index;
-    uint16_t crc_index = (uint16_t)(expected - 15u);
-    if (can_crc(raw, (uint8_t)crc_index) != (uint16_t)can_serial_value(raw, crc_index, 15u)) {
+    *tail_start = serial_bit_index;
+    uint16_t crc_start_index = (uint16_t)(expected_raw_bit_count - 15u);
+
+    if (can_crc(raw_bits, (uint8_t)crc_start_index) !=
+        (uint16_t)can_serial_value(raw_bits, crc_start_index, 15u)) {
         return CAN_SERIAL_INVALID;
     }
-    if ((uint16_t)(serial_count - serial_index) < 10u) {
+    if ((uint16_t)(serial_bit_count - serial_bit_index) < 10u) {
         return CAN_SERIAL_INCOMPLETE;
     }
-    if (!cpu->io.can_rx_serial_bits[channel][serial_index] ||
-        !cpu->io.can_rx_serial_bits[channel][serial_index + 2u]) {
+    if (!cpu->io.can_rx_serial_bits[channel][serial_bit_index] ||
+        !cpu->io.can_rx_serial_bits[channel][serial_bit_index + 2u]) {
         return CAN_SERIAL_INVALID;
     }
-    for (uint8_t index = 3u; index < 9u; index++) {
-        if (!cpu->io.can_rx_serial_bits[channel][serial_index + index]) {
+    for (uint8_t tail_index = 3u; tail_index < 9u; tail_index++) {
+        if (!cpu->io.can_rx_serial_bits[channel][serial_bit_index + tail_index]) {
             return CAN_SERIAL_INVALID;
         }
     }
