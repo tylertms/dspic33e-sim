@@ -3,23 +3,23 @@
 bool dspic33_internal_flash_read_erratum_sequence_completed(Dspic33* cpu, uint32_t opcode,
                                                             uint32_t instruction_pc,
                                                             bool psv_read) {
-    bool table_read = (opcode & 0xff0000u) == 0xba0000u;
-    bool flash_read = psv_read || table_read;
-    bool move_double = (opcode & 0xff0000u) == 0xbe0000u;
-    bool aligned_first_group = (instruction_pc & 2u) == 0u;
-    bool repeated = (opcode & 0xff8000u) == 0x090000u && cpu->rcount != 0u;
-    uint32_t words;
+    const bool is_table_read = (opcode & 0xff0000u) == 0xba0000u;
+    const bool is_flash_read = psv_read || is_table_read;
+    const bool is_double_move = (opcode & 0xff0000u) == 0xbe0000u;
+    const bool first_group_aligned = (instruction_pc & 2u) == 0u;
+    const bool is_repeated_instruction = (opcode & 0xff8000u) == 0x090000u && cpu->rcount != 0u;
+    uint32_t instruction_word_count;
 
     if (dspic33_internal_instruction_changes_program_flow(cpu, opcode, instruction_pc)) {
         dspic33_cancel_flash_read_sequence(cpu);
         return false;
     }
-    if (cpu->flash_read_erratum_candidate && flash_read) {
+    if (cpu->flash_read_erratum_candidate && is_flash_read) {
         dspic33_cancel_flash_read_sequence(cpu);
         return true;
     }
     cpu->flash_read_erratum_candidate = false;
-    if (move_double && psv_read && aligned_first_group) {
+    if (is_double_move && psv_read && first_group_aligned) {
         cpu->flash_read_connecting_words = 0u;
         cpu->flash_read_erratum_armed = true;
         cpu->flash_read_connecting_ends_repeat = false;
@@ -28,24 +28,25 @@ bool dspic33_internal_flash_read_erratum_sequence_completed(Dspic33* cpu, uint32
     if (!cpu->flash_read_erratum_armed) {
         return false;
     }
-    if (flash_read && aligned_first_group) {
+    if (is_flash_read && first_group_aligned) {
         dspic33_cancel_flash_read_sequence(cpu);
         return false;
     }
-    if (flash_read && cpu->flash_read_connecting_ends_repeat) {
+    if (is_flash_read && cpu->flash_read_connecting_ends_repeat) {
         dspic33_cancel_flash_read_sequence(cpu);
         return false;
     }
-    if (flash_read && cpu->flash_read_connecting_words >= 2u &&
+    if (is_flash_read && cpu->flash_read_connecting_words >= 2u &&
         !cpu->flash_read_connecting_ends_repeat) {
         cpu->flash_read_erratum_candidate = true;
         return false;
     }
-    words = dspic33_internal_instruction_length(opcode) / 2u;
-    cpu->flash_read_connecting_words = cpu->flash_read_connecting_words > UINT16_MAX - words
-                                           ? UINT16_MAX
-                                           : (uint16_t)(cpu->flash_read_connecting_words + words);
-    cpu->flash_read_connecting_ends_repeat = repeated;
+    instruction_word_count = dspic33_internal_instruction_length(opcode) / 2u;
+    cpu->flash_read_connecting_words =
+        cpu->flash_read_connecting_words > UINT16_MAX - instruction_word_count
+            ? UINT16_MAX
+            : (uint16_t)(cpu->flash_read_connecting_words + instruction_word_count);
+    cpu->flash_read_connecting_ends_repeat = is_repeated_instruction;
     return false;
 }
 
@@ -79,22 +80,23 @@ bool dspic33_internal_stack_encoding_valid(uint32_t opcode) {
 }
 
 bool dspic33_internal_bit_encoding_valid(uint32_t opcode) {
-    uint8_t kind = (uint8_t)((opcode >> 16u) & 0x07u);
-    bool file = (opcode & 0x080000u) != 0u;
-    uint8_t mode = (uint8_t)((opcode >> 4u) & 0x07u);
+    const uint8_t instruction_kind = (uint8_t)((opcode >> 16u) & 0x07u);
+    const bool is_file_access = (opcode & 0x080000u) != 0u;
+    const uint8_t addressing_mode = (uint8_t)((opcode >> 4u) & 0x07u);
 
-    if (file) {
-        return kind != 5u && (kind != 4u || (opcode & 0x001ffeu) != 0x000042u);
+    if (is_file_access) {
+        return instruction_kind != 5u &&
+               (instruction_kind != 4u || (opcode & 0x001ffeu) != 0x000042u);
     }
-    if (mode >= 6u) {
+    if (addressing_mode >= 6u) {
         return false;
     }
-    if (kind <= 2u) {
-        bool byte_mode = (opcode & 0x000400u) != 0u;
-        uint8_t bit = (uint8_t)((opcode >> 12u) & 0x0fu);
-        return (opcode & 0x000b80u) == 0u && (!byte_mode || bit < 8u);
+    if (instruction_kind <= 2u) {
+        const bool is_byte_mode = (opcode & 0x000400u) != 0u;
+        const uint8_t bit_index = (uint8_t)((opcode >> 12u) & 0x0fu);
+        return (opcode & 0x000b80u) == 0u && (!is_byte_mode || bit_index < 8u);
     }
-    if (kind <= 5u) {
+    if (instruction_kind <= 5u) {
         return (opcode & 0x000780u) == 0u;
     }
     return (opcode & 0x000f80u) == 0u;
