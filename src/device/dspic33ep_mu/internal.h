@@ -17,8 +17,8 @@ bool dspic33_device_internal_adc_pmd_disabled(const Dspic33* cpu, uint8_t module
 bool dspic33_device_internal_adc_register_write_mask(uint16_t address, uint16_t* writable);
 bool dspic33_device_internal_auxiliary_clock_configuration_locked(const Dspic33* cpu);
 bool dspic33_device_internal_auxiliary_pll_reconfiguration(uint16_t previous, uint16_t control);
-bool dspic33_device_internal_byte_queue_pop(Dspic33ByteQueue* queue, uint8_t* value);
-bool dspic33_device_internal_byte_queue_push(Dspic33ByteQueue* queue, uint8_t value);
+bool dspic33_device_internal_byte_queue_pop(Dspic33ByteQueue* queue, uint8_t* output_byte);
+bool dspic33_device_internal_byte_queue_push(Dspic33ByteQueue* queue, uint8_t byte_value);
 bool dspic33_device_internal_can_capture_enabled(const Dspic33* cpu);
 bool dspic33_device_internal_can_power_enabled(const Dspic33* cpu, uint8_t channel);
 bool dspic33_device_internal_can_queue_pop(Dspic33CanQueue* queue, Dspic33CanFrame* frame);
@@ -102,15 +102,18 @@ bool dspic33_device_internal_timer_is_type_b(uint8_t timer);
 bool dspic33_device_internal_timer_pair_enabled(const Dspic33* cpu, uint8_t timer);
 bool dspic33_device_internal_timer_pmd_disabled(const Dspic33* cpu, uint8_t timer);
 bool dspic33_device_internal_timer_power_enabled(const Dspic33* cpu, uint8_t timer, bool external);
-bool dspic33_device_internal_uart_fifo_front(const Dspic33UartFifo* fifo, Dspic33UartFrame* frame);
-bool dspic33_device_internal_uart_fifo_pop(Dspic33UartFifo* fifo, Dspic33UartFrame* frame);
-bool dspic33_device_internal_uart_fifo_push(Dspic33UartFifo* fifo, const Dspic33UartFrame* frame);
+bool dspic33_device_internal_uart_fifo_front(const Dspic33UartFifo* fifo,
+                                             Dspic33UartFrame* output_frame);
+bool dspic33_device_internal_uart_fifo_pop(Dspic33UartFifo* fifo, Dspic33UartFrame* output_frame);
+bool dspic33_device_internal_uart_fifo_push(Dspic33UartFifo* fifo,
+                                            const Dspic33UartFrame* input_frame);
 bool dspic33_device_internal_uart_module_disabled(const Dspic33* cpu, uint8_t channel);
 bool dspic33_device_internal_uart_pps_output_value(const Dspic33* cpu, uint8_t port, uint8_t pin,
                                                    bool* high);
-bool dspic33_device_internal_uart_queue_pop(Dspic33UartQueue* queue, Dspic33UartFrame* frame);
+bool dspic33_device_internal_uart_queue_pop(Dspic33UartQueue* queue,
+                                            Dspic33UartFrame* output_frame);
 bool dspic33_device_internal_uart_queue_push(Dspic33UartQueue* queue,
-                                             const Dspic33UartFrame* frame);
+                                             const Dspic33UartFrame* input_frame);
 bool dspic33_device_internal_uart_receiver_operating(const Dspic33* cpu, uint8_t channel);
 bool dspic33_device_internal_uart_register_write_mask(const Dspic33* cpu, uint16_t address,
                                                       uint16_t* writable);
@@ -126,10 +129,10 @@ bool dspic33_device_internal_usb_register_write_mask(const Dspic33* cpu, uint16_
                                                      uint16_t previous, uint16_t* writable);
 bool dspic33_device_internal_usb_schedule_bus_event(Dspic33* cpu, Dspic33UsbBusEvent event,
                                                     uint16_t value, uint64_t delay, bool external);
-bool dspic33_device_internal_word_queue_front(const Dspic33WordQueue* queue, uint16_t* value);
-bool dspic33_device_internal_word_queue_pop(Dspic33WordQueue* queue, uint16_t* value);
-bool dspic33_device_internal_word_queue_push_front(Dspic33WordQueue* queue, uint16_t value);
-bool dspic33_device_internal_word_queue_push(Dspic33WordQueue* queue, uint16_t value);
+bool dspic33_device_internal_word_queue_front(const Dspic33WordQueue* queue, uint16_t* output_word);
+bool dspic33_device_internal_word_queue_pop(Dspic33WordQueue* queue, uint16_t* output_word);
+bool dspic33_device_internal_word_queue_push_front(Dspic33WordQueue* queue, uint16_t word_value);
+bool dspic33_device_internal_word_queue_push(Dspic33WordQueue* queue, uint16_t word_value);
 const Dspic33PpsPin* dspic33_device_internal_pps_pin(uint8_t pin);
 bool dspic33_device_internal_pps_pin_bonded(const Dspic33* cpu, uint8_t pin);
 Dspic33CanFrame dspic33_device_internal_can_decode_frame(const uint16_t words[8]);

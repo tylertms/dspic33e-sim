@@ -655,114 +655,129 @@ bool dspic33_device_internal_pwm_register_write_mask(const Dspic33* cpu, uint16_
     return false;
 }
 
-bool dspic33_device_internal_byte_queue_push(Dspic33ByteQueue* queue, uint8_t value) {
-    uint16_t index;
+bool dspic33_device_internal_byte_queue_push(Dspic33ByteQueue* queue, uint8_t byte_value) {
+    uint16_t queue_index;
     if (queue->count == sizeof(queue->bytes)) {
         return false;
     }
-    index = (uint16_t)((queue->head + queue->count) % sizeof(queue->bytes));
-    queue->bytes[index] = value;
+
+    queue_index = (uint16_t)((queue->head + queue->count) % sizeof(queue->bytes));
+    queue->bytes[queue_index] = byte_value;
     queue->count++;
     return true;
 }
 
-bool dspic33_device_internal_byte_queue_pop(Dspic33ByteQueue* queue, uint8_t* value) {
+bool dspic33_device_internal_byte_queue_pop(Dspic33ByteQueue* queue, uint8_t* output_byte) {
     if (queue->count == 0u) {
         return false;
     }
-    *value = queue->bytes[queue->head];
+
+    *output_byte = queue->bytes[queue->head];
     queue->head = (uint16_t)((queue->head + 1u) % sizeof(queue->bytes));
     queue->count--;
     return true;
 }
 
-bool dspic33_device_internal_uart_fifo_push(Dspic33UartFifo* fifo, const Dspic33UartFrame* frame) {
-    uint8_t index;
+bool dspic33_device_internal_uart_fifo_push(Dspic33UartFifo* fifo,
+                                            const Dspic33UartFrame* input_frame) {
+    uint8_t queue_index;
     if (fifo->count == DSPIC33_UART_FIFO_SIZE) {
         return false;
     }
-    index = (uint8_t)((fifo->head + fifo->count) % DSPIC33_UART_FIFO_SIZE);
-    fifo->frames[index] = *frame;
+
+    queue_index = (uint8_t)((fifo->head + fifo->count) % DSPIC33_UART_FIFO_SIZE);
+    fifo->frames[queue_index] = *input_frame;
     fifo->count++;
     return true;
 }
 
-bool dspic33_device_internal_uart_fifo_front(const Dspic33UartFifo* fifo, Dspic33UartFrame* frame) {
+bool dspic33_device_internal_uart_fifo_front(const Dspic33UartFifo* fifo,
+                                             Dspic33UartFrame* output_frame) {
     if (fifo->count == 0u) {
         return false;
     }
-    *frame = fifo->frames[fifo->head];
+
+    *output_frame = fifo->frames[fifo->head];
     return true;
 }
 
-bool dspic33_device_internal_uart_fifo_pop(Dspic33UartFifo* fifo, Dspic33UartFrame* frame) {
-    if (!dspic33_device_internal_uart_fifo_front(fifo, frame)) {
+bool dspic33_device_internal_uart_fifo_pop(Dspic33UartFifo* fifo, Dspic33UartFrame* output_frame) {
+    if (!dspic33_device_internal_uart_fifo_front(fifo, output_frame)) {
         return false;
     }
+
     fifo->head = (uint8_t)((fifo->head + 1u) % DSPIC33_UART_FIFO_SIZE);
     fifo->count--;
     return true;
 }
 
 bool dspic33_device_internal_uart_queue_push(Dspic33UartQueue* queue,
-                                             const Dspic33UartFrame* frame) {
-    uint16_t index;
+                                             const Dspic33UartFrame* input_frame) {
+    uint16_t queue_index;
     if (queue->count == DSPIC33_UART_QUEUE_SIZE) {
         return false;
     }
-    index = (uint16_t)((queue->head + queue->count) % DSPIC33_UART_QUEUE_SIZE);
-    queue->frames[index] = *frame;
+
+    queue_index = (uint16_t)((queue->head + queue->count) % DSPIC33_UART_QUEUE_SIZE);
+    queue->frames[queue_index] = *input_frame;
     queue->count++;
     return true;
 }
 
-bool dspic33_device_internal_uart_queue_pop(Dspic33UartQueue* queue, Dspic33UartFrame* frame) {
+bool dspic33_device_internal_uart_queue_pop(Dspic33UartQueue* queue,
+                                            Dspic33UartFrame* output_frame) {
     if (queue->count == 0u) {
         return false;
     }
-    *frame = queue->frames[queue->head];
+
+    *output_frame = queue->frames[queue->head];
     queue->head = (uint16_t)((queue->head + 1u) % DSPIC33_UART_QUEUE_SIZE);
     queue->count--;
     return true;
 }
 
-bool dspic33_device_internal_word_queue_push(Dspic33WordQueue* queue, uint16_t value) {
-    uint8_t index;
+bool dspic33_device_internal_word_queue_push(Dspic33WordQueue* queue, uint16_t word_value) {
+    uint8_t queue_index;
     if (queue->count == sizeof(queue->words) / sizeof(queue->words[0])) {
         return false;
     }
-    index =
+
+    queue_index =
         (uint8_t)((queue->head + queue->count) % (sizeof(queue->words) / sizeof(queue->words[0])));
-    queue->words[index] = value;
+    queue->words[queue_index] = word_value;
     queue->count++;
     return true;
 }
 
-bool dspic33_device_internal_word_queue_pop(Dspic33WordQueue* queue, uint16_t* value) {
+bool dspic33_device_internal_word_queue_pop(Dspic33WordQueue* queue, uint16_t* output_word) {
     if (queue->count == 0u) {
         return false;
     }
-    *value = queue->words[queue->head];
+
+    *output_word = queue->words[queue->head];
     queue->head = (uint8_t)((queue->head + 1u) % (sizeof(queue->words) / sizeof(queue->words[0])));
     queue->count--;
     return true;
 }
 
-bool dspic33_device_internal_word_queue_push_front(Dspic33WordQueue* queue, uint16_t value) {
-    uint8_t capacity = (uint8_t)(sizeof(queue->words) / sizeof(queue->words[0]));
-    if (queue->count == capacity) {
+bool dspic33_device_internal_word_queue_push_front(Dspic33WordQueue* queue, uint16_t word_value) {
+    uint8_t queue_capacity = (uint8_t)(sizeof(queue->words) / sizeof(queue->words[0]));
+    if (queue->count == queue_capacity) {
         return false;
     }
-    queue->head = (uint8_t)((queue->head + capacity - 1u) % capacity);
-    queue->words[queue->head] = value;
+
+    queue->head = (uint8_t)((queue->head + queue_capacity - 1u) % queue_capacity);
+    queue->words[queue->head] = word_value;
     queue->count++;
     return true;
 }
 
-bool dspic33_device_internal_word_queue_front(const Dspic33WordQueue* queue, uint16_t* value) {
+bool dspic33_device_internal_word_queue_front(const Dspic33WordQueue* queue,
+                                              uint16_t* output_word) {
     if (queue->count == 0u) {
         return false;
     }
-    *value = queue->words[queue->head];
+
+    *output_word = queue->words[queue->head];
     return true;
 }
