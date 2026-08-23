@@ -1,110 +1,113 @@
 #include "device/dspic33ep_mu/communication/i2c/internal.h"
 
 static bool address_matches(const Dspic33* cpu, uint8_t channel, uint16_t address) {
-    uint16_t control =
+    uint16_t control_word =
         dspic33_i2c_internal_raw_word(cpu, (uint16_t)(dspic33_i2c_bases[channel] + I2C_CON));
-    uint16_t configured =
+    uint16_t configured_address =
         dspic33_i2c_internal_raw_word(cpu, (uint16_t)(dspic33_i2c_bases[channel] + I2C_ADD));
-    uint16_t mask =
+    uint16_t address_mask =
         dspic33_i2c_internal_raw_word(cpu, (uint16_t)(dspic33_i2c_bases[channel] + I2C_MSK));
-    if ((control & I2C_IPMIEN) != 0u) {
+    if ((control_word & I2C_IPMIEN) != 0u) {
         return true;
     }
-    if ((control & I2C_A10M) != 0u) {
+    if ((control_word & I2C_A10M) != 0u) {
         return false;
     }
-    if ((address <= 0x07u || address >= 0x78u) && address != (configured & 0x007fu)) {
+    if ((address <= 0x07u || address >= 0x78u) && address != (configured_address & 0x007fu)) {
         return false;
     }
-    return ((address ^ configured) & (uint16_t)~mask & 0x007fu) == 0u;
+    return ((address ^ configured_address) & (uint16_t)~address_mask & 0x007fu) == 0u;
 }
 
 static bool ten_bit_high_matches(const Dspic33* cpu, uint8_t channel, uint16_t address) {
-    uint16_t control =
+    uint16_t control_word =
         dspic33_i2c_internal_raw_word(cpu, (uint16_t)(dspic33_i2c_bases[channel] + I2C_CON));
-    uint16_t configured =
+    uint16_t configured_address =
         dspic33_i2c_internal_raw_word(cpu, (uint16_t)(dspic33_i2c_bases[channel] + I2C_ADD));
-    uint16_t mask =
+    uint16_t address_mask =
         dspic33_i2c_internal_raw_word(cpu, (uint16_t)(dspic33_i2c_bases[channel] + I2C_MSK));
-    return (control & I2C_IPMIEN) != 0u ||
-           ((control & I2C_A10M) != 0u &&
-            ((address ^ configured) & (uint16_t)~mask & 0x0300u) == 0u);
+    return (control_word & I2C_IPMIEN) != 0u ||
+           ((control_word & I2C_A10M) != 0u &&
+            ((address ^ configured_address) & (uint16_t)~address_mask & 0x0300u) == 0u);
 }
 
 static void reject_slave(Dspic33* cpu, uint8_t channel) {
-    uint8_t bit = (uint8_t)(1u << channel);
-    cpu->io.i2c_slave_active &= (uint8_t)~bit;
-    cpu->io.i2c_slave_read &= (uint8_t)~bit;
-    cpu->io.i2c_slave_rejected |= bit;
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+
+    cpu->io.i2c_slave_active &= (uint8_t)~channel_mask;
+    cpu->io.i2c_slave_read &= (uint8_t)~channel_mask;
+    cpu->io.i2c_slave_rejected |= channel_mask;
 }
 
 static void slave_start(Dspic33* cpu, uint8_t channel, uint16_t payload, bool schedule_ten_second,
-                        bool interrupt) {
-    uint16_t base = dspic33_i2c_bases[channel];
+                        bool raise_interrupt) {
+    uint16_t register_base = dspic33_i2c_bases[channel];
     uint16_t address = payload & 0x03ffu;
-    uint16_t control = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(base + I2C_CON));
-    uint16_t status = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(base + I2C_STAT));
-    bool read = (payload & I2C_EXTERNAL_READ) != 0u;
-    bool ten_bit = (payload & I2C_EXTERNAL_TEN_BIT) != 0u;
-    bool general_call = !ten_bit && address == 0u && !read;
-    bool acknowledge = dspic33_i2c_internal_slave_acknowledges(status);
-    uint8_t bit = (uint8_t)(1u << channel);
+    uint16_t control_word = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(register_base + I2C_CON));
+    uint16_t status_word = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(register_base + I2C_STAT));
+    bool is_read = (payload & I2C_EXTERNAL_READ) != 0u;
+    bool is_ten_bit = (payload & I2C_EXTERNAL_TEN_BIT) != 0u;
+    bool is_general_call = !is_ten_bit && address == 0u && !is_read;
+    bool is_acknowledged = dspic33_i2c_internal_slave_acknowledges(status_word);
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+
     if (!dspic33_i2c_internal_module_enabled(cpu, channel)) {
         return;
     }
-    if ((cpu->io.i2c_slave_rejected & bit) != 0u) {
+    if ((cpu->io.i2c_slave_rejected & channel_mask) != 0u) {
         return;
     }
-    status = (uint16_t)((status | I2C_START_STATUS) &
-                        ~(I2C_STOP_STATUS | I2C_GENERAL_CALL | I2C_TEN_BIT));
-    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(base + I2C_STAT), status);
-    if (ten_bit && !ten_bit_high_matches(cpu, channel, address)) {
+    status_word = (uint16_t)((status_word | I2C_START_STATUS) &
+                             ~(I2C_STOP_STATUS | I2C_GENERAL_CALL | I2C_TEN_BIT));
+    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(register_base + I2C_STAT), status_word);
+    if (is_ten_bit && !ten_bit_high_matches(cpu, channel, address)) {
         dspic33_i2c_internal_record_slave_acknowledgement(cpu, channel, false);
         reject_slave(cpu, channel);
         return;
     }
-    if (!ten_bit && (control & I2C_IPMIEN) == 0u &&
-        ((general_call && (control & I2C_GCEN) == 0u) ||
-         (!general_call && !address_matches(cpu, channel, address)))) {
+    if (!is_ten_bit && (control_word & I2C_IPMIEN) == 0u &&
+        ((is_general_call && (control_word & I2C_GCEN) == 0u) ||
+         (!is_general_call && !address_matches(cpu, channel, address)))) {
         dspic33_i2c_internal_record_slave_acknowledgement(cpu, channel, false);
         reject_slave(cpu, channel);
         return;
     }
-    cpu->io.i2c_slave_active |= bit;
-    if (read && !ten_bit) {
-        cpu->io.i2c_slave_read |= bit;
+    cpu->io.i2c_slave_active |= channel_mask;
+    if (is_read && !is_ten_bit) {
+        cpu->io.i2c_slave_read |= channel_mask;
     } else {
-        cpu->io.i2c_slave_read &= (uint8_t)~bit;
+        cpu->io.i2c_slave_read &= (uint8_t)~channel_mask;
     }
     cpu->io.i2c_slave_address[channel] = address;
-    status &= (uint16_t)~(I2C_DATA | I2C_READ | I2C_GENERAL_CALL | I2C_TEN_BIT);
-    if (read && !ten_bit) {
-        status |= I2C_READ;
+    status_word &= (uint16_t)~(I2C_DATA | I2C_READ | I2C_GENERAL_CALL | I2C_TEN_BIT);
+    if (is_read && !is_ten_bit) {
+        status_word |= I2C_READ;
     }
-    if (general_call) {
-        status |= I2C_GENERAL_CALL;
+    if (is_general_call) {
+        status_word |= I2C_GENERAL_CALL;
     }
-    if ((status & I2C_RBF) != 0u) {
-        status |= I2C_OVERFLOW;
+    if ((status_word & I2C_RBF) != 0u) {
+        status_word |= I2C_OVERFLOW;
     } else {
-        dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(base + I2C_RCV),
-                                            ten_bit ? (uint16_t)(0x00f0u | ((address >> 7u) & 6u))
-                                                    : (uint16_t)((address << 1u) | read));
-        status |= I2C_RBF;
+        dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(register_base + I2C_RCV),
+                                            is_ten_bit
+                                                ? (uint16_t)(0x00f0u | ((address >> 7u) & 6u))
+                                                : (uint16_t)((address << 1u) | is_read));
+        status_word |= I2C_RBF;
     }
-    control &= (uint16_t)~I2C_SCLREL;
-    if (read && !ten_bit && (control & I2C_IPMIEN) != 0u) {
-        cpu->io.i2c_slave_active &= (uint8_t)~bit;
-        cpu->io.i2c_slave_read &= (uint8_t)~bit;
-        control |= I2C_SCLREL;
+    control_word &= (uint16_t)~I2C_SCLREL;
+    if (is_read && !is_ten_bit && (control_word & I2C_IPMIEN) != 0u) {
+        cpu->io.i2c_slave_active &= (uint8_t)~channel_mask;
+        cpu->io.i2c_slave_read &= (uint8_t)~channel_mask;
+        control_word |= I2C_SCLREL;
     }
-    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(base + I2C_CON), control);
-    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(base + I2C_STAT), status);
-    dspic33_i2c_internal_record_slave_acknowledgement(cpu, channel, acknowledge);
-    if (interrupt) {
+    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(register_base + I2C_CON), control_word);
+    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(register_base + I2C_STAT), status_word);
+    dspic33_i2c_internal_record_slave_acknowledgement(cpu, channel, is_acknowledged);
+    if (raise_interrupt) {
         dspic33_i2c_internal_raise_slave(cpu, channel);
     }
-    if (ten_bit && acknowledge && schedule_ten_second &&
+    if (is_ten_bit && is_acknowledged && schedule_ten_second &&
         !dspic33_i2c_internal_schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_TEN_SECOND,
                                                       address, 1u)) {
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
@@ -112,54 +115,59 @@ static void slave_start(Dspic33* cpu, uint8_t channel, uint16_t payload, bool sc
 }
 
 static void slave_ten_second(Dspic33* cpu, uint8_t channel, uint16_t address, bool interrupt) {
-    uint16_t base = dspic33_i2c_bases[channel];
-    uint16_t control = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(base + I2C_CON));
-    uint16_t status = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(base + I2C_STAT));
-    uint16_t configured = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(base + I2C_ADD));
-    uint16_t mask = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(base + I2C_MSK));
-    bool acknowledge = dspic33_i2c_internal_slave_acknowledges(status);
-    uint8_t bit = (uint8_t)(1u << channel);
+    uint16_t register_base = dspic33_i2c_bases[channel];
+    uint16_t control_word = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(register_base + I2C_CON));
+    uint16_t status_word = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(register_base + I2C_STAT));
+    uint16_t configured_address =
+        dspic33_i2c_internal_raw_word(cpu, (uint16_t)(register_base + I2C_ADD));
+    uint16_t address_mask = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(register_base + I2C_MSK));
+    bool is_acknowledged = dspic33_i2c_internal_slave_acknowledges(status_word);
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+
     if (!dspic33_i2c_internal_module_enabled(cpu, channel) ||
-        (cpu->io.i2c_slave_active & bit) == 0u || cpu->io.i2c_slave_address[channel] != address) {
+        (cpu->io.i2c_slave_active & channel_mask) == 0u ||
+        cpu->io.i2c_slave_address[channel] != address) {
         return;
     }
-    if ((control & I2C_SCLREL) == 0u) {
+    if ((control_word & I2C_SCLREL) == 0u) {
         dspic33_i2c_internal_schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_TEN_SECOND,
                                                      address, 1u);
         return;
     }
-    if ((control & I2C_IPMIEN) == 0u &&
-        ((address ^ configured) & (uint16_t)~mask & 0x00ffu) != 0u) {
+    if ((control_word & I2C_IPMIEN) == 0u &&
+        ((address ^ configured_address) & (uint16_t)~address_mask & 0x00ffu) != 0u) {
         dspic33_i2c_internal_record_slave_acknowledgement(cpu, channel, false);
         reject_slave(cpu, channel);
         return;
     }
-    status = (uint16_t)((status | I2C_TEN_BIT) & ~(I2C_DATA | I2C_READ));
-    if ((status & I2C_RBF) != 0u) {
-        status |= I2C_OVERFLOW;
+    status_word = (uint16_t)((status_word | I2C_TEN_BIT) & ~(I2C_DATA | I2C_READ));
+    if ((status_word & I2C_RBF) != 0u) {
+        status_word |= I2C_OVERFLOW;
     } else {
-        dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(base + I2C_RCV), address & 0x00ffu);
-        status |= I2C_RBF;
+        dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(register_base + I2C_RCV),
+                                            address & 0x00ffu);
+        status_word |= I2C_RBF;
     }
-    control &= (uint16_t)~I2C_SCLREL;
-    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(base + I2C_CON), control);
-    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(base + I2C_STAT), status);
-    dspic33_i2c_internal_record_slave_acknowledgement(cpu, channel, acknowledge);
+    control_word &= (uint16_t)~I2C_SCLREL;
+    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(register_base + I2C_CON), control_word);
+    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(register_base + I2C_STAT), status_word);
+    dspic33_i2c_internal_record_slave_acknowledgement(cpu, channel, is_acknowledged);
     if (interrupt) {
         dspic33_i2c_internal_raise_slave(cpu, channel);
     }
 }
 
 static void slave_ten_restart(Dspic33* cpu, uint8_t channel, uint16_t address, bool interrupt) {
-    uint16_t base = dspic33_i2c_bases[channel];
-    uint16_t control = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(base + I2C_CON));
-    uint16_t status = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(base + I2C_STAT));
-    uint8_t bit = (uint8_t)(1u << channel);
-    bool acknowledge = dspic33_i2c_internal_slave_acknowledges(status);
-    bool ipmi;
+    uint16_t register_base = dspic33_i2c_bases[channel];
+    uint16_t control_word = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(register_base + I2C_CON));
+    uint16_t status_word = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(register_base + I2C_STAT));
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+    bool is_acknowledged = dspic33_i2c_internal_slave_acknowledges(status_word);
+    bool ipmi_enabled;
+
     if (!dspic33_i2c_internal_module_enabled(cpu, channel) ||
-        (cpu->io.i2c_slave_active & bit) == 0u || cpu->io.i2c_slave_address[channel] != address ||
-        (status & I2C_TEN_BIT) == 0u) {
+        (cpu->io.i2c_slave_active & channel_mask) == 0u ||
+        cpu->io.i2c_slave_address[channel] != address || (status_word & I2C_TEN_BIT) == 0u) {
         return;
     }
     if (!ten_bit_high_matches(cpu, channel, address)) {
@@ -167,132 +175,142 @@ static void slave_ten_restart(Dspic33* cpu, uint8_t channel, uint16_t address, b
         reject_slave(cpu, channel);
         return;
     }
-    ipmi = (control & I2C_IPMIEN) != 0u;
-    cpu->io.i2c_slave_read |= bit;
-    status = (uint16_t)((status | I2C_START_STATUS | I2C_READ) & ~(I2C_STOP_STATUS | I2C_DATA));
-    if ((status & I2C_RBF) != 0u) {
-        status |= I2C_OVERFLOW;
+    ipmi_enabled = (control_word & I2C_IPMIEN) != 0u;
+    cpu->io.i2c_slave_read |= channel_mask;
+    status_word =
+        (uint16_t)((status_word | I2C_START_STATUS | I2C_READ) & ~(I2C_STOP_STATUS | I2C_DATA));
+    if ((status_word & I2C_RBF) != 0u) {
+        status_word |= I2C_OVERFLOW;
     } else {
-        dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(base + I2C_RCV),
+        dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(register_base + I2C_RCV),
                                             (uint16_t)(0x00f1u | ((address >> 7u) & 6u)));
-        status |= I2C_RBF;
+        status_word |= I2C_RBF;
     }
-    if (ipmi) {
-        cpu->io.i2c_slave_active &= (uint8_t)~bit;
-        cpu->io.i2c_slave_read &= (uint8_t)~bit;
-        control |= I2C_SCLREL;
+    if (ipmi_enabled) {
+        cpu->io.i2c_slave_active &= (uint8_t)~channel_mask;
+        cpu->io.i2c_slave_read &= (uint8_t)~channel_mask;
+        control_word |= I2C_SCLREL;
     } else {
-        control &= (uint16_t)~I2C_SCLREL;
+        control_word &= (uint16_t)~I2C_SCLREL;
     }
-    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(base + I2C_CON), control);
-    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(base + I2C_STAT), status);
-    dspic33_i2c_internal_record_slave_acknowledgement(cpu, channel, acknowledge);
+    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(register_base + I2C_CON), control_word);
+    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(register_base + I2C_STAT), status_word);
+    dspic33_i2c_internal_record_slave_acknowledgement(cpu, channel, is_acknowledged);
     if (interrupt) {
         dspic33_i2c_internal_raise_slave(cpu, channel);
     }
 }
 
-static void slave_write(Dspic33* cpu, uint8_t channel, uint8_t value, bool interrupt) {
-    uint16_t base = dspic33_i2c_bases[channel];
-    uint16_t control = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(base + I2C_CON));
-    uint16_t status = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(base + I2C_STAT));
-    bool acknowledge = dspic33_i2c_internal_slave_acknowledges(status);
-    uint8_t bit = (uint8_t)(1u << channel);
+static void slave_write(Dspic33* cpu, uint8_t channel, uint8_t received_value,
+                        bool raise_interrupt) {
+    uint16_t register_base = dspic33_i2c_bases[channel];
+    uint16_t control_word = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(register_base + I2C_CON));
+    uint16_t status_word = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(register_base + I2C_STAT));
+    bool is_acknowledged = dspic33_i2c_internal_slave_acknowledges(status_word);
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+
     if (!dspic33_i2c_internal_module_enabled(cpu, channel) ||
-        (cpu->io.i2c_slave_active & bit) == 0u || (cpu->io.i2c_slave_read & bit) != 0u) {
+        (cpu->io.i2c_slave_active & channel_mask) == 0u ||
+        (cpu->io.i2c_slave_read & channel_mask) != 0u) {
         return;
     }
-    if ((control & I2C_SCLREL) == 0u) {
-        dspic33_i2c_internal_schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_WRITE, value,
-                                                     1u);
+    if ((control_word & I2C_SCLREL) == 0u) {
+        dspic33_i2c_internal_schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_WRITE,
+                                                     received_value, 1u);
         return;
     }
-    status |= I2C_DATA;
-    if ((status & I2C_RBF) != 0u) {
-        status |= I2C_OVERFLOW;
+    status_word |= I2C_DATA;
+    if ((status_word & I2C_RBF) != 0u) {
+        status_word |= I2C_OVERFLOW;
     } else {
-        dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(base + I2C_RCV), value);
-        status |= I2C_RBF;
+        dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(register_base + I2C_RCV),
+                                            received_value);
+        status_word |= I2C_RBF;
     }
-    if ((control & I2C_STREN) != 0u) {
-        control &= (uint16_t)~I2C_SCLREL;
+    if ((control_word & I2C_STREN) != 0u) {
+        control_word &= (uint16_t)~I2C_SCLREL;
     }
-    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(base + I2C_CON), control);
-    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(base + I2C_STAT), status);
-    dspic33_i2c_internal_record_slave_acknowledgement(cpu, channel, acknowledge);
-    if (interrupt) {
+    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(register_base + I2C_CON), control_word);
+    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(register_base + I2C_STAT), status_word);
+    dspic33_i2c_internal_record_slave_acknowledgement(cpu, channel, is_acknowledged);
+    if (raise_interrupt) {
         dspic33_i2c_internal_raise_slave(cpu, channel);
     }
 }
 
-static void slave_read(Dspic33* cpu, uint8_t channel, bool acknowledge, bool require_buffer) {
-    uint16_t base = dspic33_i2c_bases[channel];
-    uint16_t control = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(base + I2C_CON));
-    uint16_t status = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(base + I2C_STAT));
-    uint8_t bit = (uint8_t)(1u << channel);
-    bool ten_bit = (status & I2C_TEN_BIT) != 0u;
-    uint8_t value;
+static void slave_read(Dspic33* cpu, uint8_t channel, bool is_acknowledged, bool require_buffer) {
+    uint16_t register_base = dspic33_i2c_bases[channel];
+    uint16_t control_word = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(register_base + I2C_CON));
+    uint16_t status_word = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(register_base + I2C_STAT));
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+    bool is_ten_bit = (status_word & I2C_TEN_BIT) != 0u;
+    uint8_t transmit_value;
+
     if (!dspic33_i2c_internal_module_enabled(cpu, channel) ||
-        (cpu->io.i2c_slave_active & bit) == 0u || (cpu->io.i2c_slave_read & bit) == 0u ||
-        (require_buffer && (status & I2C_TBF) == 0u)) {
+        (cpu->io.i2c_slave_active & channel_mask) == 0u ||
+        (cpu->io.i2c_slave_read & channel_mask) == 0u ||
+        (require_buffer && (status_word & I2C_TBF) == 0u)) {
         return;
     }
-    if ((control & I2C_SCLREL) == 0u) {
+    if ((control_word & I2C_SCLREL) == 0u) {
         dspic33_i2c_internal_schedule_external_event(cpu, channel, I2C_EVENT_SLAVE_READ,
-                                                     acknowledge ? 1u : 0u, 1u);
+                                                     is_acknowledged ? 1u : 0u, 1u);
         return;
     }
-    value = (uint8_t)dspic33_i2c_internal_raw_word(cpu, (uint16_t)(base + I2C_TRN));
-    status &= (uint16_t)~I2C_TBF;
-    status |= I2C_DATA;
-    if (!acknowledge) {
-        status |= I2C_NOT_ACKNOWLEDGED;
-        cpu->io.i2c_slave_active &= (uint8_t)~bit;
-        cpu->io.i2c_slave_read &= (uint8_t)~bit;
+    transmit_value =
+        (uint8_t)dspic33_i2c_internal_raw_word(cpu, (uint16_t)(register_base + I2C_TRN));
+    status_word &= (uint16_t)~I2C_TBF;
+    status_word |= I2C_DATA;
+    if (!is_acknowledged) {
+        status_word |= I2C_NOT_ACKNOWLEDGED;
+        cpu->io.i2c_slave_active &= (uint8_t)~channel_mask;
+        cpu->io.i2c_slave_read &= (uint8_t)~channel_mask;
     } else {
-        status &= (uint16_t)~I2C_NOT_ACKNOWLEDGED;
-        control &= (uint16_t)~I2C_SCLREL;
+        status_word &= (uint16_t)~I2C_NOT_ACKNOWLEDGED;
+        control_word &= (uint16_t)~I2C_SCLREL;
     }
-    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(base + I2C_CON), control);
-    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(base + I2C_STAT), status);
-    dspic33_i2c_internal_record_transfer(cpu, channel, DSPIC33_I2C_WRITE, value, acknowledge,
-                                         false);
-    if (acknowledge || !ten_bit) {
+    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(register_base + I2C_CON), control_word);
+    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(register_base + I2C_STAT), status_word);
+    dspic33_i2c_internal_record_transfer(cpu, channel, DSPIC33_I2C_WRITE, transmit_value,
+                                         is_acknowledged, false);
+    if (is_acknowledged || !is_ten_bit) {
         dspic33_i2c_internal_raise_slave(cpu, channel);
     }
 }
 
 static void slave_stop(Dspic33* cpu, uint8_t channel) {
-    uint16_t base = dspic33_i2c_bases[channel];
-    uint16_t status = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(base + I2C_STAT));
-    uint8_t bit = (uint8_t)(1u << channel);
+    uint16_t register_base = dspic33_i2c_bases[channel];
+    uint16_t status_word = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(register_base + I2C_STAT));
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+
     if (!dspic33_i2c_internal_module_enabled(cpu, channel)) {
         return;
     }
-    status = (uint16_t)((status | I2C_STOP_STATUS) &
-                        ~(I2C_START_STATUS | I2C_TEN_BIT | I2C_GENERAL_CALL | I2C_TBF |
-                          I2C_TRANSMIT_ACTIVE));
-    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(base + I2C_STAT), status);
-    cpu->io.i2c_slave_active &= (uint8_t)~bit;
-    cpu->io.i2c_slave_read &= (uint8_t)~bit;
-    cpu->io.i2c_slave_rejected &= (uint8_t)~bit;
+    status_word = (uint16_t)((status_word | I2C_STOP_STATUS) &
+                             ~(I2C_START_STATUS | I2C_TEN_BIT | I2C_GENERAL_CALL | I2C_TBF |
+                               I2C_TRANSMIT_ACTIVE));
+    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(register_base + I2C_STAT), status_word);
+    cpu->io.i2c_slave_active &= (uint8_t)~channel_mask;
+    cpu->io.i2c_slave_read &= (uint8_t)~channel_mask;
+    cpu->io.i2c_slave_rejected &= (uint8_t)~channel_mask;
 }
 
 void dspic33_i2c_internal_collide(Dspic33* cpu, uint8_t channel) {
-    uint16_t base = dspic33_i2c_bases[channel];
-    uint16_t control = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(base + I2C_CON));
-    uint16_t status = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(base + I2C_STAT));
-    uint8_t bit = (uint8_t)(1u << channel);
+    uint16_t register_base = dspic33_i2c_bases[channel];
+    uint16_t control_word = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(register_base + I2C_CON));
+    uint16_t status_word = dspic33_i2c_internal_raw_word(cpu, (uint16_t)(register_base + I2C_STAT));
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+
     if (!dspic33_i2c_internal_module_enabled(cpu, channel)) {
         return;
     }
-    control &= (uint16_t)~I2C_MASTER_MASK;
-    status = (uint16_t)((status | I2C_BUS_COLLISION) & ~(I2C_TBF | I2C_TRANSMIT_ACTIVE));
-    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(base + I2C_CON), control);
-    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(base + I2C_STAT), status);
+    control_word &= (uint16_t)~I2C_MASTER_MASK;
+    status_word = (uint16_t)((status_word | I2C_BUS_COLLISION) & ~(I2C_TBF | I2C_TRANSMIT_ACTIVE));
+    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(register_base + I2C_CON), control_word);
+    dspic33_i2c_internal_raw_write_word(cpu, (uint16_t)(register_base + I2C_STAT), status_word);
     dspic33_i2c_internal_pin_abort(cpu, channel);
     cpu->io.i2c_generation[channel]++;
-    cpu->io.i2c_master_active &= (uint8_t)~bit;
+    cpu->io.i2c_master_active &= (uint8_t)~channel_mask;
     dspic33_i2c_internal_record_transfer(cpu, channel, DSPIC33_I2C_COLLISION, 0u, false, true);
     dspic33_i2c_internal_raise_master(cpu, channel);
 }
