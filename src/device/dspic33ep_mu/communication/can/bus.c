@@ -576,31 +576,36 @@ static void can_transmit_error_start(Dspic33* cpu, uint8_t channel_index) {
     }
 }
 
-void dspic33_device_internal_can_error_event(Dspic33* cpu, uint8_t channel, uint32_t value) {
-    uint16_t address = (uint16_t)(dspic33_device_can_bases[channel] + 0x0eu);
-    uint16_t counts = dspic33_device_internal_raw_word(cpu, address);
-    uint16_t increment = (uint16_t)(value >> CAN_EVENT_ERROR_COUNT_SHIFT);
-    if ((value & CAN_EVENT_TRANSMIT_ERROR) != 0u) {
-        uint16_t transmit = (uint16_t)(counts >> 8u);
-        uint32_t total = (uint32_t)transmit + increment;
-        if (total > 0xffu) {
+void dspic33_device_internal_can_error_event(Dspic33* cpu, uint8_t channel_index,
+                                             uint32_t event_value) {
+    const uint16_t counter_address = (uint16_t)(dspic33_device_can_bases[channel_index] + 0x0eu);
+    uint16_t error_counters = dspic33_device_internal_raw_word(cpu, counter_address);
+    const uint16_t error_increment = (uint16_t)(event_value >> CAN_EVENT_ERROR_COUNT_SHIFT);
+
+    if ((event_value & CAN_EVENT_TRANSMIT_ERROR) != 0u) {
+        uint16_t transmit_error_count = (uint16_t)(error_counters >> 8u);
+        const uint32_t transmit_total = (uint32_t)transmit_error_count + error_increment;
+
+        if (transmit_total > 0xffu) {
             dspic33_device_internal_raw_write_word(
-                cpu, (uint16_t)(dspic33_device_can_bases[channel] + 0x0au),
+                cpu, (uint16_t)(dspic33_device_can_bases[channel_index] + 0x0au),
                 (uint16_t)(dspic33_device_internal_raw_word(
-                               cpu, (uint16_t)(dspic33_device_can_bases[channel] + 0x0au)) |
+                               cpu, (uint16_t)(dspic33_device_can_bases[channel_index] + 0x0au)) |
                            CAN_BUS_OFF));
-            transmit = 0xffu;
+            transmit_error_count = 0xffu;
         } else {
-            transmit = (uint16_t)total;
+            transmit_error_count = (uint16_t)transmit_total;
         }
-        counts = (uint16_t)((counts & 0x00ffu) | (transmit << 8u));
+        error_counters = (uint16_t)((error_counters & 0x00ffu) | (transmit_error_count << 8u));
     } else {
-        uint16_t receive = (uint16_t)(counts & 0x00ffu);
-        receive = receive + increment > 0xffu ? 0xffu : receive + increment;
-        counts = (uint16_t)((counts & 0xff00u) | receive);
+        uint16_t receive_error_count = (uint16_t)(error_counters & 0x00ffu);
+        receive_error_count = receive_error_count + error_increment > 0xffu
+                                  ? 0xffu
+                                  : receive_error_count + error_increment;
+        error_counters = (uint16_t)((error_counters & 0xff00u) | receive_error_count);
     }
-    dspic33_device_internal_raw_write_word(cpu, address, counts);
-    dspic33_device_internal_can_refresh_error_status(cpu, channel);
+    dspic33_device_internal_raw_write_word(cpu, counter_address, error_counters);
+    dspic33_device_internal_can_refresh_error_status(cpu, channel_index);
 }
 
 void dspic33_device_internal_can_invalid_event(Dspic33* cpu, uint8_t channel) {
