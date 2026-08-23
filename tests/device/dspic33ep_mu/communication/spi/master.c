@@ -598,14 +598,15 @@ void dspic33_spi_test_b1_frame_output_cases(TestState* state, Dspic33* cpu, Dspi
                "mapped B1 active-low frame remains inactive after transfer");
     }
 
-    for (uint8_t clock_mode = 0u; clock_mode < 4u; clock_mode++) {
-        uint16_t control = (uint16_t)(((clock_mode & 1u) != 0u ? 0x0100u : 0u) |
-                                      ((clock_mode & 2u) != 0u ? 0x0040u : 0u));
-        bool sample_high = (control & 0x0040u) != 0u;
+    for (uint8_t clock_mode_index = 0u; clock_mode_index < 4u; clock_mode_index++) {
+        const uint16_t spi_control = (uint16_t)(((clock_mode_index & 1u) != 0u ? 0x0100u : 0u) |
+                                                ((clock_mode_index & 2u) != 0u ? 0x0040u : 0u));
+        const bool sample_high = (spi_control & 0x0040u) != 0u;
+
         dspic33_reset(cpu, 0u);
         dspic33_write_word(cpu, 0x0680u, 5u);
         dspic33_spi_pin_input(cpu, 0u, sample_high, false, false);
-        dspic33_spi_test_configure_spi(cpu, 0u, control, 0xa002u, 0u);
+        dspic33_spi_test_configure_spi(cpu, 0u, spi_control, 0xa002u, 0u);
         dspic33_write_word(cpu, 0x0248u, 0xa5u);
         expect(state,
                dspic33_spi_data_output(cpu, 0u, &data) && data &&
@@ -628,7 +629,7 @@ void dspic33_spi_test_b1_frame_output_cases(TestState* state, Dspic33* cpu, Dspi
                    dspic33_spi_pin(cpu, 64u, &data) && !data,
                "slave data advances on the transmit edge after its first sample");
         dspic33_spi_pin_input(cpu, 0u, sample_high, true, false);
-        for (uint8_t index = 2u; index < 8u; index++) {
+        for (uint8_t sample_index = 2u; sample_index < 8u; sample_index++) {
             dspic33_spi_pin_input(cpu, 0u, !sample_high, true, false);
             dspic33_spi_pin_input(cpu, 0u, sample_high, true, false);
         }
