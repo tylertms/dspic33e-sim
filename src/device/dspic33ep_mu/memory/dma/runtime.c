@@ -1,23 +1,25 @@
 #include "device/dspic33ep_mu/internal.h"
 
-bool dspic33_device_internal_comparator_pin_channel(const Dspic33* cpu, uint8_t pin,
-                                                    uint8_t* comparator) {
-    uint8_t function = dspic33_device_internal_pps_output_function(cpu, pin);
-    if (function >= COMPARATOR_PPS_FUNCTION &&
-        function < COMPARATOR_PPS_FUNCTION + DSPIC33_COMPARATOR_COUNT) {
-        *comparator = (uint8_t)(function - COMPARATOR_PPS_FUNCTION);
+bool dspic33_device_internal_comparator_pin_channel(const Dspic33* cpu, uint8_t pin_index,
+                                                    uint8_t* comparator_index) {
+    const uint8_t output_function = dspic33_device_internal_pps_output_function(cpu, pin_index);
+
+    if (output_function >= COMPARATOR_PPS_FUNCTION &&
+        output_function < COMPARATOR_PPS_FUNCTION + DSPIC33_COMPARATOR_COUNT) {
+        *comparator_index = (uint8_t)(output_function - COMPARATOR_PPS_FUNCTION);
         return true;
     }
     return false;
 }
 
 bool dspic33_device_internal_can_queue_push(Dspic33CanQueue* queue, const Dspic33CanFrame* frame) {
-    uint8_t index;
+    uint8_t frame_index;
+
     if (queue->count == 64u) {
         return false;
     }
-    index = (uint8_t)((queue->head + queue->count) % 64u);
-    queue->frames[index] = *frame;
+    frame_index = (uint8_t)((queue->head + queue->count) % 64u);
+    queue->frames[frame_index] = *frame;
     queue->count++;
     return true;
 }
@@ -39,20 +41,21 @@ void dspic33_device_internal_can_queue_discard_last(Dspic33CanQueue* queue) {
 }
 
 static bool event_less(const Dspic33Event* left, const Dspic33Event* right) {
-    bool left_dma_completion;
-    bool right_dma_completion;
+    const bool left_is_dma = left->type == DSPIC33_EVENT_DMA;
+    const bool right_is_dma = right->type == DSPIC33_EVENT_DMA;
+
     if (left->paused != right->paused) {
         return !left->paused;
     }
     if (left->cycle != right->cycle) {
         return left->cycle < right->cycle;
     }
-    if (left->type == DSPIC33_EVENT_DMA && right->type == DSPIC33_EVENT_DMA &&
-        left->source != right->source) {
-        left_dma_completion = left->source >= DSPIC33_DMA_COUNT;
-        right_dma_completion = right->source >= DSPIC33_DMA_COUNT;
-        if (left_dma_completion != right_dma_completion) {
-            return left_dma_completion;
+    if (left_is_dma && right_is_dma && left->source != right->source) {
+        const bool left_is_completion = left->source >= DSPIC33_DMA_COUNT;
+        const bool right_is_completion = right->source >= DSPIC33_DMA_COUNT;
+
+        if (left_is_completion != right_is_completion) {
+            return left_is_completion;
         }
         return left->source % DSPIC33_DMA_COUNT < right->source % DSPIC33_DMA_COUNT;
     }
@@ -60,62 +63,64 @@ static bool event_less(const Dspic33Event* left, const Dspic33Event* right) {
 }
 
 static bool event_reserve(Dspic33EventQueue* queue) {
-    Dspic33Event* items;
-    size_t capacity;
+    Dspic33Event* resized_items;
+    size_t new_capacity;
+
     if (queue->count < queue->capacity) {
         return true;
     }
-    capacity = queue->capacity == 0u ? 64u : queue->capacity * 2u;
-    items = realloc(queue->items, capacity * sizeof(*items));
-    if (items == NULL) {
+    new_capacity = queue->capacity == 0u ? 64u : queue->capacity * 2u;
+    resized_items = realloc(queue->items, new_capacity * sizeof(*resized_items));
+    if (resized_items == NULL) {
         return false;
     }
-    queue->items = items;
-    queue->capacity = capacity;
+    queue->items = resized_items;
+    queue->capacity = new_capacity;
     return true;
 }
 
-static bool schedule_event(Dspic33* cpu, Dspic33EventType type, uint16_t source, uint32_t value,
-                           uint64_t delay, bool external) {
+static bool schedule_event(Dspic33* cpu, Dspic33EventType type, uint16_t event_source,
+                           uint32_t event_value, uint64_t event_delay, bool is_external) {
     Dspic33Event event;
-    size_t index;
-    size_t parent;
-    if (delay > UINT64_MAX - cpu->device_cycles) {
+    size_t insertion_index;
+    size_t parent_index;
+
+    if (event_delay > UINT64_MAX - cpu->device_cycles) {
         return false;
     }
     if (!event_reserve(&cpu->events)) {
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
         return false;
     }
-    event.cycle = cpu->device_cycles + delay;
+    event.cycle = cpu->device_cycles + event_delay;
     event.sequence = cpu->events.sequence++;
     event.paused_remaining = 0u;
-    event.value = value;
-    event.source = source;
+    event.value = event_value;
+    event.source = event_source;
     event.type = type;
     event.paused = false;
-    event.external = external;
-    index = cpu->events.count++;
-    while (index != 0u) {
-        parent = (index - 1u) / 2u;
-        if (!event_less(&event, &cpu->events.items[parent])) {
+    event.external = is_external;
+    insertion_index = cpu->events.count++;
+    while (insertion_index != 0u) {
+        parent_index = (insertion_index - 1u) / 2u;
+        if (!event_less(&event, &cpu->events.items[parent_index])) {
             break;
         }
-        cpu->events.items[index] = cpu->events.items[parent];
-        index = parent;
+        cpu->events.items[insertion_index] = cpu->events.items[parent_index];
+        insertion_index = parent_index;
     }
-    cpu->events.items[index] = event;
+    cpu->events.items[insertion_index] = event;
     return true;
 }
 
-bool dspic33_schedule(Dspic33* cpu, Dspic33EventType type, uint16_t source, uint32_t value,
-                      uint64_t delay) {
-    return schedule_event(cpu, type, source, value, delay, false);
+bool dspic33_schedule(Dspic33* cpu, Dspic33EventType type, uint16_t event_source,
+                      uint32_t event_value, uint64_t event_delay) {
+    return schedule_event(cpu, type, event_source, event_value, event_delay, false);
 }
 
-bool dspic33_schedule_external(Dspic33* cpu, Dspic33EventType type, uint16_t source, uint32_t value,
-                               uint64_t delay) {
-    return schedule_event(cpu, type, source, value, delay, true);
+bool dspic33_schedule_external(Dspic33* cpu, Dspic33EventType type, uint16_t event_source,
+                               uint32_t event_value, uint64_t event_delay) {
+    return schedule_event(cpu, type, event_source, event_value, event_delay, true);
 }
 
 void dspic33_reorder_events(Dspic33* cpu) {
@@ -144,85 +149,97 @@ void dspic33_reorder_events(Dspic33* cpu) {
 }
 
 Dspic33Event dspic33_device_internal_event_pop(Dspic33EventQueue* queue) {
-    Dspic33Event result = queue->items[0];
-    Dspic33Event tail = queue->items[--queue->count];
-    size_t index = 0u;
-    while (index * 2u + 1u < queue->count) {
-        size_t child = index * 2u + 1u;
-        if (child + 1u < queue->count &&
-            event_less(&queue->items[child + 1u], &queue->items[child])) {
-            child++;
+    Dspic33Event first_event = queue->items[0];
+    Dspic33Event last_event = queue->items[--queue->count];
+    size_t insertion_index = 0u;
+
+    while (insertion_index * 2u + 1u < queue->count) {
+        size_t child_index = insertion_index * 2u + 1u;
+        if (child_index + 1u < queue->count &&
+            event_less(&queue->items[child_index + 1u], &queue->items[child_index])) {
+            child_index++;
         }
-        if (!event_less(&queue->items[child], &tail)) {
+        if (!event_less(&queue->items[child_index], &last_event)) {
             break;
         }
-        queue->items[index] = queue->items[child];
-        index = child;
+        queue->items[insertion_index] = queue->items[child_index];
+        insertion_index = child_index;
     }
     if (queue->count != 0u) {
-        queue->items[index] = tail;
+        queue->items[insertion_index] = last_event;
     }
-    return result;
+    return first_event;
 }
 
 static void update_nested_do_interrupt_request(Dspic33* cpu, uint16_t irq);
 
-void dspic33_raise_interrupt(Dspic33* cpu, uint16_t irq) {
-    uint16_t address;
-    uint16_t mask;
-    uint16_t value;
-    if (irq >= DSPIC33_IRQ_COUNT) {
+void dspic33_raise_interrupt(Dspic33* cpu, uint16_t interrupt_number) {
+    uint16_t status_address;
+    uint16_t interrupt_mask;
+    uint16_t interrupt_status;
+
+    if (interrupt_number >= DSPIC33_IRQ_COUNT) {
         return;
     }
-    address = (uint16_t)(0x0800u + (irq / 16u) * 2u);
-    mask = (uint16_t)(1u << (irq % 16u));
-    value = dspic33_device_internal_raw_word(cpu, address);
-    dspic33_device_internal_raw_write_word(cpu, address, (uint16_t)(value | mask));
-    if ((value & mask) == 0u) {
-        update_nested_do_interrupt_request(cpu, irq);
+    status_address = (uint16_t)(0x0800u + (interrupt_number / 16u) * 2u);
+    interrupt_mask = (uint16_t)(1u << (interrupt_number % 16u));
+    interrupt_status = dspic33_device_internal_raw_word(cpu, status_address);
+    dspic33_device_internal_raw_write_word(cpu, status_address,
+                                           (uint16_t)(interrupt_status | interrupt_mask));
+    if ((interrupt_status & interrupt_mask) == 0u) {
+        update_nested_do_interrupt_request(cpu, interrupt_number);
     }
 }
 
-void dspic33_device_internal_raise_external_interrupt(Dspic33* cpu, uint8_t channel) {
-    if (channel == 0u) {
-        uint8_t module;
+void dspic33_device_internal_raise_external_interrupt(Dspic33* cpu, uint8_t external_channel) {
+    if (external_channel == 0u) {
+        uint8_t adc_module;
+
         dspic33_dma_request(cpu, 0u, 0u, 0u);
-        for (module = 0u; module < DSPIC33_ADC_COUNT; module++) {
-            dspic33_adc_trigger(cpu, module, 1u, 0u);
+        for (adc_module = 0u; adc_module < DSPIC33_ADC_COUNT; adc_module++) {
+            dspic33_adc_trigger(cpu, adc_module, 1u, 0u);
         }
-    } else if (channel == 1u) {
+    } else if (external_channel == 1u) {
         dspic33_device_internal_output_compare_pulse_source(cpu, OUTPUT_COMPARE_SYNC_INT1);
-    } else if (channel == 2u) {
+    } else if (external_channel == 2u) {
         dspic33_device_internal_output_compare_pulse_source(cpu, OUTPUT_COMPARE_SYNC_INT2);
     }
-    dspic33_raise_interrupt(cpu, dspic33_device_external_interrupt_irqs[channel]);
+    dspic33_raise_interrupt(cpu, dspic33_device_external_interrupt_irqs[external_channel]);
 }
 
-void dspic33_device_internal_raise_scheduled_interrupt(Dspic33* cpu, uint16_t irq) {
-    uint8_t channel;
-    for (channel = 0u; channel < DSPIC33_EXTERNAL_INTERRUPT_COUNT; channel++) {
-        if (dspic33_device_external_interrupt_irqs[channel] == irq) {
-            dspic33_device_internal_raise_external_interrupt(cpu, channel);
+void dspic33_device_internal_raise_scheduled_interrupt(Dspic33* cpu, uint16_t interrupt_number) {
+    uint8_t external_channel;
+
+    for (external_channel = 0u; external_channel < DSPIC33_EXTERNAL_INTERRUPT_COUNT;
+         external_channel++) {
+        if (dspic33_device_external_interrupt_irqs[external_channel] == interrupt_number) {
+            dspic33_device_internal_raise_external_interrupt(cpu, external_channel);
             return;
         }
     }
-    dspic33_raise_interrupt(cpu, irq);
+    dspic33_raise_interrupt(cpu, interrupt_number);
 }
 
-static uint8_t interrupt_priority(const Dspic33* cpu, uint16_t irq) {
-    uint16_t value = dspic33_device_internal_raw_word(cpu, (uint16_t)(0x0840u + (irq / 4u) * 2u));
-    return (uint8_t)((value >> ((irq % 4u) * 4u)) & 0x07u);
+static uint8_t interrupt_priority(const Dspic33* cpu, uint16_t interrupt_number) {
+    const uint16_t priority_word =
+        dspic33_device_internal_raw_word(cpu, (uint16_t)(0x0840u + (interrupt_number / 4u) * 2u));
+
+    return (uint8_t)((priority_word >> ((interrupt_number % 4u) * 4u)) & 0x07u);
 }
 
-bool dspic33_device_internal_interrupt_enabled(const Dspic33* cpu, uint16_t irq) {
-    uint16_t mask = (uint16_t)(1u << (irq % 16u));
-    uint16_t offset = (uint16_t)((irq / 16u) * 2u);
-    return (dspic33_device_internal_raw_word(cpu, (uint16_t)(0x0800u + offset)) & mask) != 0u &&
-           (dspic33_device_internal_raw_word(cpu, (uint16_t)(0x0820u + offset)) & mask) != 0u;
+bool dspic33_device_internal_interrupt_enabled(const Dspic33* cpu, uint16_t interrupt_number) {
+    const uint16_t interrupt_mask = (uint16_t)(1u << (interrupt_number % 16u));
+    const uint16_t status_offset = (uint16_t)((interrupt_number / 16u) * 2u);
+
+    return (dspic33_device_internal_raw_word(cpu, (uint16_t)(0x0800u + status_offset)) &
+            interrupt_mask) != 0u &&
+           (dspic33_device_internal_raw_word(cpu, (uint16_t)(0x0820u + status_offset)) &
+            interrupt_mask) != 0u;
 }
 
-static bool interrupt_deferred(const Dspic33* cpu, uint16_t irq) {
-    return (cpu->interrupt_deferred[irq / 16u] & (uint16_t)(1u << (irq % 16u))) != 0u;
+static bool interrupt_deferred(const Dspic33* cpu, uint16_t interrupt_number) {
+    return (cpu->interrupt_deferred[interrupt_number / 16u] &
+            (uint16_t)(1u << (interrupt_number % 16u))) != 0u;
 }
 
 void dspic33_device_latch_interrupt(Dspic33* cpu, uint8_t vector, uint8_t priority) {
@@ -238,39 +255,43 @@ void dspic33_device_latch_math_error(Dspic33* cpu, uint16_t cause) {
 
 static bool select_interrupt(const Dspic33* cpu, uint16_t* selected_irq,
                              uint8_t* selected_priority) {
-    uint8_t current = (uint8_t)((cpu->sr >> 5u) & 0x07u);
-    uint8_t best_priority = current;
+    const uint8_t current_priority = (uint8_t)((cpu->sr >> 5u) & 0x07u);
+    uint8_t best_priority = current_priority;
     uint16_t best_irq = DSPIC33_IRQ_COUNT;
-    uint16_t irq;
-    uint16_t group;
+    uint16_t interrupt_number;
+    uint16_t interrupt_group;
+
     if (!cpu->async_events_enabled ||
         ((dspic33_device_internal_raw_word(cpu, 0x08c2u) & 0x8000u) == 0u &&
          cpu->gie_disable_deferred == 0u) ||
         (cpu->corcon & 0x0008u) != 0u) {
         return false;
     }
-    for (group = 0u; group < (DSPIC33_IRQ_COUNT + 15u) / 16u; group++) {
-        uint16_t offset = (uint16_t)(group * 2u);
-        if ((dspic33_device_internal_raw_word(cpu, (uint16_t)(0x0800u + offset)) &
-             dspic33_device_internal_raw_word(cpu, (uint16_t)(0x0820u + offset))) != 0u) {
+    for (interrupt_group = 0u; interrupt_group < (DSPIC33_IRQ_COUNT + 15u) / 16u;
+         interrupt_group++) {
+        const uint16_t status_offset = (uint16_t)(interrupt_group * 2u);
+
+        if ((dspic33_device_internal_raw_word(cpu, (uint16_t)(0x0800u + status_offset)) &
+             dspic33_device_internal_raw_word(cpu, (uint16_t)(0x0820u + status_offset))) != 0u) {
             break;
         }
     }
-    if (group == (DSPIC33_IRQ_COUNT + 15u) / 16u) {
+    if (interrupt_group == (DSPIC33_IRQ_COUNT + 15u) / 16u) {
         return false;
     }
-    for (irq = 0u; irq < DSPIC33_IRQ_COUNT; irq++) {
-        uint8_t priority;
-        if (!dspic33_device_internal_interrupt_enabled(cpu, irq) || interrupt_deferred(cpu, irq)) {
+    for (interrupt_number = 0u; interrupt_number < DSPIC33_IRQ_COUNT; interrupt_number++) {
+        const uint8_t priority = interrupt_priority(cpu, interrupt_number);
+
+        if (!dspic33_device_internal_interrupt_enabled(cpu, interrupt_number) ||
+            interrupt_deferred(cpu, interrupt_number)) {
             continue;
         }
-        priority = interrupt_priority(cpu, irq);
         if (cpu->disicnt != 0u && priority < 7u) {
             continue;
         }
         if (priority > best_priority) {
             best_priority = priority;
-            best_irq = irq;
+            best_irq = interrupt_number;
         }
     }
     if (best_irq == DSPIC33_IRQ_COUNT) {
