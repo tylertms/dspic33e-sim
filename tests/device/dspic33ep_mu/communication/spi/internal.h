@@ -15,17 +15,18 @@ static const uint8_t irqs[DSPIC33_SPI_COUNT] = {10u, 33u, 91u, 123u};
 static const uint8_t error_irqs[DSPIC33_SPI_COUNT] = {9u, 32u, 90u, 122u};
 static const uint8_t requests[DSPIC33_SPI_COUNT] = {10u, 33u, 91u, 123u};
 
-bool dspic33_spi_test_interrupt_flag(Dspic33* cpu, uint8_t irq);
-bool dspic33_spi_test_transfer_interrupt_after_cycle(Dspic33* cpu, uint8_t irq);
-uint16_t dspic33_spi_test_dma_base(uint8_t channel);
-uint64_t dspic33_spi_test_transfer_cycles(uint16_t control);
+bool dspic33_spi_test_interrupt_flag(Dspic33* cpu, uint8_t interrupt_number);
+bool dspic33_spi_test_transfer_interrupt_after_cycle(Dspic33* cpu, uint8_t interrupt_number);
+uint16_t dspic33_spi_test_dma_base(uint8_t channel_index);
+uint64_t dspic33_spi_test_transfer_cycles(uint16_t spi_control);
 void dspic33_spi_test_b1_frame_output_cases(TestState* state, Dspic33* cpu, Dspic33* copy);
 void dspic33_spi_test_boundary_cases(TestState* state, Dspic33* cpu);
-void dspic33_spi_test_clear_interrupt(Dspic33* cpu, uint8_t irq);
-void dspic33_spi_test_configure_dma(Dspic33* cpu, uint8_t channel, uint16_t control,
-                                    uint8_t request, uint32_t memory, uint16_t pad, uint16_t count);
-void dspic33_spi_test_configure_spi(Dspic33* cpu, uint8_t channel, uint16_t control,
-                                    uint16_t control2, uint8_t interrupt_mode);
+void dspic33_spi_test_clear_interrupt(Dspic33* cpu, uint8_t interrupt_number);
+void dspic33_spi_test_configure_dma(Dspic33* cpu, uint8_t channel_index, uint16_t dma_control,
+                                    uint8_t request_source, uint32_t memory_address,
+                                    uint16_t peripheral_address, uint16_t transfer_count);
+void dspic33_spi_test_configure_spi(Dspic33* cpu, uint8_t channel_index, uint16_t spi_control,
+                                    uint16_t frame_control, uint8_t interrupt_mode);
 void dspic33_spi_test_enhanced_fifo_cases(TestState* state, Dspic33* cpu);
 void dspic33_spi_test_interrupt_mode_cases(TestState* state, Dspic33* cpu);
 void dspic33_spi_test_master_input_cases(TestState* state, Dspic33* cpu, Dspic33* copy);
