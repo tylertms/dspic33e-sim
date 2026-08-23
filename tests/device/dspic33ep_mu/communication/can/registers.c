@@ -409,26 +409,31 @@ void dspic33_can_test_interrupt_flag_write_zero_cases(TestState* state, Dspic33*
 }
 
 void dspic33_can_test_standard_filter_domain(TestState* state, Dspic33* cpu) {
-    uint16_t identifier;
-    uint16_t expected = 0x5a0u;
-    uint16_t mask = 0x7f0u;
-    Dspic33CanFrame input;
+    const uint16_t expected_identifier = 0x5a0u;
+    const uint16_t identifier_mask = 0x7f0u;
+    Dspic33CanFrame received_frame;
+
     dspic33_reset(cpu, 0u);
     dspic33_can_test_configure_receive(cpu, 0u, 0x2000u, 4u, 0u);
-    dspic33_can_test_configure_filter(cpu, 0u, 0u, expected, false, mask, true, 0u, 0u);
+    dspic33_can_test_configure_filter(cpu, 0u, 0u, expected_identifier, false, identifier_mask,
+                                      true, 0u, 0u);
     dspic33_can_test_enable_filter(cpu, 0u, 1u);
     dspic33_can_test_select_window(cpu, 0u, false);
     dspic33_can_test_set_mode(cpu, 0u, 0u);
-    for (identifier = 0u; identifier <= 0x7ffu; identifier++) {
-        bool accepted = (identifier & mask) == (expected & mask);
-        input = dspic33_can_test_frame(identifier, false, false, 2u, (uint8_t)identifier);
-        expect(state, dspic33_can_receive(cpu, 0u, &input, 0u), "standard domain schedule");
+    for (uint16_t identifier_value = 0u; identifier_value <= 0x7ffu; identifier_value++) {
+        const bool filter_match =
+            (identifier_value & identifier_mask) == (expected_identifier & identifier_mask);
+
+        received_frame =
+            dspic33_can_test_frame(identifier_value, false, false, 2u, (uint8_t)identifier_value);
+        expect(state, dspic33_can_receive(cpu, 0u, &received_frame, 0u),
+               "standard domain schedule");
         expect(state, dspic33_device_advance(cpu, 32u), "standard domain advance");
-        expect(state, dspic33_can_test_receive_full(cpu, 0u, 0u) == accepted,
+        expect(state, dspic33_can_test_receive_full(cpu, 0u, 0u) == filter_match,
                "standard domain filter result");
-        if (accepted) {
+        if (filter_match) {
             expect(state,
-                   dspic33_can_test_memory_word(cpu, 0x2000u) == (uint16_t)(identifier << 2u),
+                   dspic33_can_test_memory_word(cpu, 0x2000u) == (uint16_t)(identifier_value << 2u),
                    "standard domain identifier storage");
             clear_receive_flag(cpu, 0u, 0u);
         }
@@ -438,32 +443,34 @@ void dspic33_can_test_standard_filter_domain(TestState* state, Dspic33* cpu) {
 void dspic33_can_test_extended_filter_cases(TestState* state, Dspic33* cpu) {
     static const uint32_t identifiers[] = {0u,         1u,          0x3ffffu,    0x40000u,
                                            0x1ffffffu, 0x10000000u, 0x15555555u, 0x1fffffffu};
-    uint8_t channel;
-    uint8_t index;
-    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-        for (index = 0u; index < sizeof(identifiers) / sizeof(identifiers[0]); index++) {
-            uint32_t identifier = identifiers[index];
-            Dspic33CanFrame input = dspic33_can_test_frame(identifier, true, false, 8u, index);
+    for (uint8_t channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
+        for (size_t identifier_index = 0u;
+             identifier_index < sizeof(identifiers) / sizeof(identifiers[0]); identifier_index++) {
+            const uint32_t identifier_value = identifiers[identifier_index];
+            const Dspic33CanFrame received_frame = dspic33_can_test_frame(
+                identifier_value, true, false, 8u, (uint8_t)identifier_index);
+
             dspic33_reset(cpu, 0u);
-            dspic33_can_test_configure_receive(cpu, channel, 0x3000u, 6u, 0u);
-            dspic33_can_test_configure_filter(cpu, channel, 3u, identifier, true, 0x1fffffffu, true,
-                                              6u, 1u);
-            dspic33_can_test_enable_filter(cpu, channel, 1u << 3u);
-            dspic33_can_test_select_window(cpu, channel, false);
-            dspic33_can_test_set_mode(cpu, channel, 0u);
+            dspic33_can_test_configure_receive(cpu, channel_index, 0x3000u, 6u, 0u);
+            dspic33_can_test_configure_filter(cpu, channel_index, 3u, identifier_value, true,
+                                              0x1fffffffu, true, 6u, 1u);
+            dspic33_can_test_enable_filter(cpu, channel_index, 1u << 3u);
+            dspic33_can_test_select_window(cpu, channel_index, false);
+            dspic33_can_test_set_mode(cpu, channel_index, 0u);
             expect(state,
-                   dspic33_can_receive(cpu, channel, &input, 0u) &&
+                   dspic33_can_receive(cpu, channel_index, &received_frame, 0u) &&
                        dspic33_device_advance(cpu, 32u),
                    "extended exact transfer");
-            expect(state, dspic33_can_test_receive_full(cpu, channel, 6u),
+            expect(state, dspic33_can_test_receive_full(cpu, channel_index, 6u),
                    "extended exact full flag");
             expect(state,
                    (((uint32_t)(dspic33_can_test_memory_word(cpu, 0x3060u) >> 2u) & 0x7ffu)
-                    << 18u) == (identifier & 0x1ffc0000u),
+                    << 18u) == (identifier_value & 0x1ffc0000u),
                    "extended SID storage");
             expect(state,
                    (((uint32_t)(dspic33_can_test_memory_word(cpu, 0x3062u) & 0x0fffu) << 6u) |
-                    (dspic33_can_test_memory_word(cpu, 0x3064u) >> 10u)) == (identifier & 0x3ffffu),
+                    (dspic33_can_test_memory_word(cpu, 0x3064u) >> 10u)) ==
+                       (identifier_value & 0x3ffffu),
                    "extended EID storage");
         }
     }
