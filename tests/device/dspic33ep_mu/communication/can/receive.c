@@ -21,24 +21,26 @@ void dspic33_can_test_receive_groups(TestState* state, Dspic33* cpu) {
 void dspic33_can_test_receive_overflow_write_zero_prior_domain(TestState* state, Dspic33* cpu) {
     static const uint8_t offsets[] = {0x28u, 0x2au};
     static const uint16_t previous_words[] = {0x0000u, 0x5a5au};
-    uint8_t channel;
-    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-        uint8_t index;
+    uint8_t channel_index;
+
+    for (channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
+        uint8_t offset_index;
         dspic33_reset(cpu, 0u);
-        dspic33_can_test_select_window(cpu, channel, false);
-        for (index = 0u; index < sizeof(offsets); index++) {
-            uint16_t address = (uint16_t)(bases[channel] + offsets[index]);
+        dspic33_can_test_select_window(cpu, channel_index, false);
+        for (offset_index = 0u; offset_index < sizeof(offsets); offset_index++) {
+            uint16_t register_address = (uint16_t)(bases[channel_index] + offsets[offset_index]);
             uint8_t previous_index;
             for (previous_index = 0u;
                  previous_index < sizeof(previous_words) / sizeof(previous_words[0]);
                  previous_index++) {
-                uint16_t previous = previous_words[previous_index];
-                uint32_t requested;
-                for (requested = 0u; requested <= UINT16_MAX; requested += 257u) {
-                    dspic33_can_test_write_memory_word(cpu, address, previous);
-                    dspic33_write_word(cpu, address, (uint16_t)requested);
+                uint16_t previous_word = previous_words[previous_index];
+                uint32_t requested_value;
+                for (requested_value = 0u; requested_value <= UINT16_MAX; requested_value += 257u) {
+                    dspic33_can_test_write_memory_word(cpu, register_address, previous_word);
+                    dspic33_write_word(cpu, register_address, (uint16_t)requested_value);
                     expect(state,
-                           dspic33_read_word(cpu, address) == (uint16_t)(previous & requested),
+                           dspic33_read_word(cpu, register_address) ==
+                               (uint16_t)(previous_word & requested_value),
                            "receive overflow write-zero prior domain");
                 }
             }
@@ -48,45 +50,51 @@ void dspic33_can_test_receive_overflow_write_zero_prior_domain(TestState* state,
 
 void dspic33_can_test_receive_flag_read_pointer_cases(TestState* state, Dspic33* cpu) {
     static const uint8_t sizes[] = {4u, 6u, 8u, 12u, 16u, 24u, 32u};
-    uint8_t channel;
-    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-        uint8_t selection;
-        for (selection = 0u; selection < sizeof(sizes); selection++) {
-            uint8_t size = sizes[selection];
-            uint8_t start = (uint8_t)(size / 2u);
-            uint8_t buffer;
-            for (buffer = start; buffer < size; buffer++) {
-                uint16_t address = (uint16_t)(bases[channel] + 0x20u + (buffer >= 16u ? 2u : 0u));
-                uint16_t bit = (uint16_t)(1u << (buffer & 15u));
-                uint16_t fifo_address = (uint16_t)(bases[channel] + 8u);
-                uint8_t expected = buffer + 1u == size ? start : (uint8_t)(buffer + 1u);
+    uint8_t channel_index;
+
+    for (channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
+        uint8_t size_index;
+        for (size_index = 0u; size_index < sizeof(sizes); size_index++) {
+            uint8_t receive_size = sizes[size_index];
+            uint8_t start_buffer = (uint8_t)(receive_size / 2u);
+            uint8_t buffer_index;
+            for (buffer_index = start_buffer; buffer_index < receive_size; buffer_index++) {
+                uint16_t register_address =
+                    (uint16_t)(bases[channel_index] + 0x20u + (buffer_index >= 16u ? 2u : 0u));
+                uint16_t bit_mask = (uint16_t)(1u << (buffer_index & 15u));
+                uint16_t fifo_address = (uint16_t)(bases[channel_index] + 8u);
+                uint8_t expected_buffer =
+                    buffer_index + 1u == receive_size ? start_buffer : (uint8_t)(buffer_index + 1u);
                 dspic33_reset(cpu, 0u);
-                dspic33_can_test_configure_receive(cpu, channel, 0xf800u, selection, start);
-                dspic33_can_test_select_window(cpu, channel, false);
-                dspic33_can_test_write_memory_word(cpu, address, bit);
-                dspic33_can_test_write_memory_word(cpu, fifo_address,
-                                                   (uint16_t)(((uint16_t)start << 8u) | 0x003fu));
-                dspic33_write_word(cpu, address, (uint16_t)~bit);
-                expect(state, dspic33_read_word(cpu, address) == 0u, "FIFO receive flag clear");
-                expect(state, (dspic33_read_word(cpu, fifo_address) & 0x003fu) == expected,
+                dspic33_can_test_configure_receive(cpu, channel_index, 0xf800u, size_index,
+                                                   start_buffer);
+                dspic33_can_test_select_window(cpu, channel_index, false);
+                dspic33_can_test_write_memory_word(cpu, register_address, bit_mask);
+                dspic33_can_test_write_memory_word(
+                    cpu, fifo_address, (uint16_t)(((uint16_t)start_buffer << 8u) | 0x003fu));
+                dspic33_write_word(cpu, register_address, (uint16_t)~bit_mask);
+                expect(state, dspic33_read_word(cpu, register_address) == 0u,
+                       "FIFO receive flag clear");
+                expect(state, (dspic33_read_word(cpu, fifo_address) & 0x003fu) == expected_buffer,
                        "FIFO receive flag advances read pointer");
                 expect(state,
                        (dspic33_read_word(cpu, fifo_address) & 0x3f00u) ==
-                           (uint16_t)((uint16_t)start << 8u),
+                           (uint16_t)((uint16_t)start_buffer << 8u),
                        "FIFO receive flag preserves write pointer");
             }
-            if (start != 0u) {
-                uint8_t buffer = (uint8_t)(start - 1u);
-                uint16_t address = (uint16_t)(bases[channel] + 0x20u);
-                uint16_t bit = (uint16_t)(1u << buffer);
-                uint16_t fifo_address = (uint16_t)(bases[channel] + 8u);
+            if (start_buffer != 0u) {
+                uint8_t buffer_index = (uint8_t)(start_buffer - 1u);
+                uint16_t register_address = (uint16_t)(bases[channel_index] + 0x20u);
+                uint16_t bit_mask = (uint16_t)(1u << buffer_index);
+                uint16_t fifo_address = (uint16_t)(bases[channel_index] + 8u);
                 dspic33_reset(cpu, 0u);
-                dspic33_can_test_configure_receive(cpu, channel, 0xf800u, selection, start);
-                dspic33_can_test_select_window(cpu, channel, false);
-                dspic33_can_test_write_memory_word(cpu, address, bit);
-                dspic33_can_test_write_memory_word(cpu, fifo_address,
-                                                   (uint16_t)(((uint16_t)start << 8u) | 0x003eu));
-                dspic33_write_word(cpu, address, (uint16_t)~bit);
+                dspic33_can_test_configure_receive(cpu, channel_index, 0xf800u, size_index,
+                                                   start_buffer);
+                dspic33_can_test_select_window(cpu, channel_index, false);
+                dspic33_can_test_write_memory_word(cpu, register_address, bit_mask);
+                dspic33_can_test_write_memory_word(
+                    cpu, fifo_address, (uint16_t)(((uint16_t)start_buffer << 8u) | 0x003eu));
+                dspic33_write_word(cpu, register_address, (uint16_t)~bit_mask);
                 expect(state, (dspic33_read_word(cpu, fifo_address) & 0x003fu) == 0x003eu,
                        "direct receive flag preserves FIFO read pointer");
             }
