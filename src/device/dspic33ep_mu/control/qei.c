@@ -569,13 +569,13 @@ uint64_t dspic33_device_internal_qei_boundary_cycles(const Dspic33* cpu, uint64_
     return earliest_boundary_cycles;
 }
 
-bool dspic33_device_internal_qei_pps_output_value(const Dspic33* cpu, uint8_t port, uint8_t pin,
-                                                  bool* is_high) {
+bool dspic33_device_internal_qei_pps_output_value(const Dspic33* cpu, uint8_t port,
+                                                  uint8_t port_bit, bool* is_high) {
     for (size_t pin_index = 0u;
          pin_index < sizeof(dspic33_device_pps_pins) / sizeof(dspic33_device_pps_pins[0]);
          pin_index++) {
         if (dspic33_device_pps_pins[pin_index].port == port &&
-            dspic33_device_pps_pins[pin_index].bit == pin) {
+            dspic33_device_pps_pins[pin_index].bit == port_bit) {
             const uint8_t output_function = dspic33_device_internal_pps_output_function(
                 cpu, dspic33_device_pps_pins[pin_index].pin);
             if (output_function == 47u || output_function == 48u) {

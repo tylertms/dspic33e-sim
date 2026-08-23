@@ -81,10 +81,10 @@ bool dspic33_device_internal_pwm_pin_value(const Dspic33* cpu, uint8_t port, uin
 bool dspic33_device_internal_pwm_register_write_mask(const Dspic33* cpu, uint16_t address,
                                                      uint16_t* writable);
 bool dspic33_device_internal_qei_compare_output_value(const Dspic33* cpu, uint8_t channel,
-                                                      bool* high);
-bool dspic33_device_internal_qei_pps_output_value(const Dspic33* cpu, uint8_t port, uint8_t bit,
-                                                  bool* high);
-bool dspic33_device_internal_qei_read_register(Dspic33* cpu, uint16_t address, uint8_t* value);
+                                                      bool* is_high);
+bool dspic33_device_internal_qei_pps_output_value(const Dspic33* cpu, uint8_t port,
+                                                  uint8_t port_bit, bool* is_high);
+bool dspic33_device_internal_qei_read_register(Dspic33* cpu, uint16_t address, uint8_t* read_value);
 bool dspic33_device_internal_register_write_mask(const Dspic33* cpu, uint16_t address,
                                                  uint16_t* writable);
 bool dspic33_device_internal_schedule_dma_channel(Dspic33* cpu, uint8_t channel,
@@ -160,7 +160,7 @@ uint32_t dspic33_device_internal_timer_prescale(uint16_t control);
 uint64_t dspic33_device_internal_can_bit_cycles(const Dspic33* cpu, uint8_t channel);
 uint64_t dspic33_device_internal_output_compare_clock_boundary_ticks(const Dspic33* cpu,
                                                                      uint8_t timer);
-uint64_t dspic33_device_internal_qei_boundary_cycles(const Dspic33* cpu, uint64_t limit);
+uint64_t dspic33_device_internal_qei_boundary_cycles(const Dspic33* cpu, uint64_t maximum_cycles);
 uint64_t dspic33_device_internal_spi_transfer_cycles(const Dspic33* cpu, uint8_t channel);
 uint64_t dspic33_device_internal_timer_ticks_until_period(const Dspic33* cpu, uint8_t timer_index);
 uint8_t dspic33_device_internal_auxiliary_pll_input(uint16_t control);
@@ -248,7 +248,8 @@ void dspic33_device_internal_pwm_refresh_status(Dspic33* cpu, uint8_t generator)
 void dspic33_device_internal_pwm_start(Dspic33* cpu);
 void dspic33_device_internal_pwm_sync_event(Dspic33* cpu, uint8_t input, bool high);
 void dspic33_device_internal_pwm_update_output(Dspic33* cpu, uint8_t generator);
-void dspic33_device_internal_qei_set_physical_inputs(Dspic33* cpu, uint8_t channel, uint8_t values);
+void dspic33_device_internal_qei_set_physical_inputs(Dspic33* cpu, uint8_t channel,
+                                                     uint8_t input_values);
 void dspic33_device_internal_raise_external_interrupt(Dspic33* cpu, uint8_t channel);
 void dspic33_device_internal_raise_scheduled_interrupt(Dspic33* cpu, uint16_t irq);
 void dspic33_device_internal_raw_write_word(Dspic33* cpu, uint16_t address, uint16_t value);
@@ -348,8 +349,8 @@ void dspic33_device_internal_update_pmp_pmd(Dspic33* cpu, uint16_t previous);
 void dspic33_device_internal_update_pmp_register(Dspic33* cpu, uint16_t address, uint16_t previous);
 void dspic33_device_internal_update_pwm_pmd(Dspic33* cpu, uint16_t address, uint16_t previous);
 void dspic33_device_internal_update_pwm_register(Dspic33* cpu, uint16_t address, uint16_t previous);
-void dspic33_device_internal_update_qei_register(Dspic33* cpu, uint16_t address, uint16_t previous,
-                                                 uint16_t requested);
+void dspic33_device_internal_update_qei_register(Dspic33* cpu, uint16_t address,
+                                                 uint16_t previous_value, uint16_t requested_value);
 void dspic33_device_internal_update_rtcc_register(Dspic33* cpu, uint16_t address,
                                                   uint16_t previous);
 void dspic33_device_internal_update_spi_register(Dspic33* cpu, uint16_t address, uint16_t previous,
