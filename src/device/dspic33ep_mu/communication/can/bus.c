@@ -121,37 +121,39 @@ static void can_receive_sample_final(Dspic33* cpu, uint8_t channel_index) {
     can_receive_sample(cpu, channel_index, sample_count >= 2u);
 }
 
-static void can_ack_start(Dspic33* cpu, uint8_t channel) {
-    uint8_t bit = (uint8_t)(1u << channel);
-    if (!dspic33_device_internal_can_serial_receive_enabled(cpu, channel) ||
-        dspic33_device_internal_can_mode(cpu, channel) == CAN_MODE_LISTEN) {
+static void can_ack_start(Dspic33* cpu, uint8_t channel_index) {
+    const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+
+    if (!dspic33_device_internal_can_serial_receive_enabled(cpu, channel_index) ||
+        dspic33_device_internal_can_mode(cpu, channel_index) == CAN_MODE_LISTEN) {
         return;
     }
-    cpu->io.can_rx_ack |= bit;
-    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_ACK_FINISH,
-                          dspic33_device_internal_can_bit_cycles(cpu, channel))) {
-        cpu->io.can_rx_ack &= (uint8_t)~bit;
+    cpu->io.can_rx_ack |= channel_bit;
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_ACK_FINISH,
+                          dspic33_device_internal_can_bit_cycles(cpu, channel_index))) {
+        cpu->io.can_rx_ack &= (uint8_t)~channel_bit;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
 }
 
-static void can_ack_finish(Dspic33* cpu, uint8_t channel) {
-    cpu->io.can_rx_ack &= (uint8_t)~(uint8_t)(1u << channel);
+static void can_ack_finish(Dspic33* cpu, uint8_t channel_index) {
+    cpu->io.can_rx_ack &= (uint8_t)~(uint8_t)(1u << channel_index);
 }
 
-static void can_receive_error_start(Dspic33* cpu, uint8_t channel) {
-    uint8_t bit = (uint8_t)(1u << channel);
-    cpu->io.can_rx_error_active |= bit;
-    cpu->io.can_rx_error_start_cycle[channel] = cpu->device_cycles;
-    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_ERROR_FINISH,
-                          14u * dspic33_device_internal_can_bit_cycles(cpu, channel))) {
-        cpu->io.can_rx_error_active &= (uint8_t)~bit;
+static void can_receive_error_start(Dspic33* cpu, uint8_t channel_index) {
+    const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+
+    cpu->io.can_rx_error_active |= channel_bit;
+    cpu->io.can_rx_error_start_cycle[channel_index] = cpu->device_cycles;
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_RECEIVE_ERROR_FINISH,
+                          14u * dspic33_device_internal_can_bit_cycles(cpu, channel_index))) {
+        cpu->io.can_rx_error_active &= (uint8_t)~channel_bit;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
 }
 
-static void can_receive_error_finish(Dspic33* cpu, uint8_t channel) {
-    cpu->io.can_rx_error_active &= (uint8_t)~(uint8_t)(1u << channel);
+static void can_receive_error_finish(Dspic33* cpu, uint8_t channel_index) {
+    cpu->io.can_rx_error_active &= (uint8_t)~(uint8_t)(1u << channel_index);
 }
 
 static void can_mode_transition(Dspic33* cpu, uint8_t channel, uint32_t value) {
