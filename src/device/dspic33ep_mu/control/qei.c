@@ -20,11 +20,13 @@ static uint32_t qei_read_counter(const Dspic33* cpu, uint8_t channel, uint16_t l
             << 16u);
 }
 
-static void qei_write_counter(Dspic33* cpu, uint8_t channel, uint16_t low_offset, uint32_t value) {
+static void qei_write_counter(Dspic33* cpu, uint8_t channel, uint16_t low_offset,
+                              uint32_t counter_value) {
     const uint16_t qei_base = dspic33_device_qei_bases[channel];
-    dspic33_device_internal_raw_write_word(cpu, (uint16_t)(qei_base + low_offset), (uint16_t)value);
+    dspic33_device_internal_raw_write_word(cpu, (uint16_t)(qei_base + low_offset),
+                                           (uint16_t)counter_value);
     dspic33_device_internal_raw_write_word(cpu, (uint16_t)(qei_base + low_offset + 2u),
-                                           (uint16_t)(value >> 16u));
+                                           (uint16_t)(counter_value >> 16u));
 }
 
 static uint64_t qei_divider(uint16_t control) {
@@ -219,21 +221,23 @@ static bool qei_path_hits_range(uint32_t start, int8_t direction, uint64_t ticks
 }
 
 static bool qei_path_crosses_value(uint32_t start, int8_t direction, uint64_t ticks,
-                                   uint32_t value) {
-    return qei_path_hits_range(start, direction, ticks, value, value);
+                                   uint32_t target_value) {
+    return qei_path_hits_range(start, direction, ticks, target_value, target_value);
 }
 
 static bool qei_path_crosses_word(uint16_t start, int8_t direction, uint64_t ticks,
-                                  uint16_t value) {
+                                  uint16_t target_value) {
     uint16_t end;
     if (ticks > UINT16_MAX) {
         return true;
     }
     end = direction > 0 ? (uint16_t)(start + (uint16_t)ticks) : (uint16_t)(start - (uint16_t)ticks);
     if (direction > 0) {
-        return end > start ? value > start && value <= end : value > start || value <= end;
+        return end > start ? target_value > start && target_value <= end
+                           : target_value > start || target_value <= end;
     }
-    return end < start ? value >= end && value < start : value < start || value >= end;
+    return end < start ? target_value >= end && target_value < start
+                       : target_value < start || target_value >= end;
 }
 
 static void qei_advance_timer_ticks(Dspic33* cpu, uint8_t channel, int8_t direction,
@@ -426,11 +430,11 @@ bool dspic33_device_internal_qei_compare_output_value(const Dspic33* cpu, uint8_
 
 static bool qei_pps_output_mapped(const Dspic33* cpu, uint8_t channel) {
     uint8_t function = (uint8_t)(47u + channel);
-    for (size_t index = 0u;
-         index < sizeof(dspic33_device_pps_outputs) / sizeof(dspic33_device_pps_outputs[0]);
-         index++) {
+    for (size_t output_index = 0u;
+         output_index < sizeof(dspic33_device_pps_outputs) / sizeof(dspic33_device_pps_outputs[0]);
+         output_index++) {
         if (dspic33_device_internal_pps_output_function(
-                cpu, dspic33_device_pps_outputs[index].pin) == function) {
+                cpu, dspic33_device_pps_outputs[output_index].pin) == function) {
             return true;
         }
     }
