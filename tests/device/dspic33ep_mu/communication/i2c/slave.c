@@ -567,14 +567,14 @@ void dspic33_i2c_test_slave_pin_receive_cases(TestState* state, Dspic33* cpu) {
     for (route_index = 0u; route_index < sizeof(pin_routes) / sizeof(pin_routes[0]);
          route_index++) {
         const I2cPinRoute* route = &pin_routes[route_index];
-        uint16_t base = bases[route->channel];
-        uint16_t pins = (uint16_t)((1u << route->clock) | (1u << route->data));
-        uint8_t value = (uint8_t)(0x31u + route_index * 0x22u);
+        uint16_t register_base = bases[route->channel];
+        uint16_t pin_mask = (uint16_t)((1u << route->clock) | (1u << route->data));
+        uint8_t received_byte = (uint8_t)(0x31u + route_index * 0x22u);
 
         dspic33_load_configuration_word(cpu, 0xf8000cu, route->configuration);
         dspic33_reset(cpu, 0u);
-        dspic33_gpio_drive(cpu, route->port, pins, pins);
-        dspic33_write_word(cpu, (uint16_t)(base + 10u), 0x52u);
+        dspic33_gpio_drive(cpu, route->port, pin_mask, pin_mask);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 10u), 0x52u);
         dspic33_i2c_test_enable(cpu, route->channel, 0u, 0u);
         dspic33_i2c_test_drive_pin(route, cpu, false, false);
         expect(state,
@@ -585,7 +585,7 @@ void dspic33_i2c_test_slave_pin_receive_cases(TestState* state, Dspic33* cpu) {
         expect(state,
                dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, false,
                                            false) &&
-                   dspic33_read_word(cpu, base) == 0x00a4u &&
+                   dspic33_read_word(cpu, register_base) == 0x00a4u &&
                    !dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[route->channel]),
                "physical slave receives address before ninth-clock interrupt");
         expect(state, dspic33_i2c_test_pop_slave_acknowledgement(cpu, route->channel, true),
@@ -603,16 +603,16 @@ void dspic33_i2c_test_slave_pin_receive_cases(TestState* state, Dspic33* cpu) {
                    dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[route->channel]) &&
                    cpu->io.i2c_slave_pin_state[route->channel] == 2u,
                "physical slave raises address interrupt and stretches after ninth clock");
-        dspic33_read_word(cpu, base);
-        dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x9000u);
+        dspic33_read_word(cpu, register_base);
+        dspic33_write_word(cpu, (uint16_t)(register_base + 6u), 0x9000u);
         dspic33_i2c_test_drive_pin(route, cpu, false, true);
 
         dspic33_i2c_test_clear_interrupt(cpu, slave_irqs[route->channel]);
-        dspic33_i2c_test_drive_byte(route, cpu, value);
+        dspic33_i2c_test_drive_byte(route, cpu, received_byte);
         expect(state,
                dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, false,
                                            false) &&
-                   dspic33_read_word(cpu, base) == value &&
+                   dspic33_read_word(cpu, register_base) == received_byte &&
                    !dspic33_i2c_test_interrupt_flag(cpu, slave_irqs[route->channel]),
                "physical slave receives data and drives ACK before interrupt");
         expect(state, dspic33_i2c_test_pop_slave_acknowledgement(cpu, route->channel, true),
@@ -632,7 +632,7 @@ void dspic33_i2c_test_slave_pin_receive_cases(TestState* state, Dspic33* cpu) {
         dspic33_i2c_test_drive_pin(route, cpu, false, true);
         expect(state,
                cpu->io.i2c_slave_pin_active == 0u &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 8u)) & 0x0018u) == 0x0010u &&
+                   (dspic33_read_word(cpu, (uint16_t)(register_base + 8u)) & 0x0018u) == 0x0010u &&
                    dspic33_i2c_test_pin_levels(cpu, route->port, route->clock, route->data, true,
                                                true),
                "physical slave Stop clears serial state and returns bus idle");
