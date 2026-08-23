@@ -434,21 +434,25 @@ void dspic33_can_test_transmit_error_variant_cases(TestState* state, Dspic33* cp
            "aborting an error-passive retry releases the CAN bus");
 }
 
-static bool drive_until_receive_error(Dspic33* cpu, uint16_t corrupt_bit) {
-    for (uint16_t bit = 0u; bit < 160u; bit++) {
-        bool transmit_high;
-        bool receive_high;
+static bool drive_until_receive_error(Dspic33* cpu, uint16_t corruption_bit) {
+    for (uint16_t bit_index = 0u; bit_index < 160u; bit_index++) {
+        bool transmitted_pin_level;
+        bool received_pin_level;
+
         if ((cpu->io.can_rx_error_active & 2u) != 0u) {
             return true;
         }
-        if (!dspic33_can_pin(cpu, 64u, &transmit_high) ||
-            !dspic33_can_pin(cpu, 65u, &receive_high)) {
+
+        if (!dspic33_can_pin(cpu, 64u, &transmitted_pin_level) ||
+            !dspic33_can_pin(cpu, 65u, &received_pin_level)) {
             return false;
         }
-        if (bit == corrupt_bit) {
-            transmit_high = !transmit_high;
+
+        if (bit_index == corruption_bit) {
+            transmitted_pin_level = !transmitted_pin_level;
         }
-        if (!dspic33_can_input_pin(cpu, 64u, transmit_high && receive_high, 0u) ||
+
+        if (!dspic33_can_input_pin(cpu, 64u, transmitted_pin_level && received_pin_level, 0u) ||
             !dspic33_device_advance(cpu, 4u)) {
             return false;
         }
