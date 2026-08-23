@@ -223,25 +223,27 @@ static bool dci_schedule_sample(Dspic33* cpu, uint64_t delay) {
 
 static bool dci_begin_internal_word(Dspic33* cpu) {
     Dspic33Dci* dci = &cpu->io.dci;
-    uint64_t word_cycles = dci_word_cycles(cpu);
-    uint64_t sample_delay =
+    uint64_t word_cycle_count = dci_word_cycles(cpu);
+    uint64_t sample_delay_cycles =
         (dspic33_device_internal_raw_word(cpu, DCI_CONTROL1) & DCI_CONTROL_SAMPLE_RISING) != 0u
             ? 0u
             : dci_bit_cycles(cpu) / 2u;
+
     dci->serial_input = 0u;
     dci->serial_bits = 0u;
-    if (!dci_schedule_internal(cpu, DCI_EVENT_INTERNAL, word_cycles)) {
+    if (!dci_schedule_internal(cpu, DCI_EVENT_INTERNAL, word_cycle_count)) {
         return false;
     }
-    return !dci->pps_input_configured || dci_schedule_sample(cpu, sample_delay);
+    return !dci->pps_input_configured || dci_schedule_sample(cpu, sample_delay_cycles);
 }
 
 static bool dci_clock_running(const Dspic33* cpu) {
-    uint16_t control = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
+    uint16_t control_word = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
+
     if (cpu->io.dci.pmd_disabled || cpu->power_state == DSPIC33_POWER_SLEEP) {
         return false;
     }
-    return cpu->power_state != DSPIC33_POWER_IDLE || (control & DCI_CONTROL_STOP_IDLE) == 0u;
+    return cpu->power_state != DSPIC33_POWER_IDLE || (control_word & DCI_CONTROL_STOP_IDLE) == 0u;
 }
 
 static bool dci_internal_event(const Dspic33Event* event) {
@@ -300,11 +302,13 @@ void dspic33_device_internal_dci_discard_internal_events(Dspic33* cpu) {
 }
 
 void dspic33_device_internal_dci_update_power_state(Dspic33* cpu) {
-    uint16_t control = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
-    bool internal = (control & DCI_CONTROL_EXTERNAL_CLOCK) == 0u;
-    bool clocked = !internal || (dspic33_device_internal_raw_word(cpu, DCI_CONTROL3) != 0u &&
-                                 dci_clock_running(cpu));
-    if (clocked) {
+    uint16_t control_word = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
+    bool uses_internal_clock = (control_word & DCI_CONTROL_EXTERNAL_CLOCK) == 0u;
+    bool clock_is_running =
+        !uses_internal_clock ||
+        (dspic33_device_internal_raw_word(cpu, DCI_CONTROL3) != 0u && dci_clock_running(cpu));
+
+    if (clock_is_running) {
         dci_resume_events(cpu);
     } else {
         dci_pause_events(cpu);
