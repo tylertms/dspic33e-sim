@@ -1,99 +1,104 @@
 #include "device/dspic33ep_mu/internal.h"
 
 uint8_t dspic33_device_internal_uart_transmit_interrupt_mode(const Dspic33* cpu, uint8_t channel) {
-    uint16_t status =
+    uint16_t status_word =
         dspic33_device_internal_raw_word(cpu, (uint16_t)(dspic33_device_uart_bases[channel] + 2u));
-    return (uint8_t)(((status & UART_STATUS_TX_INTERRUPT_LOW) != 0u ? 1u : 0u) |
-                     ((status & UART_STATUS_TX_INTERRUPT_HIGH) != 0u ? 2u : 0u));
+    return (uint8_t)(((status_word & UART_STATUS_TX_INTERRUPT_LOW) != 0u ? 1u : 0u) |
+                     ((status_word & UART_STATUS_TX_INTERRUPT_HIGH) != 0u ? 2u : 0u));
 }
 
 static uint8_t uart_receive_interrupt_threshold(const Dspic33* cpu, uint8_t channel) {
-    uint16_t mode =
+    uint16_t status_word =
         dspic33_device_internal_raw_word(cpu, (uint16_t)(dspic33_device_uart_bases[channel] + 2u)) &
         UART_STATUS_RX_INTERRUPT_MASK;
-    if (mode == 0x0080u) {
+    if (status_word == 0x0080u) {
         return 3u;
     }
-    if (mode == 0x00c0u) {
+    if (status_word == 0x00c0u) {
         return 4u;
     }
     return 1u;
 }
 
-static Dspic33UartParity uart_parity(uint16_t mode) {
-    uint16_t selection = mode & UART_MODE_DATA_MASK;
-    if (selection == 0x0002u) {
+static Dspic33UartParity uart_parity(uint16_t mode_word) {
+    uint16_t parity_selection = mode_word & UART_MODE_DATA_MASK;
+    if (parity_selection == 0x0002u) {
         return DSPIC33_UART_PARITY_EVEN;
     }
-    if (selection == 0x0004u) {
+    if (parity_selection == 0x0004u) {
         return DSPIC33_UART_PARITY_ODD;
     }
     return DSPIC33_UART_PARITY_NONE;
 }
 
-static bool uart_frame_data_parity(const Dspic33UartFrame* frame) {
-    uint16_t value = frame->value;
-    bool odd = false;
-    uint8_t bit;
-    for (bit = 0u; bit < frame->data_bits; bit++) {
-        odd = odd != ((value & (uint16_t)(1u << bit)) != 0u);
+static bool uart_frame_data_parity(const Dspic33UartFrame* uart_frame) {
+    uint16_t data_word = uart_frame->value;
+    bool parity_bit = false;
+    uint8_t data_bit_index;
+
+    for (data_bit_index = 0u; data_bit_index < uart_frame->data_bits; data_bit_index++) {
+        parity_bit = parity_bit != ((data_word & (uint16_t)(1u << data_bit_index)) != 0u);
     }
-    return frame->parity == DSPIC33_UART_PARITY_EVEN ? odd : !odd;
+    return uart_frame->parity == DSPIC33_UART_PARITY_EVEN ? parity_bit : !parity_bit;
 }
 
-static bool uart_frame_logical_bit(const Dspic33UartFrame* frame, uint8_t bit) {
-    if (bit == 0u) {
+static bool uart_frame_logical_bit(const Dspic33UartFrame* uart_frame, uint8_t bit_index) {
+    if (bit_index == 0u) {
         return false;
     }
-    bit--;
-    if (bit < frame->data_bits) {
-        return (frame->value & (uint16_t)(1u << bit)) != 0u;
+    bit_index--;
+    if (bit_index < uart_frame->data_bits) {
+        return (uart_frame->value & (uint16_t)(1u << bit_index)) != 0u;
     }
-    bit = (uint8_t)(bit - frame->data_bits);
-    if (frame->parity != DSPIC33_UART_PARITY_NONE) {
-        if (bit == 0u) {
-            return uart_frame_data_parity(frame);
+    bit_index = (uint8_t)(bit_index - uart_frame->data_bits);
+    if (uart_frame->parity != DSPIC33_UART_PARITY_NONE) {
+        if (bit_index == 0u) {
+            return uart_frame_data_parity(uart_frame);
         }
-        bit--;
+        bit_index--;
     }
     return true;
 }
 
-static uint8_t uart_frame_bits(const Dspic33UartFrame* frame) {
-    return (uint8_t)(1u + frame->data_bits + frame->stop_bits +
-                     (frame->parity == DSPIC33_UART_PARITY_NONE ? 0u : 1u));
+static uint8_t uart_frame_bits(const Dspic33UartFrame* uart_frame) {
+    return (uint8_t)(1u + uart_frame->data_bits + uart_frame->stop_bits +
+                     (uart_frame->parity == DSPIC33_UART_PARITY_NONE ? 0u : 1u));
 }
 
 void dspic33_device_internal_uart_refresh_status(Dspic33* cpu, uint8_t channel) {
-    uint16_t base = dspic33_device_uart_bases[channel];
-    uint16_t status = dspic33_device_internal_raw_word(cpu, (uint16_t)(base + 2u));
-    uint8_t bit = (uint8_t)(1u << channel);
-    Dspic33UartFrame frame;
-    status &= (uint16_t)~(UART_STATUS_TX_FULL | UART_STATUS_TX_EMPTY | UART_STATUS_RX_IDLE |
-                          UART_STATUS_PARITY_ERROR | UART_STATUS_FRAMING_ERROR |
-                          UART_STATUS_RX_AVAILABLE);
+    uint16_t uart_base = dspic33_device_uart_bases[channel];
+    uint16_t status_word = dspic33_device_internal_raw_word(cpu, (uint16_t)(uart_base + 2u));
+    uint8_t channel_mask = (uint8_t)(1u << channel);
+    Dspic33UartFrame received_frame;
+
+    status_word &= (uint16_t)~(UART_STATUS_TX_FULL | UART_STATUS_TX_EMPTY | UART_STATUS_RX_IDLE |
+                               UART_STATUS_PARITY_ERROR | UART_STATUS_FRAMING_ERROR |
+                               UART_STATUS_RX_AVAILABLE);
     if (cpu->io.uart_tx_fifo[channel].count == DSPIC33_UART_FIFO_SIZE) {
-        status |= UART_STATUS_TX_FULL;
+        status_word |= UART_STATUS_TX_FULL;
     }
-    if ((cpu->io.uart_tx_active & bit) == 0u && cpu->io.uart_tx_fifo[channel].count == 0u) {
-        status |= UART_STATUS_TX_EMPTY;
+    if ((cpu->io.uart_tx_active & channel_mask) == 0u &&
+        cpu->io.uart_tx_fifo[channel].count == 0u) {
+        status_word |= UART_STATUS_TX_EMPTY;
     }
-    if ((cpu->io.uart_rx_active & bit) == 0u) {
-        status |= UART_STATUS_RX_IDLE;
+    if ((cpu->io.uart_rx_active & channel_mask) == 0u) {
+        status_word |= UART_STATUS_RX_IDLE;
     }
-    if (dspic33_device_internal_uart_fifo_front(&cpu->io.uart_rx_fifo[channel], &frame)) {
-        status |= UART_STATUS_RX_AVAILABLE;
-        if (frame.parity_error) {
-            status |= UART_STATUS_PARITY_ERROR;
+
+    if (dspic33_device_internal_uart_fifo_front(&cpu->io.uart_rx_fifo[channel], &received_frame)) {
+        status_word |= UART_STATUS_RX_AVAILABLE;
+        if (received_frame.parity_error) {
+            status_word |= UART_STATUS_PARITY_ERROR;
         }
-        if (frame.framing_error) {
-            status |= UART_STATUS_FRAMING_ERROR;
+        if (received_frame.framing_error) {
+            status_word |= UART_STATUS_FRAMING_ERROR;
         }
-        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(base + 6u), frame.value & 0x01ffu);
+        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(uart_base + 6u),
+                                               received_frame.value & 0x01ffu);
     } else {
-        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(base + 6u), 0u);
+        dspic33_device_internal_raw_write_word(cpu, (uint16_t)(uart_base + 6u), 0u);
     }
-    dspic33_device_internal_raw_write_word(cpu, (uint16_t)(base + 2u), status);
+    dspic33_device_internal_raw_write_word(cpu, (uint16_t)(uart_base + 2u), status_word);
 }
 
 void dspic33_device_internal_uart_clear_receive(Dspic33* cpu, uint8_t channel) {
