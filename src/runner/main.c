@@ -11,7 +11,7 @@ enum { PROGRAM_WORD_LIMIT = 8 };
 
 typedef struct {
     uint32_t address;
-    uint32_t value;
+    uint32_t instruction_word;
 } ProgramWord;
 
 typedef struct {
@@ -24,14 +24,14 @@ typedef struct {
     uint8_t program_word_count;
 } Arguments;
 
-static bool parse_u64(const char* text, uint64_t maximum, uint64_t* parsed_value) {
+static bool parse_u64(const char* input_text, uint64_t maximum, uint64_t* numeric_value) {
     char* end = NULL;
     errno = 0;
-    const unsigned long long parsed = strtoull(text, &end, 0);
-    if (errno != 0 || end == text || *end != '\0' || parsed > maximum) {
+    const unsigned long long parsed = strtoull(input_text, &end, 0);
+    if (errno != 0 || end == input_text || *end != '\0' || parsed > maximum) {
         return false;
     }
-    *parsed_value = (uint64_t)parsed;
+    *numeric_value = (uint64_t)parsed;
     return true;
 }
 
@@ -44,7 +44,7 @@ static bool parse_arguments(int argc, char** argv, Arguments* arguments) {
     arguments->device = DSPIC33EP_MU_DEVICE_512MU810;
     arguments->limits = (Dspic33RunLimits){1000000u, 10000000u};
     for (int argument_index = 2; argument_index < argc; argument_index++) {
-        uint64_t parsed_value;
+        uint64_t numeric_value;
         if (strcmp(argv[argument_index], "--reset-address") == 0 && argument_index + 1 < argc) {
             arguments->reset_location = argv[++argument_index];
         } else if (strcmp(argv[argument_index], "--device") == 0 && argument_index + 1 < argc) {
@@ -56,29 +56,29 @@ static bool parse_arguments(int argc, char** argv, Arguments* arguments) {
             arguments->stop_location = argv[++argument_index];
         } else if (strcmp(argv[argument_index], "--max-instructions") == 0 &&
                    argument_index + 1 < argc) {
-            if (!parse_u64(argv[++argument_index], UINT64_MAX, &parsed_value)) {
+            if (!parse_u64(argv[++argument_index], UINT64_MAX, &numeric_value)) {
                 return false;
             }
-            arguments->limits.instruction_limit = parsed_value;
+            arguments->limits.instruction_limit = numeric_value;
         } else if (strcmp(argv[argument_index], "--max-cycles") == 0 && argument_index + 1 < argc) {
-            if (!parse_u64(argv[++argument_index], UINT64_MAX, &parsed_value)) {
+            if (!parse_u64(argv[++argument_index], UINT64_MAX, &numeric_value)) {
                 return false;
             }
-            arguments->limits.cycle_limit = parsed_value;
+            arguments->limits.cycle_limit = numeric_value;
         } else if (strcmp(argv[argument_index], "--program-word") == 0 &&
                    argument_index + 2 < argc) {
             if (arguments->program_word_count == PROGRAM_WORD_LIMIT) {
                 return false;
             }
             ProgramWord* program_word = &arguments->program_words[arguments->program_word_count];
-            if (!parse_u64(argv[++argument_index], UINT32_MAX, &parsed_value)) {
+            if (!parse_u64(argv[++argument_index], UINT32_MAX, &numeric_value)) {
                 return false;
             }
-            program_word->address = (uint32_t)parsed_value;
-            if (!parse_u64(argv[++argument_index], 0x00ffffffu, &parsed_value)) {
+            program_word->address = (uint32_t)numeric_value;
+            if (!parse_u64(argv[++argument_index], 0x00ffffffu, &numeric_value)) {
                 return false;
             }
-            program_word->value = (uint32_t)parsed_value;
+            program_word->instruction_word = (uint32_t)numeric_value;
             arguments->program_word_count++;
         } else {
             return false;
@@ -97,9 +97,9 @@ static void print_usage(const char* program) {
 
 static bool resolve_location(const FirmwareImage* image, const char* text, uint32_t* address,
                              char* error, size_t error_size) {
-    uint64_t numeric;
-    if (parse_u64(text, UINT32_MAX, &numeric)) {
-        *address = (uint32_t)numeric;
+    uint64_t numeric_value;
+    if (parse_u64(text, UINT32_MAX, &numeric_value)) {
+        *address = (uint32_t)numeric_value;
         return true;
     }
     return firmware_image_symbol(image, text, address, error, error_size);
@@ -165,7 +165,7 @@ int main(int argc, char** argv) {
     }
     for (uint8_t word_index = 0u; word_index < arguments.program_word_count; word_index++) {
         const ProgramWord program_word = arguments.program_words[word_index];
-        if (!dspic33_load_program_word(cpu, program_word.address, program_word.value)) {
+        if (!dspic33_load_program_word(cpu, program_word.address, program_word.instruction_word)) {
             fprintf(stderr, "invalid program word address: 0x%08" PRIx32 "\n",
                     program_word.address);
             dspic33_destroy(cpu);
