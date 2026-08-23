@@ -924,8 +924,8 @@ void dspic33_device_internal_run_dci(Dspic33* cpu, uint16_t event_source, uint32
 
 static void dci_start(Dspic33* cpu) {
     Dspic33Dci* dci = &cpu->io.dci;
-    uint16_t control = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
-    uint64_t start_delay;
+    uint16_t control_word = dspic33_device_internal_raw_word(cpu, DCI_CONTROL1);
+
     dspic33_device_internal_dci_discard_internal_events(cpu);
     dci->generation++;
     dci->started = false;
@@ -937,7 +937,7 @@ static void dci_start(Dspic33* cpu) {
     dci->slot = 0u;
     dci->serial_input = 0u;
     dci->serial_bits = 0u;
-    dci->serial_startup_bits = (control & DCI_CONTROL_EXTERNAL_CLOCK) != 0u ? 3u : 0u;
+    dci->serial_startup_bits = (control_word & DCI_CONTROL_EXTERNAL_CLOCK) != 0u ? 3u : 0u;
     dci->serial_frame_bits = 0u;
     dci->serial_output_high = false;
     dci->serial_output_driven = false;
@@ -949,75 +949,77 @@ static void dci_start(Dspic33* cpu) {
     if (!dspic33_device_internal_dci_configuration_supported(cpu)) {
         return;
     }
-    if ((control & DCI_CONTROL_EXTERNAL_CLOCK) != 0u) {
+    if ((control_word & DCI_CONTROL_EXTERNAL_CLOCK) != 0u) {
         return;
     }
-    start_delay = dci_bit_cycles(cpu) * 3u;
-    dci_schedule_internal(cpu, DCI_EVENT_START, start_delay);
+    dci_schedule_internal(cpu, DCI_EVENT_START, dci_bit_cycles(cpu) * 3u);
 }
 
-static bool dci_frame_remaining_cycles(const Dspic33* cpu, uint64_t* remaining) {
-    size_t index;
-    uint8_t slot;
-    uint64_t bit_cycles = dci_bit_cycles(cpu);
-    for (index = 0u; index < cpu->events.count; index++) {
-        const Dspic33Event* event = &cpu->events.items[index];
+static bool dci_frame_remaining_cycles(const Dspic33* cpu, uint64_t* remaining_cycles) {
+    uint64_t bit_cycle_count = dci_bit_cycles(cpu);
+
+    for (size_t event_index = 0u; event_index < cpu->events.count; event_index++) {
+        const Dspic33Event* event = &cpu->events.items[event_index];
         if (event->type != DSPIC33_EVENT_DCI || event->source != DCI_EVENT_INTERNAL ||
             (uint16_t)event->value != cpu->io.dci.generation) {
             continue;
         }
-        *remaining = event->paused ? event->paused_remaining : event->cycle - cpu->device_cycles;
-        for (slot = (uint8_t)(cpu->io.dci.slot + 1u); slot < dci_frame_count(cpu); slot++) {
-            *remaining += bit_cycles * dci_slot_width(cpu, slot);
+        *remaining_cycles =
+            event->paused ? event->paused_remaining : event->cycle - cpu->device_cycles;
+        for (uint8_t slot_index = (uint8_t)(cpu->io.dci.slot + 1u);
+             slot_index < dci_frame_count(cpu); slot_index++) {
+            *remaining_cycles += bit_cycle_count * dci_slot_width(cpu, slot_index);
         }
         return true;
     }
     return false;
 }
 
-static void dci_disable(Dspic33* cpu, uint16_t control) {
+static void dci_disable(Dspic33* cpu, uint16_t control_word) {
     Dspic33Dci* dci = &cpu->io.dci;
-    uint64_t remaining;
+    uint64_t remaining_cycles;
+
     if (!dci->initialized || !dci->started) {
         dci_abort(cpu);
         return;
     }
     dci->disable_pending = true;
     dci->disable_frames = 1u;
-    if ((control & DCI_CONTROL_EXTERNAL_CLOCK) != 0u) {
-        uint8_t slot;
-        remaining = dci_slot_width(cpu, dci->slot) - dci->serial_bits;
-        for (slot = (uint8_t)(dci->slot + 1u); slot < dci_frame_count(cpu); slot++) {
-            remaining += dci_slot_width(cpu, slot);
+    if ((control_word & DCI_CONTROL_EXTERNAL_CLOCK) != 0u) {
+        remaining_cycles = dci_slot_width(cpu, dci->slot) - dci->serial_bits;
+        for (uint8_t slot_index = (uint8_t)(dci->slot + 1u); slot_index < dci_frame_count(cpu);
+             slot_index++) {
+            remaining_cycles += dci_slot_width(cpu, slot_index);
         }
-        if (remaining < 3u) {
+        if (remaining_cycles < 3u) {
             dci->disable_frames = 2u;
         }
     } else {
-        if (!dci_frame_remaining_cycles(cpu, &remaining)) {
+        if (!dci_frame_remaining_cycles(cpu, &remaining_cycles)) {
             dci_abort(cpu);
             return;
         }
-        if (remaining < dci_bit_cycles(cpu) * 3u) {
+        if (remaining_cycles < dci_bit_cycles(cpu) * 3u) {
             dci->disable_frames = 2u;
         }
     }
 }
 
-static void dci_update_pmd(Dspic33* cpu, uint16_t previous) {
+static void dci_update_pmd(Dspic33* cpu, uint16_t previous_pmd) {
     Dspic33Dci* dci = &cpu->io.dci;
-    uint16_t current = dspic33_device_internal_raw_word(cpu, DCI_PMD_ADDRESS);
-    bool disabled;
-    if (((previous ^ current) & DCI_PMD) == 0u) {
+    uint16_t current_pmd = dspic33_device_internal_raw_word(cpu, DCI_PMD_ADDRESS);
+
+    if (((previous_pmd ^ current_pmd) & DCI_PMD) == 0u) {
         return;
     }
-    disabled = (current & DCI_PMD) != 0u;
+    bool pmd_is_disabled = (current_pmd & DCI_PMD) != 0u;
+
     dci->pmd_generation++;
     if (!dspic33_schedule(cpu, DSPIC33_EVENT_DCI, DCI_EVENT_PMD,
                           ((uint32_t)dci->pmd_generation << DCI_EVENT_GENERATION_SHIFT) |
-                              (disabled ? DCI_EVENT_DISABLED : 0u),
+                              (pmd_is_disabled ? DCI_EVENT_DISABLED : 0u),
                           dspic33_device_instruction_cycles(cpu, 1u))) {
-        dspic33_device_internal_raw_write_word(cpu, DCI_PMD_ADDRESS, previous);
+        dspic33_device_internal_raw_write_word(cpu, DCI_PMD_ADDRESS, previous_pmd);
         dci->pmd_generation++;
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
