@@ -377,46 +377,50 @@ static int can_transmit_selection(const Dspic33* cpu, uint8_t channel_index) {
     return selected_buffer;
 }
 
-static void can_transmit_start(Dspic33* cpu, uint8_t channel) {
-    uint8_t bit = (uint8_t)(1u << channel);
-    int selected;
-    if ((cpu->io.can_tx_busy & bit) != 0u || (cpu->io.can_tx_retry_wait & bit) != 0u ||
-        !dspic33_device_internal_can_power_enabled(cpu, channel) ||
-        (dspic33_device_internal_can_mode(cpu, channel) != CAN_MODE_NORMAL &&
-         dspic33_device_internal_can_mode(cpu, channel) != CAN_MODE_LOOPBACK) ||
-        (dspic33_device_internal_raw_word(cpu,
-                                          (uint16_t)(dspic33_device_can_bases[channel] + 0x0au)) &
+static void can_transmit_start(Dspic33* cpu, uint8_t channel_index) {
+    const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+    int selected_buffer;
+
+    if ((cpu->io.can_tx_busy & channel_bit) != 0u ||
+        (cpu->io.can_tx_retry_wait & channel_bit) != 0u ||
+        !dspic33_device_internal_can_power_enabled(cpu, channel_index) ||
+        (dspic33_device_internal_can_mode(cpu, channel_index) != CAN_MODE_NORMAL &&
+         dspic33_device_internal_can_mode(cpu, channel_index) != CAN_MODE_LOOPBACK) ||
+        (dspic33_device_internal_raw_word(
+             cpu, (uint16_t)(dspic33_device_can_bases[channel_index] + 0x0au)) &
          CAN_BUS_OFF) != 0u) {
         return;
     }
-    selected = can_transmit_selection(cpu, channel);
-    if (selected < 0) {
+    selected_buffer = can_transmit_selection(cpu, channel_index);
+    if (selected_buffer < 0) {
         return;
     }
     if (!dspic33_device_internal_can_dma_ready(
-            cpu, dspic33_device_can_tx_requests[channel],
-            (uint16_t)(dspic33_device_can_bases[channel] + 0x42u), true)) {
-        dspic33_raise_interrupt(cpu, dspic33_device_can_tx_irqs[channel]);
+            cpu, dspic33_device_can_tx_requests[channel_index],
+            (uint16_t)(dspic33_device_can_bases[channel_index] + 0x42u), true)) {
+        dspic33_raise_interrupt(cpu, dspic33_device_can_tx_irqs[channel_index]);
         return;
     }
-    cpu->io.can_tx_buffer[channel] = (uint8_t)selected;
-    cpu->io.can_tx_word[channel] = 0u;
-    memset(cpu->io.can_tx_words[channel], 0, sizeof(cpu->io.can_tx_words[channel]));
-    cpu->io.can_tx_busy |= bit;
-    dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_WORD, 0u);
+    cpu->io.can_tx_buffer[channel_index] = (uint8_t)selected_buffer;
+    cpu->io.can_tx_word[channel_index] = 0u;
+    memset(cpu->io.can_tx_words[channel_index], 0, sizeof(cpu->io.can_tx_words[channel_index]));
+    cpu->io.can_tx_busy |= channel_bit;
+    dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_TRANSMIT_WORD, 0u);
 }
 
-static void can_transmit_word(Dspic33* cpu, uint8_t channel) {
-    uint8_t word = cpu->io.can_tx_word[channel];
-    if (word >= 8u) {
-        dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_FINISH, 0u);
+static void can_transmit_word(Dspic33* cpu, uint8_t channel_index) {
+    const uint8_t transmit_word_index = cpu->io.can_tx_word[channel_index];
+
+    if (transmit_word_index >= 8u) {
+        dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_TRANSMIT_FINISH, 0u);
         return;
     }
-    cpu->io.can_tx_word[channel]++;
-    dspic33_raise_interrupt(cpu, dspic33_device_can_tx_irqs[channel]);
-    dspic33_dma_request(cpu, dspic33_device_can_tx_requests[channel],
-                        (uint16_t)(cpu->io.can_tx_buffer[channel] * 16u + word * 2u), 0u);
-    dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_WORD, 1u);
+    cpu->io.can_tx_word[channel_index]++;
+    dspic33_raise_interrupt(cpu, dspic33_device_can_tx_irqs[channel_index]);
+    dspic33_dma_request(
+        cpu, dspic33_device_can_tx_requests[channel_index],
+        (uint16_t)(cpu->io.can_tx_buffer[channel_index] * 16u + transmit_word_index * 2u), 0u);
+    dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_TRANSMIT_WORD, 1u);
 }
 
 static void can_transmit_bus_finish(Dspic33* cpu, uint8_t channel) {
