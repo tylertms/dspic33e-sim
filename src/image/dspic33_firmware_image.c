@@ -7,13 +7,13 @@
 static bool is_elf(const char* path) {
     unsigned char magic[4];
     FILE* file = fopen(path, "rb");
-    bool result = false;
+    bool is_elf_file = false;
     if (file != NULL) {
-        result = fread(magic, 1u, sizeof(magic), file) == sizeof(magic) && magic[0] == 0x7fu &&
-                 magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F';
+        is_elf_file = fread(magic, 1u, sizeof(magic), file) == sizeof(magic) && magic[0] == 0x7fu &&
+                      magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F';
         fclose(file);
     }
-    return result;
+    return is_elf_file;
 }
 
 static bool read_file(const char* path, uint8_t** bytes, size_t* size) {
@@ -69,8 +69,8 @@ bool firmware_image_load_program(const FirmwareImage* image, Dspic33* cpu, char*
     if (image->type == FIRMWARE_IMAGE_ELF) {
         return elf_image_load_program(&image->elf, cpu, error, error_size);
     }
-    uint32_t entry;
-    if (!dspic33_load_binary_data(cpu, image->bytes, image->size, 0u, &entry)) {
+    uint32_t entry_address;
+    if (!dspic33_load_binary_data(cpu, image->bytes, image->size, 0u, &entry_address)) {
         if (error_size != 0u) {
             snprintf(error, error_size, "binary firmware image is invalid");
         }
@@ -90,10 +90,11 @@ bool firmware_image_symbol(const FirmwareImage* image, const char* name, uint32_
     return false;
 }
 
-bool dspic33_load_elf_data(Dspic33* cpu, const void* data, size_t size, uint32_t* entry_address) {
+bool dspic33_load_elf_data(Dspic33* cpu, const void* image_data, size_t image_size,
+                           uint32_t* entry_address) {
     ElfImage image;
     char error[160];
-    if (cpu == NULL || !elf_image_open_data(&image, data, size, error, sizeof(error))) {
+    if (cpu == NULL || !elf_image_open_data(&image, image_data, image_size, error, sizeof(error))) {
         return false;
     }
     const bool loaded = elf_image_load_program(&image, cpu, error, sizeof(error));
@@ -106,20 +107,20 @@ bool dspic33_load_elf_data(Dspic33* cpu, const void* data, size_t size, uint32_t
     return loaded;
 }
 
-bool dspic33_load_binary_data(Dspic33* cpu, const void* data, size_t size, uint32_t load_address,
-                              uint32_t* entry_address) {
-    const uint8_t* bytes = data;
-    size_t offset;
-    if (cpu == NULL || bytes == NULL || size == 0u || (size & 3u) != 0u ||
-        (load_address & 3u) != 0u || size > UINT32_MAX - load_address) {
+bool dspic33_load_binary_data(Dspic33* cpu, const void* image_data, size_t image_size,
+                              uint32_t load_address, uint32_t* entry_address) {
+    const uint8_t* bytes = image_data;
+    size_t byte_offset;
+    if (cpu == NULL || bytes == NULL || image_size == 0u || (image_size & 3u) != 0u ||
+        (load_address & 3u) != 0u || image_size > UINT32_MAX - load_address) {
         return false;
     }
-    for (offset = 0u; offset < size; offset += 4u) {
-        uint32_t storage = load_address + (uint32_t)offset;
+    for (byte_offset = 0u; byte_offset < image_size; byte_offset += 4u) {
+        uint32_t storage = load_address + (uint32_t)byte_offset;
         uint32_t program_address = storage / 2u;
-        uint32_t word = (uint32_t)bytes[offset] | ((uint32_t)bytes[offset + 1u] << 8u) |
-                        ((uint32_t)bytes[offset + 2u] << 16u);
-        if (word == 0x00ffffffu && bytes[offset + 3u] == 0xffu) {
+        uint32_t word = (uint32_t)bytes[byte_offset] | ((uint32_t)bytes[byte_offset + 1u] << 8u) |
+                        ((uint32_t)bytes[byte_offset + 2u] << 16u);
+        if (word == 0x00ffffffu && bytes[byte_offset + 3u] == 0xffu) {
             continue;
         }
         if (dspic33_program_range_implemented(program_address, 2u) &&
@@ -138,11 +139,12 @@ bool dspic33_load_binary_data(Dspic33* cpu, const void* data, size_t size, uint3
     return true;
 }
 
-bool dspic33_elf_symbol_data(const void* data, size_t size, const char* name, uint32_t* address) {
+bool dspic33_elf_symbol_data(const void* image_data, size_t image_size, const char* name,
+                             uint32_t* address) {
     ElfImage image;
     char error[160];
     if (name == NULL || address == NULL ||
-        !elf_image_open_data(&image, data, size, error, sizeof(error))) {
+        !elf_image_open_data(&image, image_data, image_size, error, sizeof(error))) {
         return false;
     }
     const bool found = elf_image_symbol(&image, name, address, error, sizeof(error));
