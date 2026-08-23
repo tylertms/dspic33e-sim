@@ -541,12 +541,13 @@ void dspic33_dci_test_pps_internal_sample_lifecycle_cases(TestState* state, Dspi
 }
 
 void dspic33_dci_test_pps_selection_cases(TestState* state, Dspic33* cpu) {
-    uint8_t selection;
-    bool high;
-    for (selection = 0u; selection < 16u; selection++) {
+    uint8_t selection_index;
+    bool is_high;
+
+    for (selection_index = 0u; selection_index < 16u; selection_index++) {
         dspic33_reset(cpu, 0u);
         dspic33_dci_test_configure_serial_pins(cpu);
-        dspic33_write_word(cpu, DCI_PPS_INPUTS, (uint16_t)((selection << 8u) | PPS_DATA_PIN));
+        dspic33_write_word(cpu, DCI_PPS_INPUTS, (uint16_t)((selection_index << 8u) | PPS_DATA_PIN));
         dspic33_dci_test_configure_external(cpu, DCI_SAMPLE_RISING, 4u, 1u, 1u, 0u, 1u);
         expect(state,
                dspic33_dci_test_drive_serial_word(cpu, 0xf000u, 4u, true) &&
@@ -555,7 +556,8 @@ void dspic33_dci_test_pps_selection_cases(TestState* state, Dspic33* cpu) {
 
         dspic33_reset(cpu, 0u);
         dspic33_dci_test_configure_serial_pins(cpu);
-        dspic33_write_word(cpu, DCI_PPS_INPUTS, (uint16_t)((PPS_CLOCK_PIN << 8u) | selection));
+        dspic33_write_word(cpu, DCI_PPS_INPUTS,
+                           (uint16_t)((PPS_CLOCK_PIN << 8u) | selection_index));
         dspic33_dci_test_configure_external(cpu, DCI_SAMPLE_RISING, 4u, 1u, 1u, 0u, 1u);
         expect(state,
                dspic33_dci_test_drive_serial_word(cpu, 0xf000u, 4u, true) &&
@@ -564,7 +566,7 @@ void dspic33_dci_test_pps_selection_cases(TestState* state, Dspic33* cpu) {
 
         dspic33_reset(cpu, 0u);
         dspic33_dci_test_configure_serial_pins(cpu);
-        dspic33_write_word(cpu, DCI_PPS_FRAME, selection);
+        dspic33_write_word(cpu, DCI_PPS_FRAME, selection_index);
         dspic33_dci_test_configure_external(
             cpu, DCI_SAMPLE_RISING | DCI_EXTERNAL_FRAME | DCI_DATA_JUSTIFY, 4u, 1u, 1u, 0u, 1u);
         dspic33_dci_test_activate_serial_clock(cpu, true, GPIO_CLOCK_MASK);
@@ -583,19 +585,20 @@ void dspic33_dci_test_pps_selection_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, DCI_TRANSMIT_BASE, 0xa000u);
     dspic33_write_word(cpu, DCI_CONTROL1, DCI_ENABLE | DCI_DATA_JUSTIFY);
     dspic33_device_advance(cpu, 12u);
-    for (selection = 0u; selection < 64u; selection++) {
-        dspic33_write_word(cpu, DCI_PPS_DATA_OUTPUT, (uint16_t)((uint16_t)selection << 8u));
+    for (selection_index = 0u; selection_index < 64u; selection_index++) {
+        dspic33_write_word(cpu, DCI_PPS_DATA_OUTPUT, (uint16_t)((uint16_t)selection_index << 8u));
         expect(state,
-               dspic33_dci_pin(cpu, PPS_DATA_OUTPUT_PIN, &high) ==
-                   (selection >= 11u && selection <= 13u),
+               dspic33_dci_pin(cpu, PPS_DATA_OUTPUT_PIN, &is_high) ==
+                   (selection_index >= 11u && selection_index <= 13u),
                "DCI RPOR function admission matches target table");
     }
 }
 
 void dspic33_dci_test_pps_output_cases(TestState* state, Dspic33* cpu) {
-    bool high;
+    bool is_high;
+
     expect(state,
-           !dspic33_dci_pin(cpu, PPS_DATA_OUTPUT_PIN, NULL) && !dspic33_dci_pin(cpu, 0u, &high),
+           !dspic33_dci_pin(cpu, PPS_DATA_OUTPUT_PIN, NULL) && !dspic33_dci_pin(cpu, 0u, &is_high),
            "DCI pin API rejects invalid queries");
     dspic33_reset(cpu, 0u);
     dspic33_dci_test_configure_serial_pins(cpu);
@@ -607,20 +610,20 @@ void dspic33_dci_test_pps_output_cases(TestState* state, Dspic33* cpu) {
     dspic33_gpio_drive(cpu, GPIO_PORT_D, GPIO_FRAME_MASK, GPIO_FRAME_MASK);
     expect(state, dspic33_dci_test_drive_serial_edge(cpu, false, true, GPIO_CLOCK_MASK),
            "start PPS DCI data output frame");
-    expect(state, dspic33_dci_pin(cpu, PPS_DATA_OUTPUT_PIN, &high) && high,
+    expect(state, dspic33_dci_pin(cpu, PPS_DATA_OUTPUT_PIN, &is_high) && is_high,
            "CSDO RPOR mapping drives transmit MSb");
     dspic33_gpio_drive(cpu, GPIO_PORT_D, 0u, GPIO_CLOCK_MASK);
-    expect(state, dspic33_dci_pin(cpu, PPS_DATA_OUTPUT_PIN, &high) && high,
+    expect(state, dspic33_dci_pin(cpu, PPS_DATA_OUTPUT_PIN, &is_high) && is_high,
            "CSDO holds transmit MSb before first data sample");
     expect(state, dspic33_dci_test_drive_serial_bit(cpu, true, true),
            "sample first PPS DCI output bit");
     dspic33_gpio_drive(cpu, GPIO_PORT_D, 0u, GPIO_CLOCK_MASK);
-    expect(state, dspic33_dci_pin(cpu, PPS_DATA_OUTPUT_PIN, &high) && !high,
+    expect(state, dspic33_dci_pin(cpu, PPS_DATA_OUTPUT_PIN, &is_high) && !is_high,
            "CSDO advances on opposite serial clock edge");
     dspic33_write_word(cpu, DCI_PPS_DATA_OUTPUT, 0x000bu);
     expect(state,
-           !dspic33_dci_pin(cpu, PPS_DATA_OUTPUT_PIN, &high) &&
-               dspic33_dci_pin(cpu, PPS_FRAME_PIN, &high) && !high,
+           !dspic33_dci_pin(cpu, PPS_DATA_OUTPUT_PIN, &is_high) &&
+               dspic33_dci_pin(cpu, PPS_FRAME_PIN, &is_high) && !is_high,
            "CSDO output follows live RPOR remapping");
 
     dspic33_reset(cpu, 0u);
@@ -629,7 +632,7 @@ void dspic33_dci_test_pps_output_cases(TestState* state, Dspic33* cpu) {
     dspic33_dci_test_configure_external(cpu, DCI_SAMPLE_RISING | DCI_TRISTATE, 4u, 1u, 1u, 0u, 0u);
     expect(state, dspic33_dci_test_drive_serial_bit(cpu, false, true),
            "start tri-stated PPS DCI slot");
-    expect(state, !dspic33_dci_pin(cpu, PPS_DATA_OUTPUT_PIN, &high),
+    expect(state, !dspic33_dci_pin(cpu, PPS_DATA_OUTPUT_PIN, &is_high),
            "CSDOM releases disabled CSDO slot");
 
     dspic33_reset(cpu, 0u);
@@ -640,16 +643,16 @@ void dspic33_dci_test_pps_output_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, DCI_TRANSMIT_BASE, 0xa000u);
     dspic33_write_word(cpu, DCI_CONTROL1, DCI_ENABLE | DCI_DATA_JUSTIFY);
     expect(state,
-           dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high) && high &&
-               dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && !high,
+           dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &is_high) && is_high &&
+               dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high) && !is_high,
            "master DCI drives CSCK during startup with inactive COFS");
     expect(state, dspic33_device_advance(cpu, 12u), "advance master DCI through startup clocks");
-    expect(state, dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high) && high,
+    expect(state, dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &is_high) && is_high,
            "master DCI begins data word with asserted CSCK");
-    expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && high,
+    expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high) && is_high,
            "master multi-channel DCI asserts COFS for first clock");
     expect(state, dspic33_device_advance(cpu, 4u), "advance master DCI beyond first serial clock");
-    expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && !high,
+    expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high) && !is_high,
            "master multi-channel DCI negates COFS after first clock");
 
     dspic33_reset(cpu, 0u);
@@ -661,10 +664,10 @@ void dspic33_dci_test_pps_output_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, DCI_CONTROL1, DCI_ENABLE | DCI_DATA_JUSTIFY | DCI_SAMPLE_RISING);
     expect(state, dspic33_device_advance(cpu, 12u),
            "advance rising-sample master through startup clocks");
-    expect(state, dspic33_dci_pin(cpu, PPS_DATA_OUTPUT_PIN, &high) && high,
+    expect(state, dspic33_dci_pin(cpu, PPS_DATA_OUTPUT_PIN, &is_high) && is_high,
            "rising-sample master presents first CSDO bit before rising edge");
     expect(state, dspic33_device_advance(cpu, 2u), "advance rising-sample master to falling edge");
-    expect(state, dspic33_dci_pin(cpu, PPS_DATA_OUTPUT_PIN, &high) && !high,
+    expect(state, dspic33_dci_pin(cpu, PPS_DATA_OUTPUT_PIN, &is_high) && !is_high,
            "rising-sample master advances CSDO on falling edge");
 
     dspic33_reset(cpu, 0u);
@@ -674,11 +677,11 @@ void dspic33_dci_test_pps_output_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, DCI_CONTROL1, DCI_ENABLE);
     expect(state, dspic33_device_advance(cpu, 8u),
            "advance default-justified master to final startup clock");
-    expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && high,
+    expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high) && is_high,
            "default DJST asserts COFS one clock before data");
     expect(state, dspic33_device_advance(cpu, 4u),
            "advance default-justified master to data boundary");
-    expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && !high,
+    expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high) && !is_high,
            "default DJST negates COFS when first data bit begins");
 
     dspic33_reset(cpu, 0u);
@@ -687,11 +690,11 @@ void dspic33_dci_test_pps_output_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, DCI_CONTROL3, 1u);
     dspic33_write_word(cpu, DCI_CONTROL1, DCI_ENABLE | DCI_MODE_I2S | DCI_DATA_JUSTIFY);
     expect(state, dspic33_device_advance(cpu, 12u), "advance I2S master through startup clocks");
-    expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && high,
+    expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high) && is_high,
            "I2S master drives right-channel COFS high first");
     expect(state, dspic33_device_advance(cpu, 16u),
            "advance I2S master through right-channel word");
-    expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high) && !high,
+    expect(state, dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high) && !is_high,
            "I2S master toggles COFS for left-channel word");
 
     dspic33_reset(cpu, 0u);
@@ -700,7 +703,7 @@ void dspic33_dci_test_pps_output_cases(TestState* state, Dspic33* cpu) {
     dspic33_dci_test_configure_external(cpu, DCI_SAMPLE_RISING | DCI_EXTERNAL_FRAME, 4u, 1u, 1u, 0u,
                                         0u);
     expect(state,
-           !dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &high) &&
-               !dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &high),
+           !dspic33_dci_pin(cpu, PPS_CLOCK_OUTPUT_PIN, &is_high) &&
+               !dspic33_dci_pin(cpu, PPS_FRAME_OUTPUT_PIN, &is_high),
            "slave DCI releases externally directed CSCK and COFS outputs");
 }
