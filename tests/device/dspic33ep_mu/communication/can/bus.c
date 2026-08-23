@@ -111,27 +111,30 @@ void dspic33_can_test_bus_groups(TestState* state, Dspic33* cpu) {
     dspic33_can_test_receive_pps_qualification_cases(state, cpu);
 }
 
-static bool drive_shared_can_bus(Dspic33* can1, Dspic33* can2, uint8_t active_channel,
-                                 uint64_t bit_cycles) {
-    uint16_t count = 0u;
-    Dspic33* active = active_channel == 0u ? can1 : can2;
-    while ((active->io.can_tx_on_bus & (uint8_t)(1u << active_channel)) != 0u && count < 160u) {
-        bool can1_high;
-        bool can2_high;
-        bool bus_high;
-        if (!dspic33_can_pin(can1, 65u, &can1_high) || !dspic33_can_pin(can2, 66u, &can2_high)) {
+static bool drive_shared_can_bus(Dspic33* can1, Dspic33* can2, uint8_t active_channel_index,
+                                 uint64_t bit_duration) {
+    uint16_t bit_count = 0u;
+    Dspic33* active_controller = active_channel_index == 0u ? can1 : can2;
+
+    while ((active_controller->io.can_tx_on_bus & (uint8_t)(1u << active_channel_index)) != 0u &&
+           bit_count < 160u) {
+        bool can1_level;
+        bool can2_level;
+        bool bus_level;
+
+        if (!dspic33_can_pin(can1, 65u, &can1_level) || !dspic33_can_pin(can2, 66u, &can2_level)) {
             return false;
         }
-        bus_high = can1_high && can2_high;
-        if (!dspic33_can_input_pin(can1, 64u, bus_high, 0u) ||
-            !dspic33_can_input_pin(can2, 64u, bus_high, 0u) ||
-            !dspic33_device_advance(can1, bit_cycles) ||
-            !dspic33_device_advance(can2, bit_cycles)) {
+        bus_level = can1_level && can2_level;
+        if (!dspic33_can_input_pin(can1, 64u, bus_level, 0u) ||
+            !dspic33_can_input_pin(can2, 64u, bus_level, 0u) ||
+            !dspic33_device_advance(can1, bit_duration) ||
+            !dspic33_device_advance(can2, bit_duration)) {
             return false;
         }
-        count++;
+        bit_count++;
     }
-    return count != 0u && count < 160u;
+    return bit_count != 0u && bit_count < 160u;
 }
 
 void dspic33_can_test_arbitration_field_cases(TestState* state, Dspic33* cpu) {
