@@ -130,17 +130,18 @@ static void dci_update_bcg(Dspic33* cpu, bool reset) {
     }
 }
 
-static bool dci_output_push(Dspic33* cpu, uint16_t value, uint8_t slot, bool driven) {
+static bool dci_output_push(Dspic33* cpu, uint16_t output_value, uint8_t slot_index,
+                            bool output_driven) {
     Dspic33DciQueue* queue = &cpu->io.dci.output;
-    uint8_t tail;
+
     if (queue->count == DSPIC33_DCI_QUEUE_SIZE) {
         return false;
     }
-    tail = (uint8_t)((queue->head + queue->count) % DSPIC33_DCI_QUEUE_SIZE);
-    queue->transfers[tail].cycle = cpu->device_cycles;
-    queue->transfers[tail].value = value;
-    queue->transfers[tail].slot = slot;
-    queue->transfers[tail].driven = driven;
+    uint8_t tail_index = (uint8_t)((queue->head + queue->count) % DSPIC33_DCI_QUEUE_SIZE);
+    queue->transfers[tail_index].cycle = cpu->device_cycles;
+    queue->transfers[tail_index].value = output_value;
+    queue->transfers[tail_index].slot = slot_index;
+    queue->transfers[tail_index].driven = output_driven;
     queue->count++;
     return true;
 }
@@ -157,20 +158,20 @@ bool dspic33_device_internal_dci_output_pop(Dspic33DciQueue* queue, Dspic33DciTr
 
 static void dci_refresh_status(Dspic33* cpu) {
     Dspic33Dci* dci = &cpu->io.dci;
-    uint16_t status = (uint16_t)((uint16_t)dci->slot << 8u);
+    uint16_t status_word = (uint16_t)((uint16_t)dci->slot << 8u);
     if (dci->receive_overflow != 0u) {
-        status |= DCI_STATUS_RECEIVE_OVERFLOW;
+        status_word |= DCI_STATUS_RECEIVE_OVERFLOW;
     }
     if (dci->receive_unread != 0u) {
-        status |= DCI_STATUS_RECEIVE_FULL;
+        status_word |= DCI_STATUS_RECEIVE_FULL;
     }
     if (dci->transmit_underflow != 0u) {
-        status |= DCI_STATUS_TRANSMIT_UNDERFLOW;
+        status_word |= DCI_STATUS_TRANSMIT_UNDERFLOW;
     }
     if (dci->transmit_empty) {
-        status |= DCI_STATUS_TRANSMIT_EMPTY;
+        status_word |= DCI_STATUS_TRANSMIT_EMPTY;
     }
-    dspic33_device_internal_raw_write_word(cpu, DCI_STATUS, status);
+    dspic33_device_internal_raw_write_word(cpu, DCI_STATUS, status_word);
 }
 
 static void dci_abort(Dspic33* cpu) {
@@ -250,10 +251,9 @@ static bool dci_internal_event(const Dspic33Event* event) {
 }
 
 static void dci_pause_events(Dspic33* cpu) {
-    size_t index;
     bool changed = false;
-    for (index = 0u; index < cpu->events.count; index++) {
-        Dspic33Event* event = &cpu->events.items[index];
+    for (size_t event_index = 0u; event_index < cpu->events.count; event_index++) {
+        Dspic33Event* event = &cpu->events.items[event_index];
         if (!dci_internal_event(event) || event->paused) {
             continue;
         }
@@ -267,10 +267,9 @@ static void dci_pause_events(Dspic33* cpu) {
 }
 
 static void dci_resume_events(Dspic33* cpu) {
-    size_t index;
     bool changed = false;
-    for (index = 0u; index < cpu->events.count; index++) {
-        Dspic33Event* event = &cpu->events.items[index];
+    for (size_t event_index = 0u; event_index < cpu->events.count; event_index++) {
+        Dspic33Event* event = &cpu->events.items[event_index];
         if (!dci_internal_event(event) || !event->paused) {
             continue;
         }
@@ -289,14 +288,14 @@ static void dci_resume_events(Dspic33* cpu) {
 }
 
 void dspic33_device_internal_dci_discard_internal_events(Dspic33* cpu) {
-    size_t source;
-    size_t destination = 0u;
-    for (source = 0u; source < cpu->events.count; source++) {
-        if (!dci_internal_event(&cpu->events.items[source])) {
-            cpu->events.items[destination++] = cpu->events.items[source];
+    size_t retained_event_count = 0u;
+
+    for (size_t event_index = 0u; event_index < cpu->events.count; event_index++) {
+        if (!dci_internal_event(&cpu->events.items[event_index])) {
+            cpu->events.items[retained_event_count++] = cpu->events.items[event_index];
         }
     }
-    cpu->events.count = destination;
+    cpu->events.count = retained_event_count;
     dspic33_reorder_events(cpu);
 }
 
@@ -327,35 +326,36 @@ static bool dci_dma_request(Dspic33* cpu) {
 
 static bool dci_transfer_buffers(Dspic33* cpu, bool receive, bool transmit) {
     Dspic33Dci* dci = &cpu->io.dci;
-    uint8_t count = dci_buffer_count(cpu);
-    uint8_t index;
-    bool error = false;
-    for (index = 0u; index < count; index++) {
-        uint8_t bit = (uint8_t)(1u << index);
-        if (receive && (dci->receive_buffered & bit) != 0u) {
-            if ((dci->receive_unread & bit) != 0u) {
-                dci->receive_overflow |= bit;
-                error = true;
+    uint8_t buffer_count = dci_buffer_count(cpu);
+    bool transfer_error = false;
+
+    for (uint8_t buffer_index = 0u; buffer_index < buffer_count; buffer_index++) {
+        uint8_t buffer_mask = (uint8_t)(1u << buffer_index);
+
+        if (receive && (dci->receive_buffered & buffer_mask) != 0u) {
+            if ((dci->receive_unread & buffer_mask) != 0u) {
+                dci->receive_overflow |= buffer_mask;
+                transfer_error = true;
             }
-            dspic33_device_internal_raw_write_word(cpu, (uint16_t)(DCI_RECEIVE_BASE + index * 2u),
-                                                   dci->receive[index]);
-            dci->receive_unread |= bit;
+            dspic33_device_internal_raw_write_word(
+                cpu, (uint16_t)(DCI_RECEIVE_BASE + buffer_index * 2u), dci->receive[buffer_index]);
+            dci->receive_unread |= buffer_mask;
         }
-        if (transmit && (dci->transmit_buffered & bit) != 0u) {
-            if ((dci->transmit_written & bit) != 0u) {
+        if (transmit && (dci->transmit_buffered & buffer_mask) != 0u) {
+            if ((dci->transmit_written & buffer_mask) != 0u) {
                 uint16_t value = dspic33_device_internal_raw_word(
-                    cpu, (uint16_t)(DCI_TRANSMIT_BASE + index * 2u));
-                dci->transmit[index] = value;
-                dci->last_transmit[index] = value;
+                    cpu, (uint16_t)(DCI_TRANSMIT_BASE + buffer_index * 2u));
+                dci->transmit[buffer_index] = value;
+                dci->last_transmit[buffer_index] = value;
             } else {
-                dci->transmit_underflow |= bit;
-                dci->transmit[index] = (dspic33_device_internal_raw_word(cpu, DCI_CONTROL1) &
-                                        DCI_CONTROL_UNDERFLOW_LAST) != 0u
-                                           ? dci->last_transmit[index]
-                                           : 0u;
-                error = true;
+                dci->transmit_underflow |= buffer_mask;
+                dci->transmit[buffer_index] = (dspic33_device_internal_raw_word(cpu, DCI_CONTROL1) &
+                                               DCI_CONTROL_UNDERFLOW_LAST) != 0u
+                                                  ? dci->last_transmit[buffer_index]
+                                                  : 0u;
+                transfer_error = true;
             }
-            dci->transmit_written &= (uint8_t)~bit;
+            dci->transmit_written &= (uint8_t)~buffer_mask;
         }
     }
     dci->receive_buffered = 0u;
@@ -370,7 +370,7 @@ static bool dci_transfer_buffers(Dspic33* cpu, bool receive, bool transmit) {
             return false;
         }
     }
-    if (error) {
+    if (transfer_error) {
         dspic33_raise_interrupt(cpu, DCI_ERROR_IRQ);
     }
     return true;
