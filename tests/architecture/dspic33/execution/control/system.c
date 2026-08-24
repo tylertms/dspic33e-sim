@@ -185,9 +185,6 @@ static void move_double_encoding_matrix_cases(TestState* state, Dspic33* cpu) {
                       dspic33_read_word(cpu, (uint16_t)(destination.address + 2u)) == high;
         }
         expect_dsp_matrix_case(state, matches, opcode, "MOV.D encoding");
-        if (load) {
-        } else {
-        }
     }
 }
 

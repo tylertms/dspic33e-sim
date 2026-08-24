@@ -45,7 +45,7 @@ if(PROJECT_IS_TOP_LEVEL AND NOT DSPIC33EP_MU_ENABLE_COVERAGE)
       COMMAND
         "${CMAKE_CTEST_COMMAND}" --test-dir
         "${dspic33ep_mu_coverage_build_directory}" --output-on-failure
-        --parallel
+        --parallel 1
       COMMAND
         "${CMAKE_COMMAND}"
         "-DCOVERAGE_BUILD_DIRECTORY=${dspic33ep_mu_coverage_build_directory}"
