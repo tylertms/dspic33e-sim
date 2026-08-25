@@ -564,7 +564,8 @@ static void exact_return_encoding_cases(TestState* state, Dspic33* cpu) {
     matches = dspic33_load_program_word(cpu, 0x020000u, OPCODE_RETURN) &&
               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000300u &&
               cpu->cycles - cycles == 6u && cpu->w[15] == 0x5000u && cpu->call_depth == 0u &&
-              cpu->sr == 0x010fu && cpu->corcon == 0x0024u;
+              cpu->sr == 0x010fu && cpu->corcon == 0x0024u &&
+              dspic33_get_executed_program_counter(cpu) == 0x020000u;
     expect_dsp_matrix_case(state, matches, OPCODE_RETURN, "RETURN encoding");
 
     prepare_return_encoding_case(cpu);
@@ -576,7 +577,8 @@ static void exact_return_encoding_cases(TestState* state, Dspic33* cpu) {
     matches = dspic33_load_program_word(cpu, 0x020000u, OPCODE_RETFIE) &&
               dspic33_step(cpu) == DSPIC33_RUNNING && cpu->pc == 0x000300u &&
               cpu->cycles - cycles == 6u && cpu->w[15] == 0x5000u && cpu->interrupt_depth == 0u &&
-              cpu->sr == 0x010fu && cpu->corcon == 0x002cu;
+              cpu->sr == 0x010fu && cpu->corcon == 0x002cu &&
+              dspic33_get_executed_program_counter(cpu) == 0x020000u;
     expect_dsp_matrix_case(state, matches, OPCODE_RETFIE, "RETFIE encoding");
 }
 

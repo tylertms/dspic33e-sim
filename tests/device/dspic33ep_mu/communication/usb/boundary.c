@@ -26,6 +26,19 @@ static void queue_and_memory_cases(TestState* state, Dspic33* cpu) {
            "USB descriptor rejects an out-of-range table");
     expect(state, !dspic33_device_internal_usb_read_memory(cpu, DSPIC33_DATA_SIZE, &byte, 1u, true),
            "USB memory read rejects an out-of-range address");
+
+    dspic33_usb_test_configure_host(cpu);
+    dspic33_device_internal_raw_write_word(cpu, BDTP2, 0x0010u);
+    dspic33_write_word(cpu, TOK, (uint16_t)(DSPIC33_USB_PID_IN << 4u));
+    expect(state, (dspic33_read_word(cpu, EIR) & 0x0040u) != 0u,
+           "USB host token rejects an out-of-range descriptor table");
+
+    dspic33_usb_test_configure_host(cpu);
+    dspic33_usb_test_write_descriptor(cpu, 0u, 0u, 0u, 0x0088u, 0u, BUFFER);
+    cpu->io.usb_tx.count = DSPIC33_USB_PACKET_QUEUE_SIZE;
+    dspic33_write_word(cpu, TOK, (uint16_t)(DSPIC33_USB_PID_IN << 4u));
+    expect(state, (dspic33_read_word(cpu, EIR) & 0x0020u) != 0u,
+           "USB host token reports a full transmit queue");
 }
 
 static void reset_event_cases(TestState* state, Dspic33* cpu) {

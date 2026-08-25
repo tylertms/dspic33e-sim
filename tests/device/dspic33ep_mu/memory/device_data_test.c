@@ -110,6 +110,74 @@ static void test_gpio_sfr_profile(TestState* state, Dspic33* cpu, const Expected
     }
 }
 
+static void test_peripheral_state_comparison(TestState* state, Dspic33epMuDevice device) {
+    Dspic33* first = dspic33_create_for_device(device);
+    Dspic33* second = dspic33_create_for_device(device);
+    uint32_t address = 0u;
+    uint32_t first_value = 0u;
+    uint32_t second_value = 0u;
+    expect(state, first != NULL && second != NULL, "create state comparison devices");
+    if (first == NULL || second == NULL) {
+        dspic33_destroy(second);
+        dspic33_destroy(first);
+        return;
+    }
+    expect(state,
+           !dspic33_peripheral_state_equal(NULL, second, &address, &first_value, &second_value) &&
+               !dspic33_peripheral_state_equal(first, second, NULL, &first_value, &second_value),
+           "peripheral comparison rejects invalid arguments");
+    expect(state,
+           dspic33_peripheral_state_equal(first, second, &address, &first_value, &second_value),
+           "equal peripheral state agrees");
+    const uint8_t working_register_value = 0x5au;
+    expect(state, dspic33_seed_data(first, 0u, &working_register_value, 1u),
+           "seed a working register");
+    expect(state,
+           dspic33_peripheral_state_equal(first, second, &address, &first_value, &second_value),
+           "working register layout does not affect peripheral state");
+
+    uint32_t implemented_address = 0x40u;
+    while (!dspic33ep_mu_address_implemented(device, implemented_address)) {
+        implemented_address++;
+    }
+    const uint8_t peripheral_value = 0xa5u;
+    expect(state, dspic33_seed_data(first, implemented_address, &peripheral_value, 1u),
+           "seed implemented peripheral state");
+    expect(state,
+           !dspic33_peripheral_state_equal(first, second, &address, &first_value, &second_value) &&
+               address == implemented_address && first_value == peripheral_value &&
+               first_value != second_value,
+           "peripheral comparison reports the first implemented difference");
+    expect(state, dspic33_seed_data(second, implemented_address, &peripheral_value, 1u),
+           "restore matching peripheral state");
+    expect(state, dspic33_seed_data(first, implemented_address + 1u, &peripheral_value, 1u),
+           "seed an implemented peripheral high byte");
+    expect(state,
+           !dspic33_peripheral_state_equal(first, second, &address, &first_value, &second_value) &&
+               address == implemented_address &&
+               (first_value >> 8u) == peripheral_value && first_value != second_value,
+           "peripheral comparison includes both bytes of each SFR");
+    expect(state, dspic33_seed_data(second, implemented_address + 1u, &peripheral_value, 1u),
+           "restore matching peripheral high byte");
+    uint8_t layout_value = (uint8_t)(dspic33_read_byte(second, 0x0122u) ^ 0xffu);
+    expect(state, dspic33_seed_data(first, 0x0122u, &layout_value, 1u),
+           "seed a live timer position");
+    layout_value = (uint8_t)(dspic33_read_byte(second, 0x0908u) ^ 0xffu);
+    expect(state, dspic33_seed_data(first, 0x0908u, &layout_value, 1u),
+           "seed a live output compare position");
+    layout_value = (uint8_t)(dspic33_read_byte(second, 0x0b54u) ^ 0xffu);
+    expect(state, dspic33_seed_data(first, 0x0b54u, &layout_value, 1u),
+           "seed a translated DMA address");
+    layout_value = (uint8_t)(dspic33_read_byte(second, 0x0bf8u) ^ 0xffu);
+    expect(state, dspic33_seed_data(first, 0x0bf8u, &layout_value, 1u),
+           "seed a translated DMA system address");
+    expect(state,
+           dspic33_peripheral_state_equal(first, second, &address, &first_value, &second_value),
+           "live timing and translated DMA layout do not affect peripheral state");
+    dspic33_destroy(second);
+    dspic33_destroy(first);
+}
+
 static void test_profile(TestState* state, const ExpectedProfile* expected) {
     const uint8_t data = 0x5au;
     const Dspic33epMuProfile* profile = dspic33ep_mu_profile(expected->device);
@@ -181,6 +249,8 @@ static void test_profile(TestState* state, const ExpectedProfile* expected) {
         previous_address = reset->address;
     }
     expect(state, reset_hash == expected->reset_hash, "master-clear reset data hash");
+
+    test_peripheral_state_comparison(state, expected->device);
 
     Dspic33* cpu = dspic33_create_for_device(expected->device);
     expect(state, cpu != NULL, "create profile device");

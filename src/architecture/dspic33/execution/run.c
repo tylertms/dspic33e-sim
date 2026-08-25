@@ -173,6 +173,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         uint64_t return_cycles;
         uint32_t target;
         bool dependency_stall = (cpu->previous_working_register_writes & UINT16_C(0x8000)) != 0u;
+        cpu->current_instruction_pc = instruction_pc;
         dspic33_cancel_flash_read_sequence(cpu);
         dspic33_device_return_interrupt(cpu);
         target = cpu->pc;
@@ -201,6 +202,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         uint64_t return_cycles;
         uint32_t target;
         bool dependency_stall = (cpu->previous_working_register_writes & UINT16_C(0x8000)) != 0u;
+        cpu->current_instruction_pc = instruction_pc;
         dspic33_cancel_flash_read_sequence(cpu);
         if (cpu->call_depth == 0u) {
             cpu->stop_reason = DSPIC33_RETURNED;
@@ -503,6 +505,10 @@ uint32_t dspic33_get_register(const Dspic33* cpu, uint8_t reg) {
 }
 
 uint32_t dspic33_get_program_counter(const Dspic33* cpu) { return cpu != NULL ? cpu->pc : 0u; }
+
+uint32_t dspic33_get_executed_program_counter(const Dspic33* cpu) {
+    return cpu != NULL ? cpu->current_instruction_pc : 0u;
+}
 
 uint64_t dspic33_get_instruction_count(const Dspic33* cpu) {
     return cpu != NULL ? cpu->instructions : 0u;

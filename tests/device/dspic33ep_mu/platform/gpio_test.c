@@ -276,19 +276,30 @@ static void pull_cases(TestState* state, Dspic33* cpu) {
 
     {
         bool high = false;
+        bool output_enabled = false;
         reset_released_port(cpu, 3u);
         dspic33_write_word(cpu, tris_addresses[3], 0u);
         dspic33_write_word(cpu, latch_addresses[3], 0x0100u);
         expect(state, dspic33_gpio_pin(cpu, 3u, 8u, &high) && high,
                "resolved pin API observes LAT-driven output");
+        expect(state,
+               dspic33_gpio_output(cpu, 3u, 8u, &output_enabled, &high) && output_enabled && high,
+               "GPIO output API reports an enabled high output");
         dspic33_write_word(cpu, tris_addresses[3], 0x0100u);
         dspic33_write_word(cpu, pull_up_addresses[3], 0x0100u);
         dspic33_gpio_drive(cpu, 3u, 0u, 0x0100u);
         expect(state, dspic33_gpio_pin(cpu, 3u, 8u, &high) && !high,
                "resolved pin API observes driven-low input");
         expect(state,
+               dspic33_gpio_output(cpu, 3u, 8u, &output_enabled, &high) && !output_enabled &&
+                   !high,
+               "GPIO output API reports a disabled output");
+        expect(state,
                !dspic33_gpio_pin(cpu, DSPIC33_GPIO_PORT_COUNT, 0u, &high) &&
-                   !dspic33_gpio_pin(cpu, 3u, 16u, &high) && !dspic33_gpio_pin(cpu, 3u, 8u, NULL),
+                   !dspic33_gpio_pin(cpu, 3u, 16u, &high) && !dspic33_gpio_pin(cpu, 3u, 8u, NULL) &&
+                   !dspic33_gpio_output(cpu, DSPIC33_GPIO_PORT_COUNT, 0u, &output_enabled, &high) &&
+                   !dspic33_gpio_output(cpu, 3u, 16u, &output_enabled, &high) &&
+                   !dspic33_gpio_output(cpu, 3u, 8u, NULL, &high),
                "resolved pin API rejects invalid observations");
     }
 }

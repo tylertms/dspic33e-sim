@@ -187,6 +187,15 @@ static void lane_cases(TestState* state, Dspic33* cpu) {
                cpu->io.crc.words[2] == 0x78u,
            "byte lane order and word-write low lane");
 
+    configure(cpu, 8u, 16u, 0x1021u, false, false);
+    cpu->io.dma_transfer_active = true;
+    cpu->io.dma_transfer_width = 2u;
+    dspic33_write_word(cpu, CRC_DATA_LOW, 0x5678u);
+    cpu->io.dma_transfer_active = false;
+    cpu->io.dma_transfer_width = 0u;
+    expect(state, valid_words(cpu) == 1u && cpu->io.crc.words[0] == 0x78u,
+           "DMA word writes use the transfer width for CRC input");
+
     configure(cpu, 16u, 16u, 0x1021u, false, false);
     dspic33_write_byte(cpu, CRC_DATA_LOW, 0x12u);
     expect(state, valid_words(cpu) == 0u, "word low byte ignored");

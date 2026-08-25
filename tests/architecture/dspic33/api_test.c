@@ -32,6 +32,8 @@ static void test_execution(TestState* state) {
            "dspic33_get_cycle_count(cpu) == step.cycles");
     expect(state, dspic33_get_program_counter(cpu) == step.pc,
            "dspic33_get_program_counter(cpu) == step.pc");
+    expect(state, dspic33_get_executed_program_counter(cpu) == 0u,
+           "executed program counter identifies the stepped instruction");
     expect(state, dspic33_get_interrupt_count(cpu) == 0u, "dspic33_get_interrupt_count(cpu) == 0u");
     expect(state, dspic33_get_last_interrupt(cpu) == UINT16_MAX,
            "dspic33_get_last_interrupt(cpu) == UINT16_MAX");
@@ -78,6 +80,8 @@ static void test_execution_boundaries(TestState* state) {
     dspic33_reset(cpu, 0u);
     expect(state, dspic33_load_program_word(cpu, 0u, 0x060000u), "load boundary return opcode");
     expect(state, dspic33_run(cpu, 0u) == DSPIC33_RETURNED, "run returns at an empty call stack");
+    expect(state, dspic33_get_executed_program_counter(cpu) == 0u,
+           "completed return reports its program counter");
 
     dspic33_reset(cpu, 0u);
     Dspic33Result returned = dspic33_run_with_limits(cpu, (Dspic33RunLimits){0u, 0u});
@@ -124,6 +128,8 @@ static void test_null_getters(TestState* state) {
     expect(state, dspic33_get_register(NULL, 0u) == 0u, "dspic33_get_register(NULL, 0u) == 0u");
     expect(state, dspic33_get_program_counter(NULL) == 0u,
            "dspic33_get_program_counter(NULL) == 0u");
+    expect(state, dspic33_get_executed_program_counter(NULL) == 0u,
+           "dspic33_get_executed_program_counter(NULL) == 0u");
     expect(state, dspic33_get_instruction_count(NULL) == 0u,
            "dspic33_get_instruction_count(NULL) == 0u");
     expect(state, dspic33_get_cycle_count(NULL) == 0u, "dspic33_get_cycle_count(NULL) == 0u");

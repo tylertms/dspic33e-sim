@@ -73,6 +73,7 @@ void dspic33_oscillator_test_oscillator_pin_cases(TestState* state, Dspic33* sou
     for (uint8_t primary_mode = 0u; primary_mode < 4u; primary_mode++) {
         for (uint8_t clock_select = 0u; clock_select < 2u; clock_select++) {
             bool gpio_high = false;
+            bool gpio_output = false;
             bool clock_output = false;
             uint64_t edges = 0u;
             bool owned = primary_mode == 1u || primary_mode == 2u || clock_select != 0u;
@@ -85,6 +86,7 @@ void dspic33_oscillator_test_oscillator_pin_cases(TestState* state, Dspic33* sou
             dspic33_write_word(source, 0x0e24u, 0x8000u);
             expect(state,
                    (dspic33_gpio_pin(source, 2u, 15u, &gpio_high) == !owned) &&
+                       (dspic33_gpio_output(source, 2u, 15u, &gpio_output, &gpio_high) == !owned) &&
                        (dspic33_oscillator_pin(source, &clock_output, &edges) == owned) &&
                        (!owned || (clock_output == clock &&
                                    edges == (clock ? source->device_cycles * 2u : 0u))) &&

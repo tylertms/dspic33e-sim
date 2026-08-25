@@ -473,6 +473,47 @@ void dspic33_can_test_extended_filter_cases(TestState* state, Dspic33* cpu) {
                        (identifier_value & 0x3ffffu),
                    "extended EID storage");
         }
+
+        Dspic33CanFrame standard_frame = dspic33_can_test_frame(0x456u, false, false, 0u, 0u);
+        dspic33_reset(cpu, 0u);
+        dspic33_can_test_configure_receive(cpu, channel_index, 0x3000u, 6u, 0u);
+        dspic33_can_test_configure_filter(cpu, channel_index, 0u, 0x456u, true, 0x1fffffffu,
+                                          true, 0u, 0u);
+        dspic33_can_test_enable_filter(cpu, channel_index, 1u);
+        dspic33_can_test_select_window(cpu, channel_index, false);
+        dspic33_can_test_set_mode(cpu, channel_index, 0u);
+        expect(state,
+               dspic33_can_receive(cpu, channel_index, &standard_frame, 0u) &&
+                   dspic33_device_advance(cpu, 32u) &&
+                   !dspic33_can_test_receive_full(cpu, channel_index, 0u),
+               "filter format matching rejects a standard frame for an extended filter");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_can_test_configure_receive(cpu, channel_index, 0x3000u, 6u, 0u);
+        dspic33_can_test_configure_filter(cpu, channel_index, 0u, 0x456u, false, 0x7ffu, true, 0u,
+                                          3u);
+        dspic33_can_test_enable_filter(cpu, channel_index, 1u);
+        dspic33_can_test_select_window(cpu, channel_index, false);
+        dspic33_can_test_set_mode(cpu, channel_index, 0u);
+        expect(state,
+               dspic33_can_receive(cpu, channel_index, &standard_frame, 0u) &&
+                   dspic33_device_advance(cpu, 32u) &&
+                   !dspic33_can_test_receive_full(cpu, channel_index, 0u),
+               "invalid CAN mask selection rejects a frame");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_can_test_configure_receive(cpu, channel_index, 0x3000u, 2u, 0u);
+        dspic33_can_test_configure_filter(cpu, channel_index, 0u, 0x456u, false, 0x7ffu, true, 14u,
+                                          0u);
+        dspic33_can_test_enable_filter(cpu, channel_index, 1u);
+        dspic33_can_test_select_window(cpu, channel_index, false);
+        dspic33_can_test_set_mode(cpu, channel_index, 0u);
+        expect(state,
+               dspic33_can_receive(cpu, channel_index, &standard_frame, 0u) &&
+                   dspic33_device_advance(cpu, 32u) &&
+                   (dspic33_read_word(cpu, (uint16_t)(bases[channel_index] + 0x0au)) & 0x0004u) !=
+                       0u,
+               "CAN reports overflow for a filter target outside the configured buffer range");
     }
 }
 

@@ -2,6 +2,10 @@
 
 #include <string.h>
 
+#include "architecture/dspic33/internal.h"
+#include "device/dspic33ep_mu/registers.h"
+#include "device/dspic33ep_mu/tables.h"
+
 static const Dspic33epMuProfile profiles[DSPIC33EP_MU_DEVICE_COUNT] = {
     {DSPIC33EP_MU_DEVICE_256MU806, "dsPIC33EP256MU806", 0x2ac00u, 0x8000u, 0x18614000u, 64u, 51u,
      4u, 24u},
@@ -235,6 +239,77 @@ bool dspic33ep_mu_address_implemented(Dspic33epMuDevice device, uint32_t address
     const uint32_t sfr_word_index = (address & 0x0ffeu) >> 1u;
     return (implementation_bitmap[sfr_word_index >> 3u] & (uint8_t)(1u << (sfr_word_index & 7u))) !=
            0u;
+}
+
+static bool is_live_timer_state(uint32_t address) {
+    for (uint8_t timer = 0u; timer < DSPIC33_TIMER_COUNT; ++timer) {
+        if (address == dspic33_device_timer_registers[timer] ||
+            address == dspic33_device_timer_registers[timer] + 1u) {
+            return true;
+        }
+    }
+    for (size_t timer = 0u;
+         timer < sizeof(dspic33_device_timer_holding_registers) /
+                     sizeof(dspic33_device_timer_holding_registers[0]);
+         ++timer) {
+        if (address == dspic33_device_timer_holding_registers[timer] ||
+            address == dspic33_device_timer_holding_registers[timer] + 1u) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool is_dma_layout_state(uint32_t address) {
+    if (address >= DMA_SADRL && address <= DMA_SADRH + 1u) {
+        return true;
+    }
+    if (address < DMA_CHANNEL_BASE ||
+        address >= DMA_CHANNEL_BASE + DSPIC33_DMA_COUNT * DMA_CHANNEL_STRIDE) {
+        return false;
+    }
+    const uint32_t offset = (address - DMA_CHANNEL_BASE) % DMA_CHANNEL_STRIDE;
+    return offset >= 4u && offset < 12u;
+}
+
+static bool is_live_output_compare_state(uint32_t address) {
+    return address >= OUTPUT_COMPARE_BASE &&
+           address < OUTPUT_COMPARE_BASE + DSPIC33_OUTPUT_COMPARE_COUNT * OUTPUT_COMPARE_STRIDE &&
+           (address - OUTPUT_COMPARE_BASE) % OUTPUT_COMPARE_STRIDE == OUTPUT_COMPARE_TIMER_OFFSET;
+}
+
+bool dspic33_peripheral_state_equal(const Dspic33* first, const Dspic33* second,
+                                    uint32_t* first_difference, uint32_t* first_value,
+                                    uint32_t* second_value) {
+    if (first == NULL || second == NULL || first->device != second->device ||
+        first_difference == NULL || first_value == NULL || second_value == NULL) {
+        return false;
+    }
+    const uint8_t* implementation_bitmap = dspic33ep_mu_implementation_bitmap(first->device);
+    if (implementation_bitmap == NULL) {
+        return false;
+    }
+    for (uint32_t address = 0x40u; address < DSPIC33_SFR_WORD_COUNT * 2u; address += 2u) {
+        if (is_live_timer_state(address) || is_dma_layout_state(address) ||
+            is_live_output_compare_state(address)) {
+            continue;
+        }
+        const uint32_t word_index = address >> 1u;
+        if ((implementation_bitmap[word_index >> 3u] & (uint8_t)(1u << (word_index & 7u))) == 0u) {
+            continue;
+        }
+        const uint16_t first_word =
+            (uint16_t)(first->data[address] | ((uint16_t)first->data[address + 1u] << 8u));
+        const uint16_t second_word =
+            (uint16_t)(second->data[address] | ((uint16_t)second->data[address + 1u] << 8u));
+        if (first_word != second_word) {
+            *first_difference = address;
+            *first_value = first_word;
+            *second_value = second_word;
+            return false;
+        }
+    }
+    return true;
 }
 
 const Dspic33SfrMasterClearReset* dspic33ep_mu_master_clear_resets(Dspic33epMuDevice device,

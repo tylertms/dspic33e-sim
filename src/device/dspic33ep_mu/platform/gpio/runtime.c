@@ -49,6 +49,26 @@ bool dspic33_gpio_pin(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* high)
     return true;
 }
 
+bool dspic33_gpio_output(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* enabled,
+                         bool* high) {
+    if (cpu == NULL || port >= DSPIC33_GPIO_PORT_COUNT || bit >= 16u || enabled == NULL ||
+        high == NULL) {
+        return false;
+    }
+    const uint16_t mask = (uint16_t)(1u << bit);
+    if ((dspic33_device_internal_gpio_port_mask(cpu, port) & mask) == 0u ||
+        (port == 2u && bit == 15u && dspic33_device_internal_oscillator_pin_owned(cpu))) {
+        return false;
+    }
+    const uint16_t input_mask =
+        (uint16_t)(dspic33_device_internal_raw_word(
+                       cpu, dspic33_device_gpio_tris_addresses[port]) |
+                   dspic33_device_gpio_input_only_masks[port]);
+    *enabled = (input_mask & mask) == 0u;
+    *high = (dspic33_device_internal_gpio_pin_values(cpu, port) & mask) != 0u;
+    return true;
+}
+
 bool dspic33_gpio_signal(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* high) {
     if (cpu == NULL || port >= DSPIC33_GPIO_PORT_COUNT || bit >= 16u || high == NULL) {
         return false;

@@ -10,6 +10,7 @@ static void read_word_as_cpu(Dspic33* cpu, uint32_t address) {
 }
 
 static void test_cpu_reads(TestState* state, Dspic33* cpu) {
+    dspic33_clear_uninitialized_data_reads(NULL);
     dspic33_reset(cpu, 0u);
     expect(state, dspic33_get_uninitialized_data_read_count(cpu) == 0u,
            "reset starts without uninitialized reads");

@@ -505,6 +505,20 @@ static void interrupt_entry_latency_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, TIMER2_PERIOD, UINT16_MAX);
     dspic33_write_word(cpu, TIMER2_CONTROL, 0x8000u);
     dspic33_raise_interrupt(cpu, 0u);
+    dspic33_load_program_word(cpu, 0x0300u, 0u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING &&
+               dspic33_get_executed_program_counter(cpu) == 0x0300u,
+           "stepping a pending interrupt reports the first handler instruction");
+
+    dspic33_reset(cpu, 0x0200u);
+    dspic33_load_program_word(cpu, 0x0200u, 0u);
+    enable_interrupt(cpu, 0u, 1u, 0x0300u);
+    cpu->w[15] = 0x2000u;
+    dspic33_write_word(cpu, TIMER2_COUNTER, 0u);
+    dspic33_write_word(cpu, TIMER2_PERIOD, UINT16_MAX);
+    dspic33_write_word(cpu, TIMER2_CONTROL, 0x8000u);
+    dspic33_raise_interrupt(cpu, 0u);
     expect(state,
            dspic33_device_service_interrupt(cpu) && cpu->pc == 0x0300u && cpu->cycles == 9u &&
                cpu->device_cycles == 9u && dspic33_read_word(cpu, TIMER2_COUNTER) == 9u &&

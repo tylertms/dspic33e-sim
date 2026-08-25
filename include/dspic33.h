@@ -848,6 +848,9 @@ uint16_t dspic33_read_word(Dspic33* cpu, uint32_t address);
 uint64_t dspic33_get_uninitialized_data_read_count(const Dspic33* cpu);
 uint32_t dspic33_get_first_uninitialized_data_read(const Dspic33* cpu);
 void dspic33_clear_uninitialized_data_reads(Dspic33* cpu);
+bool dspic33_peripheral_state_equal(const Dspic33* first, const Dspic33* second,
+                                    uint32_t* first_difference, uint32_t* first_value,
+                                    uint32_t* second_value);
 bool dspic33_schedule(Dspic33* cpu, Dspic33EventType type, uint16_t source, uint32_t value,
                       uint64_t delay);
 bool dspic33_schedule_external(Dspic33* cpu, Dspic33EventType type, uint16_t source, uint32_t value,
@@ -949,6 +952,8 @@ void dspic33_adc_input(Dspic33* cpu, uint8_t channel, uint16_t value);
 bool dspic33_gpio_drive(Dspic33* cpu, uint8_t port, uint16_t value, uint16_t mask);
 bool dspic33_gpio_release(Dspic33* cpu, uint8_t port, uint16_t mask);
 bool dspic33_gpio_pin(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* high);
+bool dspic33_gpio_output(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* enabled,
+                         bool* high);
 bool dspic33_gpio_signal(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* high);
 bool dspic33_oscillator_pin(const Dspic33* cpu, bool* clock_output, uint64_t* edges);
 bool dspic33_reference_clock_pin(const Dspic33* cpu, uint8_t pin, uint64_t primary_edges,
@@ -966,6 +971,7 @@ Dspic33Result dspic33_step_result(Dspic33* cpu);
 Dspic33Result dspic33_run_with_limits(Dspic33* cpu, Dspic33RunLimits limits);
 uint32_t dspic33_get_register(const Dspic33* cpu, uint8_t reg);
 uint32_t dspic33_get_program_counter(const Dspic33* cpu);
+uint32_t dspic33_get_executed_program_counter(const Dspic33* cpu);
 uint64_t dspic33_get_instruction_count(const Dspic33* cpu);
 uint64_t dspic33_get_cycle_count(const Dspic33* cpu);
 Dspic33StopReason dspic33_get_stop(const Dspic33* cpu);
