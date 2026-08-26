@@ -50,13 +50,13 @@ test_definitions = [
   {
     'name': 'processor_encoding_census',
     'sources': ['architecture/dspic33/execution/encoding_census_test.c'],
-    'suite': ['core', 'unit', 'integration'],
+    'suite': ['core', 'unit', 'integration', 'census'],
     'timeout': 300,
   },
   {
     'name': 'processor_state_census',
     'sources': ['architecture/dspic33/execution/state_census_test.c'],
-    'suite': ['core', 'unit', 'integration'],
+    'suite': ['core', 'unit', 'integration', 'census'],
   },
   {
     'name': 'uninitialized_data',
@@ -66,7 +66,7 @@ test_definitions = [
   {
     'name': 'peripheral_state_census',
     'sources': ['device/dspic33ep_mu/state_census_test.c'],
-    'suite': ['device', 'unit', 'integration'],
+    'suite': ['device', 'unit', 'integration', 'census'],
   },
   {'name': 'processor_boundary', 'sources': ['architecture/dspic33/execution/boundary.c'], 'suite': ['core', 'unit']},
   {
@@ -155,7 +155,7 @@ test_definitions = [
   {
     'name': 'peripheral_census',
     'sources': ['device/dspic33ep_mu/platform/peripheral_census_test.c'],
-    'suite': ['device', 'unit', 'integration'],
+    'suite': ['device', 'unit', 'integration', 'census'],
   },
   {
     'name': 'peripheral_api_boundary',
@@ -226,7 +226,7 @@ test_definitions = [
   {
     'name': 'output_compare_state_census',
     'sources': ['device/dspic33ep_mu/control/output_compare/state_census_test.c'],
-    'suite': ['device', 'unit', 'integration'],
+    'suite': ['device', 'unit', 'integration', 'census'],
   },
   {
     'name': 'pmp',
@@ -346,6 +346,7 @@ fixture_generator = executable(
 )
 runner_image = custom_target(
   'dspic33ep_mu_firmware_runner_image',
+  build_by_default: true,
   command: fixture_generator,
   output: smoke_image_name,
 )
