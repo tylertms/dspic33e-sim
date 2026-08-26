@@ -83,9 +83,9 @@ int main(int argc, char** argv) {
     expect(&state, initialized, "cpu initialized");
     if (initialized) {
         const Census census = census_encodings(&cpu, shard);
-        const bool matches =
-            census.examined == 1048576u && census.executed == expected_executed[shard] &&
-            census.fingerprint == expected_fingerprints[shard];
+        const bool matches = census.examined == 1048576u &&
+                             census.executed == expected_executed[shard] &&
+                             census.fingerprint == expected_fingerprints[shard];
         if (!matches) {
             printf("[census] shard=%u examined=%llu executed=%llu fingerprint=%llu\n", shard,
                    (unsigned long long)census.examined, (unsigned long long)census.executed,

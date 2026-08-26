@@ -248,9 +248,8 @@ static bool is_live_timer_state(uint32_t address) {
             return true;
         }
     }
-    for (size_t timer = 0u;
-         timer < sizeof(dspic33_device_timer_holding_registers) /
-                     sizeof(dspic33_device_timer_holding_registers[0]);
+    for (size_t timer = 0u; timer < sizeof(dspic33_device_timer_holding_registers) /
+                                        sizeof(dspic33_device_timer_holding_registers[0]);
          ++timer) {
         if (address == dspic33_device_timer_holding_registers[timer] ||
             address == dspic33_device_timer_holding_registers[timer] + 1u) {

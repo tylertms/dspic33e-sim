@@ -333,8 +333,7 @@ static bool run_direct_file_odd_word_case(Dspic33* cpu, Dspic33* reference, uint
               cpu->last_trap == 1u && cpu->last_trap_return == 2u && cpu->pc == 0x000340u &&
               cpu->cycles == expected_cycles && cpu->w[15] == 0x5004u &&
               (dspic33_read_word(cpu, 0x08c0u) & 0x0008u) != 0u &&
-               (uint16_t)(dspic33_read_word(cpu, 0x5002u) >> 8u) ==
-                   (uint16_t)(status & 0x00ffu) &&
+              (uint16_t)(dspic33_read_word(cpu, 0x5002u) >> 8u) == (uint16_t)(status & 0x00ffu) &&
               (uint16_t)(cpu->data[0x08c8u] | ((uint16_t)cpu->data[0x08c9u] << 8u)) == 0x0e01u &&
               memcmp(cpu->w, reference->w, 15u * sizeof(*cpu->w)) == 0 &&
               memcmp(cpu->data, reference->data, 0x08c0u) == 0 &&

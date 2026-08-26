@@ -461,8 +461,7 @@ uint16_t dspic33_data_test_binary_matrix_status(BinaryMatrixOperation operation,
         if (minuend >= subtraction) {
             status |= 0x0001u;
         }
-        if ((uint32_t)(minuend & digit_mask) >=
-            (uint32_t)(subtrahend & digit_mask) + borrow) {
+        if ((uint32_t)(minuend & digit_mask) >= (uint32_t)(subtrahend & digit_mask) + borrow) {
             status |= 0x0100u;
         }
         if (signed_result < minimum || signed_result > maximum) {

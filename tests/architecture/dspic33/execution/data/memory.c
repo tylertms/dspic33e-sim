@@ -469,8 +469,7 @@ static void subtract_borrow_flags(TestState* state, Dspic33* cpu) {
     load_instruction(state, cpu, 0u, 0x5d808du);
 
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->sr == 0x0008u &&
-               cpu->w[1] == 0x8098u,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->sr == 0x0008u && cpu->w[1] == 0x8098u,
            "SUBB excludes a false high-word signed overflow");
 }
 

@@ -291,8 +291,7 @@ static void pull_cases(TestState* state, Dspic33* cpu) {
         expect(state, dspic33_gpio_pin(cpu, 3u, 8u, &high) && !high,
                "resolved pin API observes driven-low input");
         expect(state,
-               dspic33_gpio_output(cpu, 3u, 8u, &output_enabled, &high) && !output_enabled &&
-                   !high,
+               dspic33_gpio_output(cpu, 3u, 8u, &output_enabled, &high) && !output_enabled && !high,
                "GPIO output API reports a disabled output");
         expect(state,
                !dspic33_gpio_pin(cpu, DSPIC33_GPIO_PORT_COUNT, 0u, &high) &&

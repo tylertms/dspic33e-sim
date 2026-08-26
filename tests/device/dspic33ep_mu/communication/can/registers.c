@@ -477,8 +477,8 @@ void dspic33_can_test_extended_filter_cases(TestState* state, Dspic33* cpu) {
         Dspic33CanFrame standard_frame = dspic33_can_test_frame(0x456u, false, false, 0u, 0u);
         dspic33_reset(cpu, 0u);
         dspic33_can_test_configure_receive(cpu, channel_index, 0x3000u, 6u, 0u);
-        dspic33_can_test_configure_filter(cpu, channel_index, 0u, 0x456u, true, 0x1fffffffu,
-                                          true, 0u, 0u);
+        dspic33_can_test_configure_filter(cpu, channel_index, 0u, 0x456u, true, 0x1fffffffu, true,
+                                          0u, 0u);
         dspic33_can_test_enable_filter(cpu, channel_index, 1u);
         dspic33_can_test_select_window(cpu, channel_index, false);
         dspic33_can_test_set_mode(cpu, channel_index, 0u);

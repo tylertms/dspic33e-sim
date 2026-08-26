@@ -154,8 +154,8 @@ static void test_peripheral_state_comparison(TestState* state, Dspic33epMuDevice
            "seed an implemented peripheral high byte");
     expect(state,
            !dspic33_peripheral_state_equal(first, second, &address, &first_value, &second_value) &&
-               address == implemented_address &&
-               (first_value >> 8u) == peripheral_value && first_value != second_value,
+               address == implemented_address && (first_value >> 8u) == peripheral_value &&
+               first_value != second_value,
            "peripheral comparison includes both bytes of each SFR");
     expect(state, dspic33_seed_data(second, implemented_address + 1u, &peripheral_value, 1u),
            "restore matching peripheral high byte");
