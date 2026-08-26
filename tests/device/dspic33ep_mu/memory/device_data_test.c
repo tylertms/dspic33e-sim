@@ -255,6 +255,10 @@ static void test_profile(TestState* state, const ExpectedProfile* expected) {
     Dspic33* cpu = dspic33_create_for_device(expected->device);
     expect(state, cpu != NULL, "create profile device");
     expect(state, dspic33_device_profile(cpu) == profile, "created device profile");
+    expect(state, dspic33_read_program_word(cpu, 0xff0000u) == expected->device_id >> 16u,
+           "profile device ID program word");
+    expect(state, dspic33_read_program_word(cpu, 0xff0002u) == 0x4002u,
+           "profile revision program word");
     expect(state, dspic33_device_program_range_implemented(cpu, 0u, 2u),
            "device program start implemented");
     expect(state, dspic33_load_program_word(cpu, expected->program_limit - 2u, 0x005aa5u),

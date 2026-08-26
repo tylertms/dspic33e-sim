@@ -460,7 +460,7 @@ uint32_t dspic33_read_program_word(const Dspic33* cpu, uint32_t address) {
         return cpu->configuration[4u + configuration_index * 2u];
     }
     if (address == 0xff0000u) {
-        return 0x001872u;
+        return dspic33_device_profile(cpu)->device_id >> 16u;
     }
     if (address == 0xff0002u) {
         return 0x004002u;
