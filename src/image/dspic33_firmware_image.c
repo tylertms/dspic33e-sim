@@ -125,13 +125,13 @@ bool dspic33_load_binary_data(Dspic33* cpu, const void* image_data, size_t image
         if (program_word == 0x00ffffffu && bytes[byte_offset + 3u] == 0xffu) {
             continue;
         }
-        if (dspic33_program_range_implemented(program_address, 2u) &&
-            !dspic33_load_program_word(cpu, program_address, program_word)) {
-            return false;
-        }
         if (program_address >= DSPIC33_CONFIGURATION_BASE &&
-            program_address < DSPIC33_CONFIGURATION_BASE + DSPIC33_CONFIGURATION_SIZE &&
-            !dspic33_load_configuration_word(cpu, program_address, program_word)) {
+            program_address < DSPIC33_CONFIGURATION_BASE + DSPIC33_CONFIGURATION_SIZE) {
+            if (!dspic33_load_configuration_word(cpu, program_address, program_word)) {
+                return false;
+            }
+        } else if (!dspic33_device_program_range_implemented(cpu, program_address, 2u) ||
+                   !dspic33_load_program_word(cpu, program_address, program_word)) {
             return false;
         }
     }

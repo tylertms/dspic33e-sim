@@ -145,6 +145,7 @@ static void test_file_loading(TestState* state, Dspic33* cpu) {
 
 static void test_binary(TestState* state, Dspic33* cpu) {
     const uint8_t image[] = {0x56u, 0x34u, 0x12u, 0u};
+    const uint8_t erased[] = {0xffu, 0xffu, 0xffu, 0xffu};
     uint32_t entry_address = UINT32_MAX;
     expect(state, dspic33_load_binary_data(cpu, image, sizeof(image), 0x200u, &entry_address),
            "dspic33_load_binary_data(cpu, image, sizeof(image), 0x200u, &entry_address)");
@@ -155,6 +156,10 @@ static void test_binary(TestState* state, Dspic33* cpu) {
            "!dspic33_load_binary_data(cpu, image, 3u, 0u, &entry_address)");
     expect(state, !dspic33_load_binary_data(cpu, image, sizeof(image), 2u, &entry_address),
            "!dspic33_load_binary_data(cpu, image, sizeof(image), 2u, &entry_address)");
+    expect(state, !dspic33_load_binary_data(cpu, image, sizeof(image), 0x100000u, &entry_address),
+           "out-of-map binary content is rejected");
+    expect(state, dspic33_load_binary_data(cpu, erased, sizeof(erased), 0x100000u, &entry_address),
+           "out-of-map erased binary content is ignored");
     expect(state, dspic33_load_binary_data(cpu, image, sizeof(image), 0x204u, NULL),
            "dspic33_load_binary_data(cpu, image, sizeof(image), 0x204u, NULL)");
 }
@@ -206,6 +211,29 @@ static void test_elf(TestState* state, Dspic33* cpu) {
     write_u32_le(image, PROGRAM_SECTION_OFFSET + 20u, 3u);
     expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
            "unaligned program section is rejected");
+    initialize_elf_image(image);
+    write_u32_le(image, PROGRAM_TABLE_OFFSET + 8u, 0x80000u);
+    write_u32_le(image, PROGRAM_TABLE_OFFSET + 12u, 0x80000u);
+    write_u32_le(image, PROGRAM_SECTION_OFFSET + 12u, 0x80000u);
+    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
+           "out-of-map ELF content is rejected");
+    write_u32_le(image, PROGRAM_DATA_OFFSET, UINT32_MAX);
+    expect(state, dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
+           "out-of-map erased ELF content is ignored");
+
+    uint8_t wrapping_image[IMAGE_SIZE + 4u];
+    initialize_elf_image(wrapping_image);
+    write_u32_le(wrapping_image, PROGRAM_TABLE_OFFSET + 8u, UINT32_MAX - 1u);
+    write_u32_le(wrapping_image, PROGRAM_TABLE_OFFSET + 12u, UINT32_MAX - 1u);
+    write_u32_le(wrapping_image, PROGRAM_TABLE_OFFSET + 16u, 8u);
+    write_u32_le(wrapping_image, PROGRAM_TABLE_OFFSET + 20u, 8u);
+    write_u32_le(wrapping_image, PROGRAM_SECTION_OFFSET + 12u, UINT32_MAX - 1u);
+    write_u32_le(wrapping_image, PROGRAM_SECTION_OFFSET + 20u, 8u);
+    write_u32_le(wrapping_image, PROGRAM_DATA_OFFSET, UINT32_MAX);
+    write_u32_le(wrapping_image, PROGRAM_DATA_OFFSET + 4u, 0x00123456u);
+    expect(state,
+           !dspic33_load_elf_data(cpu, wrapping_image, sizeof(wrapping_image), &entry_address),
+           "wrapping ELF program address is rejected");
 }
 
 static void test_symbol(TestState* state) {
