@@ -531,6 +531,8 @@ uint32_t dspic33_get_fault_address(const Dspic33* cpu) {
                                            : cpu->current_instruction_pc;
 }
 
+uint64_t dspic33_get_trap_count(const Dspic33* cpu) { return cpu != NULL ? cpu->trap_count : 0u; }
+
 uint64_t dspic33_get_interrupt_count(const Dspic33* cpu) {
     return cpu != NULL ? cpu->interrupt_count : 0u;
 }

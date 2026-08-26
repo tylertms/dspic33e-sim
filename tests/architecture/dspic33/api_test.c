@@ -34,6 +34,7 @@ static void test_execution(TestState* state) {
            "dspic33_get_program_counter(cpu) == step.pc");
     expect(state, dspic33_get_executed_program_counter(cpu) == 0u,
            "executed program counter identifies the stepped instruction");
+    expect(state, dspic33_get_trap_count(cpu) == 0u, "dspic33_get_trap_count(cpu) == 0u");
     expect(state, dspic33_get_interrupt_count(cpu) == 0u, "dspic33_get_interrupt_count(cpu) == 0u");
     expect(state, dspic33_get_last_interrupt(cpu) == UINT16_MAX,
            "dspic33_get_last_interrupt(cpu) == UINT16_MAX");
@@ -95,6 +96,8 @@ static void test_execution_boundaries(TestState* state) {
     cpu->current_instruction_pc = 0x220u;
     expect(state, dspic33_get_fault_address(cpu) == 0x220u,
            "fault getter falls back to the current instruction");
+    cpu->trap_count = 3u;
+    expect(state, dspic33_get_trap_count(cpu) == 3u, "trap getter reports handled traps");
     dspic33_destroy(cpu);
 }
 
@@ -136,6 +139,7 @@ static void test_null_getters(TestState* state) {
     expect(state, dspic33_get_stop(NULL) == DSPIC33_HALTED,
            "dspic33_get_stop(NULL) == DSPIC33_HALTED");
     expect(state, dspic33_get_fault_address(NULL) == 0u, "dspic33_get_fault_address(NULL) == 0u");
+    expect(state, dspic33_get_trap_count(NULL) == 0u, "dspic33_get_trap_count(NULL) == 0u");
     expect(state, dspic33_get_interrupt_count(NULL) == 0u,
            "dspic33_get_interrupt_count(NULL) == 0u");
     expect(state, dspic33_get_last_interrupt(NULL) == UINT16_MAX,

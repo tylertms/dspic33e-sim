@@ -184,15 +184,16 @@ int main(int argc, char** argv) {
     }
     dspic33_reset(cpu, entry);
     const Dspic33Result result = run(cpu, arguments.limits, stop_address, stop_enabled);
+    const uint64_t trap_count = dspic33_get_trap_count(cpu);
     printf("stop=%u pc=0x%08" PRIx32 " opcode=0x%08" PRIx32 " instructions=%" PRIu64
-           " cycles=%" PRIu64 " entry=0x%08" PRIx32 " fault=0x%08" PRIx32 "\n",
+           " cycles=%" PRIu64 " entry=0x%08" PRIx32 " fault=0x%08" PRIx32 " traps=%" PRIu64 "\n",
            result.stop, result.pc, result.opcode, result.instructions, result.cycles, entry,
-           dspic33_get_fault_address(cpu));
+           dspic33_get_fault_address(cpu), trap_count);
     for (uint8_t register_index = 0u; register_index < 16u; register_index++) {
         printf("W%u=0x%04" PRIx32 "%c", register_index, dspic33_get_register(cpu, register_index),
                register_index == 15u ? '\n' : ' ');
     }
     dspic33_destroy(cpu);
     firmware_image_close(&image);
-    return failed(result.stop) ? EXIT_FAILURE : EXIT_SUCCESS;
+    return failed(result.stop) || trap_count != 0u ? EXIT_FAILURE : EXIT_SUCCESS;
 }

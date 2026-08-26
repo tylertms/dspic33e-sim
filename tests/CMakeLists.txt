@@ -273,16 +273,45 @@ if(PROJECT_IS_TOP_LEVEL AND BUILD_TESTING)
                         "runner;system")
   target_link_libraries(dspic33ep_mu_firmware_image_test
                         PRIVATE dspic33ep_mu_firmware_image)
+  set(dspic33ep_mu_runner_smoke_image
+      ${CMAKE_CURRENT_BINARY_DIR}/dspic33ep_mu_firmware_runner_smoke.bin)
+  dspic33ep_mu_add_test(firmware_runner_fixture
+                        tests/system/runner_fixture_test.c "runner;system")
+  target_compile_definitions(
+    dspic33ep_mu_firmware_runner_fixture_test
+    PRIVATE DSPIC33EP_MU_RUNNER_SMOKE_IMAGE="${dspic33ep_mu_runner_smoke_image}"
+  )
+  set_tests_properties(dspic33ep_mu_firmware_runner_fixture_test
+                       PROPERTIES FIXTURES_SETUP dspic33ep_mu_runner_smoke)
 
   add_test(
     NAME dspic33ep_mu_firmware_runner_smoke_test
     COMMAND
-      dspic33ep_mu_firmware_runner
-      ${CMAKE_CURRENT_SOURCE_DIR}/tests/system/runner_smoke.bin --reset-address
-      0 --device dsPIC33EP256MU806 --program-word 0 0x2005a0 --program-word 2
-      0xfe4000 --stop-address 2 --max-instructions 10)
+      dspic33ep_mu_firmware_runner ${dspic33ep_mu_runner_smoke_image}
+      --reset-address 0 --device dsPIC33EP256MU806 --program-word 0 0x2005a0
+      --program-word 2 0xfe4000 --stop-address 2 --max-instructions 10)
   set_tests_properties(
     dspic33ep_mu_firmware_runner_smoke_test
-    PROPERTIES LABELS "runner;system" PASS_REGULAR_EXPRESSION "W0=0x005a")
+    PROPERTIES LABELS "runner;system" FIXTURES_REQUIRED
+               dspic33ep_mu_runner_smoke PASS_REGULAR_EXPRESSION "W0=0x005a")
+
+  add_test(
+    NAME dspic33ep_mu_firmware_runner_trap_test
+    COMMAND
+      dspic33ep_mu_firmware_runner ${dspic33ep_mu_runner_smoke_image}
+      --reset-address 0 --device dsPIC33EP256MU806 --program-word 0 0xd80103
+      --program-word 12 0x000300 --program-word 768 0x000000 --max-instructions
+      10)
+  set_tests_properties(
+    dspic33ep_mu_firmware_runner_trap_test
+    PROPERTIES LABELS "runner;system" FIXTURES_REQUIRED
+               dspic33ep_mu_runner_smoke WILL_FAIL TRUE)
+
+  add_test(NAME dspic33ep_mu_firmware_runner_cleanup_test
+           COMMAND ${CMAKE_COMMAND} -E rm -f ${dspic33ep_mu_runner_smoke_image})
+  set_tests_properties(
+    dspic33ep_mu_firmware_runner_cleanup_test
+    PROPERTIES LABELS "runner;system" FIXTURES_CLEANUP
+               dspic33ep_mu_runner_smoke)
 
 endif()

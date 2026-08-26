@@ -952,8 +952,7 @@ void dspic33_adc_input(Dspic33* cpu, uint8_t channel, uint16_t value);
 bool dspic33_gpio_drive(Dspic33* cpu, uint8_t port, uint16_t value, uint16_t mask);
 bool dspic33_gpio_release(Dspic33* cpu, uint8_t port, uint16_t mask);
 bool dspic33_gpio_pin(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* high);
-bool dspic33_gpio_output(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* enabled,
-                         bool* high);
+bool dspic33_gpio_output(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* enabled, bool* high);
 bool dspic33_gpio_signal(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* high);
 bool dspic33_oscillator_pin(const Dspic33* cpu, bool* clock_output, uint64_t* edges);
 bool dspic33_reference_clock_pin(const Dspic33* cpu, uint8_t pin, uint64_t primary_edges,
@@ -976,6 +975,7 @@ uint64_t dspic33_get_instruction_count(const Dspic33* cpu);
 uint64_t dspic33_get_cycle_count(const Dspic33* cpu);
 Dspic33StopReason dspic33_get_stop(const Dspic33* cpu);
 uint32_t dspic33_get_fault_address(const Dspic33* cpu);
+uint64_t dspic33_get_trap_count(const Dspic33* cpu);
 uint64_t dspic33_get_interrupt_count(const Dspic33* cpu);
 uint16_t dspic33_get_last_interrupt(const Dspic33* cpu);
 uint8_t dspic33_get_interrupt_depth(const Dspic33* cpu);
