@@ -12,20 +12,21 @@ Device memory maps and reset values are based on Microchip's dsPIC33E Device Fam
 
 ## Build
 
+Requires GCC, Meson, and Ninja.
+
 ```
-cmake -S . -B build/simulator -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build/simulator --parallel
+meson setup build/simulator --buildtype=release
+meson compile -C build/simulator
 ```
 
 ### Build Targets
 
 | Target | Type | Description |
 | :--- | :--- | :--- |
-| `dspic33ep_mu::simulator` | Static Library | dsPIC33EP-MU device and dsPIC33E core simulator. |
-| `dspic33ep_mu::firmware_image` | Static Library | ELF and raw binary image loader. |
-| `dspic33ep_mu::firmware_runner` | Executable | CLI tool to load and run firmware images. |
+| `dspic33ep_mu_simulator` | Static Library | dsPIC33EP-MU device and dsPIC33E core simulator. |
+| `dspic33ep_mu_firmware_image` | Static Library | ELF and raw binary image loader. |
+| `dspic33ep_mu_firmware_runner` | Executable | CLI tool to load and run firmware images. |
 | `test` | Utility | Run all tests. |
-| `test-coverage` | Utility | Run all tests and print a source coverage summary. |
 
 ## Run Firmware
 
@@ -44,11 +45,13 @@ dspic33ep_mu_firmware_runner <IMAGE> --reset-address <ADDRESS> [OPTIONS]
 | `--max-cycles <N>` | Maximum clock cycle limit. |
 | `--program-word <ADDR> <VAL>` | Write word to program memory before execution. |
 
-## Use in CMake Projects
+## Use in Meson Projects
 
-```cmake
-add_subdirectory(sim/dspic33ep-mu-sim EXCLUDE_FROM_ALL)
-target_link_libraries(your_target PRIVATE dspic33ep_mu::simulator)
+```meson
+dspic33ep_mu = subproject('dspic33ep-mu-sim')
+simulator = dspic33ep_mu.get_variable('dspic33ep_mu_simulator_dependency')
+
+executable('your_target', 'main.c', dependencies: simulator)
 ```
 
 ## Run Tests
@@ -56,13 +59,15 @@ target_link_libraries(your_target PRIVATE dspic33ep_mu::simulator)
 Run all tests:
 
 ```
-cmake --build build/simulator --target test
+meson test -C build/simulator
 ```
 
 Run all tests with simulator source coverage:
 
 ```
-cmake --build build/simulator --target test-coverage
+meson setup build/test-coverage --buildtype=debug -Db_coverage=true
+meson test -C build/test-coverage
+meson compile -C build/test-coverage coverage-text
 ```
 
-The coverage target requires GCC and gcov. It prints the summary after all tests pass.
+The coverage report requires GCC, gcov, and gcovr.
