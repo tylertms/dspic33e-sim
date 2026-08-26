@@ -973,6 +973,8 @@ bool dspic33_copy(Dspic33* destination, const Dspic33* source) {
     uint8_t* data = destination->data;
     uint8_t* initialized_data = destination->initialized_data;
     uint8_t* var_write_domains = destination->var_write_domains;
+    Dspic33Trace trace = destination->trace;
+    void* trace_context = destination->trace_context;
     if (event_capacity < source->events.count) {
         Dspic33Event* resized =
             realloc(events, source->events.count * sizeof(*source->events.items));
@@ -1002,6 +1004,8 @@ bool dspic33_copy(Dspic33* destination, const Dspic33* source) {
     destination->var_write_domains = var_write_domains;
     destination->events.items = events;
     destination->events.capacity = event_capacity;
+    destination->trace = trace;
+    destination->trace_context = trace_context;
     return true;
 }
 

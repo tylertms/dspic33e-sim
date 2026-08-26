@@ -169,6 +169,9 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     device_ratio = dspic33_device_instruction_cycles(cpu, 1u);
     opcode = sequential_hole_fetch ? 0u : dspic33_read_program_word(cpu, cpu->pc);
     cpu->sequential_program_hole_pc = 0u;
+    if (cpu->trace != NULL) {
+        cpu->trace(cpu->trace_context, instruction_pc, opcode);
+    }
     if (opcode == 0x064000u) {
         uint64_t return_cycles;
         uint32_t target;
@@ -548,6 +551,13 @@ uint8_t dspic33_get_interrupt_depth(const Dspic33* cpu) {
 void dspic33_set_stop_on_trap(Dspic33* cpu, bool enabled) {
     if (cpu != NULL) {
         cpu->stop_on_trap = enabled;
+    }
+}
+
+void dspic33_set_trace(Dspic33* cpu, Dspic33Trace trace, void* context) {
+    if (cpu != NULL) {
+        cpu->trace = trace;
+        cpu->trace_context = context;
     }
 }
 

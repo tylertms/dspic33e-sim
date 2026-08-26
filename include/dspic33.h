@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 typedef struct Dspic33 Dspic33;
+typedef void (*Dspic33Trace)(void* context, uint32_t address, uint32_t opcode);
 
 #define DSPIC33_DATA_SIZE 0x100000u
 #define DSPIC33_PROGRAM_LIMIT 0x55800u
@@ -980,6 +981,7 @@ uint64_t dspic33_get_interrupt_count(const Dspic33* cpu);
 uint16_t dspic33_get_last_interrupt(const Dspic33* cpu);
 uint8_t dspic33_get_interrupt_depth(const Dspic33* cpu);
 void dspic33_set_stop_on_trap(Dspic33* cpu, bool enabled);
+void dspic33_set_trace(Dspic33* cpu, Dspic33Trace trace, void* context);
 bool dspic33_begin_call(Dspic33* cpu, uint32_t address, bool async_events);
 bool dspic33_seed_data(Dspic33* cpu, uint32_t address, const void* data, size_t size);
 const char* dspic33_stop_reason_name(Dspic33StopReason reason);

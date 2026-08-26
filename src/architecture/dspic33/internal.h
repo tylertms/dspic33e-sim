@@ -98,6 +98,8 @@ struct Dspic33 {
     bool reset_locked;
     bool stop_on_trap;
     bool async_events_enabled;
+    Dspic33Trace trace;
+    void* trace_context;
     uint16_t interrupt_log_irq[16];
     uint32_t interrupt_log_entry[16];
     uint32_t interrupt_log_return[16];

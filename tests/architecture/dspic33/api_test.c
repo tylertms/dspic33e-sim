@@ -3,6 +3,19 @@
 #include "dspic33.h"
 #include "test.h"
 
+typedef struct {
+    uint32_t address;
+    uint32_t opcode;
+    uint32_t count;
+} TraceCapture;
+
+static void capture_trace(void* context, uint32_t address, uint32_t opcode) {
+    TraceCapture* capture = context;
+    capture->address = address;
+    capture->opcode = opcode;
+    capture->count++;
+}
+
 static void test_lifecycle(TestState* state) {
     Dspic33* source = dspic33_create();
     Dspic33* destination = dspic33_create();
@@ -64,6 +77,34 @@ static void test_execution(TestState* state) {
            "dspic33_step_result(NULL).stop == DSPIC33_HALTED");
     expect(state, dspic33_run_with_limits(NULL, (Dspic33RunLimits){0u, 0u}).stop == DSPIC33_HALTED,
            "dspic33_run_with_limits(NULL, limits).stop == DSPIC33_HALTED");
+}
+
+static void test_trace(TestState* state) {
+    Dspic33* source = dspic33_create();
+    Dspic33* destination = dspic33_create();
+    TraceCapture source_capture = {0};
+    TraceCapture destination_capture = {0};
+    expect(state, source != NULL && destination != NULL, "trace processors are created");
+    expect(state, dspic33_load_program_word(source, 0u, 0x200123u), "trace opcode is loaded");
+    dspic33_set_trace(source, capture_trace, &source_capture);
+    dspic33_set_trace(destination, capture_trace, &destination_capture);
+    expect(state, dspic33_copy(destination, source), "trace processor is copied");
+    dspic33_reset(destination, 0u);
+    dspic33_step(destination);
+    expect(state, destination_capture.count == 1u, "destination trace is called once");
+    expect(state, destination_capture.address == 0u, "destination trace reports the address");
+    expect(state, destination_capture.opcode == 0x200123u, "destination trace reports the opcode");
+    expect(state, source_capture.count == 0u, "copy preserves the destination trace context");
+    dspic33_reset(destination, 0u);
+    dspic33_step(destination);
+    expect(state, destination_capture.count == 2u, "reset preserves the trace callback");
+    dspic33_set_trace(destination, NULL, NULL);
+    dspic33_reset(destination, 0u);
+    dspic33_step(destination);
+    expect(state, destination_capture.count == 2u, "cleared trace is not called");
+    dspic33_set_trace(NULL, capture_trace, &destination_capture);
+    dspic33_destroy(destination);
+    dspic33_destroy(source);
 }
 
 static void test_execution_boundaries(TestState* state) {
@@ -265,6 +306,7 @@ int main(void) {
     TestState state = {0};
     test_lifecycle(&state);
     test_execution(&state);
+    test_trace(&state);
     test_execution_boundaries(&state);
     test_host_operations(&state);
     test_null_getters(&state);
