@@ -6,8 +6,10 @@
 
 enum {
     ELF_HEADER_SIZE = 52,
+    ELF_PROGRAM_SIZE = 32,
     ELF_SECTION_SIZE = 40,
     ELF_SYMBOL_SIZE = 16,
+    ELF_SEGMENT_LOAD = 1,
     ELF_SECTION_PROGBITS = 1,
     ELF_SECTION_SYMTAB = 2,
     ELF_EXECUTABLE = 2,
@@ -26,6 +28,13 @@ typedef struct {
     uint32_t linked_section;
     uint32_t entry_size;
 } ElfSection;
+
+typedef struct {
+    uint32_t type;
+    uint32_t file_offset;
+    uint32_t physical_address;
+    uint32_t file_size;
+} ElfSegment;
 
 static uint16_t read_u16(const uint8_t* bytes) {
     return (uint16_t)(bytes[0] | ((uint16_t)bytes[1] << 8u));
@@ -81,6 +90,24 @@ static bool section_table(const ElfImage* image, uint32_t* table_offset, uint16_
     return true;
 }
 
+static bool program_table(const ElfImage* image, uint32_t* table_offset, uint16_t* segment_count,
+                          char* error, size_t error_size) {
+    uint16_t program_entry_size;
+    if (!header_valid(image, error, error_size)) {
+        return false;
+    }
+    *table_offset = read_u32(image->bytes + 28u);
+    program_entry_size = read_u16(image->bytes + 42u);
+    *segment_count = read_u16(image->bytes + 44u);
+    if (*segment_count != 0u &&
+        (program_entry_size != ELF_PROGRAM_SIZE ||
+         !range_valid(image->size, *table_offset, (uint32_t)*segment_count * program_entry_size))) {
+        set_error(error, error_size, "ELF program table is invalid");
+        return false;
+    }
+    return true;
+}
+
 static ElfSection read_section(const ElfImage* image, uint32_t table_offset,
                                uint16_t section_index) {
     const uint8_t* section_bytes =
@@ -94,6 +121,45 @@ static ElfSection read_section(const ElfImage* image, uint32_t table_offset,
     section.linked_section = read_u32(section_bytes + 24u);
     section.entry_size = read_u32(section_bytes + 36u);
     return section;
+}
+
+static ElfSegment read_segment(const ElfImage* image, uint32_t table_offset,
+                               uint16_t segment_index) {
+    const uint8_t* segment_bytes =
+        image->bytes + table_offset + (uint32_t)segment_index * ELF_PROGRAM_SIZE;
+    ElfSegment segment;
+    segment.type = read_u32(segment_bytes);
+    segment.file_offset = read_u32(segment_bytes + 4u);
+    segment.physical_address = read_u32(segment_bytes + 12u);
+    segment.file_size = read_u32(segment_bytes + 16u);
+    return segment;
+}
+
+static bool section_load_address(const ElfImage* image, const ElfSection* section,
+                                 uint32_t program_table_offset, uint16_t segment_count,
+                                 uint32_t* load_address) {
+    if (segment_count == 0u) {
+        *load_address = section->virtual_address;
+        return true;
+    }
+    for (uint16_t segment_index = 0u; segment_index < segment_count; segment_index++) {
+        const ElfSegment segment = read_segment(image, program_table_offset, segment_index);
+        if (segment.type != ELF_SEGMENT_LOAD ||
+            !range_valid(image->size, segment.file_offset, segment.file_size) ||
+            section->file_offset < segment.file_offset) {
+            continue;
+        }
+        const uint32_t file_delta = section->file_offset - segment.file_offset;
+        if (file_delta > segment.file_size || section->byte_size > segment.file_size - file_delta) {
+            continue;
+        }
+        if ((file_delta & 3u) != 0u || file_delta / 2u > UINT32_MAX - segment.physical_address) {
+            return false;
+        }
+        *load_address = segment.physical_address + file_delta / 2u;
+        return true;
+    }
+    return false;
 }
 
 bool elf_image_open(ElfImage* image, const char* path, char* error, size_t error_size) {
@@ -156,8 +222,11 @@ void elf_image_close(ElfImage* image) {
 
 bool elf_image_load_program(const ElfImage* image, Dspic33* cpu, char* error, size_t error_size) {
     uint32_t table_offset;
+    uint32_t program_table_offset;
     uint16_t section_count;
-    if (!section_table(image, &table_offset, &section_count, error, error_size)) {
+    uint16_t segment_count;
+    if (!section_table(image, &table_offset, &section_count, error, error_size) ||
+        !program_table(image, &program_table_offset, &segment_count, error, error_size)) {
         return false;
     }
     for (uint16_t section_index = 0u; section_index < section_count; section_index++) {
@@ -171,9 +240,15 @@ bool elf_image_load_program(const ElfImage* image, Dspic33* cpu, char* error, si
             set_error(error, error_size, "ELF program section is invalid");
             return false;
         }
+        uint32_t load_address;
+        if (!section_load_address(image, &program_section, program_table_offset, segment_count,
+                                  &load_address)) {
+            set_error(error, error_size, "ELF program section is not loadable");
+            return false;
+        }
         for (uint32_t byte_offset = 0u; byte_offset < program_section.byte_size;
              byte_offset += 4u) {
-            uint32_t program_address = program_section.virtual_address + byte_offset / 2u;
+            uint32_t program_address = load_address + byte_offset / 2u;
             uint32_t program_word =
                 read_u32(image->bytes + program_section.file_offset + byte_offset);
             if (program_address >= DSPIC33_CONFIGURATION_BASE &&

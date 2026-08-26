@@ -7,8 +7,13 @@
 
 enum {
     ELF_HEADER_SIZE = 52,
+    ELF_PROGRAM_SIZE = 32,
     ELF_SECTION_SIZE = 40,
-    IMAGE_SIZE = ELF_HEADER_SIZE + 2 * ELF_SECTION_SIZE + 4,
+    PROGRAM_TABLE_OFFSET = ELF_HEADER_SIZE,
+    PROGRAM_SECTION_TABLE_OFFSET = PROGRAM_TABLE_OFFSET + ELF_PROGRAM_SIZE,
+    PROGRAM_SECTION_OFFSET = PROGRAM_SECTION_TABLE_OFFSET + ELF_SECTION_SIZE,
+    PROGRAM_DATA_OFFSET = PROGRAM_SECTION_OFFSET + ELF_SECTION_SIZE,
+    IMAGE_SIZE = PROGRAM_DATA_OFFSET + 4,
     SYMBOL_OFFSET = ELF_HEADER_SIZE + 3 * ELF_SECTION_SIZE,
     STRING_OFFSET = SYMBOL_OFFSET + 16,
     SYMBOL_IMAGE_SIZE = STRING_OFFSET + 7,
@@ -40,17 +45,29 @@ static void initialize_elf_image(uint8_t* image) {
     write_u16_le(image, 16u, 2u);
     write_u16_le(image, 18u, 118u);
     write_u32_le(image, 24u, 0x100u);
-    write_u32_le(image, 32u, ELF_HEADER_SIZE);
+    write_u32_le(image, 28u, PROGRAM_TABLE_OFFSET);
+    write_u32_le(image, 32u, PROGRAM_SECTION_TABLE_OFFSET);
+    write_u16_le(image, 42u, ELF_PROGRAM_SIZE);
+    write_u16_le(image, 44u, 1u);
     write_u16_le(image, 46u, ELF_SECTION_SIZE);
     write_u16_le(image, 48u, 2u);
 
-    const size_t section = ELF_HEADER_SIZE + ELF_SECTION_SIZE;
+    write_u32_le(image, PROGRAM_TABLE_OFFSET, 1u);
+    write_u32_le(image, PROGRAM_TABLE_OFFSET + 4u, PROGRAM_DATA_OFFSET);
+    write_u32_le(image, PROGRAM_TABLE_OFFSET + 8u, 0x100u);
+    write_u32_le(image, PROGRAM_TABLE_OFFSET + 12u, 0x100u);
+    write_u32_le(image, PROGRAM_TABLE_OFFSET + 16u, 4u);
+    write_u32_le(image, PROGRAM_TABLE_OFFSET + 20u, 4u);
+    write_u32_le(image, PROGRAM_TABLE_OFFSET + 24u, 5u);
+    write_u32_le(image, PROGRAM_TABLE_OFFSET + 28u, 2u);
+
+    const size_t section = PROGRAM_SECTION_OFFSET;
     write_u32_le(image, section + 4u, 1u);
     write_u32_le(image, section + 8u, 0x40000000u);
     write_u32_le(image, section + 12u, 0x100u);
-    write_u32_le(image, section + 16u, ELF_HEADER_SIZE + 2u * ELF_SECTION_SIZE);
+    write_u32_le(image, section + 16u, PROGRAM_DATA_OFFSET);
     write_u32_le(image, section + 20u, 4u);
-    write_u32_le(image, ELF_HEADER_SIZE + 2u * ELF_SECTION_SIZE, 0x00123456u);
+    write_u32_le(image, PROGRAM_DATA_OFFSET, 0x00123456u);
 }
 
 static void initialize_symbol_image(uint8_t* image) {
@@ -151,6 +168,16 @@ static void test_elf(TestState* state, Dspic33* cpu) {
     expect(state, entry_address == 0x100u, "entry_address == 0x100u");
     expect(state, dspic33_read_program_word(cpu, 0x100u) == 0x00123456u,
            "dspic33_read_program_word(cpu, 0x100u) == 0x00123456u");
+    initialize_elf_image(image);
+    write_u32_le(image, PROGRAM_TABLE_OFFSET + 8u, 0x8300u);
+    write_u32_le(image, PROGRAM_TABLE_OFFSET + 12u, 0x300u);
+    write_u32_le(image, PROGRAM_SECTION_OFFSET + 12u, 0x8300u);
+    expect(state, dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
+           "PSV ELF section loads from its physical address");
+    expect(state,
+           dspic33_read_program_word(cpu, 0x300u) == 0x00123456u &&
+               dspic33_read_program_word(cpu, 0x8300u) == 0x00ffffffu,
+           "PSV ELF section uses LMA instead of VMA");
     image[0] = 0u;
     expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
            "!dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address)");
@@ -164,6 +191,10 @@ static void test_elf(TestState* state, Dspic33* cpu) {
     expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
            "ELF64 image is rejected");
     initialize_elf_image(image);
+    write_u16_le(image, 42u, ELF_PROGRAM_SIZE - 1u);
+    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
+           "short program header is rejected");
+    initialize_elf_image(image);
     write_u16_le(image, 46u, ELF_SECTION_SIZE - 1u);
     expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
            "short section header is rejected");
@@ -172,7 +203,7 @@ static void test_elf(TestState* state, Dspic33* cpu) {
     expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
            "out-of-range section table is rejected");
     initialize_elf_image(image);
-    write_u32_le(image, ELF_HEADER_SIZE + ELF_SECTION_SIZE + 20u, 3u);
+    write_u32_le(image, PROGRAM_SECTION_OFFSET + 20u, 3u);
     expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
            "unaligned program section is rejected");
 }
