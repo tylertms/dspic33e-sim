@@ -44,6 +44,8 @@ enum {
     OPCODE_MOV_DOUBLE_W4_W2 = 0xbe0114u,
     OPCODE_TBLRDL_W4_W3 = 0xba0194u,
     OPCODE_BSET_DATA_0 = 0xa81200u,
+    OPCODE_SFTAC_A_LEFT_1 = 0xc8007fu,
+    OPCODE_SFTAC_B_LEFT_1 = 0xc8807fu,
     OPCODE_NOP = 0u,
     OPCODE_RESET = 0xfe0000u,
     OPCODE_RETFIE = 0x064000u
@@ -173,6 +175,39 @@ static void access_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_byte(cpu, INTTREG, 0u);
     dspic33_write_byte(cpu, INTTREG + 1u, 0u);
     expect(state, dspic33_read_word(cpu, INTTREG) == 0x0906u, "INTTREG byte writes are ignored");
+}
+
+static void accumulator_trap_cases(TestState* state, Dspic33* cpu) {
+    static const uint32_t opcodes[] = {OPCODE_SFTAC_A_LEFT_1, OPCODE_SFTAC_B_LEFT_1};
+    static const uint16_t enables[] = {0x0400u, 0x0200u};
+    static const uint16_t overflow_errors[] = {0x4000u, 0x2000u};
+    static const uint16_t catastrophic_errors[] = {0x1000u, 0x0800u};
+
+    for (uint8_t accumulator = 0u; accumulator < 2u; accumulator++) {
+        dspic33_reset(cpu, 0u);
+        dspic33_set_async_events(cpu, false);
+        dspic33_load_program_word(cpu, 0u, opcodes[accumulator]);
+        dspic33_write_word(cpu, INTCON1, enables[accumulator]);
+        cpu->accumulator[accumulator] = INT32_MAX;
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+                   dspic33_read_word(cpu, INTCON1) ==
+                       (uint16_t)(enables[accumulator] | overflow_errors[accumulator] | 0x0010u) &&
+                   pending_trap(cpu, 4u) != NULL,
+               "enabled accumulator guard overflow latches a math trap");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_set_async_events(cpu, false);
+        dspic33_load_program_word(cpu, 0u, opcodes[accumulator]);
+        dspic33_write_word(cpu, INTCON1, 0x0100u);
+        cpu->accumulator[accumulator] = INT64_C(0x7fffffffff);
+        expect(state,
+               dspic33_step(cpu) == DSPIC33_RUNNING &&
+                   dspic33_read_word(cpu, INTCON1) ==
+                       (uint16_t)(0x0110u | catastrophic_errors[accumulator]) &&
+                   pending_trap(cpu, 4u) != NULL,
+               "enabled catastrophic accumulator overflow latches a math trap");
+    }
 }
 
 static void generic_hard_cases(TestState* state, Dspic33* cpu) {
@@ -866,6 +901,7 @@ int main(void) {
         return 2;
     }
     access_cases(&state, &source);
+    accumulator_trap_cases(&state, &source);
     generic_hard_cases(&state, &source);
     generic_soft_cases(&state, &source);
     external_interrupt_edge_cases(&state, &source);
