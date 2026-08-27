@@ -604,7 +604,9 @@ bool dspic33_seed_data(Dspic33* cpu, uint32_t address, const void* data, size_t 
         !dspic33_data_range_valid(address, (uint32_t)size)) {
         return false;
     }
-    memcpy(cpu->data + address, data, size);
+    if (size != 0u) {
+        memcpy(cpu->data + address, data, size);
+    }
     return true;
 }
 
