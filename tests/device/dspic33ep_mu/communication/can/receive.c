@@ -73,7 +73,7 @@ void dspic33_can_test_receive_flag_read_pointer_cases(TestState* state, Dspic33*
                     buffer_index + 1u == receive_size ? start_buffer : (uint8_t)(buffer_index + 1u);
 
                 dspic33_reset(cpu, 0u);
-                dspic33_can_test_configure_receive(cpu, channel_index, 0xf800u, fifo_size_index,
+                dspic33_can_test_configure_receive(cpu, channel_index, 0xd800u, fifo_size_index,
                                                    start_buffer);
                 dspic33_can_test_select_window(cpu, channel_index, false);
                 dspic33_can_test_write_memory_word(cpu, register_address, bit_mask);
@@ -96,7 +96,7 @@ void dspic33_can_test_receive_flag_read_pointer_cases(TestState* state, Dspic33*
                 uint16_t fifo_address = (uint16_t)(bases[channel_index] + 8u);
 
                 dspic33_reset(cpu, 0u);
-                dspic33_can_test_configure_receive(cpu, channel_index, 0xf800u, fifo_size_index,
+                dspic33_can_test_configure_receive(cpu, channel_index, 0xd800u, fifo_size_index,
                                                    start_buffer);
                 dspic33_can_test_select_window(cpu, channel_index, false);
                 dspic33_can_test_write_memory_word(cpu, register_address, bit_mask);
@@ -115,7 +115,7 @@ static void fifo_interrupt_boundary_case(TestState* state, Dspic33* cpu, uint8_t
     uint16_t can_base = bases[channel_index];
     uint16_t fifo_address = (uint16_t)(can_base + 8u);
     uint16_t interrupt_address = (uint16_t)(can_base + 0x0au);
-    uint32_t receive_memory = (uint32_t)(0xf800u + channel_index * 0x100u);
+    uint32_t receive_memory = (uint32_t)(0xd800u + channel_index * 0x100u);
     Dspic33CanFrame input_frame = dspic33_can_test_frame(0x456u, false, false, 1u, 0x90u);
     uint8_t preparation_count = wraparound ? 2u : 0u;
     uint8_t frame_index;
@@ -198,7 +198,7 @@ static void receive_flag_hardware_event_case(TestState* state, Dspic33* cpu, uin
     uint16_t overflow_address =
         (uint16_t)(can_base + 0x28u + (target_buffer_index >= 16u ? 2u : 0u));
     uint16_t target_bit_mask = (uint16_t)(1u << (target_buffer_index & 15u));
-    uint32_t receive_memory = (uint32_t)(0xf000u + channel_index * 0x400u);
+    uint32_t receive_memory = (uint32_t)(0xd000u + channel_index * 0x400u);
     uint16_t preserved_message_words[8];
     uint8_t receive_buffer_index;
     uint8_t word_index;

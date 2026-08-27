@@ -51,6 +51,7 @@ static void completion_failure_cases(TestState* state, Dspic33* cpu) {
     dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 4u, 0x4000u);
     dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 6u, 0u);
     dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 0x0cu, 0x0290u);
+    cpu->io.dma_address[0] = 0x4000u;
     cpu->io.dma_forced_pending = 1u;
     fill_event_queue(state, cpu);
     test_reject_reallocation(true);
@@ -162,6 +163,7 @@ static void pad_collision_cases(TestState* state, Dspic33* cpu) {
     dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE, DMA_TEST_CONTROL_ENABLE | 0x2000u);
     dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 4u, 0x4000u);
     dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 0x0cu, 0x0298u);
+    cpu->io.dma_address[0] = 0x4000u;
     cpu->io.dma_forced_pending = 1u;
     cpu->io.cpu_write_valid = true;
     cpu->io.cpu_write_cycle = cpu->cycles;
@@ -176,6 +178,7 @@ static void pad_collision_cases(TestState* state, Dspic33* cpu) {
     dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 4u, 0x4000u);
     dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 0x0cu, 0x0248u);
     dspic33_device_internal_raw_write_word(cpu, 0x0248u, 0x00a5u);
+    cpu->io.dma_address[0] = 0x4000u;
     cpu->io.dma_forced_pending = 1u;
     dspic33_device_internal_run_dma(cpu, 0u, DMA_TEST_FORCE);
     expect(state, (cpu->io.dma_active & 1u) != 0u && !cpu->io.dma_transfer_active,
@@ -185,6 +188,7 @@ static void pad_collision_cases(TestState* state, Dspic33* cpu) {
     dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE, DMA_TEST_CONTROL_ENABLE | 0x4800u);
     dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 4u, 0x4000u);
     dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 0x0cu, 0x0248u);
+    cpu->io.dma_address[0] = 0x4000u;
     cpu->io.dma_forced_pending = 1u;
     cpu->io.cpu_write_valid = true;
     cpu->io.cpu_write_cycle = cpu->cycles;

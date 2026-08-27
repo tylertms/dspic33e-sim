@@ -469,7 +469,7 @@ static void transmit_error_transition_cases(TestState* state, Dspic33* cpu, uint
 }
 
 static void complete_error_test_transmission(TestState* state, Dspic33* cpu, uint8_t channel) {
-    uint32_t memory = (uint32_t)(0xe000u + channel * 0x100u);
+    uint32_t memory = (uint32_t)(0xd800u + channel * 0x100u);
     Dspic33CanFrame output;
     uint8_t word_index;
     dspic33_can_test_configure_transmit(cpu, channel, memory);

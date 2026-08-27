@@ -71,6 +71,52 @@ static bool request(Dspic33* cpu, uint8_t source, uint16_t indirect) {
     return dspic33_dma_request(cpu, source, indirect, 0u) && dspic33_device_advance(cpu, 1u);
 }
 
+static void expect_dma_address(TestState* state, Dspic33* cpu, uint16_t control,
+                               uint32_t address, bool valid, const char* execution,
+                               const char* result) {
+    dspic33_reset(cpu, 0u);
+    cpu->data[address] = 0xa5u;
+    if (address + 1u < DSPIC33_DATA_SIZE) {
+        cpu->data[address + 1u] = 0x5au;
+    }
+    dspic33_write_word(cpu, DMA_TEST_WRITE_PAD, 0xffffu);
+    configure_channel(cpu, 0u, control, 0xe0u, address, 0u, DMA_TEST_WRITE_PAD, 0u);
+    expect(state, request(cpu, 0xe0u, 0u), execution);
+    expect(state,
+           valid ? stored_word(cpu, DMA_TEST_WRITE_PAD) ==
+                       ((control & 0x4000u) != 0u ? 0xffa5u : 0x5aa5u)
+                 : stored_word(cpu, DMA_TEST_WRITE_PAD) == 0xffffu && cpu->last_trap == 6u &&
+                       (dspic33_read_word(cpu, 0x08c4u) & 0x0020u) != 0u,
+           result);
+}
+
+static void device_memory_address_cases(TestState* state) {
+    for (Dspic33epMuDevice device = DSPIC33EP_MU_DEVICE_256MU806;
+         device < DSPIC33EP_MU_DEVICE_COUNT; device++) {
+        Dspic33* cpu = dspic33_create_for_device(device);
+        expect(state, cpu != NULL, "create profile DMA processor");
+        if (cpu == NULL) {
+            continue;
+        }
+        const uint32_t data_limit = dspic33_device_profile(cpu)->data_limit;
+        expect_dma_address(state, cpu, 0x6001u, 0x0fffu, false,
+                           "request DMA below SRAM", "DMA below SRAM traps");
+        expect_dma_address(state, cpu, 0x6001u, 0x1000u, true,
+                           "request DMA at SRAM start", "DMA accepts SRAM start");
+        expect_dma_address(state, cpu, 0x6001u, data_limit - 1u, true,
+                           "request DMA byte at SRAM end", "DMA accepts final SRAM byte");
+        expect_dma_address(state, cpu, 0x6001u, data_limit, false,
+                           "request DMA byte beyond SRAM", "DMA byte beyond SRAM traps");
+        expect_dma_address(state, cpu, 0x2001u, data_limit - 2u, true,
+                           "request DMA word at SRAM end", "DMA accepts final SRAM word");
+        expect_dma_address(state, cpu, 0x2001u, data_limit, false,
+                           "request DMA word beyond SRAM", "DMA word beyond SRAM traps");
+        expect_dma_address(state, cpu, 0x2001u, 0x1001u, false,
+                           "request unaligned DMA word", "unaligned DMA word traps");
+        dspic33_destroy(cpu);
+    }
+}
+
 static bool pad_in_set(uint16_t pad, const uint16_t* pads, size_t count) {
     size_t index;
     for (index = 0u; index < count; index++) {
@@ -508,16 +554,6 @@ static void routing_and_status_cases(TestState* state, Dspic33* cpu) {
            "channel interrupt mapping");
 
     dspic33_reset(cpu, 0u);
-    dspic33_write_word(cpu, 0x12346u, 0x55aau);
-    configure_channel(cpu, 0u, 0x2001u, 0x91u, 0x12346u, 0u, DMA_TEST_WRITE_PAD, 0u);
-    expect(state, request(cpu, 0x91u, 0u), "24-bit address request");
-    expect(state, stored_word(cpu, DMA_TEST_WRITE_PAD) == 0x55aau, "24-bit memory transfer");
-    expect(state,
-           dspic33_read_word(cpu, 0x0bf8u) == 0x2346u && dspic33_read_word(cpu, 0x0bfau) == 0x0001u,
-           "DSADR records 24-bit address");
-    expect(state, dspic33_read_word(cpu, 0x0bf6u) == 0u, "DMALCA records channel");
-
-    dspic33_reset(cpu, 0u);
     cpu->data[0] = 0x9eu;
     cpu->data[1] = 0x9eu;
     dspic33_write_word(cpu, DMA_TEST_WRITE_PAD, 0xffffu);
@@ -897,6 +933,7 @@ int main(void) {
                 dspic33_release(&copy);
             }
         }
+        device_memory_address_cases(&state);
         dspic33_release(&cpu);
     }
     return test_finish(&state);

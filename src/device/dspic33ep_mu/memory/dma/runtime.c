@@ -590,8 +590,11 @@ static uint32_t dma_transfer_address(const Dspic33* cpu, uint8_t channel_index,
     return cpu->io.dma_address[channel_index];
 }
 
-static bool dma_memory_address_valid(uint32_t memory_address, uint8_t transfer_width) {
-    return dspic33_data_range_valid(memory_address, transfer_width);
+static bool dma_memory_address_valid(const Dspic33* cpu, uint32_t memory_address,
+                                     uint8_t transfer_width) {
+    return memory_address >= 0x1000u &&
+           (transfer_width == 1u || (memory_address & 1u) == 0u) &&
+           dspic33_device_data_range_implemented(cpu, memory_address, transfer_width);
 }
 
 static bool dma_write_cycle_matches(const Dspic33* cpu) {
@@ -885,7 +888,7 @@ void dspic33_device_internal_run_dma(Dspic33* cpu, uint16_t event_source, uint32
     peripheral_address = dspic33_device_internal_raw_word(cpu, (uint16_t)(channel_base + 0x0cu));
     transfer_width = (dma_control & DMA_CON_SIZE_BYTE) != 0u ? 1u : 2u;
     memory_address = dma_transfer_address(cpu, channel_index, dma_control, (uint16_t)event_value);
-    if (!dma_memory_address_valid(memory_address, transfer_width)) {
+    if (!dma_memory_address_valid(cpu, memory_address, transfer_width)) {
         dspic33_raise_dma_address_trap(cpu);
         if (is_forced) {
             cpu->io.dma_forced_pending &= (uint16_t)~channel_bit;

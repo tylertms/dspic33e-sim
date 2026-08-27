@@ -180,7 +180,7 @@ int main(void) {
     if (initialized) {
         const Census census = census_peripherals(&cpu);
         expect(&state,
-               census.accepted == 16756u && census.fingerprint == UINT64_C(10580142138821623483),
+               census.accepted == 16756u && census.fingerprint == UINT64_C(9535769531222620263),
                "peripheral census matches");
         dspic33_release(&cpu);
     }

@@ -305,7 +305,7 @@ void dspic33_can_test_register_access_cases(TestState* state, Dspic33* cpu) {
     for (uint8_t channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
         const uint16_t can_base = bases[channel_index];
         const uint16_t receive_data_address = (uint16_t)(can_base + 0x40u);
-        const uint32_t memory_address = (uint32_t)(0xf600u + channel_index * 0x100u);
+        const uint32_t memory_address = (uint32_t)(0xd600u + channel_index * 0x100u);
         const Dspic33CanFrame received_frame =
             dspic33_can_test_frame(0x321u, false, false, 4u, 0x40u);
         bool error_counters_preserved;
@@ -710,7 +710,7 @@ static bool transmit_buffer_selected(Dspic33* cpu, uint8_t channel_index, uint8_
 static void fifo_overflow_advancement_case(TestState* state, Dspic33* cpu, uint8_t channel_index,
                                            bool listen_all, bool buffer_full, bool pointer_wrap) {
     const uint16_t can_base = bases[channel_index];
-    const uint32_t memory_address = (uint32_t)(0xf000u + channel_index * 0x100u);
+    const uint32_t memory_address = (uint32_t)(0xd000u + channel_index * 0x100u);
     const Dspic33CanFrame received_frame = dspic33_can_test_frame(0x456u, false, false, 1u, 0x80u);
     const uint8_t buffer_index = pointer_wrap ? 3u : 2u;
     const uint8_t expected_next_buffer = pointer_wrap ? 2u : 3u;

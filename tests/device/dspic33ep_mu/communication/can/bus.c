@@ -609,7 +609,7 @@ void dspic33_can_test_bus_off_recovery_cases(TestState* state, Dspic33* cpu) {
 void dspic33_can_test_error_counter_recovery_cases(TestState* state, Dspic33* cpu) {
     for (uint8_t channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
         const uint16_t can_base = bases[channel_index];
-        const uint32_t memory_address = (uint32_t)(0xe000u + channel_index * 0x100u);
+        const uint32_t memory_address = (uint32_t)(0xd800u + channel_index * 0x100u);
         Dspic33CanFrame received_frame = dspic33_can_test_frame(0x234u, false, false, 1u, 0x5au);
 
         dspic33_reset(cpu, 0u);
