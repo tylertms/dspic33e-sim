@@ -109,29 +109,61 @@ static void test_trace(TestState* state) {
 
 static void test_coverage(TestState* state) {
     Dspic33* cpu = dspic33_create();
-    Dspic33Coverage* coverage = dspic33_coverage_create(0x200u, 4u);
+    Dspic33Coverage* coverage = dspic33_coverage_create(0x200u, 8u);
     expect(state, cpu != NULL && coverage != NULL, "coverage resources are created");
-    expect(state, dspic33_load_program_word(cpu, 0x200u, 0u), "first coverage opcode is loaded");
-    expect(state, dspic33_load_program_word(cpu, 0x202u, 0u), "second coverage opcode is loaded");
-    dspic33_set_trace(cpu, dspic33_coverage_record, coverage);
+    expect(state, dspic33_load_program_word(cpu, 0x200u, 0x320000u),
+           "conditional branch is loaded");
+    expect(state, dspic33_load_program_word(cpu, 0x202u, 0xe78011u), "compare-and-skip is loaded");
+    expect(state, dspic33_load_program_word(cpu, 0x204u, 0xa70002u), "bit skip is loaded");
+    expect(state, dspic33_load_program_word(cpu, 0x206u, 0u), "skip target is loaded");
+    dspic33_set_coverage(cpu, coverage);
     dspic33_reset(cpu, 0x200u);
     dspic33_step(cpu);
+    dspic33_reset(cpu, 0x200u);
+    dspic33_write_word(cpu, 0x0042u, 0x0002u);
+    dspic33_step(cpu);
+    dspic33_reset(cpu, 0x202u);
+    dspic33_set_working_register(cpu, 0u, 1u);
+    dspic33_set_working_register(cpu, 1u, 1u);
+    dspic33_step(cpu);
+    dspic33_reset(cpu, 0x202u);
+    dspic33_set_working_register(cpu, 0u, 1u);
+    dspic33_set_working_register(cpu, 1u, 2u);
+    dspic33_step(cpu);
+    dspic33_reset(cpu, 0x204u);
+    dspic33_set_working_register(cpu, 2u, 0u);
+    dspic33_step(cpu);
+    dspic33_reset(cpu, 0x204u);
+    dspic33_set_working_register(cpu, 2u, 1u);
     dspic33_step(cpu);
     Dspic33CoverageResult result = dspic33_coverage_result(coverage);
-    expect(state, result.instructions == 2u, "coverage records executed instructions");
+    expect(state, result.instructions == 6u, "coverage records executed instructions");
     expect(state, result.outside_range == 0u, "coverage stays inside its range");
-    expect(state, result.unique_instructions == 2u, "coverage counts unique instructions");
+    expect(state, result.unique_instructions == 3u, "coverage counts unique instructions");
+    expect(state, result.conditional_branches == 6u, "coverage records conditional branches");
+    expect(state, result.branches_taken == 3u, "coverage records taken branches");
+    expect(state, result.branches_not_taken == 3u, "coverage records not-taken branches");
+    expect(state, result.unique_branch_sites == 3u, "coverage counts unique branch sites");
+    expect(state, result.unique_branch_outcomes == 6u, "coverage counts unique branch outcomes");
+    expect(state, result.fully_covered_branch_sites == 3u,
+           "coverage counts branches with both outcomes");
     expect(state, dspic33_coverage_executed(coverage, 0x200u),
            "coverage exposes the first instruction");
     expect(state, dspic33_coverage_executed(coverage, 0x202u),
            "coverage exposes the second instruction");
+    expect(state,
+           dspic33_coverage_flags(coverage, 0x204u) ==
+               (DSPIC33_COVERAGE_EXECUTED | DSPIC33_COVERAGE_BRANCH_TAKEN |
+                DSPIC33_COVERAGE_BRANCH_NOT_TAKEN),
+           "coverage exposes branch outcomes");
     dspic33_coverage_clear(coverage);
-    dspic33_coverage_record(coverage, 0x204u, 0u);
+    dspic33_coverage_record(coverage, 0x208u, 0u);
     result = dspic33_coverage_result(coverage);
     expect(state, result.instructions == 1u, "coverage clear resets counters");
     expect(state, result.outside_range == 1u, "coverage counts instructions outside its range");
     expect(state, result.unique_instructions == 0u, "outside instructions are not unique slots");
     expect(state, !dspic33_coverage_executed(coverage, 0x200u), "coverage clear resets slots");
+    dspic33_set_coverage(cpu, NULL);
     dspic33_coverage_destroy(coverage);
     dspic33_destroy(cpu);
     expect(state, dspic33_coverage_create(1u, 2u) == NULL, "coverage rejects odd addresses");

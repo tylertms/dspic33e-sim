@@ -749,7 +749,11 @@ bool dspic33_internal_execute_compare_control(Dspic33* cpu, uint32_t opcode) {
     if (kind == COMPARE_CONTROL_NONE) {
         return false;
     }
-    if (!dspic33_internal_compare_control_taken(cpu, opcode, kind)) {
+    const bool taken = dspic33_internal_compare_control_taken(cpu, opcode, kind);
+    if (cpu->coverage != NULL) {
+        dspic33_coverage_record_branch(cpu->coverage, cpu->current_instruction_pc, taken);
+    }
+    if (!taken) {
         return true;
     }
     if (displacement == 1) {
@@ -837,7 +841,11 @@ bool dspic33_internal_execute_bit(Dspic33* cpu, uint32_t opcode) {
         value |= mask;
     } else if (kind == 6u || kind == 7u) {
         bool set = (value & mask) != 0u;
-        if ((kind == 6u && set) || (kind == 7u && !set)) {
+        const bool taken = (kind == 6u && set) || (kind == 7u && !set);
+        if (cpu->coverage != NULL) {
+            dspic33_coverage_record_branch(cpu->coverage, cpu->current_instruction_pc, taken);
+        }
+        if (taken) {
             skip_instruction(cpu, SKIP_RETURN_TARGET);
         }
         return true;

@@ -824,6 +824,11 @@ bool dspic33_internal_execute(Dspic33* cpu, uint32_t opcode) {
     }
     bool branch_taken;
     if (dspic33_internal_relative_branch_condition(cpu, opcode, &branch_taken)) {
+        if (cpu->coverage != NULL &&
+            !((opcode & 0xf00000u) == 0x300000u && ((opcode >> 16u) & 0x0fu) == 7u)) {
+            dspic33_coverage_record_branch(cpu->coverage, cpu->current_instruction_pc,
+                                           branch_taken);
+        }
         if (branch_taken) {
             int32_t displacement = (int16_t)(opcode & 0xffffu);
             uint32_t target = dspic33_internal_program_address_add(cpu->pc, displacement * 2);
@@ -841,7 +846,7 @@ bool dspic33_internal_execute(Dspic33* cpu, uint32_t opcode) {
         if (cpu->call_depth == 0u) {
             if ((opcode & 0x004000u) != 0u) {
                 dspic33_internal_write_working_register_byte(cpu, destination, false,
-                                                              (uint8_t)literal);
+                                                             (uint8_t)literal);
             } else {
                 dspic33_internal_write_working_register(cpu, destination, literal);
             }
@@ -998,6 +1003,7 @@ bool dspic33_copy(Dspic33* destination, const Dspic33* source) {
     uint8_t* var_write_domains = destination->var_write_domains;
     Dspic33Trace trace = destination->trace;
     void* trace_context = destination->trace_context;
+    Dspic33Coverage* coverage = destination->coverage;
     if (event_capacity < source->events.count) {
         Dspic33Event* resized =
             realloc(events, source->events.count * sizeof(*source->events.items));
@@ -1029,6 +1035,7 @@ bool dspic33_copy(Dspic33* destination, const Dspic33* source) {
     destination->events.capacity = event_capacity;
     destination->trace = trace;
     destination->trace_context = trace_context;
+    destination->coverage = coverage;
     return true;
 }
 

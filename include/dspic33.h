@@ -687,7 +687,7 @@ typedef struct {
     uint16_t timer_external_started;
     uint16_t timer_pin_levels;
     uint16_t timer_pin_qualified;
-    uint16_t timer_pmd_generation[5];
+    uint16_t timer_pmd_generation[DSPIC33_TIMER_COUNT];
     uint16_t timer_pmd_disabled;
     uint16_t timer_instruction_ratio;
     bool timer_instruction_active;
@@ -793,8 +793,20 @@ typedef struct {
 typedef struct {
     uint64_t instructions;
     uint64_t outside_range;
+    uint64_t conditional_branches;
+    uint64_t branches_taken;
+    uint64_t branches_not_taken;
     size_t unique_instructions;
+    size_t unique_branch_sites;
+    size_t unique_branch_outcomes;
+    size_t fully_covered_branch_sites;
 } Dspic33CoverageResult;
+
+typedef enum {
+    DSPIC33_COVERAGE_EXECUTED = 1u << 0,
+    DSPIC33_COVERAGE_BRANCH_TAKEN = 1u << 1,
+    DSPIC33_COVERAGE_BRANCH_NOT_TAKEN = 1u << 2,
+} Dspic33CoverageFlag;
 
 Dspic33Coverage* dspic33_coverage_create(uint32_t address, size_t size);
 void dspic33_coverage_destroy(Dspic33Coverage* coverage);
@@ -802,6 +814,7 @@ void dspic33_coverage_clear(Dspic33Coverage* coverage);
 void dspic33_coverage_record(void* context, uint32_t address, uint32_t opcode);
 Dspic33CoverageResult dspic33_coverage_result(const Dspic33Coverage* coverage);
 bool dspic33_coverage_executed(const Dspic33Coverage* coverage, uint32_t address);
+uint8_t dspic33_coverage_flags(const Dspic33Coverage* coverage, uint32_t address);
 
 typedef enum { DSPIC33_POWER_ACTIVE, DSPIC33_POWER_SLEEP, DSPIC33_POWER_IDLE } Dspic33PowerState;
 
@@ -1015,6 +1028,7 @@ uint16_t dspic33_get_last_interrupt(const Dspic33* cpu);
 uint8_t dspic33_get_interrupt_depth(const Dspic33* cpu);
 void dspic33_set_stop_on_trap(Dspic33* cpu, bool enabled);
 void dspic33_set_trace(Dspic33* cpu, Dspic33Trace trace, void* context);
+void dspic33_set_coverage(Dspic33* cpu, Dspic33Coverage* coverage);
 bool dspic33_begin_call(Dspic33* cpu, uint32_t address, bool async_events);
 bool dspic33_seed_data(Dspic33* cpu, uint32_t address, const void* data, size_t size);
 const char* dspic33_stop_reason_name(Dspic33StopReason reason);

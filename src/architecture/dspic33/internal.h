@@ -98,6 +98,7 @@ struct Dspic33 {
     bool reset_locked;
     bool stop_on_trap;
     bool async_events_enabled;
+    Dspic33Coverage* coverage;
     Dspic33Trace trace;
     void* trace_context;
     uint16_t interrupt_log_irq[16];
@@ -116,6 +117,8 @@ struct Dspic33 {
     Dspic33PowerState power_state;
     Dspic33StopReason stop_reason;
 };
+
+void dspic33_coverage_record_branch(Dspic33Coverage* coverage, uint32_t address, bool taken);
 
 bool dspic33_initialize(Dspic33* cpu);
 bool dspic33_initialize_for_device(Dspic33* cpu, Dspic33epMuDevice device);

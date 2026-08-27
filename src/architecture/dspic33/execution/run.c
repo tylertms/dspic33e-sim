@@ -189,6 +189,9 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
     if (cpu->trace != NULL) {
         cpu->trace(cpu->trace_context, instruction_pc, opcode);
     }
+    if (cpu->coverage != NULL) {
+        dspic33_coverage_record(cpu->coverage, instruction_pc, opcode);
+    }
     if (opcode == 0x064000u) {
         uint64_t return_cycles;
         uint32_t target;
@@ -575,6 +578,12 @@ void dspic33_set_trace(Dspic33* cpu, Dspic33Trace trace, void* context) {
     if (cpu != NULL) {
         cpu->trace = trace;
         cpu->trace_context = context;
+    }
+}
+
+void dspic33_set_coverage(Dspic33* cpu, Dspic33Coverage* coverage) {
+    if (cpu != NULL) {
+        cpu->coverage = coverage;
     }
 }
 
