@@ -13,7 +13,13 @@ enum {
     DMA_TEST_WRITE_PAD = 0x0298u,
     DMA_TEST_ALT_WRITE_PAD = 0x0904u,
     DMA_TEST_BIDIRECTIONAL_PAD = 0x0608u,
-    OPCODE_MOV_W1_POST_INCREMENT_W2 = 0x780131u
+    OPCODE_MOV_W1_POST_INCREMENT_W2 = 0x780131u,
+    OPCODE_MOV_W2_W1_POST_INCREMENT = 0x781882u,
+    OPCODE_MOV_LITERAL_0X1000_W2 = 0x210002u,
+    OPCODE_MOV_DOUBLE_W1_POST_INCREMENT_W2 = 0xbe0131u,
+    OPCODE_REPEAT_2 = 0x090002u,
+    OPCODE_DO_1 = 0x080001u,
+    OPCODE_DSP_X_W8_INCREMENT_Y_W10_DECREMENT = 0xc0045fu
 };
 
 static const uint16_t readable_pads[] = {0x0144u, 0x014cu, 0x0154u, 0x015cu, 0x0226u, 0x0236u,
@@ -804,6 +810,230 @@ static void stale_request_cases(TestState* state, Dspic33* cpu) {
     expect(state, stored_word(cpu, DMA_TEST_WRITE_PAD) == 0x2222u, "new generation transfers");
 }
 
+static void prepare_priority_read(Dspic33* cpu, uint16_t cpu_address, uint32_t dma_address,
+                                  uint16_t cpu_value, uint16_t dma_value, uint8_t source,
+                                  bool high_priority) {
+    dspic33_reset(cpu, 0u);
+    if (high_priority) {
+        dspic33_write_word(cpu, 0x0058u, 0x0020u);
+    } else {
+        dspic33_write_word(cpu, 0x0058u, 0u);
+    }
+    dspic33_write_word(cpu, cpu_address, cpu_value);
+    store_peripheral_word(cpu, dma_value);
+    configure_channel(cpu, 0u, 0x0001u, source, dma_address, 0u, DMA_TEST_READ_PAD, 0u);
+    dspic33_load_program_word(cpu, 0x0200u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    cpu->pc = 0x0200u;
+    dspic33_set_working_register(cpu, 1u, cpu_address);
+}
+
+static void priority_preemption_cases(TestState* state, Dspic33* cpu) {
+    uint16_t dma_ram_base = dspic33_device_profile(cpu)->dma_ram_base;
+    uint16_t y_data_base = dspic33_device_profile(cpu)->y_data_base;
+
+    prepare_priority_read(cpu, 0x3800u, 0x3800u, 0x1111u, 0x2222u, 0xd8u, true);
+    expect(state, dspic33_dma_request(cpu, 0xd8u, 0u, 1u),
+           "queue raised-priority DMA before CPU read");
+    cpu->disicnt = 3u;
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0x2222u &&
+               stored_word(cpu, 0x3800u) == 0x2222u && cpu->w[1] == 0x3802u &&
+               cpu->cycles == 2u && cpu->device_cycles == 2u && interrupt_flag(cpu, 0u) &&
+               cpu->interrupt_count == 0u && cpu->disicnt == 1u,
+           "raised-priority DMA precedes and stalls a CPU RAM read");
+
+    prepare_priority_read(cpu, 0x3820u, 0x3800u, 0x3333u, 0x4444u, 0xd9u, true);
+    expect(state, dspic33_dma_request(cpu, 0xd9u, 0u, 1u),
+           "queue raised-priority DMA on another RAM address");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0x3333u &&
+               stored_word(cpu, 0x3800u) == 0x4444u && cpu->cycles == 2u,
+           "shared RAM bus stalls without an address collision");
+
+    prepare_priority_read(cpu, 0x3800u, 0x3800u, 0x4545u, 0x5656u, 0xd9u, true);
+    expect(state,
+           dspic33_dma_request(cpu, 0xd9u, 0u, 1u) &&
+               dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 3u, 0u, 1u),
+           "queue DMA and benign event at raised-priority RAM boundary");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0x5656u &&
+               stored_word(cpu, 0x3800u) == 0x5656u &&
+               (dspic33_read_word(cpu, 0x0800u) & 0x0008u) != 0u && cpu->cycles == 2u,
+           "raised-priority DMA preempts while benign same-boundary event dispatches");
+
+    prepare_priority_read(cpu, 0x3800u, 0x3800u, 0x5757u, 0x6868u, 0xd9u, true);
+    expect(state, dspic33_dma_request(cpu, 0xd9u, 0u, 1u) &&
+                      dspic33_device_dma_preempts_cpu(cpu),
+           "ordinary raised-priority DMA boundary is eligible to stall CPU");
+    cpu->nvm.active = true;
+    cpu->nvm.completion_cycle = cpu->cycles + 1u;
+    expect(state, dspic33_device_dma_preempts_cpu(cpu),
+           "benign NVM completion does not suppress raised-priority DMA");
+    cpu->watchdog.reset_pending = true;
+    expect(state, !dspic33_device_dma_preempts_cpu(cpu),
+           "due NVM completion excludes mid-instruction DMA stall");
+
+    prepare_priority_read(cpu, 0x3800u, 0x3800u, 0x5555u, 0x6666u, 0xdau, false);
+    expect(state, dspic33_dma_request(cpu, 0xdau, 0u, 1u),
+           "queue default-priority DMA before CPU read");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0x5555u &&
+               stored_word(cpu, 0x3800u) == 0x5555u && cpu->cycles == 1u &&
+               (cpu->io.dma_arbiter_waiting & 1u) != 0u,
+           "default DMA priority preserves CPU-first ordering");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && stored_word(cpu, 0x3800u) == 0x6666u,
+           "default-priority DMA proceeds after the CPU releases shared RAM");
+
+    prepare_priority_read(cpu, dma_ram_base, dma_ram_base, 0x7777u, 0x8888u, 0xdbu, true);
+    expect(state, dspic33_dma_request(cpu, 0xdbu, 0u, 1u),
+           "queue raised-priority DMA in dual-port RAM");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0x7777u &&
+               stored_word(cpu, dma_ram_base) == 0x8888u && cpu->cycles == 1u,
+           "dual-port RAM remains concurrent without a CPU stall");
+
+    prepare_priority_read(cpu, 0x3800u, 0x3800u, 0x9999u, 0xaaaau, 0xdcu, true);
+    dspic33_write_word(cpu, 0x0b02u, (uint16_t)(DMA_FORCE | 0xdcu));
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0xaaaau &&
+               stored_word(cpu, 0x3800u) == 0xaaaau && cpu->cycles == 2u &&
+               (dspic33_read_word(cpu, 0x0b02u) & DMA_FORCE) == 0u,
+           "forced raised-priority DMA uses the shared bus first");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0058u, 0x0020u);
+    dspic33_write_word(cpu, 0x3800u, 0x1111u);
+    store_peripheral_word(cpu, 0x2222u);
+    configure_channel(cpu, 0u, 0x0001u, 0xddu, 0x3800u, 0u, DMA_TEST_READ_PAD, 0u);
+    dspic33_load_program_word(cpu, 0x0200u, OPCODE_MOV_W2_W1_POST_INCREMENT);
+    cpu->pc = 0x0200u;
+    dspic33_set_working_register(cpu, 1u, 0x3800u);
+    dspic33_set_working_register(cpu, 2u, 0x3333u);
+    expect(state, dspic33_dma_request(cpu, 0xddu, 0u, 1u),
+           "queue raised-priority DMA before CPU write");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && stored_word(cpu, 0x3800u) == 0x3333u &&
+               cpu->w[1] == 0x3802u && cpu->cycles == 2u,
+           "raised-priority DMA completes before the suspended CPU RAM write");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0058u, 0x0020u);
+    dspic33_write_word(cpu, 0x3800u, 0x1111u);
+    store_peripheral_word(cpu, 0x2222u);
+    configure_channel(cpu, 0u, 0x0001u, 0xddu, 0x3800u, 0u, DMA_TEST_READ_PAD, 0u);
+    dspic33_load_program_word(cpu, 0x0200u, OPCODE_MOV_LITERAL_0X1000_W2);
+    cpu->pc = 0x0200u;
+    expect(state, dspic33_dma_request(cpu, 0xddu, 0u, 1u),
+           "queue raised-priority DMA during register-only instruction");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "execute register-only instruction with raised-priority DMA pending");
+    expect(state, cpu->w[2] == 0x1000u, "register-only instruction retires normally");
+    expect(state, stored_word(cpu, 0x3800u) == 0x2222u,
+           "raised-priority DMA proceeds at the register-only boundary");
+    expect(state, cpu->cycles == 1u,
+           "register-only instruction does not acquire or stall the shared RAM bus");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0058u, 0x0020u);
+    dspic33_write_word(cpu, 0x3800u, 0x4444u);
+    dspic33_write_word(cpu, 0x3802u, 0x5555u);
+    store_peripheral_word(cpu, 0x6666u);
+    configure_channel(cpu, 0u, 0x0001u, 0xdeu, 0x3800u, 0u, DMA_TEST_READ_PAD, 0u);
+    dspic33_load_program_word(cpu, 0x0200u, OPCODE_MOV_DOUBLE_W1_POST_INCREMENT_W2);
+    cpu->pc = 0x0200u;
+    dspic33_set_working_register(cpu, 1u, 0x3800u);
+    expect(state, dspic33_dma_request(cpu, 0xdeu, 0u, 1u),
+           "queue raised-priority DMA before MOV.D");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0x6666u &&
+               cpu->w[3] == 0x5555u && cpu->w[1] == 0x3804u && cpu->cycles == 3u,
+           "MOV.D stalls once before its first shared RAM access");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0058u, 0x0020u);
+    dspic33_write_word(cpu, 0x3800u, 0x1111u);
+    dspic33_write_word(cpu, (uint16_t)(y_data_base + 2u), 0x2222u);
+    store_peripheral_word(cpu, 0x3333u);
+    configure_channel(cpu, 0u, 0x0001u, 0xdfu, 0x3800u, 0u, DMA_TEST_READ_PAD, 0u);
+    dspic33_load_program_word(cpu, 0x0200u, OPCODE_DSP_X_W8_INCREMENT_Y_W10_DECREMENT);
+    cpu->pc = 0x0200u;
+    cpu->w[4] = 3u;
+    cpu->w[5] = 4u;
+    dspic33_set_working_register(cpu, 8u, 0x3800u);
+    dspic33_set_working_register(cpu, 10u, (uint16_t)(y_data_base + 2u));
+    cpu->corcon = 0x0001u;
+    expect(state, dspic33_dma_request(cpu, 0xdfu, 0u, 1u),
+           "queue raised-priority DMA before DSP prefetch");
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING,
+           "execute DSP prefetch after raised-priority DMA");
+    expect(state, cpu->w[4] == 0x3333u, "DSP X prefetch observes raised-priority DMA result");
+    expect(state, cpu->w[5] == 0x2222u, "DSP Y prefetch completes after DMA stall");
+    expect(state, cpu->w[8] == 0x3802u && cpu->w[10] == y_data_base,
+           "DSP prefetch pointer updates retire once");
+    expect(state, cpu->cycles == 2u, "DSP multiword prefetch stalls once before shared RAM");
+
+    dspic33_reset(cpu, 0x0200u);
+    dspic33_write_word(cpu, 0x0058u, 0x0020u);
+    dspic33_write_word(cpu, 0x3800u, 0x7777u);
+    store_peripheral_word(cpu, 0x8888u);
+    configure_channel(cpu, 0u, 0x0001u, 0xe0u, 0x3800u, 0u, DMA_TEST_READ_PAD, 0u);
+    dspic33_load_program_word(cpu, 0x0200u, OPCODE_REPEAT_2);
+    dspic33_load_program_word(cpu, 0x0202u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    dspic33_set_working_register(cpu, 1u, 0x3800u);
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 1u,
+           "set up repeated RAM access");
+    expect(state, dspic33_dma_request(cpu, 0xe0u, 0u, 1u),
+           "queue raised-priority DMA during REPEAT");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0x8888u && cpu->pc == 0x0202u &&
+               cpu->repeat_active != 0u && cpu->rcount == 1u && cpu->cycles == 3u,
+           "REPEAT retires the stalled RAM instruction exactly once");
+
+    dspic33_reset(cpu, 0x0200u);
+    dspic33_write_word(cpu, 0x0058u, 0x0020u);
+    dspic33_write_word(cpu, 0x3800u, 0x9999u);
+    store_peripheral_word(cpu, 0xaaaau);
+    configure_channel(cpu, 0u, 0x0001u, 0xe1u, 0x3800u, 0u, DMA_TEST_READ_PAD, 0u);
+    dspic33_load_program_word(cpu, 0x0200u, OPCODE_DO_1);
+    dspic33_load_program_word(cpu, 0x0202u, 0u);
+    dspic33_load_program_word(cpu, 0x0204u, OPCODE_MOV_W1_POST_INCREMENT_W2);
+    dspic33_set_working_register(cpu, 1u, 0x3800u);
+    expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->cycles == 2u,
+           "set up DO RAM access");
+    expect(state, dspic33_dma_request(cpu, 0xe1u, 0u, 1u),
+           "queue raised-priority DMA during DO");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0xaaaau && cpu->pc == 0x0204u &&
+               cpu->do_depth == 1u && cpu->dcount == 0u && cpu->cycles == 4u,
+           "DO retires the stalled loop-ending RAM instruction exactly once");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0058u, 0x0020u);
+    dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BIDIRECTIONAL_PAD, 0x1357u);
+    configure_channel(cpu, 0u, 0x0001u, 0xe2u, 0x3880u, 0u,
+                      DMA_TEST_BIDIRECTIONAL_PAD, 0u);
+    dspic33_load_program_word(cpu, 0x0200u, OPCODE_MOV_W2_W1_POST_INCREMENT);
+    cpu->pc = 0x0200u;
+    dspic33_set_working_register(cpu, 1u, DMA_TEST_BIDIRECTIONAL_PAD);
+    dspic33_set_working_register(cpu, 2u, 0x2468u);
+    expect(state, dspic33_dma_request(cpu, 0xe2u, 0u, 1u),
+           "queue raised-priority DMA at CPU SFR write boundary");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && stored_word(cpu, 0x3880u) == 0x1357u &&
+               stored_word(cpu, DMA_TEST_BIDIRECTIONAL_PAD) == 0x2468u && cpu->cycles == 1u,
+           "SFR collision ordering remains unchanged without a shared RAM stall");
+
+    prepare_priority_read(cpu, 0x3800u, 0x3800u, 0xbbbbu, 0xccccu, 0xe3u, true);
+    dspic33_write_word(cpu, 0x0744u, 0x1800u);
+    expect(state, dspic33_dma_request(cpu, 0xe3u, 0u, 2u),
+           "queue raised-priority DMA at a divided CPU boundary");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0xccccu && cpu->cycles == 2u &&
+               cpu->device_cycles == 4u,
+           "DOZE scales both the DMA stall and retired instruction cycle");
+}
+
 static void can_receive_arbiter_erratum_cases(TestState* state, Dspic33* cpu) {
     static const uint8_t requests[] = {34u, 55u};
     size_t index;
@@ -1060,6 +1290,7 @@ int main(void) {
         peripheral_read_collision_cases(&state, &cpu);
         arbiter_owner_cases(&state, &cpu);
         stale_request_cases(&state, &cpu);
+        priority_preemption_cases(&state, &cpu);
         dspic33_dma_test_boundary_cases(&state, &cpu);
         can_receive_arbiter_erratum_cases(&state, &cpu);
         {

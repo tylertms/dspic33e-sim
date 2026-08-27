@@ -195,6 +195,9 @@ uint8_t dspic33_internal_read_operand_byte(Dspic33* cpu, uint8_t mode, uint8_t r
                                            uint8_t offset_reg);
 void dspic33_internal_advance_instruction(Dspic33* cpu, uint64_t cycles, bool separate_wait_cycle,
                                           uint64_t device_ratio);
+bool dspic33_internal_advance_instruction_stall(Dspic33* cpu, uint64_t cycles,
+                                                uint64_t device_ratio);
+bool dspic33_internal_arbitrate_data_access(Dspic33* cpu, uint32_t address);
 void dspic33_internal_advance_pending_nvm_reset(Dspic33* cpu);
 void dspic33_internal_apply_accumulator_result(Dspic33* cpu, uint8_t accumulator, int64_t result);
 void dspic33_internal_check_stack_address(Dspic33* cpu, int32_t stack_address, bool limit_wrapped);

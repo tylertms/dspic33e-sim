@@ -15,6 +15,7 @@ uint64_t dspic33_device_instruction_cycles(const Dspic33* cpu, uint64_t cycles);
 bool dspic33_device_advance_nvm(Dspic33* cpu);
 bool dspic33_device_service_interrupt(Dspic33* cpu);
 bool dspic33_device_interrupt_pending(const Dspic33* cpu);
+bool dspic33_device_dma_preempts_cpu(const Dspic33* cpu);
 bool dspic33_device_wake(Dspic33* cpu);
 bool dspic33_device_dma_pad_valid(uint16_t pad, bool write);
 bool dspic33_device_gpio_input_high(const Dspic33* cpu, uint8_t port, uint8_t bit, bool* high);

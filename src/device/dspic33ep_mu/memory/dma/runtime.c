@@ -908,6 +908,89 @@ static void complete_dma_transfer(Dspic33* cpu, uint8_t channel_index, uint32_t 
 static bool dma_target_is_dual_port_ram(const Dspic33* cpu, uint8_t channel_index,
                                         uint16_t peripheral_offset);
 
+bool dspic33_device_dma_preempts_cpu(const Dspic33* cpu) {
+    const Dspic33Event* selected = NULL;
+    uint64_t boundary;
+    uint64_t completion_cycle = UINT64_MAX;
+    uint64_t device_ratio;
+    size_t event_index;
+
+    if (!cpu->async_events_enabled || cpu->power_state == DSPIC33_POWER_SLEEP ||
+        (dspic33_device_internal_raw_word(cpu, 0x0058u) & 0x0020u) == 0u) {
+        return false;
+    }
+    if (!dspic33_device_internal_pps_shadow_matches(cpu) ||
+        (cpu->nvm.active && (cpu->nvm.reset_pending || cpu->watchdog.reset_pending) &&
+         cpu->nvm.completion_cycle != 0u && cpu->cycles != UINT64_MAX &&
+         cpu->nvm.completion_cycle <= cpu->cycles + 1u)) {
+        return false;
+    }
+    device_ratio = dspic33_device_instruction_cycles(cpu, 1u);
+    if (device_ratio > UINT64_MAX - cpu->device_cycles) {
+        return false;
+    }
+    boundary = cpu->device_cycles + device_ratio;
+    for (event_index = 0u; event_index < cpu->events.count; event_index++) {
+        const Dspic33Event* event = &cpu->events.items[event_index];
+        uint8_t channel_index;
+        uint16_t event_generation;
+        uint16_t channel_bit;
+        uint16_t dma_control;
+        uint32_t memory_address;
+        uint8_t transfer_width;
+
+        if (event->paused || event->cycle > boundary) {
+            continue;
+        }
+        if (event->type != DSPIC33_EVENT_DMA) {
+            continue;
+        }
+        if (event->source >= DSPIC33_DMA_COUNT * 2u) {
+            continue;
+        }
+        channel_index = (uint8_t)(event->source % DSPIC33_DMA_COUNT);
+        channel_bit = dspic33_device_internal_dma_channel_bit(channel_index);
+        event_generation = (uint16_t)((event->value >> DMA_EVENT_GENERATION_SHIFT) &
+                                      DMA_EVENT_GENERATION_MASK);
+        if (event_generation !=
+            (cpu->io.dma_generation[channel_index] & DMA_EVENT_GENERATION_MASK)) {
+            continue;
+        }
+        if (event->source >= DSPIC33_DMA_COUNT) {
+            if ((cpu->io.dma_active & channel_bit) != 0u && event->cycle < completion_cycle) {
+                completion_cycle = event->cycle;
+            }
+            continue;
+        }
+        dma_control = dspic33_device_internal_raw_word(
+            cpu, dspic33_device_internal_dma_channel_base(channel_index));
+        if ((dma_control & DMA_CON_CHEN) == 0u ||
+            (dspic33_device_internal_raw_word(cpu, DMA_PWC) & channel_bit) != 0u ||
+            (cpu->io.dma_arbiter_waiting != 0u &&
+             (cpu->io.dma_arbiter_waiting & channel_bit) == 0u)) {
+            continue;
+        }
+        memory_address = dma_transfer_address(cpu, channel_index, dma_control,
+                                              (uint16_t)event->value);
+        transfer_width = (dma_control & DMA_CON_SIZE_BYTE) != 0u ? 1u : 2u;
+        if (!dma_memory_address_valid(cpu, memory_address, transfer_width)) {
+            return false;
+        }
+        if (selected == NULL || event->cycle < selected->cycle ||
+            (event->cycle == selected->cycle && event->source < selected->source) ||
+            (event->cycle == selected->cycle && event->source == selected->source &&
+             event->sequence < selected->sequence)) {
+            selected = event;
+        }
+    }
+    if (selected == NULL ||
+        (cpu->io.dma_active != 0u && completion_cycle > selected->cycle)) {
+        return false;
+    }
+    return !dma_target_is_dual_port_ram(cpu, (uint8_t)selected->source,
+                                        (uint16_t)selected->value);
+}
+
 void dspic33_device_internal_run_dma(Dspic33* cpu, uint16_t event_source, uint32_t event_value) {
     uint16_t channel_base;
     uint16_t channel_bit;

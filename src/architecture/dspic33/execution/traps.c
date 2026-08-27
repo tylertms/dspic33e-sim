@@ -102,6 +102,24 @@ static bool advance_instruction_cycles(Dspic33* cpu, uint64_t cycles, uint64_t d
     return true;
 }
 
+static void advance_pending_soft_traps(Dspic33* cpu, uint64_t cycles) {
+    for (size_t trap_index = 0u; trap_index < 4u; trap_index++) {
+        Dspic33PendingSoftTrap* pending = &cpu->pending_soft_traps[trap_index];
+        if (pending->active && pending->delay != 0u) {
+            pending->delay = pending->delay > cycles ? (uint8_t)(pending->delay - cycles) : 0u;
+        }
+    }
+}
+
+bool dspic33_internal_advance_instruction_stall(Dspic33* cpu, uint64_t cycles,
+                                                uint64_t device_ratio) {
+    if (!advance_instruction_cycles(cpu, cycles, device_ratio)) {
+        return false;
+    }
+    advance_pending_soft_traps(cpu, cycles);
+    return true;
+}
+
 void dspic33_internal_advance_instruction(Dspic33* cpu, uint64_t cycles, bool separate_wait_cycle,
                                           uint64_t device_ratio) {
     if (separate_wait_cycle && cycles > 1u) {
@@ -122,12 +140,7 @@ void dspic33_internal_advance_instruction(Dspic33* cpu, uint64_t cycles, bool se
     } else {
         advance_instruction_cycles(cpu, cycles, device_ratio);
     }
-    for (size_t trap_index = 0u; trap_index < 4u; trap_index++) {
-        Dspic33PendingSoftTrap* pending = &cpu->pending_soft_traps[trap_index];
-        if (pending->active && pending->delay != 0u) {
-            pending->delay = pending->delay > cycles ? (uint8_t)(pending->delay - cycles) : 0u;
-        }
-    }
+    advance_pending_soft_traps(cpu, cycles);
     dspic33_internal_service_pending_soft_trap(cpu);
 }
 

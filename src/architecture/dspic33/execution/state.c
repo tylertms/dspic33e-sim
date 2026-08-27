@@ -514,6 +514,22 @@ uint16_t dspic33_internal_read_word(Dspic33* cpu, uint32_t address) {
     return dspic33_read_word(cpu, address);
 }
 
+bool dspic33_internal_arbitrate_data_access(Dspic33* cpu, uint32_t address) {
+    uint64_t device_ratio;
+    if (!cpu->instruction_active || cpu->io.timer_instruction_active ||
+        cpu->io.dma_transfer_active || address < 0x1000u || (address & PSV_ADDRESS) != 0u ||
+        cpu->io.cpu_bus_cycle != UINT64_MAX) {
+        return true;
+    }
+    device_ratio = dspic33_device_instruction_cycles(cpu, 1u);
+    while (dspic33_device_dma_preempts_cpu(cpu)) {
+        if (!dspic33_internal_advance_instruction_stall(cpu, 1u, device_ratio)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static void record_non_cpu_sfr_read(Dspic33* cpu, uint32_t address) {
     if (cpu->instruction_active && !cpu->non_cpu_sfr_read && cpu->current_instruction_cycles < 2u &&
         address >= 0x005au && address < 0x1000u &&
@@ -524,9 +540,6 @@ static void record_non_cpu_sfr_read(Dspic33* cpu, uint32_t address) {
 
 static void record_cpu_data_read(Dspic33* cpu, uint32_t address) {
     record_non_cpu_sfr_read(cpu, address);
-    if (cpu->instruction_active && address >= 0x1000u && (address & PSV_ADDRESS) == 0u) {
-        cpu->io.cpu_bus_cycle = cpu->cycles;
-    }
     if (cpu->instruction_active && (address & PSV_ADDRESS) != 0u) {
         cpu->psv_read = true;
     }

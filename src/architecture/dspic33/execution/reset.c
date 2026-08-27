@@ -543,6 +543,9 @@ void dspic33_write_byte(Dspic33* cpu, uint32_t address, uint8_t value) {
     if (!dspic33_internal_data_byte_is_implemented(cpu, address)) {
         return;
     }
+    if (!dspic33_internal_arbitrate_data_access(cpu, address)) {
+        return;
+    }
     dspic33_internal_mark_data_write(cpu, address, 1u);
     if (!cpu->io.dma_transfer_active) {
         if (cpu->instruction_active && address >= 0x1000u) {
@@ -683,6 +686,9 @@ void dspic33_write_word(Dspic33* cpu, uint32_t address, uint16_t value) {
         if (high_implemented) {
             dspic33_write_byte(cpu, address + 1u, (uint8_t)(value >> 8u));
         }
+        return;
+    }
+    if (!dspic33_internal_arbitrate_data_access(cpu, address)) {
         return;
     }
     dspic33_internal_mark_data_write(cpu, address, 2u);

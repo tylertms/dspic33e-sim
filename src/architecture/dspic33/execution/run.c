@@ -6,6 +6,16 @@ uint8_t dspic33_read_byte(Dspic33* cpu, uint32_t address) {
     cpu->io.cpu_read_address = address;
     cpu->io.cpu_read_width = 1u;
     cpu->io.cpu_read_valid = true;
+    if ((cpu->address_error && !cpu->address_error_access_allowed) ||
+        !dspic33_internal_check_data_implementation(cpu, address, 1u) ||
+        !dspic33_internal_arbitrate_data_access(cpu, address)) {
+        cpu->io.cpu_read_valid = false;
+        return 0u;
+    }
+    if (cpu->instruction_active && !cpu->io.dma_transfer_active && address >= 0x1000u &&
+        (address & PSV_ADDRESS) == 0u) {
+        cpu->io.cpu_bus_cycle = cpu->cycles;
+    }
     read_value = dspic33_internal_read_byte_value(cpu, address);
     cpu->io.cpu_read_valid = false;
     return read_value;
@@ -18,6 +28,13 @@ uint16_t dspic33_read_word(Dspic33* cpu, uint32_t address) {
         !dspic33_internal_check_data_implementation(cpu, address, 2u) ||
         (cpu->address_error && !cpu->address_error_access_allowed)) {
         return 0u;
+    }
+    if (!dspic33_internal_arbitrate_data_access(cpu, address)) {
+        return 0u;
+    }
+    if (cpu->instruction_active && !cpu->io.dma_transfer_active && address >= 0x1000u &&
+        (address & PSV_ADDRESS) == 0u) {
+        cpu->io.cpu_bus_cycle = cpu->cycles;
     }
     dspic33_internal_record_data_read(cpu, address, 2u);
     cpu->io.cpu_read_address = address;
