@@ -79,15 +79,18 @@ void dspic33_nvm_test_auxiliary_loader_cases(TestState* state, Dspic33* cpu) {
     write_u16(elf_bytes, 16u, 2u);
     write_u16(elf_bytes, 18u, 118u);
     write_u32(elf_bytes, 20u, 1u);
-    write_u32(elf_bytes, 32u, 52u);
+    write_u32(elf_bytes, 28u, 52u);
     write_u16(elf_bytes, 40u, 52u);
-    write_u16(elf_bytes, 46u, 40u);
-    write_u16(elf_bytes, 48u, 2u);
-    write_u32(elf_bytes, 96u, 1u);
-    write_u32(elf_bytes, 100u, 0x00000006u);
-    write_u32(elf_bytes, 104u, DSPIC33_AUXILIARY_PROGRAM_BASE + 2u);
-    write_u32(elf_bytes, 108u, 132u);
-    write_u32(elf_bytes, 112u, 4u);
+    write_u16(elf_bytes, 42u, 32u);
+    write_u16(elf_bytes, 44u, 1u);
+    write_u32(elf_bytes, 52u, 1u);
+    write_u32(elf_bytes, 56u, 132u);
+    write_u32(elf_bytes, 60u, DSPIC33_AUXILIARY_PROGRAM_BASE + 2u);
+    write_u32(elf_bytes, 64u, DSPIC33_AUXILIARY_PROGRAM_BASE + 2u);
+    write_u32(elf_bytes, 68u, 4u);
+    write_u32(elf_bytes, 72u, 4u);
+    write_u32(elf_bytes, 76u, 5u);
+    write_u32(elf_bytes, 80u, 2u);
     write_u32(elf_bytes, 132u, 0x00654321u);
     memset(error, 0, sizeof(error));
     expect(state, elf_image_load_program(&elf, cpu, error, sizeof(error)),

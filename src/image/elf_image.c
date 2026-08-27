@@ -12,25 +12,17 @@ enum {
     ELF_SECTION_SIZE = 40,
     ELF_SYMBOL_SIZE = 16,
     ELF_SEGMENT_LOAD = 1,
-    ELF_SECTION_PROGBITS = 1,
     ELF_SECTION_SYMTAB = 2,
     ELF_SECTION_STRTAB = 3,
     ELF_EXECUTABLE = 2,
     ELF_MACHINE_DSPIC = 118,
     ELF_VERSION_CURRENT = 1,
     ELF_SECTION_UNDEFINED = 0,
-    ELF_FLAG_ALLOC = 2,
-    ELF_FLAG_EXECUTE = 4,
-    ELF_SEGMENT_WRITE = 2,
-    ELF_FLAG_NOLOAD = 0x00800000,
-    ELF_FLAG_PSV = 0x10000000,
-    ELF_FLAG_ABSOLUTE = 0x40000000
+    ELF_SEGMENT_WRITE = 2
 };
 
 typedef struct {
     uint32_t type;
-    uint32_t flags;
-    uint32_t virtual_address;
     uint32_t file_offset;
     uint32_t byte_size;
     uint32_t linked_section;
@@ -129,8 +121,6 @@ static ElfSection read_section(const ElfImage* image, uint32_t table_offset,
         image->bytes + table_offset + (uint32_t)section_index * ELF_SECTION_SIZE;
     ElfSection section;
     section.type = read_u32(section_bytes + 4u);
-    section.flags = read_u32(section_bytes + 8u);
-    section.virtual_address = read_u32(section_bytes + 12u);
     section.file_offset = read_u32(section_bytes + 16u);
     section.byte_size = read_u32(section_bytes + 20u);
     section.linked_section = read_u32(section_bytes + 24u);
@@ -210,33 +200,6 @@ static bool load_program_segments(const ElfImage* image, Dspic33* cpu,
     return loaded;
 }
 
-static bool section_load_address(const ElfImage* image, const ElfSection* section,
-                                 uint32_t program_table_offset, uint16_t segment_count,
-                                 uint32_t* load_address) {
-    if (segment_count == 0u) {
-        *load_address = section->virtual_address;
-        return true;
-    }
-    for (uint16_t segment_index = 0u; segment_index < segment_count; segment_index++) {
-        const ElfSegment segment = read_segment(image, program_table_offset, segment_index);
-        if (segment.type != ELF_SEGMENT_LOAD ||
-            !range_valid(image->size, segment.file_offset, segment.file_size) ||
-            section->file_offset < segment.file_offset) {
-            continue;
-        }
-        const uint32_t file_delta = section->file_offset - segment.file_offset;
-        if (file_delta > segment.file_size || section->byte_size > segment.file_size - file_delta) {
-            continue;
-        }
-        if ((file_delta & 3u) != 0u || file_delta / 2u > UINT32_MAX - segment.physical_address) {
-            return false;
-        }
-        *load_address = segment.physical_address + file_delta / 2u;
-        return true;
-    }
-    return false;
-}
-
 bool elf_image_open(ElfImage* image, const char* path, char* error, size_t error_size) {
     FILE* file;
     long length;
@@ -296,39 +259,13 @@ void elf_image_close(ElfImage* image) {
 }
 
 bool elf_image_load_program(const ElfImage* image, Dspic33* cpu, char* error, size_t error_size) {
-    uint32_t table_offset;
     uint32_t program_table_offset;
-    uint16_t section_count;
     uint16_t segment_count;
-    if (!section_table(image, &table_offset, &section_count, error, error_size) ||
-        !program_table(image, &program_table_offset, &segment_count, error, error_size)) {
+    if (!program_table(image, &program_table_offset, &segment_count, error, error_size)) {
         return false;
     }
-    if (section_count == 0u) {
-        return load_program_segments(image, cpu, program_table_offset, segment_count, error,
-                                     error_size);
-    }
-    for (uint16_t section_index = 0u; section_index < section_count; section_index++) {
-        ElfSection program_section = read_section(image, table_offset, section_index);
-        if (program_section.type != ELF_SECTION_PROGBITS ||
-            (program_section.flags & ELF_FLAG_ALLOC) == 0u ||
-            (program_section.flags & ELF_FLAG_NOLOAD) != 0u ||
-            (program_section.flags & (ELF_FLAG_EXECUTE | ELF_FLAG_PSV | ELF_FLAG_ABSOLUTE)) == 0u) {
-            continue;
-        }
-        uint32_t load_address;
-        if (!section_load_address(image, &program_section, program_table_offset, segment_count,
-                                  &load_address)) {
-            set_error(error, error_size, "ELF program section is not loadable");
-            return false;
-        }
-        if (!load_program_bytes(image, cpu, program_section.file_offset, program_section.byte_size,
-                                load_address, error, error_size,
-                                "ELF program section is invalid")) {
-            return false;
-        }
-    }
-    return true;
+    return load_program_segments(image, cpu, program_table_offset, segment_count, error,
+                                 error_size);
 }
 
 static bool symbol_name_matches(const char* actual, const char* requested) {

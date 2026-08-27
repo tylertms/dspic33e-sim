@@ -252,18 +252,6 @@ static void test_elf(TestState* state, Dspic33* cpu) {
     expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
            "short program header is rejected");
     initialize_elf_image(image);
-    write_u16_le(image, 46u, ELF_SECTION_SIZE - 1u);
-    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
-           "short section header is rejected");
-    initialize_elf_image(image);
-    write_u32_le(image, 32u, UINT32_MAX);
-    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
-           "out-of-range section table is rejected");
-    initialize_elf_image(image);
-    write_u32_le(image, PROGRAM_SECTION_OFFSET + 20u, 3u);
-    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
-           "unaligned program section is rejected");
-    initialize_elf_image(image);
     write_u32_le(image, PROGRAM_TABLE_OFFSET + 8u, 0x80000u);
     write_u32_le(image, PROGRAM_TABLE_OFFSET + 12u, 0x80000u);
     write_u32_le(image, PROGRAM_SECTION_OFFSET + 12u, 0x80000u);
@@ -288,7 +276,7 @@ static void test_elf(TestState* state, Dspic33* cpu) {
            "wrapping ELF program address is rejected");
 }
 
-static void test_sectionless_elf(TestState* state) {
+static void test_program_segments(TestState* state) {
     uint8_t image[IMAGE_SIZE];
     uint32_t entry_address = UINT32_MAX;
     Dspic33* cpu = dspic33_create();
@@ -311,6 +299,14 @@ static void test_sectionless_elf(TestState* state) {
            "sectionless ELF accepts a retained section entry size");
     expect(state, dspic33_read_program_word(cpu, 0x100u) == 0x00123456u,
            "sectionless ELF with retained entry size loads its program word");
+
+    dspic33_load_program_word(cpu, 0x100u, 0x00ffffffu);
+    initialize_elf_image(image);
+    write_u16_le(image, 48u, 1u);
+    expect(state, dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
+           "ELF with only a null section loads from program segments");
+    expect(state, dspic33_read_program_word(cpu, 0x100u) == 0x00123456u,
+           "null section metadata does not replace the executable load view");
 
     dspic33_load_program_word(cpu, 0x100u, 0x00ffffffu);
     initialize_elf_image(image);
@@ -354,6 +350,14 @@ static void test_symbol(TestState* state) {
     expect(state, !dspic33_elf_symbol_data(image, sizeof(image), NULL, &symbol_address),
            "!dspic33_elf_symbol_data(image, sizeof(image), NULL, &symbol_address)");
     initialize_symbol_image(image);
+    write_u16_le(image, 46u, ELF_SECTION_SIZE - 1u);
+    expect(state, !dspic33_elf_symbol_data(image, sizeof(image), "test", &symbol_address),
+           "symbol lookup rejects a short section header");
+    initialize_symbol_image(image);
+    write_u32_le(image, 32u, UINT32_MAX);
+    expect(state, !dspic33_elf_symbol_data(image, sizeof(image), "test", &symbol_address),
+           "symbol lookup rejects an out-of-range section table");
+    initialize_symbol_image(image);
     write_u16_le(image, SYMBOL_OFFSET + 14u, 0u);
     expect(state, !dspic33_elf_symbol_data(image, sizeof(image), "test", &symbol_address),
            "undefined ELF symbol is rejected");
@@ -379,7 +383,7 @@ int main(void) {
     expect(&state, cpu != NULL, "cpu != NULL");
     test_binary(&state, cpu);
     test_elf(&state, cpu);
-    test_sectionless_elf(&state);
+    test_program_segments(&state);
     test_symbol(&state);
     test_file_loading(&state, cpu);
     dspic33_destroy(cpu);
