@@ -126,6 +126,16 @@ static void test_execution_boundaries(TestState* state) {
            "completed return reports its program counter");
 
     dspic33_reset(cpu, 0u);
+    expect(state, dspic33_load_program_word(cpu, 0u, 0x051232u),
+           "load boundary RETLW opcode");
+    cpu->w[15] = 0x5000u;
+    expect(state, dspic33_begin_call(cpu, 0u, false), "begin RETLW call");
+    expect(state,
+           dspic33_run(cpu, 0u) == DSPIC33_RETURNED && cpu->w[2] == 0x0123u &&
+               cpu->w[15] == 0x5000u && cpu->call_depth == 0u,
+           "RETLW terminates an empty call frame without stack underflow");
+
+    dspic33_reset(cpu, 0u);
     Dspic33Result returned = dspic33_run_with_limits(cpu, (Dspic33RunLimits){0u, 0u});
     expect(state, returned.stop == DSPIC33_RETURNED, "limited runner reports a completed return");
 

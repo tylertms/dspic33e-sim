@@ -1,12 +1,15 @@
 
 #include "internal.h"
 
-uint32_t dspic33_internal_direct_move_address(const Dspic33* cpu, uint16_t address, bool write) {
+uint32_t dspic33_internal_direct_move_address(Dspic33* cpu, uint16_t address, bool write) {
     uint16_t page;
     if (address < 0x8000u) {
         return address;
     }
     page = write ? cpu->dswpag : cpu->dsrpag;
+    if (page == 0u) {
+        dspic33_internal_raise_data_page_error(cpu);
+    }
     if (!write && page >= 0x0200u) {
         return PSV_ADDRESS | ((page & 0x0100u) != 0u ? PSV_HIGH_BYTE : 0u) |
                ((uint32_t)(page & 0x00ffu) << 15u) | (address & 0x7fffu);

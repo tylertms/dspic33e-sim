@@ -61,6 +61,39 @@ static void bit_reversed_addressing_cases(TestState* state, Dspic33* cpu) {
            dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[2] == 0x1004u &&
                dspic33_read_word(cpu, 0x1000u) == 0x5a5au,
            "bit-reversed post-increment updates the selected pointer");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_WRITE_BACK);
+    dspic33_set_working_register(cpu, 4u, 1u);
+    dspic33_set_working_register(cpu, 5u, 1u);
+    dspic33_set_working_register(cpu, 9u, 0x1004u);
+    dspic33_set_working_register(cpu, 11u, 0x9000u);
+    dspic33_set_working_register(cpu, 12u, 0u);
+    dspic33_set_working_register(cpu, 13u, 0x1000u);
+    cpu->accumulator[0] = 0x12340000u;
+    dspic33_write_word(cpu, 0x0046u, 0x0d00u);
+    dspic33_write_word(cpu, 0x0050u, 0x8002u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[13] == 0x1004u &&
+               dspic33_read_word(cpu, 0x1000u) == 0x1234u,
+           "DSP accumulator write-back uses X WAGU bit-reversed addressing");
+
+    dspic33_reset(cpu, 0u);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_WRITE_BACK);
+    dspic33_set_working_register(cpu, 4u, 1u);
+    dspic33_set_working_register(cpu, 5u, 1u);
+    dspic33_set_working_register(cpu, 9u, 0x1004u);
+    dspic33_set_working_register(cpu, 11u, 0x9000u);
+    dspic33_set_working_register(cpu, 12u, 0u);
+    dspic33_set_working_register(cpu, 13u, 0x1002u);
+    cpu->accumulator[0] = 0x56780000u;
+    dspic33_write_word(cpu, 0x0046u, 0x800du);
+    dspic33_write_word(cpu, 0x0048u, 0x1000u);
+    dspic33_write_word(cpu, 0x004au, 0x1002u);
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->w[13] == 0x1000u &&
+               dspic33_read_word(cpu, 0x1002u) == 0x5678u,
+           "DSP accumulator write-back uses X WAGU modulo addressing");
 }
 
 static void run_limit_cases(TestState* state, Dspic33* cpu) {

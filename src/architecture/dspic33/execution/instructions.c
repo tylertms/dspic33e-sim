@@ -555,16 +555,36 @@ static bool validate_dsp_prefetch_alignment(Dspic33* cpu, uint8_t operation, boo
     return dspic33_internal_check_data_alignment(cpu, address);
 }
 
-static bool dsp_x_address_valid(const Dspic33* cpu, uint16_t address, uint16_t page) {
+static bool dsp_data_word_implemented(const Dspic33* cpu, uint16_t address) {
+    return dspic33ep_mu_address_implemented(cpu->device, address) &&
+           dspic33ep_mu_address_implemented(cpu->device, (uint32_t)address + 1u);
+}
+
+static bool dsp_x_address_implemented(const Dspic33* cpu, uint16_t address, uint16_t page) {
     if (address < 0x8000u) {
-        return true;
+        return dsp_data_word_implemented(cpu, address);
     }
     if (page >= 0x0200u) {
         uint32_t program_address =
             dspic33_internal_mapped_data_address(address, page, false) & PSV_ADDRESS_MASK;
         return !dspic33_internal_program_target_requires_address_error(cpu, program_address);
     }
-    return page == 1u && address <= 0x8ffeu;
+    return page == 1u && dspic33_device_data_range_implemented(
+                             cpu, dspic33_internal_mapped_data_address(address, page, false), 2u);
+}
+
+static bool dsp_x_address_valid(const Dspic33* cpu, uint16_t address, uint16_t page) {
+    const Dspic33epMuProfile* profile = dspic33_device_profile(cpu);
+    if (profile == NULL || !dsp_x_address_implemented(cpu, address, page)) {
+        return false;
+    }
+    if (address < 0x8000u) {
+        return address < profile->y_data_base;
+    }
+    if (page >= 0x0200u) {
+        return true;
+    }
+    return dspic33_internal_mapped_data_address(address, page, false) < profile->y_data_base;
 }
 
 static bool dsp_y_address_valid(const Dspic33* cpu, uint16_t address) {
@@ -594,13 +614,15 @@ static bool resolve_dsp_x_prefetch(const Dspic33* cpu, uint8_t operation,
     outcome->updated_data_page = resolution.updated_data_page;
     outcome->base_register = base_register;
     outcome->present = true;
+    outcome->access_implemented =
+        dsp_x_address_implemented(cpu, resolution.access_register, resolution.access_data_page);
     outcome->access_valid =
         dsp_x_address_valid(cpu, resolution.access_register, resolution.access_data_page);
     outcome->update_valid =
         !resolution.updates_register ||
-        dsp_x_address_valid(cpu, resolution.updated_register,
-                            resolution.updates_data_page ? resolution.updated_data_page
-                                                         : cpu->dsrpag);
+        dsp_x_address_implemented(cpu, resolution.updated_register,
+                                  resolution.updates_data_page ? resolution.updated_data_page
+                                                               : cpu->dsrpag);
     outcome->updates_register = resolution.updates_register;
     outcome->updates_data_page = resolution.updates_data_page;
     return true;
@@ -621,10 +643,11 @@ static bool resolve_dsp_y_prefetch(const Dspic33* cpu, uint8_t operation,
         cpu, base_register, (int32_t)cpu->w[base_register] + delta, delta, true);
     outcome->base_register = base_register;
     outcome->present = true;
+    outcome->access_implemented = dsp_data_word_implemented(cpu, address);
     outcome->access_valid = dsp_y_address_valid(cpu, address);
     outcome->updates_register = operation != 12u;
     outcome->update_valid =
-        !outcome->updates_register || dsp_y_address_valid(cpu, outcome->updated_register);
+        !outcome->updates_register || dsp_data_word_implemented(cpu, outcome->updated_register);
     return true;
 }
 
@@ -701,8 +724,8 @@ static bool execute_dsp_prefetches(Dspic33* cpu, uint8_t x_operation, uint8_t y_
     commit_dsp_prefetch(cpu, &y);
     *x_present = x.present;
     *y_present = y.present;
-    if ((x.present && (!x.access_valid || !x.update_valid)) ||
-        (y.present && (!y.access_valid || !y.update_valid))) {
+    if ((x.present && (!x.access_implemented || !x.update_valid)) ||
+        (y.present && (!y.access_implemented || !y.update_valid))) {
         raise_dsp_prefetch_error(cpu);
     }
     return true;
@@ -714,8 +737,7 @@ static void execute_dsp_write_back(Dspic33* cpu, uint8_t accumulator, uint8_t mo
     if (mode == 0u) {
         dspic33_internal_write_working_register(cpu, 13u, value);
     } else if (mode == 1u) {
-        dspic33_write_word(cpu, cpu->w[13], value);
-        dspic33_internal_write_working_register(cpu, 13u, (uint16_t)(cpu->w[13] + 2u));
+        dspic33_internal_write_operand_word(cpu, 3u, 13u, 0u, value);
     }
 }
 

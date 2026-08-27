@@ -56,6 +56,7 @@ typedef struct {
     uint16_t updated_data_page;
     uint8_t base_register;
     bool present;
+    bool access_implemented;
     bool access_valid;
     bool update_valid;
     bool updates_register;
@@ -175,7 +176,7 @@ uint16_t dspic33_internal_read_operand_word(Dspic33* cpu, uint8_t mode, uint8_t 
                                             uint8_t offset_reg);
 uint16_t dspic33_internal_read_word(Dspic33* cpu, uint32_t address);
 uint32_t dspic33_internal_device_program_limit(const Dspic33* cpu);
-uint32_t dspic33_internal_direct_move_address(const Dspic33* cpu, uint16_t address, bool write);
+uint32_t dspic33_internal_direct_move_address(Dspic33* cpu, uint16_t address, bool write);
 uint32_t dspic33_internal_instruction_length(uint32_t opcode);
 uint32_t dspic33_internal_mapped_data_address(uint16_t address, uint16_t page, bool write);
 uint32_t dspic33_internal_pop_program_counter(Dspic33* cpu);
@@ -188,6 +189,7 @@ uint8_t dspic33_internal_codeguard_configuration(const Dspic33* cpu, bool auxili
 uint8_t dspic33_internal_read_accumulator_byte(const Dspic33* cpu, uint8_t accumulator,
                                                uint8_t byte);
 uint8_t dspic33_internal_read_byte_value(Dspic33* cpu, uint32_t address);
+void dspic33_internal_raise_data_page_error(Dspic33* cpu);
 uint8_t dspic33_internal_read_data_byte(Dspic33* cpu, uint32_t address);
 uint8_t dspic33_internal_read_operand_byte(Dspic33* cpu, uint8_t mode, uint8_t reg,
                                            uint8_t offset_reg);

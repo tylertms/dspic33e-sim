@@ -80,7 +80,7 @@ int main(void) {
         const Census census = census_states(&cpu);
         expect(&state,
                census.executed_count == 60593u &&
-                   census.fingerprint == UINT64_C(9164222310185084880),
+                   census.fingerprint == UINT64_C(13510892039604521079),
                "processor state census matches");
         dspic33_release(&cpu);
     }

@@ -825,6 +825,16 @@ bool dspic33_internal_execute(Dspic33* cpu, uint32_t opcode) {
     if ((opcode & 0xff0000u) == 0x050000u) {
         uint16_t literal = (uint16_t)((opcode >> 4u) & 0x03ffu);
         uint8_t destination = (uint8_t)(opcode & 0x0fu);
+        if (cpu->call_depth == 0u) {
+            if ((opcode & 0x004000u) != 0u) {
+                dspic33_internal_write_working_register_byte(cpu, destination, false,
+                                                              (uint8_t)literal);
+            } else {
+                dspic33_internal_write_working_register(cpu, destination, literal);
+            }
+            cpu->stop_reason = DSPIC33_RETURNED;
+            return true;
+        }
         uint32_t return_pc = cpu->pc;
         uint32_t target = dspic33_internal_pop_program_counter(cpu);
         cpu->instruction_working_register_writes &= UINT16_C(0x7fff);

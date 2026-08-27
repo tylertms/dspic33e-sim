@@ -858,7 +858,7 @@ void dspic33_control_test_illegal_condition_reset_cases(TestState* state, Dspic3
 
     dspic33_reset(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_DSP_INDEXED);
-    dspic33_set_working_register(cpu, 9u, 0x1000u);
+    dspic33_set_working_register(cpu, 9u, 0x1004u);
     dspic33_set_working_register(cpu, 11u, 0x9000u);
     dspic33_set_working_register(cpu, 12u, 0u);
     expect(state, dspic33_step(cpu) == DSPIC33_RUNNING && cpu->illegal_reset_count == 0u,
@@ -866,7 +866,7 @@ void dspic33_control_test_illegal_condition_reset_cases(TestState* state, Dspic3
 
     dspic33_reset(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_DSP_WRITE_BACK);
-    dspic33_set_working_register(cpu, 9u, 0x1000u);
+    dspic33_set_working_register(cpu, 9u, 0x1004u);
     dspic33_set_working_register(cpu, 11u, 0x9000u);
     dspic33_set_working_register(cpu, 12u, 0u);
     cpu->w[13] = 0x5000u;
@@ -874,7 +874,7 @@ void dspic33_control_test_illegal_condition_reset_cases(TestState* state, Dspic3
 
     dspic33_reset(cpu, 0u);
     load_instruction(state, cpu, 0u, OPCODE_DSP_WRITE_BACK);
-    dspic33_set_working_register(cpu, 9u, 0x1000u);
+    dspic33_set_working_register(cpu, 9u, 0x1004u);
     dspic33_set_working_register(cpu, 11u, 0x9000u);
     dspic33_set_working_register(cpu, 12u, 0u);
     dspic33_set_working_register(cpu, 13u, 0x5000u);

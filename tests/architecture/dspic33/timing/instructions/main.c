@@ -493,6 +493,34 @@ static void dsp_profile_y_prefetch_cases(TestState* state) {
                cpu.w[5] == 0x2468u && cpu.w[8] == 0x4002u && cpu.w[10] == 0x5000u &&
                cpu.trap_count == 0u,
            "256MU DSP prefetch uses profile Y memory");
+
+    reset_processor_test(&cpu, 0u);
+    load_instruction(state, &cpu, 0u, OPCODE_DSP_X_W8_INCREMENT_Y_W10_DECREMENT);
+    dspic33_set_working_register(&cpu, 4u, 3u);
+    dspic33_set_working_register(&cpu, 5u, 4u);
+    dspic33_set_working_register(&cpu, 8u, 0x5000u);
+    dspic33_set_working_register(&cpu, 10u, 0x5002u);
+    dspic33_write_word(&cpu, 0x5000u, 0x1357u);
+    dspic33_write_word(&cpu, 0x5002u, 0x2468u);
+    cpu.corcon = 0x0021u;
+    expect(state,
+           dspic33_step(&cpu) == DSPIC33_RUNNING && cpu.w[4] == 0u &&
+               cpu.w[5] == 0x2468u && cpu.trap_count == 0u,
+           "256MU DSP X lane returns zero from implemented Y memory");
+
+    reset_processor_test(&cpu, 0u);
+    load_instruction(state, &cpu, 0u, OPCODE_DSP_X_W8_INCREMENT_Y_W10_DECREMENT);
+    dspic33_set_working_register(&cpu, 4u, 3u);
+    dspic33_set_working_register(&cpu, 5u, 4u);
+    dspic33_set_working_register(&cpu, 8u, 0x4000u);
+    dspic33_set_working_register(&cpu, 10u, 0x4002u);
+    dspic33_write_word(&cpu, 0x4000u, 0x1357u);
+    dspic33_write_word(&cpu, 0x4002u, 0x2468u);
+    cpu.corcon = 0x0021u;
+    expect(state,
+           dspic33_step(&cpu) == DSPIC33_RUNNING && cpu.w[4] == 0x1357u && cpu.w[5] == 0u &&
+               cpu.trap_count == 0u,
+           "256MU DSP Y lane returns zero from implemented X memory");
     dspic33_release(&cpu);
 }
 

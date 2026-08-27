@@ -641,13 +641,11 @@ void dspic33_timing_test_dsp_prefetch_address_error_cases(TestState* state, Dspi
     dspic33_write_word(cpu, 0x9002u, 0x6789u);
     cpu->corcon = 0x0021u;
     cpu->dsrpag = 1u;
-    expect_address_trap(state, cpu, "DSP X prefetch outside X space traps");
     expect(state,
-           cpu->accumulator[0] == 12 && cpu->w[4] == 0u && cpu->w[5] == 0x6789u &&
-               cpu->w[8] == 0x9000u && cpu->w[10] == 0x9000u && cpu->w[15] == 0x5004u &&
-               dspic33_read_word(cpu, 0x5000u) == 2u && dspic33_read_word(cpu, 0x5002u) == 0u &&
-               cpu->sr == 0x00c0u && cpu->corcon == 0x0029u,
-           "invalid DSP X returns zero while valid Y and arithmetic complete");
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->accumulator[0] == 12 && cpu->w[4] == 0u &&
+               cpu->w[5] == 0x6789u && cpu->w[8] == 0x9000u && cpu->w[10] == 0x9000u &&
+               cpu->trap_count == 0u,
+           "implemented Y memory returns zero through the DSP X lane without trapping");
 
     reset_processor_test(cpu, 0u);
     prepare_address_trap(state, cpu);
@@ -659,11 +657,11 @@ void dspic33_timing_test_dsp_prefetch_address_error_cases(TestState* state, Dspi
     dspic33_write_word(cpu, 0x8000u, 0x5a5au);
     cpu->corcon = 0x0021u;
     cpu->dsrpag = 1u;
-    expect_address_trap(state, cpu, "DSP Y prefetch outside Y space traps");
     expect(state,
-           cpu->accumulator[0] == 12 && cpu->w[4] == 0x5a5au && cpu->w[5] == 0u &&
-               cpu->w[8] == 0x8002u && cpu->w[10] == 0x7ffeu,
-           "invalid DSP Y returns zero while valid X and arithmetic complete");
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->accumulator[0] == 12 &&
+               cpu->w[4] == 0x5a5au && cpu->w[5] == 0u && cpu->w[8] == 0x8002u &&
+               cpu->w[10] == 0x7ffeu && cpu->trap_count == 0u,
+           "implemented X memory returns zero through the DSP Y lane without trapping");
 
     reset_processor_test(cpu, 0u);
     prepare_address_trap(state, cpu);
@@ -691,11 +689,11 @@ void dspic33_timing_test_dsp_prefetch_address_error_cases(TestState* state, Dspi
     dspic33_write_word(cpu, 0x9002u, 0x2468u);
     cpu->corcon = 0x0021u;
     cpu->dsrpag = 1u;
-    expect_address_trap(state, cpu, "DSP X invalid post-update address traps");
     expect(state,
-           cpu->accumulator[0] == 12 && cpu->w[4] == 0x1357u && cpu->w[5] == 0x2468u &&
-               cpu->w[8] == 0x9000u && cpu->w[10] == 0x9000u,
-           "DSP X post-update trap preserves fetched values and pointer updates");
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->accumulator[0] == 12 &&
+               cpu->w[4] == 0x1357u && cpu->w[5] == 0x2468u && cpu->w[8] == 0x9000u &&
+               cpu->w[10] == 0x9000u && cpu->trap_count == 0u,
+           "DSP X post-update may enter implemented Y memory");
 
     reset_processor_test(cpu, 0u);
     prepare_address_trap(state, cpu);
@@ -708,11 +706,11 @@ void dspic33_timing_test_dsp_prefetch_address_error_cases(TestState* state, Dspi
     dspic33_write_word(cpu, 0x9000u, 0x468au);
     cpu->corcon = 0x0021u;
     cpu->dsrpag = 1u;
-    expect_address_trap(state, cpu, "DSP Y invalid post-update address traps");
     expect(state,
-           cpu->accumulator[0] == 12 && cpu->w[4] == 0x3579u && cpu->w[5] == 0x468au &&
-               cpu->w[8] == 0x8002u && cpu->w[10] == 0x8ffeu,
-           "DSP Y post-update trap preserves fetched values and pointer updates");
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->accumulator[0] == 12 &&
+               cpu->w[4] == 0x3579u && cpu->w[5] == 0x468au && cpu->w[8] == 0x8002u &&
+               cpu->w[10] == 0x8ffeu && cpu->trap_count == 0u,
+           "DSP Y post-update may enter implemented X memory");
 
     reset_processor_test(cpu, 0u);
     prepare_address_trap(state, cpu);
@@ -722,11 +720,10 @@ void dspic33_timing_test_dsp_prefetch_address_error_cases(TestState* state, Dspi
     cpu->accumulator[1] = 0u;
     cpu->corcon = 0x0021u;
     cpu->dsrpag = 1u;
-    expect_address_trap(state, cpu, "CLR with invalid DSP X prefetch traps");
     expect(state,
-           cpu->accumulator[0] == 0 && cpu->w[4] == 0u && cpu->w[8] == 0x9006u && cpu->w[13] == 0u,
-           "CLR accumulator, prefetch destination, pointer and direct write-back "
-           "complete");
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->accumulator[0] == 0 && cpu->w[4] == 0u &&
+               cpu->w[8] == 0x9006u && cpu->w[13] == 0u && cpu->trap_count == 0u,
+           "CLR treats implemented opposite-bank X prefetch as zero");
 
     reset_processor_test(cpu, 0u);
     prepare_address_trap(state, cpu);
@@ -742,12 +739,12 @@ void dspic33_timing_test_dsp_prefetch_address_error_cases(TestState* state, Dspi
     cpu->accumulator[1] = 0x654321u;
     cpu->corcon = 0x0021u;
     cpu->dsrpag = 1u;
-    expect_address_trap(state, cpu, "MOVSAC indirect write-back prefetch fault traps");
     expect(state,
-           cpu->accumulator[0] == 0x123456 && cpu->accumulator[1] == 0x654321 && cpu->w[4] == 0u &&
-               cpu->w[5] == 0u && cpu->w[9] == 0x8ffeu && cpu->w[13] == 0x5102u &&
-               dspic33_read_word(cpu, 0x5100u) == 0xa55au,
-           "DSP prefetch fault inhibits memory write while pointer update completes");
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->accumulator[0] == 0x123456 &&
+               cpu->accumulator[1] == 0x654321 && cpu->w[4] == 0u && cpu->w[5] == 0u &&
+               cpu->w[9] == 0x8ffeu && cpu->w[13] == 0x5102u &&
+               dspic33_read_word(cpu, 0x5100u) == 0x0065u && cpu->trap_count == 0u,
+           "MOVSAC completes write-back after an implemented opposite-bank prefetch");
 
     reset_processor_test(cpu, 0u);
     prepare_address_trap(state, cpu);
@@ -758,11 +755,11 @@ void dspic33_timing_test_dsp_prefetch_address_error_cases(TestState* state, Dspi
     dspic33_write_word(cpu, 0x9002u, 2u);
     cpu->corcon = 0x0021u;
     cpu->dsrpag = 1u;
-    expect_address_trap(state, cpu, "ED invalid DSP X prefetch traps");
     expect(state,
-           cpu->accumulator[0] == 9 && cpu->w[4] == 0xfffeu && cpu->w[8] == 0x9002u &&
-               cpu->w[10] == 0x9000u,
-           "ED result, distance destination and pointers complete before trap");
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->accumulator[0] == 9 &&
+               cpu->w[4] == 0xfffeu && cpu->w[8] == 0x9002u && cpu->w[10] == 0x9000u &&
+               cpu->trap_count == 0u,
+           "ED treats implemented opposite-bank X prefetch as zero");
 
     reset_processor_test(cpu, 0u);
     prepare_address_trap(state, cpu);

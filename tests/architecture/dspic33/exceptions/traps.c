@@ -3,6 +3,45 @@
 void dspic33_fault_test_page_zero_address_error_cases(TestState* state, Dspic33* cpu) {
     reset_processor_test(cpu, 0u);
     prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_0X9000_W2);
+    dspic33_write_word(cpu, 0x1000u, 0x5a5au);
+    cpu->dsrpag = 0u;
+    cpu->w[2] = 0xa5a5u;
+    expect_address_trap(state, cpu, "direct page-zero word read traps");
+    expect(state, cpu->w[2] == 0x5a5au && dspic33_read_word(cpu, 0x1000u) == 0x5a5au,
+           "direct page-zero word read completes before the trap");
+
+    reset_processor_test(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_MOV_W2_0X9000);
+    dspic33_write_word(cpu, 0x1000u, 0x5a5au);
+    cpu->dswpag = 0u;
+    cpu->w[2] = 0xa5a5u;
+    expect_address_trap(state, cpu, "direct page-zero word write traps");
+    expect(state, dspic33_read_word(cpu, 0x1000u) == 0xa5a5u,
+           "direct page-zero word write completes before the trap");
+
+    reset_processor_test(cpu, 0u);
+    prepare_address_trap(state, cpu);
+    load_instruction(state, cpu, 0u, OPCODE_DSP_MOVSAC_WRITE_BACK);
+    dspic33_set_working_register(cpu, 4u, 1u);
+    dspic33_set_working_register(cpu, 5u, 1u);
+    dspic33_set_working_register(cpu, 9u, 0x1002u);
+    dspic33_set_working_register(cpu, 11u, 0x9000u);
+    dspic33_set_working_register(cpu, 12u, 0u);
+    dspic33_set_working_register(cpu, 13u, 0x9000u);
+    dspic33_write_word(cpu, 0x1000u, 0x5a5au);
+    dspic33_write_word(cpu, 0x9000u, 0xa5a5u);
+    cpu->accumulator[1] = 0x654321u;
+    cpu->dswpag = 0u;
+    expect_address_trap(state, cpu, "DSP write-back through page zero traps");
+    expect(state,
+           cpu->w[13] == 0x9002u && dspic33_read_word(cpu, 0x1000u) == 0x0065u &&
+               dspic33_read_word(cpu, 0x9000u) == 0xa5a5u,
+           "DSP write-back uses X WAGU data-page translation before trapping");
+
+    reset_processor_test(cpu, 0u);
+    prepare_address_trap(state, cpu);
     load_instruction(state, cpu, 0u, OPCODE_MOV_W1_POST_INCREMENT_W2);
     dspic33_write_word(cpu, 0x1000u, 0x5a5au);
     cpu->dsrpag = 0u;

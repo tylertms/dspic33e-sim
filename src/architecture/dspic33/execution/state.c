@@ -17,6 +17,7 @@ void dspic33_internal_enter_address_trap(Dspic33* cpu, uint32_t return_pc);
 void dspic33_internal_schedule_soft_trap(Dspic33* cpu, uint16_t trap, uint32_t vector,
                                          uint8_t priority, uint8_t delay);
 void dspic33_internal_check_stack_address(Dspic33* cpu, int32_t stack_address, bool limit_wrapped);
+static uint16_t stored_word(const Dspic33* cpu, uint16_t address);
 
 bool dspic33_program_range_implemented(uint32_t address, uint32_t size) {
     return (address < DSPIC33_PROGRAM_LIMIT && size <= DSPIC33_PROGRAM_LIMIT - address) ||
@@ -261,7 +262,7 @@ bool dspic33_internal_check_data_implementation(Dspic33* cpu, uint32_t address, 
     return false;
 }
 
-static void raise_data_page_error(Dspic33* cpu) {
+void dspic33_internal_raise_data_page_error(Dspic33* cpu) {
     if (!cpu->address_error) {
         cpu->address_error = true;
         cpu->address_error_return = cpu->pc;
@@ -403,6 +404,21 @@ void dspic33_internal_apply_accumulator_result(Dspic33* cpu, uint8_t accumulator
         cpu->sr |= saturation_flag;
     }
     update_accumulator_combined_status(cpu);
+    uint16_t interrupt_control = stored_word(cpu, 0x08c0u);
+    uint16_t error_flags = 0u;
+    uint16_t overflow_enable = accumulator == 0u ? 0x0400u : 0x0200u;
+    uint16_t overflow_error = accumulator == 0u ? 0x4000u : 0x2000u;
+    uint16_t catastrophic_error = accumulator == 0u ? 0x1000u : 0x0800u;
+    if (overflow && (interrupt_control & overflow_enable) != 0u) {
+        error_flags |= overflow_error;
+    }
+    if (accumulator_overflow && (cpu->corcon & saturation_enable) == 0u &&
+        (interrupt_control & 0x0100u) != 0u) {
+        error_flags |= catastrophic_error;
+    }
+    if (error_flags != 0u) {
+        dspic33_device_latch_math_error(cpu, error_flags);
+    }
 }
 
 void dspic33_internal_clear_accumulator_status(Dspic33* cpu, uint8_t accumulator) {
@@ -839,7 +855,7 @@ bool dspic33_internal_operand_resolution(Dspic33* cpu, uint8_t mode, uint8_t reg
         dspic33_internal_write_working_register(cpu, reg, resolution->updated_register);
     }
     if (resolution->unimplemented_data_page) {
-        raise_data_page_error(cpu);
+        dspic33_internal_raise_data_page_error(cpu);
     }
     if (!write && cpu->repeat_active != 0u && width == 2u && (mode == 2u || mode == 3u) &&
         (resolution->address & PSV_ADDRESS) != 0u) {
@@ -863,13 +879,13 @@ bool dspic33_internal_following_operand_address(Dspic33* cpu, const OperandResol
                                                 bool write, uint32_t* address) {
     uint32_t next = (uint32_t)resolution->access_register + 2u;
     if (next > UINT16_MAX) {
-        raise_data_page_error(cpu);
+        dspic33_internal_raise_data_page_error(cpu);
         return false;
     }
     *address = (uint16_t)next;
     if (resolution->paged_addressing_enabled && next >= 0x8000u) {
         if (resolution->access_data_page == 0u) {
-            raise_data_page_error(cpu);
+            dspic33_internal_raise_data_page_error(cpu);
         }
         *address = dspic33_internal_mapped_data_address((uint16_t)next,
                                                         resolution->access_data_page, write);
@@ -1026,7 +1042,7 @@ bool dspic33_internal_indirect_literal_address(Dspic33* cpu, uint8_t reg, int16_
     if (address >= 0x8000u && !((reg == 14u || reg == 15u) && (cpu->corcon & 0x0004u) != 0u)) {
         uint16_t page = write ? cpu->dswpag : cpu->dsrpag;
         if (page == 0u) {
-            raise_data_page_error(cpu);
+            dspic33_internal_raise_data_page_error(cpu);
         }
         if (!write && page >= 0x0200u) {
             address = PSV_ADDRESS | ((page & 0x0100u) != 0u ? PSV_HIGH_BYTE : 0u) |
