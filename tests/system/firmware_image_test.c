@@ -153,7 +153,7 @@ static void test_file_loading(TestState* state, Dspic33* cpu) {
 
 static void test_binary(TestState* state, Dspic33* cpu) {
     const uint8_t image[] = {0x56u, 0x34u, 0x12u, 0u};
-    const uint8_t erased[] = {0xffu, 0xffu, 0xffu, 0xffu};
+    const uint8_t erased[] = {0xffu, 0xffu, 0xffu, 0u};
     uint32_t entry_address = UINT32_MAX;
     expect(state, dspic33_load_binary_data(cpu, image, sizeof(image), 0x200u, &entry_address),
            "dspic33_load_binary_data(cpu, image, sizeof(image), 0x200u, &entry_address)");
@@ -237,7 +237,7 @@ static void test_elf(TestState* state, Dspic33* cpu) {
     write_u32_le(image, PROGRAM_SECTION_OFFSET + 12u, 0x80000u);
     expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
            "out-of-map ELF content is rejected");
-    write_u32_le(image, PROGRAM_DATA_OFFSET, UINT32_MAX);
+    write_u32_le(image, PROGRAM_DATA_OFFSET, 0x00ffffffu);
     expect(state, dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
            "out-of-map erased ELF content is ignored");
 

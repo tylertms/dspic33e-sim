@@ -122,7 +122,7 @@ bool dspic33_load_binary_data(Dspic33* cpu, const void* image_data, size_t image
         uint32_t program_word = (uint32_t)bytes[byte_offset] |
                                 ((uint32_t)bytes[byte_offset + 1u] << 8u) |
                                 ((uint32_t)bytes[byte_offset + 2u] << 16u);
-        if (program_word == 0x00ffffffu && bytes[byte_offset + 3u] == 0xffu) {
+        if (program_word == 0x00ffffffu) {
             continue;
         }
         if (program_address >= DSPIC33_CONFIGURATION_BASE &&

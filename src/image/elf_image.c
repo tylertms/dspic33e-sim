@@ -269,7 +269,7 @@ bool elf_image_load_program(const ElfImage* image, Dspic33* cpu, char* error, si
                     return false;
                 }
             } else if (!dspic33_device_program_range_implemented(cpu, program_address, 2u)) {
-                if (program_word != UINT32_MAX) {
+                if ((program_word & 0x00ffffffu) != 0x00ffffffu) {
                     set_error(error, error_size, "ELF program exceeds device memory");
                     return false;
                 }
