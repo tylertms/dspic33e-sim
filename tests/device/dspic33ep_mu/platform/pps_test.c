@@ -176,14 +176,15 @@ static void source_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0e1eu, 0u);
     configure_capture(cpu);
     expect(state, physical_edge(cpu, 32u), "RPI digital stimulus advances");
-    expect(state, cpu->io.input_capture.fifo[0].count == 0u, "RPI input ignores a cleared ANS bit");
+    expect(state, cpu->io.input_capture.fifo[0].count == 1u,
+           "RPI input recognizes a cleared ANS bit");
 
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, 0x06aeu, 32u);
     dspic33_write_word(cpu, 0x0e1eu, 1u);
     configure_capture(cpu);
-    expect(state, physical_edge(cpu, 32u), "RPI analog-qualified stimulus advances");
-    expect(state, cpu->io.input_capture.fifo[0].count == 1u, "RPI input recognizes a set ANS bit");
+    expect(state, physical_edge(cpu, 32u), "RPI analog stimulus advances");
+    expect(state, cpu->io.input_capture.fifo[0].count == 0u, "RPI input ignores a set ANS bit");
 
     dspic33_reset(cpu, 0u);
     dspic33_write_word(cpu, 0x06aeu, 32u);

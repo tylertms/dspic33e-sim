@@ -539,17 +539,6 @@ bool dspic33_device_internal_pps_pin_bonded(const Dspic33* cpu, uint8_t pin) {
             (uint16_t)(1u << pps_pin->bit)) != 0u;
 }
 
-static bool pps_output_capable(uint8_t pin) {
-    for (size_t index = 0u;
-         index < sizeof(dspic33_device_pps_outputs) / sizeof(dspic33_device_pps_outputs[0]);
-         index++) {
-        if (dspic33_device_pps_outputs[index].pin == pin) {
-            return true;
-        }
-    }
-    return false;
-}
-
 uint8_t dspic33_device_internal_pps_output_function(const Dspic33* cpu, uint8_t pin) {
     if (!dspic33_device_internal_pps_pin_bonded(cpu, pin)) {
         return 0u;
@@ -578,14 +567,12 @@ bool dspic33_device_internal_pps_physical_input_enabled(const Dspic33* cpu, uint
     const bool is_input =
         (dspic33_device_internal_raw_word(cpu, dspic33_device_gpio_tris_addresses[pps_pin->port]) &
          pin_mask) != 0u;
-    const bool is_analog_capable =
-        (dspic33_device_gpio_analog_masks[pps_pin->port] & pin_mask) != 0u;
     const bool is_analog = dspic33_device_gpio_analog_addresses[pps_pin->port] != 0u &&
                            (dspic33_device_internal_raw_word(
                                 cpu, dspic33_device_gpio_analog_addresses[pps_pin->port]) &
                             pin_mask) != 0u;
 
-    return is_input && (!is_analog_capable || (pps_output_capable(pin) ? !is_analog : is_analog));
+    return is_input && !is_analog;
 }
 
 bool dspic33_device_internal_pps_physical_input_high(const Dspic33* cpu, uint8_t pin, bool* high) {
@@ -597,12 +584,7 @@ bool dspic33_device_internal_pps_physical_input_high(const Dspic33* cpu, uint8_t
         return false;
     }
     pin_mask = (uint16_t)(1u << pps_pin->bit);
-    if (!pps_output_capable(pin) &&
-        (dspic33_device_gpio_analog_masks[pps_pin->port] & pin_mask) != 0u) {
-        *high = (cpu->io.gpio[pps_pin->port] & cpu->io.gpio_driven[pps_pin->port] & pin_mask) != 0u;
-    } else {
-        *high = (dspic33_device_internal_gpio_pin_values(cpu, pps_pin->port) & pin_mask) != 0u;
-    }
+    *high = (dspic33_device_internal_gpio_pin_values(cpu, pps_pin->port) & pin_mask) != 0u;
     return true;
 }
 

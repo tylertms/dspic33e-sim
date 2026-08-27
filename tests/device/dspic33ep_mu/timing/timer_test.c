@@ -372,7 +372,7 @@ static void pps_input_cases(TestState* state, Dspic33* cpu) {
 
 static void timer1_pin_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
-    dspic33_write_word(cpu, 0x0e2eu, 0x4000u);
+    dspic33_write_word(cpu, 0x0e2eu, 0u);
     dspic33_gpio_drive(cpu, 2u, 0u, 0x4000u);
     configure_16_bit(cpu, 0u, 0u, 100u, 0x0002u);
     expect(state, dspic33_gpio_drive(cpu, 2u, 0x4000u, 0x4000u), "drive fixed Timer1 input high");
@@ -384,20 +384,20 @@ static void timer1_pin_cases(TestState* state, Dspic33* cpu) {
            "fixed Timer1 second edge counts");
 
     dspic33_reset(cpu, 0u);
-    dspic33_write_word(cpu, 0x0e2eu, 0u);
+    dspic33_write_word(cpu, 0x0e2eu, 0x4000u);
     dspic33_gpio_drive(cpu, 2u, 0u, 0x4000u);
     configure_16_bit(cpu, 0u, 0u, 100u, 0x0002u);
     dspic33_gpio_drive(cpu, 2u, 0x4000u, 0x4000u);
     expect(state, dspic33_read_word(cpu, timer_registers[0]) == 0u,
-           "RPI Timer1 input suppresses edges with ANS clear");
-    dspic33_write_word(cpu, 0x0e2eu, 0x4000u);
+           "RPI Timer1 input suppresses edges with ANS set");
+    dspic33_write_word(cpu, 0x0e2eu, 0u);
     dspic33_gpio_drive(cpu, 2u, 0u, 0x4000u);
     dspic33_gpio_drive(cpu, 2u, 0x4000u, 0x4000u);
     expect(state, dspic33_read_word(cpu, timer_registers[0]) == 0u,
-           "RPI Timer1 input resumes with ANS set at synchronization edge");
+           "RPI Timer1 input resumes with ANS clear at synchronization edge");
 
     dspic33_reset(cpu, 0u);
-    dspic33_write_word(cpu, 0x0e2eu, 0x4000u);
+    dspic33_write_word(cpu, 0x0e2eu, 0u);
     dspic33_gpio_drive(cpu, 2u, 0u, 0x4000u);
     configure_16_bit(cpu, 0u, 0u, 100u, 0x0040u);
     dspic33_gpio_drive(cpu, 2u, 0x4000u, 0x4000u);

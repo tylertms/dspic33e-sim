@@ -153,11 +153,11 @@ static void pps_cases(TestState* state, Dspic33* cpu) {
         dspic33_gpio_drive(cpu, 1u, 0x0001u, 0x0001u);
         dspic33_write_word(cpu, 0x0e1eu, 0u);
         dspic33_qei_test_select_pps_input(cpu, channel, DSPIC33_QEI_PHASE_A, 32u);
-        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 2u)) & 1u) == 0u,
-               "QEI input-only RPI rejects a cleared ANS bit");
-        dspic33_write_word(cpu, 0x0e1eu, 1u);
         expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 2u)) & 1u) != 0u,
-               "QEI input-only RPI accepts a set ANS bit");
+               "QEI input-only RPI accepts a cleared ANS bit");
+        dspic33_write_word(cpu, 0x0e1eu, 1u);
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(base + 2u)) & 1u) == 0u,
+               "QEI input-only RPI rejects a set ANS bit");
 
         dspic33_qei_test_reset_qei(cpu);
         dspic33_gpio_release(cpu, 3u, 0x0001u);
