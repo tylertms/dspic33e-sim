@@ -2,7 +2,8 @@
 
 void dspic33_adc_input(Dspic33* cpu, uint8_t channel, uint16_t value) {
     const Dspic33epMuProfile* profile = dspic33_device_profile(cpu);
-    if (profile != NULL && channel < profile->adc_channel_count) {
+    if (profile != NULL && channel < DSPIC33_ADC_CHANNEL_COUNT &&
+        (profile->adc_channel_mask & (UINT32_C(1) << channel)) != 0u) {
         cpu->io.adc[channel] = (uint16_t)(value & 0x0fffu);
     }
 }

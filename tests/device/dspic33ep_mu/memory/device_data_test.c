@@ -18,7 +18,7 @@ typedef struct {
     uint16_t pin_count;
     uint16_t io_pin_count;
     uint8_t pwm_generator_count;
-    uint8_t adc_channel_count;
+    uint32_t adc_channel_mask;
     const uint16_t* gpio_masks;
     uint32_t implemented_words;
     uint32_t absent_ranges;
@@ -36,20 +36,20 @@ static const uint16_t gpio_masks_814[DSPIC33_GPIO_PORT_COUNT] = {
 
 static const ExpectedProfile expected_profiles[] = {
     {DSPIC33EP_MU_DEVICE_256MU806, "dsPIC33EP256MU806", 0x2ac00u, 0x8000u, 0x5000u, 0x7000u,
-     0x18614000u, 64u, 51u, 4u, 24u, gpio_masks_806, 935u, 77u, 48u, UINT64_C(0xe5286ef2ae44471e),
-     UINT64_C(0xd305ae808264e876)},
+     0x18614000u, 64u, 51u, 4u, 0xff00ffffu, gpio_masks_806, 935u, 77u, 48u,
+     UINT64_C(0xe5286ef2ae44471e), UINT64_C(0xd305ae808264e876)},
     {DSPIC33EP_MU_DEVICE_256MU810, "dsPIC33EP256MU810", 0x2ac00u, 0x8000u, 0x5000u, 0x7000u,
-     0x18624000u, 100u, 83u, 6u, 32u, gpio_masks_810, 977u, 77u, 49u, UINT64_C(0xa0bac28c616ad517),
-     UINT64_C(0xbf0a068cbb5ee5a6)},
+     0x18624000u, 100u, 83u, 6u, UINT32_MAX, gpio_masks_810, 977u, 77u, 49u,
+     UINT64_C(0xa0bac28c616ad517), UINT64_C(0xbf0a068cbb5ee5a6)},
     {DSPIC33EP_MU_DEVICE_256MU814, "dsPIC33EP256MU814", 0x2ac00u, 0x8000u, 0x5000u, 0x7000u,
-     0x18634000u, 144u, 122u, 7u, 32u, gpio_masks_814, 1014u, 80u, 52u, UINT64_C(0xbc4bc14d6f2cea50),
-     UINT64_C(0xcf445290ea30727b)},
+     0x18634000u, 144u, 122u, 7u, UINT32_MAX, gpio_masks_814, 1014u, 80u, 52u,
+     UINT64_C(0xbc4bc14d6f2cea50), UINT64_C(0xcf445290ea30727b)},
     {DSPIC33EP_MU_DEVICE_512MU810, "dsPIC33EP512MU810", 0x55800u, 0xe000u, 0x9000u, 0xd000u,
-     0x18724000u, 100u, 83u, 6u, 32u, gpio_masks_810, 977u, 77u, 49u, UINT64_C(0xa0bac28c616ad517),
-     UINT64_C(0xbf0a068cbb5ee5a6)},
+     0x18724000u, 100u, 83u, 6u, UINT32_MAX, gpio_masks_810, 977u, 77u, 49u,
+     UINT64_C(0xa0bac28c616ad517), UINT64_C(0xbf0a068cbb5ee5a6)},
     {DSPIC33EP_MU_DEVICE_512MU814, "dsPIC33EP512MU814", 0x55800u, 0xe000u, 0x9000u, 0xd000u,
-     0x18734000u, 144u, 122u, 7u, 32u, gpio_masks_814, 1014u, 80u, 52u, UINT64_C(0xbc4bc14d6f2cea50),
-     UINT64_C(0xcf445290ea30727b)},
+     0x18734000u, 144u, 122u, 7u, UINT32_MAX, gpio_masks_814, 1014u, 80u, 52u,
+     UINT64_C(0xbc4bc14d6f2cea50), UINT64_C(0xcf445290ea30727b)},
 };
 
 static uint32_t count_bits(uint16_t value) {
@@ -200,8 +200,8 @@ static void test_profile(TestState* state, const ExpectedProfile* expected) {
     expect(state, profile->io_pin_count == expected->io_pin_count, "profile I/O pins");
     expect(state, profile->pwm_generator_count == expected->pwm_generator_count,
            "profile PWM generators");
-    expect(state, profile->adc_channel_count == expected->adc_channel_count,
-           "profile ADC channels");
+    expect(state, profile->adc_channel_mask == expected->adc_channel_mask,
+           "profile ADC channel mask");
 
     Dspic33epMuDevice parsed = DSPIC33EP_MU_DEVICE_COUNT;
     expect(state, dspic33ep_mu_device_from_name(expected->name, &parsed), "profile name lookup");
@@ -296,14 +296,12 @@ static void test_profile(TestState* state, const ExpectedProfile* expected) {
     expect(state, io_pin_count == expected->io_pin_count, "profile bonded GPIO count");
     test_gpio_sfr_profile(state, cpu, expected);
 
-    uint8_t last_adc = (uint8_t)(expected->adc_channel_count - 1u);
-    dspic33_adc_input(cpu, last_adc, 0x1abcu);
-    expect(state, cpu->io.adc[last_adc] == 0x0abcu, "profile last ADC channel accepts input");
-    if (expected->adc_channel_count < DSPIC33_ADC_CHANNEL_COUNT) {
-        cpu->io.adc[expected->adc_channel_count] = 0x0123u;
-        dspic33_adc_input(cpu, expected->adc_channel_count, 0x0456u);
-        expect(state, cpu->io.adc[expected->adc_channel_count] == 0x0123u,
-               "profile first absent ADC channel rejects input");
+    for (uint8_t channel = 0u; channel < DSPIC33_ADC_CHANNEL_COUNT; channel++) {
+        const bool implemented = (expected->adc_channel_mask & (UINT32_C(1) << channel)) != 0u;
+        cpu->io.adc[channel] = 0x0123u;
+        dspic33_adc_input(cpu, channel, 0x1abcu);
+        expect(state, cpu->io.adc[channel] == (implemented ? 0x0abcu : 0x0123u),
+               "profile ADC channel admission follows channel mask");
     }
 
     expect(state,

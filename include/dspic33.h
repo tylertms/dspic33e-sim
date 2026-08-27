@@ -79,7 +79,7 @@ typedef struct {
     uint16_t pin_count;
     uint16_t io_pin_count;
     uint8_t pwm_generator_count;
-    uint8_t adc_channel_count;
+    uint32_t adc_channel_mask;
 } Dspic33epMuProfile;
 
 typedef enum {
