@@ -304,11 +304,25 @@ test_definitions = [
   },
 ]
 
+allocation_failure_tests = cc.has_link_argument('-Wl,--wrap=realloc')
+test_link_args = []
+if host_machine.system() == 'windows'
+  test_link_args = cc.get_supported_link_arguments(
+    [
+      '-Wl,--stack,33554432',
+      '/STACK:33554432',
+    ],
+  )
+endif
+
 foreach definition : test_definitions
+  if definition.get('allocation_failure', false) and not allocation_failure_tests
+    continue
+  endif
   name = 'dspic33ep_mu_' + definition['name'] + '_test'
   sources = definition['sources']
   c_args = []
-  link_args = []
+  link_args = test_link_args
   if definition.get('allocation_failure', false)
     sources += ['support/allocation_failure.c']
     c_args += ['-DDSPIC33_TEST_ALLOCATION_FAILURE=1']

@@ -11,9 +11,6 @@ project(
 )
 
 cc = meson.get_compiler('c')
-if cc.get_id() != 'gcc'
-  error('GCC is required')
-endif
 public_include = include_directories('include')
 private_include = include_directories('src')
 build_by_default = not meson.is_subproject()

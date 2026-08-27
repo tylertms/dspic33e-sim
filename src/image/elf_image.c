@@ -1,3 +1,5 @@
+#define _CRT_SECURE_NO_WARNINGS
+
 #include "elf_image.h"
 
 #include <stdio.h>
@@ -313,7 +315,8 @@ bool elf_image_symbol(const ElfImage* image, const char* name, uint32_t* address
             uint16_t symbol_section = read_u16(symbol_entry + 14u);
             const char* symbol_name;
             size_t string_bytes_remaining;
-            if (symbol_section == ELF_SECTION_UNDEFINED || string_offset >= string_table.byte_size) {
+            if (symbol_section == ELF_SECTION_UNDEFINED ||
+                string_offset >= string_table.byte_size) {
                 continue;
             }
             symbol_name = (const char*)image->bytes + string_table.file_offset + string_offset;

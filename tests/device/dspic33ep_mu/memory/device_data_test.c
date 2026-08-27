@@ -297,10 +297,11 @@ static void test_profile(TestState* state, const ExpectedProfile* expected) {
     test_gpio_sfr_profile(state, cpu, expected);
 
     for (uint8_t channel = 0u; channel < DSPIC33_ADC_CHANNEL_COUNT; channel++) {
-        const bool implemented = (expected->adc_channel_mask & (UINT32_C(1) << channel)) != 0u;
+        const bool channel_implemented =
+            (expected->adc_channel_mask & (UINT32_C(1) << channel)) != 0u;
         cpu->io.adc[channel] = 0x0123u;
         dspic33_adc_input(cpu, channel, 0x1abcu);
-        expect(state, cpu->io.adc[channel] == (implemented ? 0x0abcu : 0x0123u),
+        expect(state, cpu->io.adc[channel] == (channel_implemented ? 0x0abcu : 0x0123u),
                "profile ADC channel admission follows channel mask");
     }
 
