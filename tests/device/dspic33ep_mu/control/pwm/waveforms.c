@@ -561,6 +561,55 @@ static void pin_cases(TestState* state, Dspic33* cpu) {
            "stopped-idle PWM releases remappable sync output");
 }
 
+static void mu814_generator_seven_cases(TestState* state, Dspic33* mu810) {
+    Dspic33* cpu = dspic33_create_for_device(DSPIC33EP_MU_DEVICE_512MU814);
+    const uint8_t generator = 6u;
+    const uint16_t base = 0x0ce0u;
+
+    dspic33_reset(mu810, 0u);
+    dspic33_write_word(mu810, 0x076au, 0x4000u);
+    expect(state, dspic33_read_word(mu810, 0x076au) == 0u, "MU810 reserves PWM7 PMD");
+    expect(state, cpu != NULL, "initialize MU814 PWM processor");
+    if (cpu == NULL) {
+        return;
+    }
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, (uint16_t)(base + 6u), 0x1234u);
+    expect(state, dspic33_read_word(cpu, (uint16_t)(base + 6u)) == 0x1234u,
+           "MU814 PWM7 register access");
+    dspic33_pwm_test_configure_generator(cpu, generator, 0u, 7u, 3u, 0x0480u);
+    dspic33_write_word(cpu, (uint16_t)(base + 0x12u), 3u);
+    dspic33_pwm_test_enable_pwm(cpu, 0u);
+    expect(state,
+           dspic33_pwm_output(cpu, generator, true) && !dspic33_pwm_output(cpu, generator, false),
+           "MU814 PWM7 begins its waveform");
+    expect(state,
+           dspic33_pwm_test_gpio_pin_is(cpu, 8u, 9u, true) &&
+               dspic33_pwm_test_gpio_pin_is(cpu, 8u, 8u, false),
+           "MU814 PWM7 drives its dedicated pins");
+    dspic33_device_advance(cpu, 4u);
+    expect(state,
+           !dspic33_pwm_output(cpu, generator, true) && dspic33_pwm_output(cpu, generator, false),
+           "MU814 PWM7 advances its waveform");
+    expect(state,
+           dspic33_pwm_test_gpio_pin_is(cpu, 8u, 9u, false) &&
+               dspic33_pwm_test_gpio_pin_is(cpu, 8u, 8u, true),
+           "MU814 PWM7 waveform reaches its dedicated pins");
+    expect(state, dspic33_pwm_test_interrupt_flag(cpu, 100u), "MU814 PWM7 raises IRQ100");
+    dspic33_write_word(cpu, 0x076au, 0x4000u);
+    dspic33_device_advance(cpu, 1u);
+    expect(state,
+           dspic33_read_word(cpu, base) == 0u && !dspic33_pwm_output(cpu, generator, true) &&
+               !dspic33_pwm_output(cpu, generator, false),
+           "MU814 PWM7 PMD disables registers and output");
+    expect(state,
+           dspic33_pwm_test_gpio_pin_is(cpu, 8u, 9u, false) &&
+               dspic33_pwm_test_gpio_pin_is(cpu, 8u, 8u, false),
+           "MU814 PWM7 PMD releases its dedicated pins");
+    dspic33_destroy(cpu);
+}
+
 static void boundary_cases(TestState* state, Dspic33* cpu) {
     Dspic33 copy;
     bool initialized;
@@ -651,6 +700,7 @@ int main(void) {
     chop_and_power_cases(&state, &cpu);
     pmd_cases(&state, &cpu);
     pin_cases(&state, &cpu);
+    mu814_generator_seven_cases(&state, &cpu);
     boundary_cases(&state, &cpu);
     dspic33_release(&cpu);
     return test_finish(&state);

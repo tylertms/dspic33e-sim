@@ -940,6 +940,10 @@ bool dspic33_device_internal_pwm_pin_value(const Dspic33* cpu, uint8_t port, uin
     } else if (port == 2u && pin >= 1u && pin <= 4u) {
         generator = (uint8_t)(4u + (pin - 1u) / 2u);
         high_output = (pin & 1u) == 0u;
+    } else if (port == 8u && pin >= 8u && pin <= 9u &&
+               dspic33_device_internal_pwm_generator_count(cpu) == DSPIC33_PWM_MAX_COUNT) {
+        generator = 6u;
+        high_output = pin == 9u;
     } else {
         return false;
     }

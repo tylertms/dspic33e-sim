@@ -278,6 +278,10 @@ bool dspic33_device_internal_register_write_mask(const Dspic33* cpu, uint16_t ad
         return false;
     }
     *writable = register_masks[first].writable;
+    if (address == 0x076au &&
+        dspic33_device_internal_pwm_generator_count(cpu) == DSPIC33_PWM_MAX_COUNT) {
+        *writable |= 0x4000u;
+    }
     if (address >= 0x0e00u && address < 0x0ea0u) {
         uint8_t port = (uint8_t)((address - 0x0e00u) / 0x10u);
         *writable &= dspic33_device_internal_gpio_port_mask(cpu, port);
