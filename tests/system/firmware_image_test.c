@@ -200,9 +200,22 @@ static void test_elf(TestState* state, Dspic33* cpu) {
            "dspic33_read_program_word(cpu, 0x100u) == 0x00123456u");
     expect(state, dspic33_read_program_word(cpu, 0x200u) == 0x00ffffffu,
            "allocated noload ELF program section is ignored");
+
+    initialize_elf_image(image);
+    write_u32_le(image, PROGRAM_TABLE_OFFSET + 16u, 8u);
+    write_u32_le(image, PROGRAM_TABLE_OFFSET + 20u, 8u);
+    write_u32_le(image, COMMENT_SECTION_OFFSET + 8u, 0x40000002u);
+    write_u32_le(image, COMMENT_SECTION_OFFSET + 12u, 0x8300u);
+    write_u32_le(image, COMMENT_DATA_OFFSET, 0x00ab3412u);
+    expect(state, dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
+           "packedflash ELF section loads");
+    expect(state, dspic33_read_program_word(cpu, 0x102u) == 0x00ab3412u,
+           "packedflash ELF section retains the upper Flash byte");
+
     initialize_elf_image(image);
     write_u32_le(image, PROGRAM_TABLE_OFFSET + 8u, 0x8300u);
     write_u32_le(image, PROGRAM_TABLE_OFFSET + 12u, 0x300u);
+    write_u32_le(image, PROGRAM_SECTION_OFFSET + 8u, 0x10000002u);
     write_u32_le(image, PROGRAM_SECTION_OFFSET + 12u, 0x8300u);
     expect(state, dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
            "PSV ELF section loads from its physical address");
