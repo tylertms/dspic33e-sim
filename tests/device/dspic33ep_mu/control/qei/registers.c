@@ -254,15 +254,15 @@ void dspic33_qei_test_divider_polarity_output_cases(TestState* state, Dspic33* c
             uint8_t position_index;
             for (position_index = 0u; position_index < 3u; position_index++) {
                 bool high;
-                bool expected = (selection == 1u && positions[position_index] >= 5) ||
-                                (selection == 2u && positions[position_index] <= 2) ||
-                                (selection == 3u && (positions[position_index] >= 5 ||
-                                                     positions[position_index] <= 2));
+                bool expected = (selection == 1u && positions[position_index] >= 2) ||
+                                (selection == 2u && positions[position_index] <= 5) ||
+                                (selection == 3u && positions[position_index] >= 2 &&
+                                 positions[position_index] <= 5);
                 dspic33_qei_test_reset_qei(cpu);
                 dspic33_qei_test_write_counter(cpu, (uint16_t)(base + 0x1cu),
-                                               (uint16_t)(base + 0x1eu), 5u);
+                                               (uint16_t)(base + 0x1eu), 2u);
                 dspic33_qei_test_write_counter(cpu, (uint16_t)(base + 0x20u),
-                                               (uint16_t)(base + 0x22u), 2u);
+                                               (uint16_t)(base + 0x22u), 5u);
                 dspic33_qei_test_write_counter(cpu, (uint16_t)(base + 6u), (uint16_t)(base + 0x0au),
                                                (uint32_t)positions[position_index]);
                 dspic33_write_word(cpu, (uint16_t)(base + 2u), (uint16_t)(selection << 9u));
@@ -653,9 +653,14 @@ void dspic33_qei_test_interrupt_compare_index_cases(TestState* state, Dspic33* c
         dspic33_write_word(cpu, (uint16_t)(base + 2u), QEI_OUTPUT_LESS_EQUAL);
         expect(state, dspic33_qei_compare_output(cpu, channel, &output) && !output,
                "QEI less-equal output follows comparison");
-        dspic33_write_word(cpu, (uint16_t)(base + 2u), QEI_OUTPUT_OUTSIDE);
+        dspic33_write_word(cpu, (uint16_t)(base + 0x1cu), 2u);
+        dspic33_write_word(cpu, (uint16_t)(base + 0x20u), 5u);
+        dspic33_write_word(cpu, (uint16_t)(base + 2u), QEI_OUTPUT_WINDOW);
         expect(state, dspic33_qei_compare_output(cpu, channel, &output) && output,
-               "QEI combined comparison output follows either bound");
+               "QEI window output is high between both bounds");
+        dspic33_qei_test_write_counter(cpu, (uint16_t)(base + 6u), (uint16_t)(base + 0x0au), 9u);
+        expect(state, dspic33_qei_compare_output(cpu, channel, &output) && !output,
+               "QEI window output is low outside either bound");
 
         dspic33_qei_test_reset_qei(cpu);
         dspic33_qei_test_set_open_comparison_window(cpu, base);

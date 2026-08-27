@@ -294,9 +294,9 @@ static void pps_cases(TestState* state, Dspic33* cpu) {
         dspic33_qei_test_reset_qei(cpu);
         dspic33_gpio_release(cpu, 3u, 0x0001u);
         dspic33_write_word(cpu, 0x0e30u, 0xffffu);
-        dspic33_qei_test_write_counter(cpu, (uint16_t)(base + 0x20u), (uint16_t)(base + 0x22u), 0u);
-        dspic33_qei_test_write_counter(cpu, (uint16_t)(base + 0x1cu), (uint16_t)(base + 0x1eu), 2u);
-        dspic33_write_word(cpu, (uint16_t)(base + 2u), QEI_OUTPUT_OUTSIDE);
+        dspic33_qei_test_write_counter(cpu, (uint16_t)(base + 0x20u), (uint16_t)(base + 0x22u), 1u);
+        dspic33_qei_test_write_counter(cpu, (uint16_t)(base + 0x1cu), (uint16_t)(base + 0x1eu), 1u);
+        dspic33_write_word(cpu, (uint16_t)(base + 2u), QEI_OUTPUT_WINDOW);
         dspic33_write_byte(cpu, 0x0680u, (uint8_t)(47u + channel));
         dspic33_write_byte(cpu, 0x06aeu, 64u);
         dspic33_write_word(cpu, CAPTURE_BASE, CAPTURE_FP_EVERY_EDGE);

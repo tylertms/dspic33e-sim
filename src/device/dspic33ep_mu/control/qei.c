@@ -463,8 +463,8 @@ bool dspic33_device_internal_qei_compare_output_value(const Dspic33* cpu, uint8_
 
     *is_high = (output_mode == 1u && position_value >= high_compare_value) ||
                (output_mode == 2u && position_value <= low_compare_value) ||
-               (output_mode == 3u &&
-                (position_value >= high_compare_value || position_value <= low_compare_value));
+               (output_mode == 3u && position_value >= high_compare_value &&
+                position_value <= low_compare_value);
     return true;
 }
 
@@ -489,8 +489,8 @@ static bool qei_output_high_at(uint8_t output_mode, uint32_t position_value,
 
     return (output_mode == 1u && signed_position >= signed_high_compare) ||
            (output_mode == 2u && signed_position <= signed_low_compare) ||
-           (output_mode == 3u &&
-            (signed_position >= signed_high_compare || signed_position <= signed_low_compare));
+           (output_mode == 3u && signed_position >= signed_high_compare &&
+            signed_position <= signed_low_compare);
 }
 
 static uint64_t qei_output_transition_ticks(const Dspic33* cpu, uint8_t channel, int8_t direction) {
