@@ -123,13 +123,14 @@ static bool usb_operation(Dspic33* cpu, uint8_t operation, uint32_t value) {
     }
 }
 
-static uint64_t census(Dspic33* cpu) {
+static uint64_t census(Dspic33* cpu, uint32_t operation_hits[42]) {
     uint32_t random = UINT32_C(0x91e10da5);
     uint64_t fingerprint = UINT64_C(14695981039346656037);
     for (uint32_t scenario = 0u; scenario < 65536u; scenario++) {
         uint32_t value = next_value(&random);
-        uint8_t operation = (uint8_t)(value >> 27u);
+        uint8_t operation = (uint8_t)(value % 42u);
         bool accepted = false;
+        operation_hits[operation]++;
         if ((scenario & 63u) == 0u || cpu->stop_reason != DSPIC33_RUNNING) {
             dspic33_reset(cpu, 0u);
         }
@@ -153,10 +154,10 @@ static uint64_t census(Dspic33* cpu) {
             accepted = dspic33_device_advance(cpu, value & 7u);
         } else if (operation < 19u) {
             accepted = communication_operation(cpu, (uint8_t)(operation - 6u), value);
-        } else if (operation < 28u) {
+        } else if (operation < 35u) {
             accepted = peripheral_operation(cpu, (uint8_t)(operation - 19u), value);
         } else {
-            accepted = usb_operation(cpu, (uint8_t)(operation - 28u), value);
+            accepted = usb_operation(cpu, (uint8_t)(operation - 35u), value);
         }
         fingerprint = mix(fingerprint, value);
         fingerprint = mix(fingerprint, accepted);
@@ -173,8 +174,14 @@ int main(void) {
     bool initialized = dspic33_initialize(&cpu);
     expect(&state, initialized, "initialize peripheral state census");
     if (initialized) {
-        uint64_t fingerprint = census(&cpu);
-        expect(&state, fingerprint == UINT64_C(7762651056802707732),
+        uint32_t operation_hits[42] = {0u};
+        uint64_t fingerprint = census(&cpu, operation_hits);
+        bool all_operations_hit = true;
+        for (uint8_t operation = 0u; operation < 42u; operation++) {
+            all_operations_hit = all_operations_hit && operation_hits[operation] != 0u;
+        }
+        expect(&state, all_operations_hit, "peripheral census reaches every operation");
+        expect(&state, fingerprint == UINT64_C(8669705451844220337),
                "peripheral state census matches");
         dspic33_release(&cpu);
     }
