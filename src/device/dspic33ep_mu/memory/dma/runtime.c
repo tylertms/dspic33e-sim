@@ -80,13 +80,31 @@ static bool event_reserve(Dspic33EventQueue* queue) {
     return true;
 }
 
+static bool event_source_valid(const Dspic33* cpu, Dspic33EventType type,
+                               uint16_t event_source) {
+    switch (type) {
+    case DSPIC33_EVENT_TIMER_INTERRUPT:
+        return event_source < DSPIC33_TIMER_COUNT;
+    case DSPIC33_EVENT_PWM_FAULT:
+    case DSPIC33_EVENT_PWM_CURRENT_LIMIT:
+        return event_source < DSPIC33_PWM_INPUT_COUNT;
+    case DSPIC33_EVENT_PWM_DEAD_TIME:
+        return event_source < dspic33_device_internal_pwm_generator_count(cpu);
+    case DSPIC33_EVENT_PWM_SYNC:
+        return event_source < 2u;
+    default:
+        return true;
+    }
+}
+
 static bool schedule_event(Dspic33* cpu, Dspic33EventType type, uint16_t event_source,
                            uint32_t event_value, uint64_t event_delay, bool is_external) {
     Dspic33Event event;
     size_t heap_index;
     size_t parent_heap_index;
 
-    if (event_delay > UINT64_MAX - cpu->device_cycles) {
+    if (!event_source_valid(cpu, type, event_source) ||
+        event_delay > UINT64_MAX - cpu->device_cycles) {
         return false;
     }
     if (!event_reserve(&cpu->events)) {

@@ -143,6 +143,38 @@ static void external_event_classification_cases(TestState* state, Dspic33* cpu) 
            "USB input event classified external");
 }
 
+static void scheduled_source_boundary_cases(TestState* state, Dspic33* cpu) {
+    typedef bool (*Schedule)(Dspic33*, Dspic33EventType, uint16_t, uint32_t, uint64_t);
+    static const Schedule schedulers[] = {dspic33_schedule, dspic33_schedule_external};
+    static const Dspic33EventType types[] = {
+        DSPIC33_EVENT_TIMER_INTERRUPT,
+        DSPIC33_EVENT_PWM_FAULT,
+        DSPIC33_EVENT_PWM_CURRENT_LIMIT,
+        DSPIC33_EVENT_PWM_DEAD_TIME,
+        DSPIC33_EVENT_PWM_SYNC,
+    };
+    uint16_t limits[] = {
+        DSPIC33_TIMER_COUNT,
+        DSPIC33_PWM_INPUT_COUNT,
+        DSPIC33_PWM_INPUT_COUNT,
+        dspic33_device_profile(cpu)->pwm_generator_count,
+        2u,
+    };
+    for (size_t scheduler = 0u; scheduler < sizeof(schedulers) / sizeof(schedulers[0]); scheduler++) {
+        for (size_t index = 0u; index < sizeof(types) / sizeof(types[0]); index++) {
+            dspic33_reset(cpu, 0u);
+            expect(state, !schedulers[scheduler](cpu, types[index], limits[index], 0u, 0u),
+                   "reject unsafe scheduled event source");
+            expect(state, cpu->events.count == 0u && cpu->events.sequence == 0u,
+                   "invalid event source leaves queue unchanged");
+            expect(state, schedulers[scheduler](cpu, types[index], limits[index] - 1u, 0u, 0u),
+                   "accept maximum scheduled event source");
+            expect(state, cpu->events.count == 1u && cpu->events.sequence == 1u,
+                   "valid event source enters queue");
+        }
+    }
+}
+
 static void delayed_interrupt_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     expect(state, cpu->events.count == 0u, "reset clears event queue");
@@ -370,6 +402,7 @@ int main(void) {
         split_clock_domain_cases(&state, &cpu);
         copy_and_reset_cases(&state, &cpu, &copy);
         external_event_classification_cases(&state, &cpu);
+        scheduled_source_boundary_cases(&state, &cpu);
         warm_reset_external_event_cases(&state, &cpu, &copy);
         warm_reset_external_payload_cases(&state, &cpu);
     }
