@@ -19,6 +19,7 @@ private_include = include_directories('src')
 build_by_default = not meson.is_subproject()
 
 simulator_sources = files(
+  'src/architecture/dspic33/coverage.c',
   'src/architecture/dspic33/execution/addressing.c',
   'src/architecture/dspic33/execution/instructions.c',
   'src/architecture/dspic33/execution/reset.c',

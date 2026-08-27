@@ -107,6 +107,42 @@ static void test_trace(TestState* state) {
     dspic33_destroy(source);
 }
 
+static void test_coverage(TestState* state) {
+    Dspic33* cpu = dspic33_create();
+    Dspic33Coverage* coverage = dspic33_coverage_create(0x200u, 4u);
+    expect(state, cpu != NULL && coverage != NULL, "coverage resources are created");
+    expect(state, dspic33_load_program_word(cpu, 0x200u, 0u), "first coverage opcode is loaded");
+    expect(state, dspic33_load_program_word(cpu, 0x202u, 0u), "second coverage opcode is loaded");
+    dspic33_set_trace(cpu, dspic33_coverage_record, coverage);
+    dspic33_reset(cpu, 0x200u);
+    dspic33_step(cpu);
+    dspic33_step(cpu);
+    Dspic33CoverageResult result = dspic33_coverage_result(coverage);
+    expect(state, result.instructions == 2u, "coverage records executed instructions");
+    expect(state, result.outside_range == 0u, "coverage stays inside its range");
+    expect(state, result.unique_instructions == 2u, "coverage counts unique instructions");
+    expect(state, dspic33_coverage_executed(coverage, 0x200u),
+           "coverage exposes the first instruction");
+    expect(state, dspic33_coverage_executed(coverage, 0x202u),
+           "coverage exposes the second instruction");
+    dspic33_coverage_clear(coverage);
+    dspic33_coverage_record(coverage, 0x204u, 0u);
+    result = dspic33_coverage_result(coverage);
+    expect(state, result.instructions == 1u, "coverage clear resets counters");
+    expect(state, result.outside_range == 1u, "coverage counts instructions outside its range");
+    expect(state, result.unique_instructions == 0u, "outside instructions are not unique slots");
+    expect(state, !dspic33_coverage_executed(coverage, 0x200u), "coverage clear resets slots");
+    dspic33_coverage_destroy(coverage);
+    dspic33_destroy(cpu);
+    expect(state, dspic33_coverage_create(1u, 2u) == NULL, "coverage rejects odd addresses");
+    expect(state, dspic33_coverage_create(0u, 1u) == NULL, "coverage rejects odd sizes");
+    expect(state, dspic33_coverage_create(UINT32_MAX - 1u, 4u) == NULL,
+           "coverage rejects overflowing ranges");
+    dspic33_coverage_clear(NULL);
+    dspic33_coverage_record(NULL, 0u, 0u);
+    dspic33_coverage_destroy(NULL);
+}
+
 static void test_execution_boundaries(TestState* state) {
     Dspic33* cpu = dspic33_create();
     expect(state, cpu != NULL, "boundary cpu != NULL");
@@ -126,8 +162,7 @@ static void test_execution_boundaries(TestState* state) {
            "completed return reports its program counter");
 
     dspic33_reset(cpu, 0u);
-    expect(state, dspic33_load_program_word(cpu, 0u, 0x051232u),
-           "load boundary RETLW opcode");
+    expect(state, dspic33_load_program_word(cpu, 0u, 0x051232u), "load boundary RETLW opcode");
     cpu->w[15] = 0x5000u;
     expect(state, dspic33_begin_call(cpu, 0u, false), "begin RETLW call");
     expect(state,
@@ -343,6 +378,7 @@ int main(void) {
     test_lifecycle(&state);
     test_execution(&state);
     test_trace(&state);
+    test_coverage(&state);
     test_execution_boundaries(&state);
     test_host_operations(&state);
     test_null_getters(&state);

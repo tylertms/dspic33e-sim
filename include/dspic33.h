@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 typedef struct Dspic33 Dspic33;
+typedef struct Dspic33Coverage Dspic33Coverage;
 typedef void (*Dspic33Trace)(void* context, uint32_t address, uint32_t opcode);
 
 #define DSPIC33_DATA_SIZE 0x100000u
@@ -785,6 +786,19 @@ typedef struct {
     uint32_t pc;
     uint32_t opcode;
 } Dspic33Result;
+
+typedef struct {
+    uint64_t instructions;
+    uint64_t outside_range;
+    size_t unique_instructions;
+} Dspic33CoverageResult;
+
+Dspic33Coverage* dspic33_coverage_create(uint32_t address, size_t size);
+void dspic33_coverage_destroy(Dspic33Coverage* coverage);
+void dspic33_coverage_clear(Dspic33Coverage* coverage);
+void dspic33_coverage_record(void* context, uint32_t address, uint32_t opcode);
+Dspic33CoverageResult dspic33_coverage_result(const Dspic33Coverage* coverage);
+bool dspic33_coverage_executed(const Dspic33Coverage* coverage, uint32_t address);
 
 typedef enum { DSPIC33_POWER_ACTIVE, DSPIC33_POWER_SLEEP, DSPIC33_POWER_IDLE } Dspic33PowerState;
 
