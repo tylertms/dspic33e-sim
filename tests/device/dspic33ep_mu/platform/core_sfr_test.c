@@ -15,6 +15,9 @@ enum {
     CORE_CONTROL = 0x0044u,
     DISI_COUNT = 0x0052u,
     RESET_CONTROL = 0x0740u,
+    PMD4 = 0x0766u,
+    IFS5 = 0x080au,
+    IEC5 = 0x082au,
     INTCON1 = 0x08c0u,
     INTCON2 = 0x08c2u,
     OPCODE_MOV_PCL_W0 = 0xbf802eu,
@@ -143,6 +146,19 @@ static void reset_control_cases(TestState* state, Dspic33* cpu) {
            "B1 reset control read-modify-write clears hidden regulator flag");
 }
 
+static void device_register_mask_cases(TestState* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, IFS5, UINT16_MAX);
+    dspic33_write_word(cpu, IEC5, UINT16_MAX);
+    expect(state, dspic33_read_word(cpu, IFS5) == 0xffceu,
+           "IFS5 exposes every implemented interrupt flag");
+    expect(state, dspic33_read_word(cpu, IEC5) == 0xffceu,
+           "IEC5 exposes every implemented interrupt enable");
+    dspic33_write_word(cpu, PMD4, UINT16_MAX);
+    expect(state, dspic33_read_word(cpu, PMD4) == 0x0029u,
+           "PMD4 exposes reference oscillator disable");
+}
+
 static void disicnt_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0x200u);
     dspic33_write_word(cpu, DISI_COUNT, 0x1234u);
@@ -211,6 +227,7 @@ int main(void) {
     status_cases(&state, &source);
     core_control_cases(&state, &source);
     reset_control_cases(&state, &source);
+    device_register_mask_cases(&state, &source);
     disicnt_cases(&state, &source);
     lifecycle_cases(&state, &source, &copy);
     dspic33_release(&copy);
