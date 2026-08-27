@@ -666,6 +666,28 @@ static void dma_cases(TestState* state, Dspic33* cpu) {
     expect(state, interrupt_flag(cpu, 13u), "ordered adc increment interrupt");
 
     dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0b00u, 0u);
+    dspic33_write_word(cpu, 0x0b02u, 13u);
+    dspic33_write_word(cpu, 0x0b04u, 0x2800u);
+    dspic33_write_word(cpu, 0x0b06u, 0u);
+    dspic33_write_word(cpu, 0x0b0cu, 0x0300u);
+    dspic33_write_word(cpu, 0x0b0eu, 4u);
+    dspic33_write_word(cpu, 0x0b00u, 0x8020u);
+    dspic33_write_word(cpu, 0x0332u, 0x0107u);
+    configure_manual(cpu, 0u, 0x1000u, 0x007cu, 0u);
+    for (index = 0u; index < 5u; index++) {
+        set_input(cpu, 0u, (uint16_t)((index + 1u) * 400u));
+        start_manual(cpu, 0u);
+        finish_conversion(cpu, 0u);
+    }
+    for (index = 0u; index < 5u; index++) {
+        expect(state,
+               dspic33_read_word(cpu, (uint16_t)(0x2800u + index * 2u)) ==
+                   (uint16_t)((index + 1u) * 100u),
+               "conversion-order peripheral adc dma advances every result");
+    }
+
+    dspic33_reset(cpu, 0u);
     set_input(cpu, 1u, 400u);
     set_input(cpu, 3u, 800u);
     dspic33_write_word(cpu, 0x0b00u, 0u);
@@ -677,7 +699,7 @@ static void dma_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x0b00u, 0x8020u);
     dspic33_write_word(cpu, 0x0330u, 0x000au);
     dspic33_write_word(cpu, 0x0332u, 0x0101u);
-    configure_manual(cpu, 0u, 0u, 0x040cu, 0u);
+    configure_manual(cpu, 0u, 0u, 0x0404u, 0u);
     for (index = 0u; index < 4u; index++) {
         start_manual(cpu, 0u);
         finish_conversion(cpu, 0u);
@@ -690,6 +712,47 @@ static void dma_cases(TestState* state, Dspic33* cpu) {
            "scatter adc second channel first sample");
     expect(state, dspic33_read_word(cpu, 0x300eu) == 200u,
            "scatter adc second channel second sample");
+
+    dspic33_reset(cpu, 0u);
+    set_input(cpu, 0u, 400u);
+    set_input(cpu, 1u, 800u);
+    set_input(cpu, 2u, 1200u);
+    set_input(cpu, 4u, 1600u);
+    set_input(cpu, 5u, 2000u);
+    set_input(cpu, 6u, 2400u);
+    set_input(cpu, 7u, 2800u);
+    dspic33_write_word(cpu, 0x0b00u, 0u);
+    dspic33_write_word(cpu, 0x0b02u, 13u);
+    dspic33_write_word(cpu, 0x0b04u, 0x3000u);
+    dspic33_write_word(cpu, 0x0b06u, 0u);
+    dspic33_write_word(cpu, 0x0b0cu, 0x0300u);
+    dspic33_write_word(cpu, 0x0b0eu, 31u);
+    dspic33_write_word(cpu, 0x0b00u, 0x8020u);
+    dspic33_write_word(cpu, 0x0330u, 0x00f0u);
+    dspic33_write_word(cpu, 0x0332u, 0x0103u);
+    configure_manual(cpu, 0u, 0u, 0x070cu, 0u);
+    for (index = 0u; index < 8u; index++) {
+        start_manual(cpu, 0u);
+        finish_conversion(cpu, 0u);
+    }
+    expect(state,
+           dspic33_read_word(cpu, 0x3000u) == 100u &&
+               dspic33_read_word(cpu, 0x300eu) == 100u &&
+               dspic33_read_word(cpu, 0x3010u) == 200u &&
+               dspic33_read_word(cpu, 0x301eu) == 200u &&
+               dspic33_read_word(cpu, 0x3020u) == 300u &&
+               dspic33_read_word(cpu, 0x302eu) == 300u,
+           "scatter adc fixed channels fill their blocks");
+    expect(state,
+           dspic33_read_word(cpu, 0x3040u) == 400u &&
+               dspic33_read_word(cpu, 0x3048u) == 400u &&
+               dspic33_read_word(cpu, 0x3052u) == 500u &&
+               dspic33_read_word(cpu, 0x305au) == 500u &&
+               dspic33_read_word(cpu, 0x3064u) == 600u &&
+               dspic33_read_word(cpu, 0x306cu) == 600u &&
+               dspic33_read_word(cpu, 0x3076u) == 700u &&
+               dspic33_read_word(cpu, 0x307eu) == 700u,
+           "scatter adc scanned channels retain shared pointer holes");
 }
 
 static void power_cases(TestState* state, Dspic33* cpu) {
@@ -741,6 +804,20 @@ static void power_cases(TestState* state, Dspic33* cpu) {
            dspic33_read_word(cpu, 0x0300u) == 100u && cpu->io.adc_sleep_disabled == 0u &&
                interrupt_flag(cpu, 13u),
            "enabled adc interrupt keeps RC converter active in sleep");
+
+    dspic33_reset(cpu, 0u);
+    set_input(cpu, 0u, 400u);
+    dspic33_write_word(cpu, 0x0820u, 0x2000u);
+    dspic33_write_word(cpu, 0x0322u, 0x000cu);
+    dspic33_write_word(cpu, 0x0324u, 0x8100u);
+    dspic33_write_word(cpu, 0x0320u, 0x8074u);
+    cpu->power_state = DSPIC33_POWER_SLEEP;
+    dspic33_device_power_state_changed(cpu);
+    expect(state, dspic33_device_advance(cpu, 13u), "advance pre-interrupt sleep conversion");
+    expect(state,
+           dspic33_read_word(cpu, 0x0300u) == 100u && !interrupt_flag(cpu, 13u) &&
+               cpu->io.adc_sleep_disabled == 0u && cpu->events.count == 1u,
+           "adc interrupt enable sustains sleep sampling before its flag");
 
     dspic33_reset(cpu, 0u);
     set_input(cpu, 0u, 400u);

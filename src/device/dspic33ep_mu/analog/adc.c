@@ -181,6 +181,13 @@ static uint64_t adc_conversion_cycles(const Dspic33* cpu, uint8_t module) {
     return (adc_12_bit(cpu, module) ? 14u : 12u) * adc_clock_cycles(cpu, module);
 }
 
+static bool adc_interrupt_enabled(const Dspic33* cpu, uint8_t module) {
+    uint8_t interrupt_number = dspic33_device_adc_irqs[module];
+    uint16_t enable = dspic33_device_internal_raw_word(
+        cpu, (uint16_t)(0x0820u + (interrupt_number / 16u) * 2u));
+    return (enable & (uint16_t)(1u << (interrupt_number % 16u))) != 0u;
+}
+
 static uint32_t adc_event_value(const Dspic33* cpu, uint8_t module, uint8_t source, bool complete) {
     uint32_t event_value = source;
     event_value |= (uint32_t)cpu->io.adc_generation[module] << ADC_EVENT_GENERATION_SHIFT;
@@ -201,27 +208,31 @@ static uint8_t adc_increment_threshold(const Dspic33* cpu, uint8_t module) {
     return (uint8_t)(threshold + 1u);
 }
 
-static uint16_t adc_dma_address(Dspic33* cpu, uint8_t module, uint8_t channel) {
+static uint16_t adc_dma_address(const Dspic33* cpu, uint8_t module, uint8_t channel) {
     uint16_t control = dspic33_device_internal_adc_register(cpu, module, 0u);
     uint16_t dma_control = module == 0u ? dspic33_device_internal_raw_word(cpu, 0x0332u)
                                         : dspic33_device_internal_raw_word(cpu, 0x0372u);
     uint8_t buffer_length = (uint8_t)(dma_control & ADC_DMA_LENGTH_MASK);
-    uint8_t slot = cpu->io.adc_dma_sample[module][channel];
-    uint16_t address;
 
     if ((control & ADC_BUFFER_ORDER) != 0u) {
-        return (uint16_t)(cpu->io.adc_buffer_index[module] * 2u);
+        return (uint16_t)(cpu->io.adc_dma_index[module] * 2u);
     }
-    address = (uint16_t)(channel * ((uint16_t)2u << buffer_length) + slot * 2u);
-    cpu->io.adc_dma_sample[module][channel] = (uint8_t)((slot + 1u) & ((1u << buffer_length) - 1u));
-    return address;
+    return (uint16_t)(channel * ((uint16_t)2u << buffer_length) +
+                      cpu->io.adc_dma_index[module] * 2u);
 }
 
 static void adc_increment_boundary(Dspic33* cpu, uint8_t module) {
+    uint16_t control = dspic33_device_internal_adc_register(cpu, module, 0u);
     uint16_t control2 = dspic33_device_internal_adc_register(cpu, module, 2u);
+    uint16_t dma_control = module == 0u ? dspic33_device_internal_raw_word(cpu, 0x0332u)
+                                        : dspic33_device_internal_raw_word(cpu, 0x0372u);
 
     cpu->io.adc_sample_count[module] = 0u;
-    cpu->io.adc_scan_index[module] = 0u;
+    if ((dma_control & ADC_DMA_ENABLE) != 0u && (control & ADC_BUFFER_ORDER) == 0u) {
+        uint8_t buffer_length = (uint8_t)(dma_control & ADC_DMA_LENGTH_MASK);
+        cpu->io.adc_dma_index[module] =
+            (uint8_t)((cpu->io.adc_dma_index[module] + 1u) & ((1u << buffer_length) - 1u));
+    }
     if ((control2 & ADC_BUFFER_SPLIT) != 0u) {
         control2 ^= ADC_SECOND_BUFFER;
         cpu->io.adc_buffer_index[module] = (control2 & ADC_SECOND_BUFFER) != 0u ? 8u : 0u;
@@ -247,6 +258,10 @@ static void adc_store_result(Dspic33* cpu, uint8_t module, uint8_t channel, uint
             (uint16_t)(dspic33_device_adc_buffers[module] +
                        (cpu->io.adc_buffer_index[module] & 0x0fu) * 2u),
             result);
+    }
+    if ((dma_control & ADC_DMA_ENABLE) != 0u &&
+        (dspic33_device_internal_adc_register(cpu, module, 0u) & ADC_BUFFER_ORDER) != 0u) {
+        cpu->io.adc_dma_index[module] = (uint8_t)((cpu->io.adc_dma_index[module] + 1u) & 0x0fu);
     }
     cpu->io.adc_buffer_index[module] = (uint8_t)((cpu->io.adc_buffer_index[module] + 1u) & 0x0fu);
     cpu->io.adc_sample_count[module]++;
@@ -319,8 +334,7 @@ static void adc_complete_conversion(Dspic33* cpu, uint8_t module, uint8_t source
     dspic33_device_internal_raw_write_word(cpu, dspic33_device_adc_controls[module],
                                            source == 1u ? (uint16_t)(control & ~ADC_DONE)
                                                         : (uint16_t)(control | ADC_DONE));
-    if (cpu->power_state == DSPIC33_POWER_SLEEP &&
-        !dspic33_device_internal_interrupt_enabled(cpu, dspic33_device_adc_irqs[module])) {
+    if (cpu->power_state == DSPIC33_POWER_SLEEP && !adc_interrupt_enabled(cpu, module)) {
         cpu->io.adc_sleep_disabled |= (uint8_t)(1u << module);
         return;
     }

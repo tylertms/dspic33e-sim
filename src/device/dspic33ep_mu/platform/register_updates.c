@@ -114,9 +114,9 @@ static void adc_reset_module(Dspic33* cpu, uint8_t module) {
     cpu->io.adc_buffer_index[module] = 0u;
     cpu->io.adc_sample_count[module] = 0u;
     cpu->io.adc_scan_index[module] = 0u;
+    cpu->io.adc_dma_index[module] = 0u;
     cpu->io.adc_mux_b &= (uint8_t)~bit;
     cpu->io.adc_sleep_disabled &= (uint8_t)~bit;
-    memset(cpu->io.adc_dma_sample[module], 0, sizeof(cpu->io.adc_dma_sample[module]));
     for (index = 0u; index < 5u; index++) {
         dspic33_device_internal_raw_write_word(cpu, (uint16_t)(control + index * 2u), 0u);
     }
@@ -216,8 +216,8 @@ void dspic33_device_internal_update_adc_register(Dspic33* cpu, uint16_t address,
                 cpu->io.adc_buffer_index[module] = 0u;
                 cpu->io.adc_sample_count[module] = 0u;
                 cpu->io.adc_scan_index[module] = 0u;
+                cpu->io.adc_dma_index[module] = 0u;
                 cpu->io.adc_mux_b &= (uint8_t)~(1u << module);
-                memset(cpu->io.adc_dma_sample[module], 0, sizeof(cpu->io.adc_dma_sample[module]));
             }
             if (was_on && was_sampling && !sampling && source == 0u) {
                 dspic33_device_internal_raw_write_word(cpu, control_address,

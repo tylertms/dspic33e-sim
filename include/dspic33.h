@@ -618,7 +618,7 @@ typedef struct {
     uint8_t adc_buffer_index[DSPIC33_ADC_COUNT];
     uint8_t adc_sample_count[DSPIC33_ADC_COUNT];
     uint8_t adc_scan_index[DSPIC33_ADC_COUNT];
-    uint8_t adc_dma_sample[DSPIC33_ADC_COUNT][DSPIC33_ADC_CHANNEL_COUNT];
+    uint8_t adc_dma_index[DSPIC33_ADC_COUNT];
     uint8_t adc_mux_b;
     uint8_t adc_pmd_disabled;
     uint8_t adc_sleep_disabled;
