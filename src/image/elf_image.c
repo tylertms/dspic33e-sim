@@ -23,6 +23,8 @@ enum {
 
 typedef struct {
     uint32_t type;
+    uint32_t flags;
+    uint32_t address;
     uint32_t file_offset;
     uint32_t byte_size;
     uint32_t linked_section;
@@ -121,6 +123,8 @@ static ElfSection read_section(const ElfImage* image, uint32_t table_offset,
         image->bytes + table_offset + (uint32_t)section_index * ELF_SECTION_SIZE;
     ElfSection section;
     section.type = read_u32(section_bytes + 4u);
+    section.flags = read_u32(section_bytes + 8u);
+    section.address = read_u32(section_bytes + 12u);
     section.file_offset = read_u32(section_bytes + 16u);
     section.byte_size = read_u32(section_bytes + 20u);
     section.linked_section = read_u32(section_bytes + 24u);
@@ -318,4 +322,116 @@ bool elf_image_symbol(const ElfImage* image, const char* name, uint32_t* address
     }
     set_error(error, error_size, "ELF symbol was not found");
     return false;
+}
+
+static bool coverage_section_loaded(const ElfImage* image, const ElfSection* section,
+                                    uint32_t program_table_offset, uint16_t segment_count) {
+    if (segment_count == 0u) {
+        return true;
+    }
+    for (uint16_t segment_index = 0u; segment_index < segment_count; segment_index++) {
+        const ElfSegment segment = read_segment(image, program_table_offset, segment_index);
+        if (segment.type == ELF_SEGMENT_LOAD && (segment.flags & ELF_SEGMENT_WRITE) == 0u &&
+            section->file_offset >= segment.file_offset &&
+            (uint64_t)section->file_offset + section->byte_size <=
+                (uint64_t)segment.file_offset + segment.file_size &&
+            section->address >= segment.physical_address &&
+            (uint64_t)section->address + section->byte_size / 2u <=
+                (uint64_t)segment.physical_address + segment.memory_size / 2u) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool coverage_section(const ElfImage* image, const ElfSection* section,
+                             uint32_t program_table_offset, uint16_t segment_count) {
+    return section->type == 1u && (section->flags & 4u) != 0u && section->byte_size != 0u &&
+           section->address < DSPIC33_CONFIGURATION_BASE && (section->address & 1u) == 0u &&
+           (section->byte_size & 3u) == 0u &&
+           (uint64_t)section->address + section->byte_size / 2u <= UINT64_C(0x100000000) &&
+           range_valid(image->size, section->file_offset, section->byte_size) &&
+           coverage_section_loaded(image, section, program_table_offset, segment_count);
+}
+
+static bool conditional_branch(uint32_t opcode) {
+    const uint32_t compare = opcode & 0xff8000u;
+    const uint8_t family = (uint8_t)(opcode >> 16u);
+    const bool relative = (family >= 0x0cu && family <= 0x0fu) ||
+                          ((opcode & 0xf00000u) == 0x300000u && (family & 15u) != 7u &&
+                           (family & 15u) <= 14u);
+    const bool compare_control = compare == 0xe78000u || compare == 0xe70000u ||
+                                 compare == 0xe60000u || compare == 0xe68000u;
+    const bool bit_skip = (opcode & 0xf00000u) == 0xa00000u && (family & 7u) >= 6u;
+    return relative || compare_control || bit_skip;
+}
+
+static uint32_t instruction_length(uint32_t opcode) {
+    const uint32_t family = opcode & 0xff0000u;
+    return family == 0x020000u || family == 0x040000u || family == 0x080000u ? 4u : 2u;
+}
+
+static bool define_coverage_section(Dspic33Coverage* coverage, const ElfImage* image,
+                                    const ElfSection* section) {
+    for (uint32_t byte_offset = 0u; byte_offset < section->byte_size;) {
+        const uint32_t opcode = read_u32(image->bytes + section->file_offset + byte_offset) &
+                                0x00ffffffu;
+        const uint32_t address = section->address + byte_offset / 2u;
+        const uint32_t address_size = instruction_length(opcode);
+        const uint32_t storage_size = address_size * 2u;
+        if (storage_size > section->byte_size - byte_offset ||
+            (opcode != 0x00ffffffu &&
+             !dspic33_coverage_define_instruction(coverage, address,
+                                                  conditional_branch(opcode)))) {
+            return false;
+        }
+        byte_offset += storage_size;
+    }
+    return true;
+}
+
+Dspic33Coverage* elf_image_create_coverage(const ElfImage* image, char* error,
+                                           size_t error_size) {
+    uint32_t table_offset;
+    uint32_t program_table_offset;
+    uint16_t section_count;
+    uint16_t segment_count;
+    if (image == NULL || !section_table(image, &table_offset, &section_count, error, error_size) ||
+        !program_table(image, &program_table_offset, &segment_count, error, error_size)) {
+        return NULL;
+    }
+    uint32_t first_address = UINT32_MAX;
+    uint64_t end_address = 0u;
+    for (uint16_t section_index = 0u; section_index < section_count; section_index++) {
+        const ElfSection section = read_section(image, table_offset, section_index);
+        if (!coverage_section(image, &section, program_table_offset, segment_count)) {
+            continue;
+        }
+        if (section.address < first_address) {
+            first_address = section.address;
+        }
+        if ((uint64_t)section.address + section.byte_size / 2u > end_address) {
+            end_address = (uint64_t)section.address + section.byte_size / 2u;
+        }
+    }
+    if (first_address == UINT32_MAX || end_address - first_address > SIZE_MAX) {
+        set_error(error, error_size, "ELF has no executable program content");
+        return NULL;
+    }
+    Dspic33Coverage* coverage =
+        dspic33_coverage_create(first_address, (size_t)(end_address - first_address));
+    if (coverage == NULL) {
+        set_error(error, error_size, "ELF coverage range is invalid");
+        return NULL;
+    }
+    for (uint16_t section_index = 0u; section_index < section_count; section_index++) {
+        const ElfSection section = read_section(image, table_offset, section_index);
+        if (coverage_section(image, &section, program_table_offset, segment_count) &&
+            !define_coverage_section(coverage, image, &section)) {
+            dspic33_coverage_destroy(coverage);
+            set_error(error, error_size, "ELF executable section is invalid");
+            return NULL;
+        }
+    }
+    return coverage;
 }

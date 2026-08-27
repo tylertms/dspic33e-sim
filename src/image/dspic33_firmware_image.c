@@ -91,6 +91,17 @@ bool firmware_image_symbol(const FirmwareImage* image, const char* name, uint32_
     return false;
 }
 
+Dspic33Coverage* firmware_image_create_coverage(const FirmwareImage* image, char* error,
+                                                size_t error_size) {
+    if (image->type == FIRMWARE_IMAGE_ELF) {
+        return elf_image_create_coverage(&image->elf, error, error_size);
+    }
+    if (error_size != 0u) {
+        snprintf(error, error_size, "binary images do not describe executable sections");
+    }
+    return NULL;
+}
+
 bool dspic33_load_elf_data(Dspic33* cpu, const void* image_data, size_t image_size,
                            uint32_t* entry_address) {
     ElfImage image;
@@ -152,4 +163,26 @@ bool dspic33_elf_symbol_data(const void* image_data, size_t image_size, const ch
     const bool found = elf_image_symbol(&image, name, address, error, sizeof(error));
     elf_image_close(&image);
     return found;
+}
+
+Dspic33Coverage* dspic33_coverage_create_elf_data(const void* image_data, size_t image_size) {
+    ElfImage image;
+    char error[160];
+    if (!elf_image_open_data(&image, image_data, image_size, error, sizeof(error))) {
+        return NULL;
+    }
+    Dspic33Coverage* coverage = elf_image_create_coverage(&image, error, sizeof(error));
+    elf_image_close(&image);
+    return coverage;
+}
+
+Dspic33Coverage* dspic33_coverage_create_elf(const char* path) {
+    FirmwareImage image;
+    char error[160];
+    if (!firmware_image_open(&image, path, error, sizeof(error))) {
+        return NULL;
+    }
+    Dspic33Coverage* coverage = firmware_image_create_coverage(&image, error, sizeof(error));
+    firmware_image_close(&image);
+    return coverage;
 }

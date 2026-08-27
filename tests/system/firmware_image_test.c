@@ -24,6 +24,9 @@ enum {
 
     MALFORMED_STRING_OFFSET = SYMBOL_OFFSET + 24,
     MALFORMED_SYMBOL_IMAGE_SIZE = MALFORMED_STRING_OFFSET + 6,
+    COVERAGE_SECTION_COUNT = 2,
+    COVERAGE_DATA_OFFSET = ELF_HEADER_SIZE + COVERAGE_SECTION_COUNT * ELF_SECTION_SIZE,
+    COVERAGE_IMAGE_SIZE = COVERAGE_DATA_OFFSET + 16,
 };
 
 static void write_u16_le(uint8_t* data, size_t offset, uint16_t value) {
@@ -124,6 +127,35 @@ static void initialize_symbol_image(uint8_t* image) {
     memcpy(image + STRING_OFFSET, "\0_test", 7u);
 }
 
+static void initialize_coverage_image(uint8_t* image) {
+    memset(image, 0, COVERAGE_IMAGE_SIZE);
+    image[0] = 0x7fu;
+    image[1] = 'E';
+    image[2] = 'L';
+    image[3] = 'F';
+    image[4] = 1u;
+    image[5] = 1u;
+    image[6] = 1u;
+    write_u16_le(image, 16u, 2u);
+    write_u16_le(image, 18u, 118u);
+    write_u32_le(image, 20u, 1u);
+    write_u32_le(image, 32u, ELF_HEADER_SIZE);
+    write_u16_le(image, 40u, ELF_HEADER_SIZE);
+    write_u16_le(image, 46u, ELF_SECTION_SIZE);
+    write_u16_le(image, 48u, COVERAGE_SECTION_COUNT);
+
+    const size_t section = ELF_HEADER_SIZE + ELF_SECTION_SIZE;
+    write_u32_le(image, section + 4u, 1u);
+    write_u32_le(image, section + 8u, 4u);
+    write_u32_le(image, section + 12u, 0x200u);
+    write_u32_le(image, section + 16u, COVERAGE_DATA_OFFSET);
+    write_u32_le(image, section + 20u, 16u);
+    write_u32_le(image, COVERAGE_DATA_OFFSET, 0x320000u);
+    write_u32_le(image, COVERAGE_DATA_OFFSET + 4u, 0xe78011u);
+    write_u32_le(image, COVERAGE_DATA_OFFSET + 8u, 0xa70002u);
+    write_u32_le(image, COVERAGE_DATA_OFFSET + 12u, 0u);
+}
+
 static bool write_file(const char* path, const void* data, size_t size) {
     FILE* file = fopen(path, "wb");
     if (file == NULL) {
@@ -148,6 +180,11 @@ static void test_file_loading(TestState* state, Dspic33* cpu) {
     expect(state, image.type == FIRMWARE_IMAGE_ELF, "file image type is ELF");
     expect(state, firmware_image_load_program(&image, cpu, error, sizeof(error)),
            "firmware_image_load_program ELF");
+    Dspic33Coverage* coverage = firmware_image_create_coverage(&image, error, sizeof(error));
+    expect(state, coverage != NULL, "firmware_image_create_coverage ELF");
+    expect(state, dspic33_coverage_result(coverage).total_instructions == 1u,
+           "file ELF coverage counts instructions");
+    dspic33_coverage_destroy(coverage);
     firmware_image_close(&image);
     expect(state, write_file(binary_path, binary, sizeof(binary)), "write binary file");
     expect(state, firmware_image_open(&image, binary_path, error, sizeof(error)),
@@ -158,6 +195,8 @@ static void test_file_loading(TestState* state, Dspic33* cpu) {
     uint32_t symbol_address = 0u;
     expect(state, !firmware_image_symbol(&image, "missing", &symbol_address, error, sizeof(error)),
            "binary firmware symbol is rejected");
+    expect(state, firmware_image_create_coverage(&image, error, sizeof(error)) == NULL,
+           "binary firmware coverage is rejected");
     firmware_image_close(&image);
     expect(state, write_file(elf_path, elf, 4u), "write truncated ELF file");
     expect(state, !firmware_image_open(&image, elf_path, error, sizeof(error)),
@@ -166,6 +205,24 @@ static void test_file_loading(TestState* state, Dspic33* cpu) {
            "missing firmware image is rejected");
     (void)remove(elf_path);
     (void)remove(binary_path);
+}
+
+static void test_coverage(TestState* state) {
+    uint8_t image[COVERAGE_IMAGE_SIZE];
+    initialize_coverage_image(image);
+    Dspic33Coverage* coverage = dspic33_coverage_create_elf_data(image, sizeof(image));
+    expect(state, coverage != NULL, "ELF coverage is created");
+    const Dspic33CoverageResult result = dspic33_coverage_result(coverage);
+    expect(state, result.total_instructions == 4u, "ELF coverage counts instructions");
+    expect(state, result.total_branch_sites == 3u, "ELF coverage counts conditional branches");
+    expect(state, result.covered_instructions == 0u, "ELF coverage starts empty");
+    dspic33_coverage_destroy(coverage);
+
+    image[0] = 0u;
+    expect(state, dspic33_coverage_create_elf_data(image, sizeof(image)) == NULL,
+           "ELF coverage rejects invalid images");
+    expect(state, dspic33_coverage_create_elf_data(NULL, sizeof(image)) == NULL,
+           "ELF coverage requires image data");
 }
 
 static void test_binary(TestState* state, Dspic33* cpu) {
@@ -385,6 +442,7 @@ int main(void) {
     test_elf(&state, cpu);
     test_program_segments(&state);
     test_symbol(&state);
+    test_coverage(&state);
     test_file_loading(&state, cpu);
     dspic33_destroy(cpu);
     return test_finish(&state);

@@ -1,5 +1,4 @@
 #include <stdlib.h>
-#include <string.h>
 
 #include "dspic33.h"
 
@@ -14,7 +13,17 @@ struct Dspic33Coverage {
     size_t observed_branch_sites;
     size_t observed_branch_outcomes;
     size_t branch_sites_with_both_outcomes;
+    size_t covered_instructions;
+    size_t total_instructions;
+    size_t covered_branch_sites;
+    size_t total_branch_sites;
     uint8_t slots[];
+};
+
+enum {
+    COVERAGE_DEFINED = 1u << 3,
+    COVERAGE_CONDITIONAL_BRANCH = 1u << 4,
+    COVERAGE_DEFINITION_MASK = COVERAGE_DEFINED | COVERAGE_CONDITIONAL_BRANCH,
 };
 
 static size_t coverage_slot(const Dspic33Coverage* coverage, uint32_t address) {
@@ -48,11 +57,43 @@ void dspic33_coverage_clear(Dspic33Coverage* coverage) {
     if (coverage == NULL) {
         return;
     }
-    const uint32_t address = coverage->address;
-    const size_t size = coverage->size;
-    memset(coverage, 0, sizeof(*coverage) + size / 2u);
-    coverage->address = address;
-    coverage->size = size;
+    coverage->instructions = 0u;
+    coverage->outside_range = 0u;
+    coverage->branches_taken = 0u;
+    coverage->branches_not_taken = 0u;
+    coverage->unique_instructions = 0u;
+    coverage->observed_branch_sites = 0u;
+    coverage->observed_branch_outcomes = 0u;
+    coverage->branch_sites_with_both_outcomes = 0u;
+    coverage->covered_instructions = 0u;
+    coverage->covered_branch_sites = 0u;
+    for (size_t slot = 0u; slot < coverage->size / 2u; slot++) {
+        coverage->slots[slot] &= COVERAGE_DEFINITION_MASK;
+    }
+}
+
+bool dspic33_coverage_define_instruction(Dspic33Coverage* coverage, uint32_t address,
+                                         bool conditional_branch) {
+    const size_t slot = coverage == NULL ? SIZE_MAX : coverage_slot(coverage, address);
+    if (slot == SIZE_MAX) {
+        return false;
+    }
+    if ((coverage->slots[slot] & COVERAGE_DEFINED) == 0u) {
+        coverage->slots[slot] |= COVERAGE_DEFINED;
+        coverage->total_instructions++;
+        if ((coverage->slots[slot] & DSPIC33_COVERAGE_EXECUTED) != 0u) {
+            coverage->covered_instructions++;
+        }
+    }
+    if (conditional_branch && (coverage->slots[slot] & COVERAGE_CONDITIONAL_BRANCH) == 0u) {
+        coverage->slots[slot] |= COVERAGE_CONDITIONAL_BRANCH;
+        coverage->total_branch_sites++;
+        if ((coverage->slots[slot] &
+             (DSPIC33_COVERAGE_BRANCH_TAKEN | DSPIC33_COVERAGE_BRANCH_NOT_TAKEN)) != 0u) {
+            coverage->covered_branch_sites++;
+        }
+    }
+    return true;
 }
 
 void dspic33_coverage_record(Dspic33Coverage* coverage, uint32_t address) {
@@ -62,6 +103,7 @@ void dspic33_coverage_record(Dspic33Coverage* coverage, uint32_t address) {
     } else if ((coverage->slots[slot] & DSPIC33_COVERAGE_EXECUTED) == 0u) {
         coverage->slots[slot] |= DSPIC33_COVERAGE_EXECUTED;
         coverage->unique_instructions++;
+        coverage->covered_instructions += (coverage->slots[slot] & COVERAGE_DEFINED) != 0u;
     }
     coverage->instructions++;
 }
@@ -78,6 +120,8 @@ void dspic33_coverage_record_branch(Dspic33Coverage* coverage, uint32_t address,
     if ((coverage->slots[slot] &
          (DSPIC33_COVERAGE_BRANCH_TAKEN | DSPIC33_COVERAGE_BRANCH_NOT_TAKEN)) == 0u) {
         coverage->observed_branch_sites++;
+        coverage->covered_branch_sites +=
+            (coverage->slots[slot] & COVERAGE_CONDITIONAL_BRANCH) != 0u;
     }
     if ((coverage->slots[slot] & outcome) == 0u) {
         coverage->slots[slot] |= outcome;
@@ -104,6 +148,20 @@ Dspic33CoverageResult dspic33_coverage_result(const Dspic33Coverage* coverage) {
         .observed_branch_sites = coverage->observed_branch_sites,
         .observed_branch_outcomes = coverage->observed_branch_outcomes,
         .branch_sites_with_both_outcomes = coverage->branch_sites_with_both_outcomes,
+        .covered_instructions = coverage->covered_instructions,
+        .total_instructions = coverage->total_instructions,
+        .instruction_coverage_percent =
+            coverage->total_instructions == 0u
+                ? 0.0
+                : 100.0 * (double)coverage->covered_instructions /
+                      (double)coverage->total_instructions,
+        .covered_branch_sites = coverage->covered_branch_sites,
+        .total_branch_sites = coverage->total_branch_sites,
+        .branch_coverage_percent =
+            coverage->total_branch_sites == 0u
+                ? 0.0
+                : 100.0 * (double)coverage->covered_branch_sites /
+                      (double)coverage->total_branch_sites,
     };
 }
 
@@ -112,5 +170,5 @@ uint8_t dspic33_coverage_flags(const Dspic33Coverage* coverage, uint32_t address
         return 0u;
     }
     const size_t slot = coverage_slot(coverage, address);
-    return slot == SIZE_MAX ? 0u : coverage->slots[slot];
+    return slot == SIZE_MAX ? 0u : coverage->slots[slot] & 0x07u;
 }

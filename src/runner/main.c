@@ -22,6 +22,7 @@ typedef struct {
     Dspic33RunLimits limits;
     ProgramWord program_words[PROGRAM_WORD_LIMIT];
     uint8_t program_word_count;
+    bool coverage;
 } Arguments;
 
 static bool parse_u64(const char* input_text, uint64_t maximum, uint64_t* numeric_value) {
@@ -83,6 +84,8 @@ static bool parse_arguments(int argc, char** argv, Arguments* arguments) {
             }
             program_word->instruction_word = (uint32_t)numeric_value;
             arguments->program_word_count++;
+        } else if (strcmp(argv[argument_index], "--coverage") == 0) {
+            arguments->coverage = true;
         } else {
             return false;
         }
@@ -94,7 +97,7 @@ static void print_usage(const char* program) {
     fprintf(stderr,
             "usage: %s IMAGE --reset-address ADDRESS "
             "[--device DEVICE] [--max-instructions COUNT] [--max-cycles COUNT] "
-            "[--stop-address ADDRESS] [--program-word ADDRESS VALUE]\n",
+            "[--stop-address ADDRESS] [--program-word ADDRESS VALUE] [--coverage]\n",
             program);
 }
 
@@ -185,6 +188,17 @@ int main(int argc, char** argv) {
         firmware_image_close(&image);
         return EXIT_FAILURE;
     }
+    Dspic33Coverage* coverage = NULL;
+    if (arguments.coverage) {
+        coverage = firmware_image_create_coverage(&image, error, sizeof(error));
+        if (coverage == NULL) {
+            fprintf(stderr, "failed to create coverage: %s\n", error);
+            dspic33_destroy(cpu);
+            firmware_image_close(&image);
+            return EXIT_FAILURE;
+        }
+        dspic33_set_coverage(cpu, coverage);
+    }
     dspic33_reset(cpu, entry);
     const Dspic33Result result = run(cpu, arguments.limits, stop_address, stop_enabled);
     const uint64_t trap_count = dspic33_get_trap_count(cpu);
@@ -195,6 +209,15 @@ int main(int argc, char** argv) {
     for (uint8_t register_index = 0u; register_index < 16u; register_index++) {
         printf("W%u=0x%04" PRIx32 "%c", register_index, dspic33_get_register(cpu, register_index),
                register_index == 15u ? '\n' : ' ');
+    }
+    if (coverage != NULL) {
+        const Dspic33CoverageResult coverage_result = dspic33_coverage_result(coverage);
+        printf("coverage instructions=%zu/%zu %.2f%% branches=%zu/%zu %.2f%%\n",
+               coverage_result.covered_instructions, coverage_result.total_instructions,
+               coverage_result.instruction_coverage_percent, coverage_result.covered_branch_sites,
+               coverage_result.total_branch_sites, coverage_result.branch_coverage_percent);
+        dspic33_set_coverage(cpu, NULL);
+        dspic33_coverage_destroy(coverage);
     }
     dspic33_destroy(cpu);
     firmware_image_close(&image);

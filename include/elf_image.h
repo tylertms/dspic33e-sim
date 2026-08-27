@@ -19,5 +19,6 @@ void elf_image_close(ElfImage* image);
 bool elf_image_load_program(const ElfImage* image, Dspic33* cpu, char* error, size_t error_size);
 bool elf_image_symbol(const ElfImage* image, const char* name, uint32_t* address, char* error,
                       size_t error_size);
+Dspic33Coverage* elf_image_create_coverage(const ElfImage* image, char* error, size_t error_size);
 
 #endif

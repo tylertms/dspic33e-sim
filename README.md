@@ -44,6 +44,7 @@ dspic33ep_mu_firmware_runner <IMAGE> --reset-address <ADDRESS> [OPTIONS]
 | `--max-instructions <N>` | Maximum instruction count. |
 | `--max-cycles <N>` | Maximum clock cycle limit. |
 | `--program-word <ADDR> <VAL>` | Write word to program memory before execution. |
+| `--coverage` | Print ELF instruction and conditional-branch coverage. |
 
 ## Use in Meson Projects
 

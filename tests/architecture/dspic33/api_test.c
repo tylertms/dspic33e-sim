@@ -127,6 +127,11 @@ static void test_coverage(TestState* state) {
     Dspic33* cpu = dspic33_create();
     Dspic33Coverage* coverage = dspic33_coverage_create(0x200u, 8u);
     expect(state, cpu != NULL && coverage != NULL, "coverage resources are created");
+    for (uint32_t address = 0x200u; address <= 0x206u; address += 2u) {
+        expect(state,
+               dspic33_coverage_define_instruction(coverage, address, address < 0x206u),
+               "coverage defines an instruction");
+    }
     expect(state, dspic33_load_program_word(cpu, 0x200u, 0x320000u),
            "conditional branch is loaded");
     expect(state, dspic33_load_program_word(cpu, 0x202u, 0xe78011u), "compare-and-skip is loaded");
@@ -164,6 +169,16 @@ static void test_coverage(TestState* state) {
            "coverage counts observed branch outcomes");
     expect(state, result.branch_sites_with_both_outcomes == 3u,
            "coverage counts branches with both outcomes");
+    expect(state, result.covered_instructions == 3u,
+           "coverage counts defined instructions reached");
+    expect(state, result.total_instructions == 4u, "coverage counts defined instructions");
+    expect(state, result.instruction_coverage_percent == 75.0,
+           "coverage calculates the instruction percentage");
+    expect(state, result.covered_branch_sites == 3u,
+           "coverage counts defined branch sites reached");
+    expect(state, result.total_branch_sites == 3u, "coverage counts defined branch sites");
+    expect(state, result.branch_coverage_percent == 100.0,
+           "coverage calculates the branch percentage");
     expect(state, (dspic33_coverage_flags(coverage, 0x200u) & DSPIC33_COVERAGE_EXECUTED) != 0u,
            "coverage exposes the first instruction");
     expect(state, (dspic33_coverage_flags(coverage, 0x202u) & DSPIC33_COVERAGE_EXECUTED) != 0u,
@@ -180,6 +195,8 @@ static void test_coverage(TestState* state) {
     expect(state, result.instructions == 1u, "coverage clear resets counters");
     expect(state, result.outside_range == 1u, "coverage counts instructions outside its range");
     expect(state, result.unique_instructions == 0u, "outside instructions are not unique slots");
+    expect(state, result.covered_instructions == 0u, "coverage clear resets covered instructions");
+    expect(state, result.total_instructions == 4u, "coverage clear preserves defined instructions");
     expect(state, dspic33_coverage_flags(coverage, 0x200u) == 0u, "coverage clear resets slots");
     dspic33_set_coverage(cpu, NULL);
     dspic33_coverage_destroy(coverage);
@@ -188,6 +205,8 @@ static void test_coverage(TestState* state) {
     expect(state, dspic33_coverage_create(0u, 1u) == NULL, "coverage rejects odd sizes");
     expect(state, dspic33_coverage_create(UINT32_MAX - 1u, 4u) == NULL,
            "coverage rejects overflowing ranges");
+    expect(state, !dspic33_coverage_define_instruction(NULL, 0u, false),
+           "coverage definition requires coverage");
     dspic33_coverage_clear(NULL);
     dspic33_coverage_destroy(NULL);
 }

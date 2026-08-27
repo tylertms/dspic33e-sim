@@ -800,6 +800,12 @@ typedef struct {
     size_t observed_branch_sites;
     size_t observed_branch_outcomes;
     size_t branch_sites_with_both_outcomes;
+    size_t covered_instructions;
+    size_t total_instructions;
+    double instruction_coverage_percent;
+    size_t covered_branch_sites;
+    size_t total_branch_sites;
+    double branch_coverage_percent;
 } Dspic33CoverageResult;
 
 typedef enum {
@@ -811,6 +817,8 @@ typedef enum {
 Dspic33Coverage* dspic33_coverage_create(uint32_t address, size_t size);
 void dspic33_coverage_destroy(Dspic33Coverage* coverage);
 void dspic33_coverage_clear(Dspic33Coverage* coverage);
+bool dspic33_coverage_define_instruction(Dspic33Coverage* coverage, uint32_t address,
+                                         bool conditional_branch);
 Dspic33CoverageResult dspic33_coverage_result(const Dspic33Coverage* coverage);
 uint8_t dspic33_coverage_flags(const Dspic33Coverage* coverage, uint32_t address);
 
