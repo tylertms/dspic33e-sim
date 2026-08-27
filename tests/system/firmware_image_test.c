@@ -12,8 +12,10 @@ enum {
     PROGRAM_TABLE_OFFSET = ELF_HEADER_SIZE,
     PROGRAM_SECTION_TABLE_OFFSET = PROGRAM_TABLE_OFFSET + ELF_PROGRAM_SIZE,
     PROGRAM_SECTION_OFFSET = PROGRAM_SECTION_TABLE_OFFSET + ELF_SECTION_SIZE,
-    PROGRAM_DATA_OFFSET = PROGRAM_SECTION_OFFSET + ELF_SECTION_SIZE,
-    IMAGE_SIZE = PROGRAM_DATA_OFFSET + 4,
+    COMMENT_SECTION_OFFSET = PROGRAM_SECTION_OFFSET + ELF_SECTION_SIZE,
+    PROGRAM_DATA_OFFSET = COMMENT_SECTION_OFFSET + ELF_SECTION_SIZE,
+    COMMENT_DATA_OFFSET = PROGRAM_DATA_OFFSET + 4,
+    IMAGE_SIZE = COMMENT_DATA_OFFSET + 4,
     SYMBOL_OFFSET = ELF_HEADER_SIZE + 3 * ELF_SECTION_SIZE,
     STRING_OFFSET = SYMBOL_OFFSET + 16,
     SYMBOL_IMAGE_SIZE = STRING_OFFSET + 7,
@@ -53,7 +55,7 @@ static void initialize_elf_image(uint8_t* image) {
     write_u16_le(image, 42u, ELF_PROGRAM_SIZE);
     write_u16_le(image, 44u, 1u);
     write_u16_le(image, 46u, ELF_SECTION_SIZE);
-    write_u16_le(image, 48u, 2u);
+    write_u16_le(image, 48u, 3u);
 
     write_u32_le(image, PROGRAM_TABLE_OFFSET, 1u);
     write_u32_le(image, PROGRAM_TABLE_OFFSET + 4u, PROGRAM_DATA_OFFSET);
@@ -66,11 +68,17 @@ static void initialize_elf_image(uint8_t* image) {
 
     const size_t section = PROGRAM_SECTION_OFFSET;
     write_u32_le(image, section + 4u, 1u);
-    write_u32_le(image, section + 8u, 0x40000000u);
+    write_u32_le(image, section + 8u, 0x40000006u);
     write_u32_le(image, section + 12u, 0x100u);
     write_u32_le(image, section + 16u, PROGRAM_DATA_OFFSET);
     write_u32_le(image, section + 20u, 4u);
     write_u32_le(image, PROGRAM_DATA_OFFSET, 0x00123456u);
+
+    write_u32_le(image, COMMENT_SECTION_OFFSET + 4u, 1u);
+    write_u32_le(image, COMMENT_SECTION_OFFSET + 8u, 0x40800000u);
+    write_u32_le(image, COMMENT_SECTION_OFFSET + 16u, COMMENT_DATA_OFFSET);
+    write_u32_le(image, COMMENT_SECTION_OFFSET + 20u, 4u);
+    memcpy(image + COMMENT_DATA_OFFSET, "meta", 4u);
 }
 
 static void initialize_symbol_image(uint8_t* image) {
