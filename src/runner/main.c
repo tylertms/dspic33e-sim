@@ -25,6 +25,9 @@ typedef struct {
 } Arguments;
 
 static bool parse_u64(const char* input_text, uint64_t maximum, uint64_t* numeric_value) {
+    if (input_text[0] == '-') {
+        return false;
+    }
     char* end = NULL;
     errno = 0;
     const unsigned long long parsed = strtoull(input_text, &end, 0);
