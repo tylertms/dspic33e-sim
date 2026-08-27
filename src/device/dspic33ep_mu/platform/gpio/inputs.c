@@ -341,9 +341,12 @@ void dspic33_device_internal_uart_refresh_pps_inputs(Dspic33* cpu) {
                                                            (uint16_t)(mode & ~UART_MODE_WAKE));
                 }
             } else if (previous_high && !high &&
-                       dspic33_device_internal_uart_receiver_operating(cpu, channel) &&
-                       (cpu->io.uart_rx_active & mask) == 0u) {
-                dspic33_device_internal_uart_begin_physical_receive(cpu, channel);
+                       dspic33_device_internal_uart_receiver_operating(cpu, channel)) {
+                if ((mode & UART_MODE_IREN) != 0u) {
+                    dspic33_device_internal_uart_irda_edge(cpu, channel);
+                } else if ((cpu->io.uart_rx_active & mask) == 0u) {
+                    dspic33_device_internal_uart_begin_physical_receive(cpu, channel);
+                }
             }
         }
         if ((dspic33_device_internal_raw_word(cpu, dspic33_device_uart_bases[channel]) &

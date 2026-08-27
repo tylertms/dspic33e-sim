@@ -118,6 +118,7 @@ bool dspic33_device_internal_uart_queue_pop(Dspic33UartQueue* queue,
 bool dspic33_device_internal_uart_queue_push(Dspic33UartQueue* queue,
                                              const Dspic33UartFrame* input_frame);
 bool dspic33_device_internal_uart_receiver_operating(const Dspic33* cpu, uint8_t channel);
+void dspic33_device_internal_uart_irda_edge(Dspic33* cpu, uint8_t channel);
 bool dspic33_device_internal_uart_register_write_mask(const Dspic33* cpu, uint16_t address,
                                                       uint16_t* writable);
 bool dspic33_device_internal_uart_rx_logical_level(const Dspic33* cpu, uint8_t channel, bool* high);

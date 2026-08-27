@@ -75,6 +75,7 @@ void dspic33_device_internal_spi_clear_buffers(Dspic33* cpu, uint8_t channel) {
     cpu->io.spi_pin_bits[channel] = 0u;
     cpu->io.spi_pin_output_index[channel] = 0u;
     cpu->io.spi_pin_output_started &= (uint8_t)~channel_mask;
+    cpu->io.spi_tx_retained &= (uint8_t)~channel_mask;
     cpu->io.spi_generation[channel] =
         (uint16_t)((cpu->io.spi_generation[channel] + 1u) & SPI_EVENT_GENERATION_MASK);
     dspic33_device_internal_raw_write_word(cpu, (uint16_t)(dspic33_device_spi_bases[channel] + 8u),
@@ -309,6 +310,7 @@ static void spi_start_next_admitted(Dspic33* cpu, uint8_t channel, bool frame_ad
     uint8_t channel_mask = (uint8_t)(1u << channel);
     uint8_t previous_fifo_count = cpu->io.spi_tx_fifo[channel].count;
     uint16_t transmit_word;
+    bool retain_transmit_word;
 
     if (!frame_admitted && spi_master_frame_master(cpu, channel) && previous_fifo_count != 0u &&
         (cpu->io.spi_frame_output_pending & channel_mask) == 0u) {
@@ -329,6 +331,8 @@ static void spi_start_next_admitted(Dspic33* cpu, uint8_t channel, bool frame_ad
         dspic33_device_internal_spi_refresh_status(cpu, channel);
         return;
     }
+    retain_transmit_word = !dspic33_device_internal_spi_master(cpu, channel) &&
+                           (control_word & SPI_SLAVE_SELECT) != 0u;
     if ((cpu->io.spi_busy & channel_mask) != 0u || previous_fifo_count == 0u ||
         (dspic33_device_internal_raw_word(cpu, register_base) & SPI_ENABLE) == 0u ||
         dspic33_device_internal_spi_module_disabled(cpu, channel) ||
@@ -336,7 +340,11 @@ static void spi_start_next_admitted(Dspic33* cpu, uint8_t channel, bool frame_ad
          (control_word & SPI_SLAVE_SELECT) != 0u &&
          !dspic33_device_internal_spi_selected(cpu, channel)) ||
         (dspic33_device_internal_spi_master_frame_slave(cpu, channel) && !frame_admitted) ||
-        !dspic33_device_internal_word_queue_pop(&cpu->io.spi_tx_fifo[channel], &transmit_word)) {
+        !(retain_transmit_word
+              ? dspic33_device_internal_word_queue_front(&cpu->io.spi_tx_fifo[channel],
+                                                          &transmit_word)
+              : dspic33_device_internal_word_queue_pop(&cpu->io.spi_tx_fifo[channel],
+                                                        &transmit_word))) {
         dspic33_device_internal_spi_refresh_status(cpu, channel);
         return;
     }
@@ -346,6 +354,11 @@ static void spi_start_next_admitted(Dspic33* cpu, uint8_t channel, bool frame_ad
         cpu->io.spi_clock_start_cycle[channel] = cpu->device_cycles;
     }
     cpu->io.spi_busy |= channel_mask;
+    if (retain_transmit_word) {
+        cpu->io.spi_tx_retained |= channel_mask;
+    } else {
+        cpu->io.spi_tx_retained &= (uint8_t)~channel_mask;
+    }
     cpu->io.spi_shift[channel] = transmit_word;
     cpu->io.spi_start_cycle[channel] = cpu->device_cycles;
     cpu->io.spi_pin_receive[channel] = 0u;
@@ -394,7 +407,8 @@ void dspic33_device_internal_spi_update_slave_selection(Dspic33* cpu, uint8_t ch
         return;
     }
     if (!is_selected && (cpu->io.spi_busy & channel_mask) != 0u) {
-        if (!dspic33_device_internal_word_queue_push_front(&cpu->io.spi_tx_fifo[channel],
+        if ((cpu->io.spi_tx_retained & channel_mask) == 0u &&
+            !dspic33_device_internal_word_queue_push_front(&cpu->io.spi_tx_fifo[channel],
                                                            cpu->io.spi_shift[channel])) {
             cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
             dspic33_device_internal_spi_clear_buffers(cpu, channel);
@@ -408,6 +422,7 @@ void dspic33_device_internal_spi_update_slave_selection(Dspic33* cpu, uint8_t ch
         cpu->io.spi_pin_bits[channel] = 0u;
         cpu->io.spi_pin_output_index[channel] = 0u;
         cpu->io.spi_pin_output_started &= (uint8_t)~channel_mask;
+        cpu->io.spi_tx_retained &= (uint8_t)~channel_mask;
         cpu->io.spi_generation[channel] =
             (uint16_t)((cpu->io.spi_generation[channel] + 1u) & SPI_EVENT_GENERATION_MASK);
         spi_remove_external_events(cpu, channel);
@@ -478,6 +493,17 @@ static void spi_receive_word(Dspic33* cpu, uint8_t channel, uint16_t received_wo
 void dspic33_device_internal_spi_complete_transfer(Dspic33* cpu, uint8_t channel,
                                                    uint16_t received_word) {
     uint8_t channel_mask = (uint8_t)(1u << channel);
+    uint16_t completed_word;
+
+    if ((cpu->io.spi_tx_retained & channel_mask) != 0u) {
+        if (!dspic33_device_internal_word_queue_pop(&cpu->io.spi_tx_fifo[channel],
+                                                    &completed_word)) {
+            cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+            dspic33_device_internal_spi_clear_buffers(cpu, channel);
+            return;
+        }
+        cpu->io.spi_tx_retained &= (uint8_t)~channel_mask;
+    }
 
     cpu->io.spi_busy &= (uint8_t)~channel_mask;
     cpu->io.spi_frame_active &= (uint8_t)~channel_mask;

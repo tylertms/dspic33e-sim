@@ -17,7 +17,7 @@ static void receiver_admission_matrix(TestState* state, Dspic33* cpu) {
         {UART_MODE_ENABLE, 0x0020u, DSPIC33_POWER_ACTIVE, false},
         {0u, 0u, DSPIC33_POWER_ACTIVE, false},
         {(uint16_t)(UART_MODE_ENABLE | UART_MODE_LOOPBACK), 0u, DSPIC33_POWER_ACTIVE, false},
-        {(uint16_t)(UART_MODE_ENABLE | UART_MODE_IREN), 0u, DSPIC33_POWER_ACTIVE, false},
+        {(uint16_t)(UART_MODE_ENABLE | UART_MODE_IREN), 0u, DSPIC33_POWER_ACTIVE, true},
         {UART_MODE_ENABLE, 0u, DSPIC33_POWER_SLEEP, false},
         {(uint16_t)(UART_MODE_ENABLE | UART_MODE_STOP_IDLE), 0u, DSPIC33_POWER_IDLE, false},
         {UART_MODE_ENABLE, 0u, DSPIC33_POWER_IDLE, true},

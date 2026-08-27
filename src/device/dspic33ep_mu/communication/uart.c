@@ -106,6 +106,7 @@ void dspic33_device_internal_uart_clear_receive(Dspic33* cpu, uint8_t channel) {
     memset(&cpu->io.uart_rx_fifo[channel], 0, sizeof(cpu->io.uart_rx_fifo[channel]));
     memset(&cpu->io.uart_rx_hold[channel], 0, sizeof(cpu->io.uart_rx_hold[channel]));
     memset(&cpu->io.uart_rx_shift[channel], 0, sizeof(cpu->io.uart_rx_shift[channel]));
+    cpu->io.uart_irda_edge_cycle[channel] = 0u;
     cpu->io.uart_rx_hold_valid &= (uint8_t)~bit;
     cpu->io.uart_rx_active &= (uint8_t)~bit;
     cpu->io.uart_rx_generation[channel]++;
@@ -268,9 +269,17 @@ bool dspic33_device_internal_uart_rx_logical_level(const Dspic33* cpu, uint8_t c
 bool dspic33_device_internal_uart_receiver_operating(const Dspic33* cpu, uint8_t channel) {
     uint16_t mode = dspic33_device_internal_raw_word(cpu, dspic33_device_uart_bases[channel]);
     return !dspic33_device_internal_uart_module_disabled(cpu, channel) &&
-           (mode & (UART_MODE_ENABLE | UART_MODE_LOOPBACK | UART_MODE_IREN)) == UART_MODE_ENABLE &&
+           (mode & (UART_MODE_ENABLE | UART_MODE_LOOPBACK)) == UART_MODE_ENABLE &&
            cpu->power_state != DSPIC33_POWER_SLEEP &&
            (cpu->power_state != DSPIC33_POWER_IDLE || (mode & UART_MODE_STOP_IDLE) == 0u);
+}
+
+void dspic33_device_internal_uart_irda_edge(Dspic33* cpu, uint8_t channel) {
+    uint8_t mask = (uint8_t)(1u << channel);
+    cpu->io.uart_irda_edge_cycle[channel] = cpu->device_cycles;
+    if ((cpu->io.uart_rx_active & mask) == 0u) {
+        dspic33_device_internal_uart_begin_physical_receive(cpu, channel);
+    }
 }
 
 void dspic33_device_internal_uart_cancel_physical_receive(Dspic33* cpu, uint8_t channel) {
@@ -329,7 +338,8 @@ void dspic33_device_internal_uart_begin_physical_receive(Dspic33* cpu, uint8_t c
     uint64_t unit = (uint64_t)dspic33_device_internal_raw_word(
                         cpu, (uint16_t)(dspic33_device_uart_bases[channel] + 8u)) +
                     1u;
-    uint8_t samples = (mode & UART_MODE_HIGH_SPEED) != 0u ? 1u : 3u;
+    uint8_t samples =
+        (mode & (UART_MODE_IREN | UART_MODE_HIGH_SPEED)) == UART_MODE_HIGH_SPEED ? 1u : 3u;
     uint8_t clocks = samples == 1u ? 4u : 16u;
     uint8_t sample_first = samples == 1u ? 2u : 7u;
     uint8_t bit_count;
@@ -344,6 +354,7 @@ void dspic33_device_internal_uart_begin_physical_receive(Dspic33* cpu, uint8_t c
     frame->baud_period =
         dspic33_device_internal_raw_word(cpu, (uint16_t)(dspic33_device_uart_bases[channel] + 8u));
     frame->inverted = (mode & 0x0010u) != 0u;
+    frame->irda = (mode & UART_MODE_IREN) != 0u;
     cpu->io.uart_rx_generation[channel]++;
     cpu->io.uart_rx_samples[channel] = samples;
     cpu->io.uart_rx_votes[channel] = 0u;
@@ -377,8 +388,13 @@ static void uart_sample_physical_receive(Dspic33* cpu, uint8_t channel, uint32_t
     bool high;
     Dspic33UartFrame* frame = &cpu->io.uart_rx_shift[channel];
     if (generation != cpu->io.uart_rx_generation[channel] || samples == 0u ||
-        (cpu->io.uart_rx_active & mask) == 0u ||
-        !dspic33_device_internal_uart_rx_logical_level(cpu, channel, &high)) {
+        (cpu->io.uart_rx_active & mask) == 0u) {
+        return;
+    }
+    if (frame->irda) {
+        uint64_t unit = (uint64_t)frame->baud_period + 1u;
+        high = cpu->device_cycles - cpu->io.uart_irda_edge_cycle[channel] >= 16u * unit;
+    } else if (!dspic33_device_internal_uart_rx_logical_level(cpu, channel, &high)) {
         return;
     }
     if (high) {

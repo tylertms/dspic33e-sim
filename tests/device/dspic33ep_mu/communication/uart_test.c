@@ -129,6 +129,34 @@ static bool drive_uart_frame(Dspic33* cpu, uint16_t mode, uint16_t baud, uint16_
     return true;
 }
 
+static bool drive_irda_bit(Dspic33* cpu, bool logical, bool idle, uint64_t unit) {
+    if (logical) {
+        return dspic33_gpio_drive(cpu, 3u, idle ? 1u : 0u, 1u) &&
+               dspic33_device_advance(cpu, 16u * unit);
+    }
+    return dspic33_gpio_drive(cpu, 3u, idle ? 1u : 0u, 1u) &&
+           dspic33_device_advance(cpu, 7u * unit) &&
+           dspic33_gpio_drive(cpu, 3u, idle ? 0u : 1u, 1u) &&
+           dspic33_device_advance(cpu, 3u * unit) &&
+           dspic33_gpio_drive(cpu, 3u, idle ? 1u : 0u, 1u) &&
+           dspic33_device_advance(cpu, 6u * unit);
+}
+
+static bool drive_irda_frame(Dspic33* cpu, uint16_t mode, uint16_t baud, uint8_t value) {
+    bool idle = (mode & 0x0010u) == 0u;
+    uint64_t unit = (uint64_t)baud + 1u;
+    uint8_t bit;
+    if (!drive_irda_bit(cpu, false, idle, unit)) {
+        return false;
+    }
+    for (bit = 0u; bit < 8u; bit++) {
+        if (!drive_irda_bit(cpu, (value & (uint8_t)(1u << bit)) != 0u, idle, unit)) {
+            return false;
+        }
+    }
+    return drive_irda_bit(cpu, true, idle, unit);
+}
+
 static void register_cases(TestState* state, Dspic33* cpu) {
     uint8_t channel;
     for (channel = 0u; channel < DSPIC33_UART_COUNT; channel++) {
@@ -756,6 +784,26 @@ static void physical_pps_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && !high, "UART PPS simplex RTS active low");
 }
 
+static void physical_irda_cases(TestState* state, Dspic33* cpu) {
+    for (uint8_t channel = 0u; channel < DSPIC33_UART_COUNT; channel++) {
+        uint16_t mode = (uint16_t)(0x9000u | ((channel & 1u) != 0u ? 0x0010u : 0u));
+        uint16_t baud = (uint16_t)(channel + 1u);
+        uint8_t value = (uint8_t)(0x96u + channel);
+        bool idle = (mode & 0x0010u) == 0u;
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, 0x0e3eu, 0u);
+        dspic33_gpio_drive(cpu, 3u, idle ? 1u : 0u, 1u);
+        dspic33_write_word(cpu, pps_registers[channel], 64u);
+        configure(cpu, channel, mode, 0u, baud);
+        expect(state, drive_irda_frame(cpu, mode, baud, value), "UART PPS IrDA receive timing");
+        expect(state,
+               dspic33_read_word(cpu, (uint16_t)(bases[channel] + 6u)) == value &&
+                   interrupt_flag(cpu, receive_irqs[channel]),
+               "UART PPS IrDA decoder feeds receive FIFO");
+    }
+}
+
 static void physical_lifecycle_cases(TestState* state, Dspic33* cpu) {
     Dspic33 copy;
     bool high = false;
@@ -994,6 +1042,7 @@ int main(void) {
         cts_cases(&state, &cpu);
         dma_cases(&state, &cpu);
         physical_pps_cases(&state, &cpu);
+        physical_irda_cases(&state, &cpu);
         physical_lifecycle_cases(&state, &cpu);
         physical_auto_baud_cases(&state, &cpu);
         dspic33_uart_test_boundary_cases(&state, &cpu);

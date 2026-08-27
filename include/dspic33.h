@@ -521,6 +521,7 @@ typedef struct {
     Dspic33UartFrame uart_rx_hold[DSPIC33_UART_COUNT];
     uint64_t uart_tx_start_cycle[DSPIC33_UART_COUNT];
     uint64_t uart_auto_baud_first_cycle[DSPIC33_UART_COUNT];
+    uint64_t uart_irda_edge_cycle[DSPIC33_UART_COUNT];
     uint16_t uart_generation[DSPIC33_UART_COUNT];
     uint16_t uart_rx_generation[DSPIC33_UART_COUNT];
     uint8_t uart_rx_selection[DSPIC33_UART_COUNT];
@@ -701,6 +702,7 @@ typedef struct {
     uint8_t spi_pin_bits[DSPIC33_SPI_COUNT];
     uint8_t spi_pin_output_index[DSPIC33_SPI_COUNT];
     uint8_t spi_pin_output_started;
+    uint8_t spi_tx_retained;
     uint8_t spi_pin_clock_high;
     uint8_t spi_pin_data_high;
     uint8_t spi_pin_input_enabled;

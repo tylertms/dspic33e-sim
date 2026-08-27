@@ -385,10 +385,17 @@ void dspic33_spi_test_slave_select_retry_cases(TestState* state, Dspic33* cpu) {
         expect(state,
                (cpu->io.spi_busy & channel_bit) != 0u &&
                    cpu->io.spi_shift[channel_index] == transmitted_value &&
+                   cpu->io.spi_tx_fifo[channel_index].count == 1u &&
+                   (dspic33_read_word(cpu, spi_base) & 0x0002u) != 0u &&
                    dspic33_spi_data_output(cpu, channel_index, &data_high) && data_high &&
                    (data_functions[channel_index] == 0u ||
                     (dspic33_spi_pin(cpu, 64u, &data_high) && data_high)),
                "active slave select starts the held transmission");
+        dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), (uint16_t)~transmitted_value);
+        expect(state,
+               cpu->io.spi_tx_fifo[channel_index].count == 1u &&
+                   cpu->io.spi_shift[channel_index] == transmitted_value,
+               "active slave select rejects a second buffered word");
 
         for (uint8_t bit_index = 0u; bit_index < 4u; bit_index++) {
             const bool sample_high = (received_value & (uint16_t)(1u << (15u - bit_index))) != 0u;
@@ -409,7 +416,8 @@ void dspic33_spi_test_slave_select_retry_cases(TestState* state, Dspic33* cpu) {
         expect(state,
                (cpu->io.spi_busy & channel_bit) != 0u &&
                    cpu->io.spi_shift[channel_index] == transmitted_value &&
-                   cpu->io.spi_tx_fifo[channel_index].count == 0u,
+                   cpu->io.spi_tx_fifo[channel_index].count == 1u &&
+                   (dspic33_read_word(cpu, spi_base) & 0x0002u) != 0u,
                "slave reselection retries the retained word from its first bit");
         for (uint8_t bit_index = 0u; bit_index < 16u; bit_index++) {
             const bool sample_high = (received_value & (uint16_t)(1u << (15u - bit_index))) != 0u;
@@ -419,6 +427,7 @@ void dspic33_spi_test_slave_select_retry_cases(TestState* state, Dspic33* cpu) {
         }
         expect(state,
                (cpu->io.spi_busy & channel_bit) == 0u &&
+                   cpu->io.spi_tx_fifo[channel_index].count == 0u &&
                    dspic33_read_word(cpu, (uint16_t)(spi_base + 8u)) == received_value &&
                    !dspic33_spi_test_interrupt_flag(cpu, irqs[channel_index]) &&
                    dspic33_spi_test_transfer_interrupt_after_cycle(cpu, irqs[channel_index]),
