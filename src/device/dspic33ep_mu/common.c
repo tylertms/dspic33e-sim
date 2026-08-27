@@ -434,9 +434,11 @@ void dspic33_device_internal_update_gpio_latch(Dspic33* cpu, uint16_t address, u
         if (word_write) {
             latch = requested;
         } else if ((address & 1u) == 0u) {
-            latch = requested & 0x00ffu;
+            latch = (uint16_t)((dspic33_device_internal_raw_word(cpu, latch_address) & 0xff00u) |
+                               (requested & 0x00ffu));
         } else {
-            latch = requested & 0xff00u;
+            latch = (uint16_t)((dspic33_device_internal_raw_word(cpu, latch_address) & 0x00ffu) |
+                               (requested & 0xff00u));
         }
         if (dspic33_device_internal_register_write_mask(cpu, latch_address, &writable)) {
             latch = (uint16_t)((dspic33_device_internal_raw_word(cpu, latch_address) & ~writable) |

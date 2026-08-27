@@ -148,13 +148,13 @@ static void core_cases(TestState* state, Dspic33* cpu) {
         dspic33_write_byte(cpu, port_addresses[port], 0x3cu);
         expect(state,
                dspic33_read_word(cpu, latch_addresses[port]) ==
-                   (uint16_t)(0x003cu & latch_masks[port]),
-               "PORT low-byte write zero-extends into LAT");
+                   (uint16_t)(0xa53cu & latch_masks[port]),
+               "PORT low-byte write preserves high LAT byte");
         dspic33_write_byte(cpu, (uint16_t)(port_addresses[port] + 1u), 0xc3u);
         expect(state,
                dspic33_read_word(cpu, latch_addresses[port]) ==
-                   (uint16_t)(0xc300u & latch_masks[port]),
-               "PORT high-byte write zero-extends into LAT");
+                   (uint16_t)(0xc33cu & latch_masks[port]),
+               "PORT high-byte write preserves low LAT byte");
     }
 }
 

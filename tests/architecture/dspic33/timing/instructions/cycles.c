@@ -254,7 +254,7 @@ void dspic33_timing_test_direct_file_move_cases(TestState* state, Dspic33* cpu) 
     cpu->sr = 0x010du;
     cpu->io.cpu_write_valid = false;
     expect(state,
-           dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_read_word(cpu, 0x0e14u) == 0u &&
+           dspic33_step(cpu) == DSPIC33_RUNNING && dspic33_read_word(cpu, 0x0e14u) == 0xff00u &&
                cpu->w[0] == 0x5a5au && cpu->sr == 0x0107u && cpu->cycles == 2u &&
                cpu->io.cpu_write_valid && cpu->io.cpu_write_address == 0x0e12u &&
                cpu->io.cpu_write_width == 1u,
