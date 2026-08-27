@@ -21,7 +21,7 @@ enum {
     ELF_SECTION_UNDEFINED = 0,
     ELF_FLAG_ALLOC = 2,
     ELF_FLAG_EXECUTE = 4,
-    ELF_FLAG_PROGRAM = 0x40000000,
+    ELF_FLAG_NOLOAD = 0x00800000,
     ELF_FLAG_PSV = 0x10000000
 };
 
@@ -240,7 +240,8 @@ bool elf_image_load_program(const ElfImage* image, Dspic33* cpu, char* error, si
         ElfSection program_section = read_section(image, table_offset, section_index);
         if (program_section.type != ELF_SECTION_PROGBITS ||
             (program_section.flags & ELF_FLAG_ALLOC) == 0u ||
-            (program_section.flags & (ELF_FLAG_PROGRAM | ELF_FLAG_PSV)) == 0u) {
+            (program_section.flags & ELF_FLAG_NOLOAD) != 0u ||
+            (program_section.flags & (ELF_FLAG_EXECUTE | ELF_FLAG_PSV)) == 0u) {
             continue;
         }
         if ((program_section.byte_size & 3u) != 0u ||

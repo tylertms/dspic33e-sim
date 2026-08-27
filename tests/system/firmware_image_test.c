@@ -13,9 +13,11 @@ enum {
     PROGRAM_SECTION_TABLE_OFFSET = PROGRAM_TABLE_OFFSET + ELF_PROGRAM_SIZE,
     PROGRAM_SECTION_OFFSET = PROGRAM_SECTION_TABLE_OFFSET + ELF_SECTION_SIZE,
     COMMENT_SECTION_OFFSET = PROGRAM_SECTION_OFFSET + ELF_SECTION_SIZE,
-    PROGRAM_DATA_OFFSET = COMMENT_SECTION_OFFSET + ELF_SECTION_SIZE,
+    NOLOAD_SECTION_OFFSET = COMMENT_SECTION_OFFSET + ELF_SECTION_SIZE,
+    PROGRAM_DATA_OFFSET = NOLOAD_SECTION_OFFSET + ELF_SECTION_SIZE,
     COMMENT_DATA_OFFSET = PROGRAM_DATA_OFFSET + 4,
-    IMAGE_SIZE = COMMENT_DATA_OFFSET + 4,
+    NOLOAD_DATA_OFFSET = COMMENT_DATA_OFFSET + 4,
+    IMAGE_SIZE = NOLOAD_DATA_OFFSET + 4,
     SYMBOL_OFFSET = ELF_HEADER_SIZE + 3 * ELF_SECTION_SIZE,
     STRING_OFFSET = SYMBOL_OFFSET + 16,
     SYMBOL_IMAGE_SIZE = STRING_OFFSET + 7,
@@ -55,7 +57,7 @@ static void initialize_elf_image(uint8_t* image) {
     write_u16_le(image, 42u, ELF_PROGRAM_SIZE);
     write_u16_le(image, 44u, 1u);
     write_u16_le(image, 46u, ELF_SECTION_SIZE);
-    write_u16_le(image, 48u, 3u);
+    write_u16_le(image, 48u, 4u);
 
     write_u32_le(image, PROGRAM_TABLE_OFFSET, 1u);
     write_u32_le(image, PROGRAM_TABLE_OFFSET + 4u, PROGRAM_DATA_OFFSET);
@@ -68,7 +70,7 @@ static void initialize_elf_image(uint8_t* image) {
 
     const size_t section = PROGRAM_SECTION_OFFSET;
     write_u32_le(image, section + 4u, 1u);
-    write_u32_le(image, section + 8u, 0x40000006u);
+    write_u32_le(image, section + 8u, 0x00000006u);
     write_u32_le(image, section + 12u, 0x100u);
     write_u32_le(image, section + 16u, PROGRAM_DATA_OFFSET);
     write_u32_le(image, section + 20u, 4u);
@@ -79,6 +81,13 @@ static void initialize_elf_image(uint8_t* image) {
     write_u32_le(image, COMMENT_SECTION_OFFSET + 16u, COMMENT_DATA_OFFSET);
     write_u32_le(image, COMMENT_SECTION_OFFSET + 20u, 4u);
     memcpy(image + COMMENT_DATA_OFFSET, "meta", 4u);
+
+    write_u32_le(image, NOLOAD_SECTION_OFFSET + 4u, 1u);
+    write_u32_le(image, NOLOAD_SECTION_OFFSET + 8u, 0x40800006u);
+    write_u32_le(image, NOLOAD_SECTION_OFFSET + 12u, 0x200u);
+    write_u32_le(image, NOLOAD_SECTION_OFFSET + 16u, NOLOAD_DATA_OFFSET);
+    write_u32_le(image, NOLOAD_SECTION_OFFSET + 20u, 4u);
+    write_u32_le(image, NOLOAD_DATA_OFFSET, 0x00654321u);
 }
 
 static void initialize_symbol_image(uint8_t* image) {
@@ -189,6 +198,8 @@ static void test_elf(TestState* state, Dspic33* cpu) {
     expect(state, entry_address == 0x100u, "entry_address == 0x100u");
     expect(state, dspic33_read_program_word(cpu, 0x100u) == 0x00123456u,
            "dspic33_read_program_word(cpu, 0x100u) == 0x00123456u");
+    expect(state, dspic33_read_program_word(cpu, 0x200u) == 0x00ffffffu,
+           "allocated noload ELF program section is ignored");
     initialize_elf_image(image);
     write_u32_le(image, PROGRAM_TABLE_OFFSET + 8u, 0x8300u);
     write_u32_le(image, PROGRAM_TABLE_OFFSET + 12u, 0x300u);
