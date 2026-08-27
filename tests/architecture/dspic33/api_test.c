@@ -159,9 +159,10 @@ static void test_coverage(TestState* state) {
     expect(state, result.conditional_branches == 6u, "coverage records conditional branches");
     expect(state, result.branches_taken == 3u, "coverage records taken branches");
     expect(state, result.branches_not_taken == 3u, "coverage records not-taken branches");
-    expect(state, result.unique_branch_sites == 3u, "coverage counts unique branch sites");
-    expect(state, result.unique_branch_outcomes == 6u, "coverage counts unique branch outcomes");
-    expect(state, result.fully_covered_branch_sites == 3u,
+    expect(state, result.observed_branch_sites == 3u, "coverage counts observed branch sites");
+    expect(state, result.observed_branch_outcomes == 6u,
+           "coverage counts observed branch outcomes");
+    expect(state, result.branch_sites_with_both_outcomes == 3u,
            "coverage counts branches with both outcomes");
     expect(state, (dspic33_coverage_flags(coverage, 0x200u) & DSPIC33_COVERAGE_EXECUTED) != 0u,
            "coverage exposes the first instruction");
@@ -246,8 +247,7 @@ static void test_power_save_time_advance(TestState* state) {
            "idle instruction is loaded");
     expect(state, dspic33_load_program_word(cpu, TIMER1_VECTOR, 0x000300u),
            "Timer1 vector is loaded");
-    expect(state, dspic33_load_program_word(cpu, 0x0300u, OPCODE_NOP),
-           "Timer1 handler is loaded");
+    expect(state, dspic33_load_program_word(cpu, 0x0300u, OPCODE_NOP), "Timer1 handler is loaded");
     dspic33_reset(cpu, 0u);
     dspic33_set_working_register(cpu, 15u, 0x5000u);
     dspic33_write_word(cpu, TIMER1_COUNTER, 0u);
@@ -267,8 +267,7 @@ static void test_power_save_time_advance(TestState* state) {
            "sleep instruction is loaded");
     expect(state, dspic33_load_program_word(cpu, UART1_RECEIVE_VECTOR, 0x000400u),
            "UART1 receive vector is loaded");
-    expect(state, dspic33_load_program_word(cpu, 0x0400u, OPCODE_NOP),
-           "UART1 handler is loaded");
+    expect(state, dspic33_load_program_word(cpu, 0x0400u, OPCODE_NOP), "UART1 handler is loaded");
     dspic33_reset(cpu, 0u);
     dspic33_set_working_register(cpu, 15u, 0x5000u);
     dspic33_write_word(cpu, UART1_MODE, 0x8080u);

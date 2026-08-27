@@ -11,9 +11,9 @@ struct Dspic33Coverage {
     uint64_t branches_taken;
     uint64_t branches_not_taken;
     size_t unique_instructions;
-    size_t unique_branch_sites;
-    size_t unique_branch_outcomes;
-    size_t fully_covered_branch_sites;
+    size_t observed_branch_sites;
+    size_t observed_branch_outcomes;
+    size_t branch_sites_with_both_outcomes;
     uint8_t slots[];
 };
 
@@ -77,13 +77,13 @@ void dspic33_coverage_record_branch(Dspic33Coverage* coverage, uint32_t address,
         taken ? DSPIC33_COVERAGE_BRANCH_NOT_TAKEN : DSPIC33_COVERAGE_BRANCH_TAKEN;
     if ((coverage->slots[slot] &
          (DSPIC33_COVERAGE_BRANCH_TAKEN | DSPIC33_COVERAGE_BRANCH_NOT_TAKEN)) == 0u) {
-        coverage->unique_branch_sites++;
+        coverage->observed_branch_sites++;
     }
     if ((coverage->slots[slot] & outcome) == 0u) {
         coverage->slots[slot] |= outcome;
-        coverage->unique_branch_outcomes++;
+        coverage->observed_branch_outcomes++;
         if ((coverage->slots[slot] & opposite) != 0u) {
-            coverage->fully_covered_branch_sites++;
+            coverage->branch_sites_with_both_outcomes++;
         }
     }
     coverage->branches_taken += taken;
@@ -95,15 +95,15 @@ Dspic33CoverageResult dspic33_coverage_result(const Dspic33Coverage* coverage) {
         return (Dspic33CoverageResult){0};
     }
     return (Dspic33CoverageResult){
-        coverage->instructions,
-        coverage->outside_range,
-        coverage->branches_taken + coverage->branches_not_taken,
-        coverage->branches_taken,
-        coverage->branches_not_taken,
-        coverage->unique_instructions,
-        coverage->unique_branch_sites,
-        coverage->unique_branch_outcomes,
-        coverage->fully_covered_branch_sites,
+        .instructions = coverage->instructions,
+        .outside_range = coverage->outside_range,
+        .conditional_branches = coverage->branches_taken + coverage->branches_not_taken,
+        .branches_taken = coverage->branches_taken,
+        .branches_not_taken = coverage->branches_not_taken,
+        .unique_instructions = coverage->unique_instructions,
+        .observed_branch_sites = coverage->observed_branch_sites,
+        .observed_branch_outcomes = coverage->observed_branch_outcomes,
+        .branch_sites_with_both_outcomes = coverage->branch_sites_with_both_outcomes,
     };
 }
 

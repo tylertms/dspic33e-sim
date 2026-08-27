@@ -797,9 +797,9 @@ typedef struct {
     uint64_t branches_taken;
     uint64_t branches_not_taken;
     size_t unique_instructions;
-    size_t unique_branch_sites;
-    size_t unique_branch_outcomes;
-    size_t fully_covered_branch_sites;
+    size_t observed_branch_sites;
+    size_t observed_branch_outcomes;
+    size_t branch_sites_with_both_outcomes;
 } Dspic33CoverageResult;
 
 typedef enum {
