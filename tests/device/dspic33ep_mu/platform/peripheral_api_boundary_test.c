@@ -72,6 +72,8 @@ static void conversion_and_pwm_cases(TestState* state, Dspic33* cpu) {
 static void can_cases(TestState* state, Dspic33* cpu) {
     Dspic33CanFrame frame;
     memset(&frame, 0, sizeof(frame));
+    expect(state, !dspic33_can_receive(cpu, 0u, NULL, 0u) && cpu->io.can_rx[0].count == 0u,
+           "CAN receive rejects a null frame without changing its queue");
     frame.length = 9u;
     expect(state, !dspic33_can_receive(cpu, 0u, &frame, 0u),
            "CAN receive rejects an oversized frame");
@@ -97,6 +99,13 @@ static void can_cases(TestState* state, Dspic33* cpu) {
                !dspic33_can_invalid(cpu, 0u, UINT64_MAX) &&
                !dspic33_can_transmit(cpu, DSPIC33_CAN_COUNT, &frame),
            "CAN APIs reject invalid boundaries");
+
+    expect(state, dspic33_device_internal_can_queue_push(&cpu->io.can_tx[0], &frame),
+           "CAN transmit boundary queue populated");
+    expect(state,
+           !dspic33_can_transmit(cpu, 0u, NULL) && cpu->io.can_tx[0].count == 1u &&
+               dspic33_can_transmit(cpu, 0u, &frame) && cpu->io.can_tx[0].count == 0u,
+           "CAN transmit rejects a null frame without consuming its queue");
 }
 
 static void can_output_cases(TestState* state, Dspic33* cpu) {
@@ -153,6 +162,7 @@ static void can_output_cases(TestState* state, Dspic33* cpu) {
 
 static void usb_cases(TestState* state, Dspic33* cpu) {
     uint8_t packet[8] = {0u};
+    Dspic33UsbPacket queued_packet = {0u};
     expect(state,
            !dspic33_usb_receive(cpu, DSPIC33_USB_ENDPOINT_COUNT, packet, 1u, 0u) &&
                !dspic33_usb_receive(cpu, 0u, packet, DSPIC33_USB_PACKET_SIZE + 1u, 0u) &&
@@ -165,6 +175,13 @@ static void usb_cases(TestState* state, Dspic33* cpu) {
                !dspic33_usb_host_response(cpu, DSPIC33_USB_HANDSHAKE_ACK, NULL, 0u, false, 0u) &&
                !dspic33_usb_bus(cpu, (Dspic33UsbBusEvent)8u, 0u, 0u),
            "USB APIs reject invalid boundaries");
+
+    expect(state, dspic33_device_internal_usb_queue_push(&cpu->io.usb_tx, &queued_packet),
+           "USB transmit boundary queue populated");
+    expect(state,
+           !dspic33_usb_transmit(cpu, NULL) && cpu->io.usb_tx.count == 1u &&
+               dspic33_usb_transmit(cpu, &queued_packet) && cpu->io.usb_tx.count == 0u,
+           "USB transmit rejects a null packet without consuming its queue");
 }
 
 static void output_state_cases(TestState* state, Dspic33* cpu) {
@@ -227,6 +244,13 @@ static void usb_state_cases(TestState* state, Dspic33* cpu) {
     cpu->io.usb_host_pending = true;
     cpu->io.usb_host_endpoint = 0u;
     cpu->io.usb_host_pid = DSPIC33_USB_PID_IN;
+    expect(state,
+           !dspic33_usb_host_response(cpu, (Dspic33UsbHandshake)(DSPIC33_USB_HANDSHAKE_ERROR + 1u),
+                                      &data, 0u, false, 0u) &&
+               !dspic33_usb_host_response(cpu, (Dspic33UsbHandshake)-1, &data, 0u, false, 0u) &&
+               cpu->events.count == 0u && !cpu->io.usb_pending[0].active &&
+               cpu->io.usb_host_pending,
+           "undefined USB handshake leaves host response state unchanged");
     expect(state, dspic33_usb_host_response(cpu, DSPIC33_USB_HANDSHAKE_ACK, &data, 0u, false, 0u),
            "pending USB host token accepts a response");
 

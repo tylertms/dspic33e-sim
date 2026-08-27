@@ -80,11 +80,13 @@ static bool event_reserve(Dspic33EventQueue* queue) {
     return true;
 }
 
-static bool event_source_valid(const Dspic33* cpu, Dspic33EventType type,
-                               uint16_t event_source) {
+static bool event_source_valid(const Dspic33* cpu, Dspic33EventType type, uint16_t event_source,
+                               uint32_t event_value) {
     switch (type) {
     case DSPIC33_EVENT_TIMER_INTERRUPT:
         return event_source < DSPIC33_TIMER_COUNT;
+    case DSPIC33_EVENT_TIMER_PMD:
+        return event_source < 5u;
     case DSPIC33_EVENT_PWM_FAULT:
     case DSPIC33_EVENT_PWM_CURRENT_LIMIT:
         return event_source < DSPIC33_PWM_INPUT_COUNT;
@@ -92,6 +94,11 @@ static bool event_source_valid(const Dspic33* cpu, Dspic33EventType type,
         return event_source < dspic33_device_internal_pwm_generator_count(cpu);
     case DSPIC33_EVENT_PWM_SYNC:
         return event_source < 2u;
+    case DSPIC33_EVENT_OUTPUT_COMPARE_FAULT:
+        return (event_value & OUTPUT_COMPARE_FAULT_EVENT_PIN) != 0u
+                   ? event_source <= UINT8_MAX &&
+                         dspic33_device_internal_pps_pin_bonded(cpu, (uint8_t)event_source)
+                   : event_source < DSPIC33_OUTPUT_COMPARE_FAULT_COUNT;
     default:
         return true;
     }
@@ -103,7 +110,7 @@ static bool schedule_event(Dspic33* cpu, Dspic33EventType type, uint16_t event_s
     size_t heap_index;
     size_t parent_heap_index;
 
-    if (!event_source_valid(cpu, type, event_source) ||
+    if (!event_source_valid(cpu, type, event_source, event_value) ||
         event_delay > UINT64_MAX - cpu->device_cycles) {
         return false;
     }
@@ -610,8 +617,7 @@ static uint32_t dma_transfer_address(const Dspic33* cpu, uint8_t channel_index,
 
 static bool dma_memory_address_valid(const Dspic33* cpu, uint32_t memory_address,
                                      uint8_t transfer_width) {
-    return memory_address >= 0x1000u &&
-           (transfer_width == 1u || (memory_address & 1u) == 0u) &&
+    return memory_address >= 0x1000u && (transfer_width == 1u || (memory_address & 1u) == 0u) &&
            dspic33_device_data_range_implemented(cpu, memory_address, transfer_width);
 }
 

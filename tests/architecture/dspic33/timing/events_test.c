@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "device/dspic33ep_mu/device.h"
+#include "device/dspic33ep_mu/registers.h"
 #include "dspic33.h"
 #include "test.h"
 
@@ -147,20 +148,19 @@ static void scheduled_source_boundary_cases(TestState* state, Dspic33* cpu) {
     typedef bool (*Schedule)(Dspic33*, Dspic33EventType, uint16_t, uint32_t, uint64_t);
     static const Schedule schedulers[] = {dspic33_schedule, dspic33_schedule_external};
     static const Dspic33EventType types[] = {
-        DSPIC33_EVENT_TIMER_INTERRUPT,
-        DSPIC33_EVENT_PWM_FAULT,
-        DSPIC33_EVENT_PWM_CURRENT_LIMIT,
-        DSPIC33_EVENT_PWM_DEAD_TIME,
-        DSPIC33_EVENT_PWM_SYNC,
+        DSPIC33_EVENT_TIMER_INTERRUPT,   DSPIC33_EVENT_TIMER_PMD,     DSPIC33_EVENT_PWM_FAULT,
+        DSPIC33_EVENT_PWM_CURRENT_LIMIT, DSPIC33_EVENT_PWM_DEAD_TIME, DSPIC33_EVENT_PWM_SYNC,
     };
     uint16_t limits[] = {
         DSPIC33_TIMER_COUNT,
+        5u,
         DSPIC33_PWM_INPUT_COUNT,
         DSPIC33_PWM_INPUT_COUNT,
         dspic33_device_profile(cpu)->pwm_generator_count,
         2u,
     };
-    for (size_t scheduler = 0u; scheduler < sizeof(schedulers) / sizeof(schedulers[0]); scheduler++) {
+    for (size_t scheduler = 0u; scheduler < sizeof(schedulers) / sizeof(schedulers[0]);
+         scheduler++) {
         for (size_t index = 0u; index < sizeof(types) / sizeof(types[0]); index++) {
             dspic33_reset(cpu, 0u);
             expect(state, !schedulers[scheduler](cpu, types[index], limits[index], 0u, 0u),
@@ -172,6 +172,29 @@ static void scheduled_source_boundary_cases(TestState* state, Dspic33* cpu) {
             expect(state, cpu->events.count == 1u && cpu->events.sequence == 1u,
                    "valid event source enters queue");
         }
+    }
+
+    for (size_t scheduler = 0u; scheduler < sizeof(schedulers) / sizeof(schedulers[0]);
+         scheduler++) {
+        dspic33_reset(cpu, 0u);
+        expect(state,
+               !schedulers[scheduler](cpu, DSPIC33_EVENT_OUTPUT_COMPARE_FAULT,
+                                      DSPIC33_OUTPUT_COMPARE_FAULT_COUNT, 0u, 0u) &&
+                   !schedulers[scheduler](cpu, DSPIC33_EVENT_OUTPUT_COMPARE_FAULT, UINT16_MAX,
+                                          OUTPUT_COMPARE_FAULT_EVENT_PIN, 0u) &&
+                   !schedulers[scheduler](cpu, DSPIC33_EVENT_OUTPUT_COMPARE_FAULT, UINT8_MAX,
+                                          OUTPUT_COMPARE_FAULT_EVENT_PIN, 0u),
+               "reject unsafe output compare fault event sources");
+        expect(state, cpu->events.count == 0u && cpu->events.sequence == 0u,
+               "invalid output compare fault sources leave queue unchanged");
+        expect(state,
+               schedulers[scheduler](cpu, DSPIC33_EVENT_OUTPUT_COMPARE_FAULT,
+                                     DSPIC33_OUTPUT_COMPARE_FAULT_COUNT - 1u, 0u, 0u) &&
+                   schedulers[scheduler](
+                       cpu, DSPIC33_EVENT_OUTPUT_COMPARE_FAULT, 16u,
+                       OUTPUT_COMPARE_FAULT_EVENT_PIN | OUTPUT_COMPARE_FAULT_EVENT_HIGH, 0u) &&
+                   dspic33_device_advance(cpu, 0u) && cpu->events.count == 0u,
+               "dispatch maximum direct and bonded pin output compare fault events");
     }
 }
 

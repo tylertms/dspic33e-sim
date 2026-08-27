@@ -279,7 +279,7 @@ bool dspic33_pwm_output(const Dspic33* cpu, uint8_t generator, bool high) {
 bool dspic33_can_receive(Dspic33* cpu, uint8_t channel, const Dspic33CanFrame* frame,
                          uint64_t delay) {
     Dspic33CanQueue* queue;
-    if (channel >= DSPIC33_CAN_COUNT || frame->length > 8u ||
+    if (frame == NULL || channel >= DSPIC33_CAN_COUNT || frame->length > 8u ||
         (!frame->extended ? frame->identifier > 0x7ffu : frame->identifier > 0x1fffffffu)) {
         return false;
     }
@@ -314,7 +314,7 @@ bool dspic33_can_invalid(Dspic33* cpu, uint8_t channel, uint64_t delay) {
 }
 
 bool dspic33_can_transmit(Dspic33* cpu, uint8_t channel, Dspic33CanFrame* frame) {
-    return channel < DSPIC33_CAN_COUNT &&
+    return frame != NULL && channel < DSPIC33_CAN_COUNT &&
            dspic33_device_internal_can_queue_pop(&cpu->io.can_tx[channel], frame);
 }
 
@@ -471,7 +471,7 @@ bool dspic33_usb_token(Dspic33* cpu, uint8_t address, uint8_t endpoint, Dspic33U
 
 bool dspic33_usb_host_response(Dspic33* cpu, Dspic33UsbHandshake handshake, const uint8_t* data,
                                uint16_t size, bool data1, uint64_t delay) {
-    return cpu->io.usb_host_pending &&
+    return (uint32_t)handshake <= DSPIC33_USB_HANDSHAKE_ERROR && cpu->io.usb_host_pending &&
            usb_schedule_token(cpu,
                               (uint8_t)(dspic33_device_internal_raw_word(cpu, USB_ADDR) & 0x007fu),
                               cpu->io.usb_host_endpoint, cpu->io.usb_host_pid, data, size, data1,
@@ -496,5 +496,5 @@ bool dspic33_device_internal_usb_schedule_bus_event(Dspic33* cpu, Dspic33UsbBusE
 }
 
 bool dspic33_usb_transmit(Dspic33* cpu, Dspic33UsbPacket* packet) {
-    return dspic33_device_internal_usb_queue_pop(&cpu->io.usb_tx, packet);
+    return packet != NULL && dspic33_device_internal_usb_queue_pop(&cpu->io.usb_tx, packet);
 }
