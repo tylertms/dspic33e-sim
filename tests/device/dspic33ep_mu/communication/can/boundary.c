@@ -513,6 +513,27 @@ static void controller_admission_matrix_cases(TestState* state, Dspic33* cpu) {
     cpu->power_state = DSPIC33_POWER_SLEEP;
     expect(state, !dspic33_device_internal_can_serial_receive_enabled(cpu, 0u),
            "sleep disables serial CAN reception");
+
+    for (uint8_t channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint16_t base = bases[channel];
+        uint16_t pmd_mask = (uint16_t)(2u << channel);
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, base, 0x1234u);
+        uint16_t preserved_control = dspic33_read_word(cpu, base);
+        dspic33_write_word(cpu, 0x0760u, pmd_mask);
+        expect(state, dspic33_read_word(cpu, base) == preserved_control,
+               "CAN PMD disable retains one-cycle access window");
+        expect(state, dspic33_device_advance(cpu, 1u), "advance CAN PMD disable boundary");
+        dspic33_write_word(cpu, base, 0u);
+        expect(state, dspic33_read_word(cpu, base) == 0u,
+               "CAN PMD disables controller register access");
+        dspic33_write_word(cpu, 0x0760u, 0u);
+        expect(state, dspic33_read_word(cpu, base) == 0u,
+               "CAN PMD enable retains one-cycle disabled window");
+        expect(state, dspic33_device_advance(cpu, 1u), "advance CAN PMD enable boundary");
+        expect(state, dspic33_read_word(cpu, base) == preserved_control,
+               "CAN PMD enable restores preserved controller registers");
+    }
 }
 
 void dspic33_can_test_boundary_groups(TestState* state, Dspic33* cpu) {

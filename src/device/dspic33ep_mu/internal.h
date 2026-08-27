@@ -76,6 +76,7 @@ bool dspic33_device_internal_pps_physical_input_high(const Dspic33* cpu, uint8_t
 bool dspic33_device_internal_pps_register_write_mask(const Dspic33* cpu, uint16_t address,
                                                      uint16_t* writable);
 bool dspic33_device_internal_pps_shadow_matches(const Dspic33* cpu);
+bool dspic33_device_internal_platform_pmd_disabled(const Dspic33* cpu, uint8_t source);
 bool dspic33_device_internal_protect_oscillator_write(Dspic33* cpu, uint16_t address,
                                                       uint16_t previous_control);
 bool dspic33_device_internal_pwm_address_inaccessible(const Dspic33* cpu, uint16_t address);
@@ -280,6 +281,7 @@ void dspic33_device_internal_run_dci(Dspic33* cpu, uint16_t source, uint32_t val
 void dspic33_device_internal_run_dma(Dspic33* cpu, uint16_t source, uint32_t event_value);
 void dspic33_device_internal_run_input_capture(Dspic33* cpu, uint16_t source, uint32_t value);
 void dspic33_device_internal_run_output_compare(Dspic33* cpu, uint16_t source, uint32_t value);
+void dspic33_device_internal_run_platform_pmd(Dspic33* cpu, uint16_t source, uint32_t value);
 void dspic33_device_internal_run_pmp_pmd(Dspic33* cpu, uint32_t value);
 void dspic33_device_internal_run_pmp(Dspic33* cpu, uint16_t generation);
 void dspic33_device_internal_run_pwm_pmd(Dspic33* cpu, uint16_t source, uint32_t value);
@@ -349,6 +351,8 @@ void dspic33_device_internal_update_nvm_control(Dspic33* cpu, uint16_t requested
 void dspic33_device_internal_update_nvm_key(Dspic33* cpu, uint16_t key_word);
 void dspic33_device_internal_update_output_compare_pmd(Dspic33* cpu, uint16_t address,
                                                        uint16_t previous);
+void dspic33_device_internal_update_platform_pmd(Dspic33* cpu, uint16_t address,
+                                                 uint16_t previous);
 void dspic33_device_internal_update_output_compare_register(Dspic33* cpu, uint16_t address,
                                                             uint16_t previous);
 void dspic33_device_internal_update_pmp_pmd(Dspic33* cpu, uint16_t previous);

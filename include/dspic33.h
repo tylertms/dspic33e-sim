@@ -116,7 +116,8 @@ typedef enum {
     DSPIC33_EVENT_QEI,
     DSPIC33_EVENT_DCI,
     DSPIC33_EVENT_AUX_PLL,
-    DSPIC33_EVENT_OSCILLATOR
+    DSPIC33_EVENT_OSCILLATOR,
+    DSPIC33_EVENT_PLATFORM_PMD
 } Dspic33EventType;
 
 typedef struct {
@@ -546,6 +547,8 @@ typedef struct {
     uint8_t uart_rx_hold_valid;
     uint8_t uart_cts;
     uint8_t uart_cts_direct;
+    uint16_t platform_pmd_generation[15];
+    uint16_t platform_pmd_disabled;
     Dspic33ByteQueue spi_tx[DSPIC33_SPI_COUNT];
     Dspic33WordQueue spi_tx_fifo[DSPIC33_SPI_COUNT];
     Dspic33WordQueue spi_rx_fifo[DSPIC33_SPI_COUNT];

@@ -181,7 +181,7 @@ int main(void) {
             all_operations_hit = all_operations_hit && operation_hits[operation] != 0u;
         }
         expect(&state, all_operations_hit, "peripheral census reaches every operation");
-        expect(&state, fingerprint == UINT64_C(12480037681265908551),
+        expect(&state, fingerprint == UINT64_C(15291425411647694971),
                "peripheral state census matches");
         dspic33_release(&cpu);
     }

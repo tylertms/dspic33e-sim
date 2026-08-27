@@ -27,6 +27,7 @@ static void receiver_admission_matrix(TestState* state, Dspic33* cpu) {
     for (index = 0u; index < sizeof(cases) / sizeof(cases[0]); index++) {
         configure(cpu, cases[index].mode, cases[index].power);
         dspic33_device_internal_raw_write_word(cpu, 0x0760u, cases[index].pmd);
+        cpu->io.platform_pmd_disabled = cases[index].pmd != 0u ? 1u : 0u;
         expect(state,
                dspic33_device_internal_uart_receiver_operating(cpu, 0u) == cases[index].operating,
                "UART receiver admission matrix");

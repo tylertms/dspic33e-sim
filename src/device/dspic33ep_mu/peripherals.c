@@ -330,7 +330,8 @@ bool dspic33_can_pin(const Dspic33* cpu, uint8_t pin, bool* high) {
         return false;
     }
     channel = (uint8_t)(function - 14u);
-    if ((dspic33_device_internal_raw_word(cpu, 0x0760u) & (uint16_t)(2u << channel)) != 0u) {
+    if (dspic33_device_internal_platform_pmd_disabled(
+            cpu, (uint8_t)(PLATFORM_PMD_CAN_BASE + channel))) {
         return false;
     }
     *high = true;

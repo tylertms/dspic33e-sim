@@ -150,6 +150,7 @@ static void scheduled_source_boundary_cases(TestState* state, Dspic33* cpu) {
     static const Dspic33EventType types[] = {
         DSPIC33_EVENT_TIMER_INTERRUPT,   DSPIC33_EVENT_TIMER_PMD,     DSPIC33_EVENT_PWM_FAULT,
         DSPIC33_EVENT_PWM_CURRENT_LIMIT, DSPIC33_EVENT_PWM_DEAD_TIME, DSPIC33_EVENT_PWM_SYNC,
+        DSPIC33_EVENT_PLATFORM_PMD,
     };
     uint16_t limits[] = {
         DSPIC33_TIMER_COUNT,
@@ -158,6 +159,7 @@ static void scheduled_source_boundary_cases(TestState* state, Dspic33* cpu) {
         DSPIC33_PWM_INPUT_COUNT,
         dspic33_device_profile(cpu)->pwm_generator_count,
         2u,
+        15u,
     };
     for (size_t scheduler = 0u; scheduler < sizeof(schedulers) / sizeof(schedulers[0]);
          scheduler++) {

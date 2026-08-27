@@ -133,11 +133,4 @@ void dspic33_device_internal_update_spi_register(Dspic33* cpu, uint16_t address,
         dspic33_device_internal_spi_refresh_status(cpu, channel);
         return;
     }
-    if (address == 0x0760u || address == 0x076au) {
-        for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
-            if (dspic33_device_internal_spi_module_disabled(cpu, channel)) {
-                dspic33_device_internal_spi_clear_buffers(cpu, channel);
-            }
-        }
-    }
 }

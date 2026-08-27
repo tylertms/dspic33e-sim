@@ -158,16 +158,27 @@ static void pmd_cases(TestState* state, Dspic33* cpu) {
 
         dspic33_reset(cpu, 0u);
         dspic33_spi_test_configure_spi(cpu, channel_index, 0x043bu, 0u, 0u);
+        const uint16_t preserved_control = dspic33_read_word(cpu, (uint16_t)(spi_base + 2u));
         dspic33_write_word(cpu, pmd_address,
                            (uint16_t)(dspic33_read_word(cpu, pmd_address) | pmd_bit));
+        expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 2u)) == preserved_control,
+               "SPI PMD disable retains one-cycle access window");
+        expect(state, dspic33_device_advance(cpu, 1u), "advance SPI PMD disable boundary");
         dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0xaaaau);
-        expect(state, (cpu->io.spi_busy & (uint8_t)(1u << channel_index)) == 0u,
-               "pmd blocks transfer");
+        expect(state,
+               (cpu->io.spi_busy & (uint8_t)(1u << channel_index)) == 0u &&
+                   dspic33_read_word(cpu, (uint16_t)(spi_base + 2u)) == 0u,
+               "SPI PMD blocks transfer and register access");
         dspic33_write_word(cpu, pmd_address,
                            (uint16_t)(dspic33_read_word(cpu, pmd_address) & ~pmd_bit));
+        expect(state, dspic33_read_word(cpu, (uint16_t)(spi_base + 2u)) == 0u,
+               "SPI PMD enable retains one-cycle disabled window");
+        expect(state, dspic33_device_advance(cpu, 1u), "advance SPI PMD enable boundary");
         dspic33_write_word(cpu, (uint16_t)(spi_base + 8u), 0xbbbbu);
-        expect(state, (cpu->io.spi_busy & (uint8_t)(1u << channel_index)) != 0u,
-               "pmd clear restores transfer");
+        expect(state,
+               (cpu->io.spi_busy & (uint8_t)(1u << channel_index)) != 0u &&
+                   dspic33_read_word(cpu, (uint16_t)(spi_base + 2u)) == preserved_control,
+               "SPI PMD clear restores transfer and registers");
     }
 }
 

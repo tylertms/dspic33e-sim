@@ -1,5 +1,118 @@
 #include "device/dspic33ep_mu/internal.h"
 
+static bool platform_pmd_location(uint8_t source, uint16_t* address, uint16_t* mask) {
+    static const uint16_t addresses[PLATFORM_PMD_COUNT] = {
+        0x0760u, 0x0760u, 0x0764u, 0x0766u, 0x0760u, 0x0760u, 0x076au, 0x076au,
+        0x0760u, 0x0760u, 0x076cu, 0x076cu, 0x076cu, 0x076cu, 0x0766u,
+    };
+    static const uint16_t masks[PLATFORM_PMD_COUNT] = {
+        0x0020u, 0x0040u, 0x0008u, 0x0020u, 0x0008u, 0x0010u, 0x0001u, 0x0002u,
+        0x0002u, 0x0004u, 0x0010u, 0x0020u, 0x0040u, 0x0080u, 0x0008u,
+    };
+    if (source >= PLATFORM_PMD_COUNT) {
+        return false;
+    }
+    *address = addresses[source];
+    *mask = masks[source];
+    return true;
+}
+
+bool dspic33_device_internal_platform_pmd_disabled(const Dspic33* cpu, uint8_t source) {
+    return source >= PLATFORM_PMD_COUNT ||
+           (cpu->io.platform_pmd_disabled & (uint16_t)(1u << source)) != 0u;
+}
+
+void dspic33_device_internal_run_platform_pmd(Dspic33* cpu, uint16_t source, uint32_t value) {
+    uint16_t source_bit;
+    bool disabled;
+    if (source >= PLATFORM_PMD_COUNT ||
+        (uint16_t)(value >> PLATFORM_PMD_EVENT_GENERATION_SHIFT) !=
+            cpu->io.platform_pmd_generation[source]) {
+        return;
+    }
+    source_bit = (uint16_t)(1u << source);
+    disabled = (value & PLATFORM_PMD_EVENT_DISABLED) != 0u;
+    if (disabled) {
+        cpu->io.platform_pmd_disabled |= source_bit;
+    } else {
+        cpu->io.platform_pmd_disabled &= (uint16_t)~source_bit;
+    }
+    if (source < PLATFORM_PMD_SPI_BASE) {
+        uint8_t channel = (uint8_t)(source - PLATFORM_PMD_UART_BASE);
+        if (disabled) {
+            dspic33_device_internal_uart_reset_runtime(cpu, channel);
+        } else {
+            dspic33_device_internal_uart_refresh_status(cpu, channel);
+        }
+    } else if (source < PLATFORM_PMD_CAN_BASE) {
+        uint8_t channel = (uint8_t)(source - PLATFORM_PMD_SPI_BASE);
+        if (disabled) {
+            dspic33_device_internal_spi_clear_buffers(cpu, channel);
+        } else {
+            dspic33_device_internal_spi_refresh_status(cpu, channel);
+        }
+    } else if (source < PLATFORM_PMD_DMA_BASE) {
+        uint8_t channel = (uint8_t)(source - PLATFORM_PMD_CAN_BASE);
+        uint8_t channel_bit = (uint8_t)(1u << channel);
+        if (disabled) {
+            cpu->io.can_rx_busy &= (uint8_t)~channel_bit;
+            cpu->io.can_tx_busy &= (uint8_t)~channel_bit;
+        }
+    } else if (source < PLATFORM_PMD_REFERENCE_CLOCK && disabled) {
+        uint8_t first_channel = (uint8_t)((source - PLATFORM_PMD_DMA_BASE) * 4u);
+        uint8_t last_channel = (uint8_t)(first_channel + 4u);
+        if (last_channel > DSPIC33_DMA_COUNT) {
+            last_channel = DSPIC33_DMA_COUNT;
+        }
+        for (uint8_t channel = first_channel; channel < last_channel; channel++) {
+            uint16_t channel_bit = dspic33_device_internal_dma_channel_bit(channel);
+            uint16_t request_address =
+                (uint16_t)(dspic33_device_internal_dma_channel_base(channel) + 2u);
+            cpu->io.dma_forced_pending &= (uint16_t)~channel_bit;
+            cpu->io.dma_peripheral_pending &= (uint16_t)~channel_bit;
+            cpu->io.dma_active &= (uint16_t)~channel_bit;
+            cpu->io.dma_arbiter_waiting &= (uint16_t)~channel_bit;
+            dspic33_device_internal_dma_advance_generation(cpu, channel);
+            dspic33_device_internal_raw_write_word(
+                cpu, request_address,
+                (uint16_t)(dspic33_device_internal_raw_word(cpu, request_address) &
+                           ~DMA_REQ_FORCE));
+        }
+    }
+    dspic33_device_internal_refresh_physical_pin_inputs(cpu);
+}
+
+void dspic33_device_internal_update_platform_pmd(Dspic33* cpu, uint16_t address,
+                                                 uint16_t previous) {
+    uint16_t current = dspic33_device_internal_raw_word(cpu, address);
+    uint16_t changed_sources = 0u;
+    for (uint8_t source = 0u; source < PLATFORM_PMD_COUNT; source++) {
+        uint16_t source_address;
+        uint16_t source_mask;
+        if (!platform_pmd_location(source, &source_address, &source_mask) ||
+            source_address != address || ((current ^ previous) & source_mask) == 0u) {
+            continue;
+        }
+        changed_sources |= (uint16_t)(1u << source);
+        cpu->io.platform_pmd_generation[source]++;
+        if (!dspic33_schedule(
+                cpu, DSPIC33_EVENT_PLATFORM_PMD, source,
+                ((uint32_t)cpu->io.platform_pmd_generation[source]
+                 << PLATFORM_PMD_EVENT_GENERATION_SHIFT) |
+                    ((current & source_mask) != 0u ? PLATFORM_PMD_EVENT_DISABLED : 0u),
+                dspic33_device_instruction_cycles(cpu, 1u))) {
+            dspic33_device_internal_raw_write_word(cpu, address, previous);
+            for (uint8_t invalidate = 0u; invalidate < PLATFORM_PMD_COUNT; invalidate++) {
+                if ((changed_sources & (uint16_t)(1u << invalidate)) != 0u) {
+                    cpu->io.platform_pmd_generation[invalidate]++;
+                }
+            }
+            cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+            return;
+        }
+    }
+}
+
 void dspic33_device_internal_update_timer_register(Dspic33* cpu, uint16_t address,
                                                    uint16_t previous) {
     uint8_t timer;
@@ -428,8 +541,6 @@ void dspic33_device_internal_update_pwm_register(Dspic33* cpu, uint16_t address,
 
 void dspic33_device_internal_update_uart_register(Dspic33* cpu, uint16_t address, uint16_t previous,
                                                   uint16_t requested) {
-    static const uint16_t pmd_addresses[DSPIC33_UART_COUNT] = {0x0760u, 0x0760u, 0x0764u, 0x0766u};
-    static const uint16_t pmd_masks[DSPIC33_UART_COUNT] = {0x0020u, 0x0040u, 0x0008u, 0x0020u};
     uint8_t channel;
     for (channel = 0u; channel < DSPIC33_UART_COUNT; channel++) {
         uint16_t base = dspic33_device_uart_bases[channel];
@@ -499,16 +610,5 @@ void dspic33_device_internal_update_uart_register(Dspic33* cpu, uint16_t address
             return;
         }
         return;
-    }
-    for (channel = 0u; channel < DSPIC33_UART_COUNT; channel++) {
-        if (address == pmd_addresses[channel]) {
-            bool was_disabled = (previous & pmd_masks[channel]) != 0u;
-            bool disabled = dspic33_device_internal_uart_module_disabled(cpu, channel);
-            if (!was_disabled && disabled) {
-                dspic33_device_internal_uart_reset_runtime(cpu, channel);
-            } else if (was_disabled && !disabled) {
-                dspic33_device_internal_uart_refresh_status(cpu, channel);
-            }
-        }
     }
 }

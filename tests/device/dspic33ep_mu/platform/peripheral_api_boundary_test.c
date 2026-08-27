@@ -120,9 +120,11 @@ static void can_output_cases(TestState* state, Dspic33* cpu) {
            "CAN output rejects an upper adjacent PPS function");
     dspic33_write_byte(cpu, 0x0680u, 14u);
     dspic33_device_internal_raw_write_word(cpu, 0x0760u, 2u);
+    cpu->io.platform_pmd_disabled = 0x0100u;
     expect(state, !dspic33_can_pin(cpu, 64u, &high), "CAN output rejects channel PMD");
 
     dspic33_device_internal_raw_write_word(cpu, 0x0760u, 0u);
+    cpu->io.platform_pmd_disabled = 0u;
     dspic33_device_internal_raw_write_word(cpu, 0x040au, 0x2000u);
     expect(state, dspic33_can_pin(cpu, 64u, &high) && high, "bus-off CAN output remains recessive");
 

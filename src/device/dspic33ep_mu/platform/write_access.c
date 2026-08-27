@@ -22,6 +22,45 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     if (dspic33_i2c_write_register(cpu, address, previous_value, requested_value)) {
         return;
     }
+    for (channel = 0u; channel < DSPIC33_UART_COUNT; channel++) {
+        if (dspic33_device_internal_uart_module_disabled(cpu, channel) &&
+            register_address >= dspic33_device_uart_bases[channel] &&
+            register_address <= dspic33_device_uart_bases[channel] + 8u) {
+            dspic33_device_internal_raw_write_word(cpu, register_address, previous_value);
+            return;
+        }
+    }
+    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
+        if (dspic33_device_internal_spi_module_disabled(cpu, channel) &&
+            register_address >= dspic33_device_spi_bases[channel] &&
+            register_address <= dspic33_device_spi_bases[channel] + 8u) {
+            dspic33_device_internal_raw_write_word(cpu, register_address, previous_value);
+            return;
+        }
+    }
+    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        if (dspic33_device_internal_platform_pmd_disabled(
+                cpu, (uint8_t)(PLATFORM_PMD_CAN_BASE + channel)) &&
+            register_address >= dspic33_device_can_bases[channel] &&
+            register_address <= dspic33_device_can_bases[channel] + 0x7eu) {
+            dspic33_device_internal_raw_write_word(cpu, register_address, previous_value);
+            return;
+        }
+    }
+    if (register_address >= DMA_CHANNEL_BASE &&
+        register_address < DMA_CHANNEL_BASE + DSPIC33_DMA_COUNT * DMA_CHANNEL_STRIDE) {
+        channel = (uint8_t)((register_address - DMA_CHANNEL_BASE) / DMA_CHANNEL_STRIDE);
+        if (dspic33_device_internal_platform_pmd_disabled(
+                cpu, (uint8_t)(PLATFORM_PMD_DMA_BASE + channel / 4u))) {
+            dspic33_device_internal_raw_write_word(cpu, register_address, previous_value);
+            return;
+        }
+    }
+    if (register_address == REFERENCE_CLOCK_CONTROL &&
+        dspic33_device_internal_platform_pmd_disabled(cpu, PLATFORM_PMD_REFERENCE_CLOCK)) {
+        dspic33_device_internal_raw_write_word(cpu, register_address, previous_value);
+        return;
+    }
     if (cpu->io.usb_pmd_disabled &&
         dspic33_device_internal_usb_register_address(register_address)) {
         dspic33_device_internal_raw_write_word(cpu, register_address, previous_value);
@@ -64,6 +103,7 @@ void dspic33_device_write_byte(Dspic33* cpu, uint16_t address, uint16_t previous
     dspic33_device_internal_update_adc_pmd(cpu, register_address, previous_value);
     dspic33_device_internal_update_pwm_pmd(cpu, register_address, previous_value);
     dspic33_device_internal_update_usb_pmd(cpu, register_address, previous_value);
+    dspic33_device_internal_update_platform_pmd(cpu, register_address, previous_value);
     if (register_address == 0x0740u && (cpu->configuration[10u] & 0x80u) == 0u &&
         (previous_value & 0x0020u) == 0u &&
         (dspic33_device_internal_raw_word(cpu, register_address) & 0x0020u) != 0u) {

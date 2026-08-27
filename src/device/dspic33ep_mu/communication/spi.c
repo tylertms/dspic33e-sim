@@ -1,12 +1,9 @@
 #include "device/dspic33ep_mu/internal.h"
 
 bool dspic33_device_internal_spi_module_disabled(const Dspic33* cpu, uint8_t channel) {
-    if (channel < 2u) {
-        return (dspic33_device_internal_raw_word(cpu, 0x0760u) & (uint16_t)(0x0008u << channel)) !=
-               0u;
-    }
-    return (dspic33_device_internal_raw_word(cpu, 0x076au) & (uint16_t)(1u << (channel - 2u))) !=
-           0u;
+    return channel >= DSPIC33_SPI_COUNT ||
+           dspic33_device_internal_platform_pmd_disabled(
+               cpu, (uint8_t)(PLATFORM_PMD_SPI_BASE + channel));
 }
 
 bool dspic33_device_internal_spi_master(const Dspic33* cpu, uint8_t channel) {
@@ -542,6 +539,10 @@ void dspic33_device_internal_run_spi(Dspic33* cpu, uint8_t channel, uint32_t eve
     register_base = dspic33_device_spi_bases[channel];
     channel_mask = (uint8_t)(1u << channel);
 
+    if (dspic33_device_internal_spi_module_disabled(cpu, channel)) {
+        return;
+    }
+
     if (event_kind == 0u) {
         dspic33_device_internal_raw_write_word(cpu, (uint16_t)(register_base + 8u), event_data);
         dspic33_device_internal_raw_write_word(
@@ -551,8 +552,7 @@ void dspic33_device_internal_run_spi(Dspic33* cpu, uint8_t channel, uint32_t eve
         return;
     }
 
-    if ((dspic33_device_internal_raw_word(cpu, register_base) & SPI_ENABLE) == 0u ||
-        dspic33_device_internal_spi_module_disabled(cpu, channel)) {
+    if ((dspic33_device_internal_raw_word(cpu, register_base) & SPI_ENABLE) == 0u) {
         return;
     }
 

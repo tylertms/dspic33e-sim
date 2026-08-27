@@ -245,6 +245,9 @@ static void process_event(Dspic33* cpu, const Dspic33Event* event) {
     case DSPIC33_EVENT_OSCILLATOR:
         dspic33_device_internal_complete_oscillator_event(cpu, event->source, event->value);
         break;
+    case DSPIC33_EVENT_PLATFORM_PMD:
+        dspic33_device_internal_run_platform_pmd(cpu, event->source, event->value);
+        break;
     }
 }
 

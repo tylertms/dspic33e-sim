@@ -13,12 +13,13 @@ uint8_t dspic33_device_internal_can_mode(const Dspic33* cpu, uint8_t channel_ind
 }
 
 bool dspic33_device_internal_can_power_enabled(const Dspic33* cpu, uint8_t channel_index) {
-    const uint16_t control_word =
-        dspic33_device_internal_raw_word(cpu, dspic33_device_can_bases[channel_index]);
-
-    if ((dspic33_device_internal_raw_word(cpu, 0x0760u) & (uint16_t)(2u << channel_index)) != 0u) {
+    if (channel_index >= DSPIC33_CAN_COUNT ||
+        dspic33_device_internal_platform_pmd_disabled(
+            cpu, (uint8_t)(PLATFORM_PMD_CAN_BASE + channel_index))) {
         return false;
     }
+    const uint16_t control_word =
+        dspic33_device_internal_raw_word(cpu, dspic33_device_can_bases[channel_index]);
     if (cpu->power_state == DSPIC33_POWER_ACTIVE) {
         return true;
     }
@@ -1014,7 +1015,8 @@ static void can_receive_pin_level(Dspic33* cpu, uint8_t pin, bool input_is_high)
             (dspic33_device_internal_raw_word(
                  cpu, (uint16_t)(dspic33_device_can_bases[channel] + 0x12u)) &
              CAN_WAKE_FILTER) != 0u &&
-            (dspic33_device_internal_raw_word(cpu, 0x0760u) & (uint16_t)(2u << channel)) == 0u) {
+            !dspic33_device_internal_platform_pmd_disabled(
+                cpu, (uint8_t)(PLATFORM_PMD_CAN_BASE + channel))) {
             dspic33_device_internal_can_raise_event(cpu, channel, CAN_INTERRUPT_WAKE, 0u, 0u);
             continue;
         }

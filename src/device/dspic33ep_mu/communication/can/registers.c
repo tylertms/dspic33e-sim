@@ -206,13 +206,4 @@ void dspic33_device_internal_update_can_register(Dspic33* cpu, uint16_t address,
         }
         return;
     }
-    if (address == 0x0760u) {
-        for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
-            if ((dspic33_device_internal_raw_word(cpu, address) & (uint16_t)(2u << channel)) !=
-                0u) {
-                cpu->io.can_rx_busy &= (uint8_t)~(uint8_t)(1u << channel);
-                cpu->io.can_tx_busy &= (uint8_t)~(uint8_t)(1u << channel);
-            }
-        }
-    }
 }

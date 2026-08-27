@@ -79,6 +79,40 @@ static bool request(Dspic33* cpu, uint8_t source, uint16_t indirect) {
     return dspic33_dma_request(cpu, source, indirect, 0u) && dspic33_device_advance(cpu, 1u);
 }
 
+static void pmd_cases(TestState* state, Dspic33* cpu) {
+    for (uint8_t channel = 0u; channel < DSPIC33_DMA_COUNT; channel++) {
+        uint16_t base = channel_base(channel);
+        uint16_t pmd_mask = (uint16_t)(0x0010u << (channel / 4u));
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, base, 0x8001u);
+        dspic33_write_word(cpu, 0x076cu, pmd_mask);
+        expect(state, dspic33_read_word(cpu, base) == 0x8001u,
+               "DMA PMD disable retains one-cycle access window");
+        expect(state, dspic33_device_advance(cpu, 1u), "advance DMA PMD disable boundary");
+        dspic33_write_word(cpu, base, 0u);
+        expect(state, dspic33_read_word(cpu, base) == 0u,
+               "DMA PMD disables channel register access");
+        dspic33_write_word(cpu, 0x076cu, 0u);
+        expect(state, dspic33_read_word(cpu, base) == 0u,
+               "DMA PMD enable retains one-cycle disabled window");
+        expect(state, dspic33_device_advance(cpu, 1u), "advance DMA PMD enable boundary");
+        expect(state, dspic33_read_word(cpu, base) == 0x8001u,
+               "DMA PMD enable restores preserved channel registers");
+    }
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x3600u, 0xaaaau);
+    configure_channel(cpu, 0u, 0x2000u, 0xd8u, 0x3600u, 0u, DMA_TEST_WRITE_PAD, 0u);
+    expect(state, dspic33_dma_request(cpu, 0xd8u, 0u, 4u), "queue DMA before PMD disable");
+    dspic33_write_word(cpu, 0x076cu, 0x0010u);
+    expect(state, dspic33_device_advance(cpu, 1u), "apply DMA PMD with pending request");
+    expect(state, dspic33_device_advance(cpu, 4u), "advance past canceled DMA request");
+    expect(state,
+           stored_word(cpu, DMA_TEST_WRITE_PAD) == 0u && cpu->io.dma_peripheral_pending == 0u &&
+               cpu->io.dma_active == 0u,
+           "DMA PMD cancels pending channel activity");
+}
+
 static void expect_dma_address(TestState* state, Dspic33* cpu, uint16_t control,
                                uint32_t address, bool valid, const char* execution,
                                const char* result) {
@@ -1291,6 +1325,7 @@ int main(void) {
         arbiter_owner_cases(&state, &cpu);
         stale_request_cases(&state, &cpu);
         priority_preemption_cases(&state, &cpu);
+        pmd_cases(&state, &cpu);
         dspic33_dma_test_boundary_cases(&state, &cpu);
         can_receive_arbiter_erratum_cases(&state, &cpu);
         {

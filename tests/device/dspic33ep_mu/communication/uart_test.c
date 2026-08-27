@@ -179,16 +179,33 @@ static void register_cases(TestState* state, Dspic33* cpu) {
         dspic33_write_word(cpu, (uint16_t)(base + 8u), 0xa55au);
         expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0xa55au, "baud full width");
         dspic33_write_word(cpu, pmd_addresses[channel], pmd_masks[channel]);
+        expect(state, dspic33_read_word(cpu, base) == 0xbbffu,
+               "PMD disable retains one-cycle UART access window");
+        expect(state, dspic33_device_advance(cpu, 1u), "advance UART PMD disable boundary");
         dspic33_write_word(cpu, base, 0x8000u);
         dspic33_write_word(cpu, (uint16_t)(base + 8u), 0x1234u);
-        expect(state, dspic33_read_word(cpu, base) == 0xbbffu,
-               "PMD preserves mode and blocks write");
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0xa55au,
-               "PMD blocks baud write");
+        expect(state, dspic33_read_word(cpu, base) == 0u,
+               "PMD disables UART register access");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0u,
+               "PMD blocks UART writes");
         dspic33_write_word(cpu, pmd_addresses[channel], 0u);
-        expect(state, dspic33_read_word(cpu, (uint16_t)(base + 2u)) == 0xe1f0u,
-               "PMD preserves controls and resets runtime");
+        expect(state, dspic33_read_word(cpu, base) == 0u,
+               "PMD enable retains one-cycle disabled window");
+        expect(state, dspic33_device_advance(cpu, 1u), "advance UART PMD enable boundary");
+        expect(state,
+               dspic33_read_word(cpu, base) == 0xbbffu &&
+                   dspic33_read_word(cpu, (uint16_t)(base + 8u)) == 0xa55au &&
+                   dspic33_read_word(cpu, (uint16_t)(base + 2u)) == 0xe1f0u,
+               "PMD enable restores preserved UART registers");
     }
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, bases[0], 0x8000u);
+    dspic33_write_word(cpu, pmd_addresses[0], pmd_masks[0]);
+    dspic33_write_word(cpu, pmd_addresses[0], 0u);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && dspic33_read_word(cpu, bases[0]) == 0x8000u,
+           "rapid UART PMD toggle rejects stale disable transition");
 }
 
 static void receive_value_domain(TestState* state, Dspic33* cpu) {
@@ -863,7 +880,11 @@ static void physical_lifecycle_cases(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && !high,
            "UART PPS active transmit before PMD");
     dspic33_write_word(cpu, pmd_addresses[0], pmd_masks[0]);
-    expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && high && cpu->io.uart_tx_active == 0u,
+    expect(state, dspic33_gpio_pin(cpu, 3u, 0u, &high) && !high,
+           "UART PPS remains active during PMD delay");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && dspic33_gpio_pin(cpu, 3u, 0u, &high) && high &&
+               cpu->io.uart_tx_active == 0u,
            "UART PPS PMD aborts transmit and releases idle");
 
     dspic33_reset(cpu, 0u);

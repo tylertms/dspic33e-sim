@@ -490,11 +490,9 @@ bool dspic33_device_internal_adc_register_write_mask(uint16_t address, uint16_t*
 }
 
 bool dspic33_device_internal_uart_module_disabled(const Dspic33* cpu, uint8_t channel) {
-    static const uint16_t pmd_addresses[DSPIC33_UART_COUNT] = {0x0760u, 0x0760u, 0x0764u, 0x0766u};
-    static const uint16_t pmd_masks[DSPIC33_UART_COUNT] = {0x0020u, 0x0040u, 0x0008u, 0x0020u};
     return channel >= DSPIC33_UART_COUNT ||
-           (dspic33_device_internal_raw_word(cpu, pmd_addresses[channel]) & pmd_masks[channel]) !=
-               0u;
+           dspic33_device_internal_platform_pmd_disabled(
+               cpu, (uint8_t)(PLATFORM_PMD_UART_BASE + channel));
 }
 
 bool dspic33_device_internal_uart_register_write_mask(const Dspic33* cpu, uint16_t address,

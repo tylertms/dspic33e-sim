@@ -100,6 +100,7 @@ bool dspic33_reference_clock_pin(const Dspic33* cpu, uint8_t pin, uint64_t prima
     uint8_t function = dspic33_device_internal_pps_output_function(cpu, pin);
     uint16_t control = dspic33_device_internal_raw_word(cpu, REFERENCE_CLOCK_CONTROL);
     if (function != 49u || (control & REFERENCE_CLOCK_ENABLE) == 0u ||
+        dspic33_device_internal_platform_pmd_disabled(cpu, PLATFORM_PMD_REFERENCE_CLOCK) ||
         (cpu->power_state == DSPIC33_POWER_SLEEP && (control & 0x2000u) == 0u)) {
         return false;
     }

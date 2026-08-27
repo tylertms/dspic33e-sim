@@ -558,6 +558,8 @@ void dspic33_can_test_transmit_pps_cases(TestState* state, Dspic33* cpu) {
         dspic33_write_word(
             cpu, 0x0760u,
             (uint16_t)(dspic33_read_word(cpu, 0x0760u) | (uint16_t)(2u << channel_index)));
+        expect(state, dspic33_can_pin(cpu, 65u, &pin_level),
+               "CAN PMD disable retains one-cycle PPS output window");
         expect(state, dspic33_device_advance(cpu, 1u) && !dspic33_can_pin(cpu, 65u, &pin_level),
                "PMD releases the CAN transmit PPS output");
 

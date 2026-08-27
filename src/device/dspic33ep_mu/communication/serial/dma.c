@@ -346,7 +346,9 @@ bool dspic33_dma_request(Dspic33* cpu, uint8_t request_source, uint16_t peripher
         const uint16_t channel_base = dspic33_device_internal_dma_channel_base(channel_index);
         const uint16_t channel_bit = dspic33_device_internal_dma_channel_bit(channel_index);
 
-        if ((dspic33_device_internal_raw_word(cpu, channel_base) & DMA_CON_CHEN) == 0u ||
+        if (dspic33_device_internal_platform_pmd_disabled(
+                cpu, (uint8_t)(PLATFORM_PMD_DMA_BASE + channel_index / 4u)) ||
+            (dspic33_device_internal_raw_word(cpu, channel_base) & DMA_CON_CHEN) == 0u ||
             (dspic33_device_internal_raw_word(cpu, (uint16_t)(channel_base + 2u)) &
              DMA_REQ_SOURCE_MASK) != request_source ||
             (dspic33_device_internal_raw_word(cpu, DMA_PWC) & channel_bit) != 0u) {

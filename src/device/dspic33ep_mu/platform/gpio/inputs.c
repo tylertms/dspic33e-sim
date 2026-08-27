@@ -432,6 +432,40 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
     if (address == 0x0741u) {
         return (uint8_t)(value & ~0x08u);
     }
+    for (channel = 0u; channel < DSPIC33_UART_COUNT; channel++) {
+        if (dspic33_device_internal_uart_module_disabled(cpu, channel) &&
+            base >= dspic33_device_uart_bases[channel] &&
+            base <= dspic33_device_uart_bases[channel] + 8u) {
+            return 0u;
+        }
+    }
+    for (channel = 0u; channel < DSPIC33_SPI_COUNT; channel++) {
+        if (dspic33_device_internal_spi_module_disabled(cpu, channel) &&
+            base >= dspic33_device_spi_bases[channel] &&
+            base <= dspic33_device_spi_bases[channel] + 8u) {
+            return 0u;
+        }
+    }
+    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        if (dspic33_device_internal_platform_pmd_disabled(
+                cpu, (uint8_t)(PLATFORM_PMD_CAN_BASE + channel)) &&
+            base >= dspic33_device_can_bases[channel] &&
+            base <= dspic33_device_can_bases[channel] + 0x7eu) {
+            return 0u;
+        }
+    }
+    if (base >= DMA_CHANNEL_BASE &&
+        base < DMA_CHANNEL_BASE + DSPIC33_DMA_COUNT * DMA_CHANNEL_STRIDE) {
+        channel = (uint8_t)((base - DMA_CHANNEL_BASE) / DMA_CHANNEL_STRIDE);
+        if (dspic33_device_internal_platform_pmd_disabled(
+                cpu, (uint8_t)(PLATFORM_PMD_DMA_BASE + channel / 4u))) {
+            return 0u;
+        }
+    }
+    if (base == REFERENCE_CLOCK_CONTROL &&
+        dspic33_device_internal_platform_pmd_disabled(cpu, PLATFORM_PMD_REFERENCE_CLOCK)) {
+        return 0u;
+    }
     for (timer = 0u; timer < 5u; timer++) {
         if (dspic33_device_internal_timer_pmd_disabled(cpu, timer) &&
             (base == dspic33_device_timer_controls[timer] ||

@@ -694,6 +694,10 @@ void dspic33_device_internal_run_can(Dspic33* cpu, uint8_t channel_index, uint32
     if (channel_index >= DSPIC33_CAN_COUNT) {
         return;
     }
+    if (dspic33_device_internal_platform_pmd_disabled(
+            cpu, (uint8_t)(PLATFORM_PMD_CAN_BASE + channel_index))) {
+        return;
+    }
     switch (event_kind) {
     case CAN_EVENT_RECEIVE_START:
         can_receive_start(cpu, channel_index);

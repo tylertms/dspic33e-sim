@@ -116,6 +116,8 @@ static bool event_source_valid(const Dspic33* cpu, Dspic33EventType type, uint16
         return event_source < DSPIC33_TIMER_COUNT;
     case DSPIC33_EVENT_TIMER_PMD:
         return event_source < 5u;
+    case DSPIC33_EVENT_PLATFORM_PMD:
+        return event_source < PLATFORM_PMD_COUNT;
     case DSPIC33_EVENT_PWM_FAULT:
     case DSPIC33_EVENT_PWM_CURRENT_LIMIT:
         return event_source < DSPIC33_PWM_INPUT_COUNT;
@@ -1011,6 +1013,10 @@ void dspic33_device_internal_run_dma(Dspic33* cpu, uint16_t event_source, uint32
     is_completion = event_source >= DSPIC33_DMA_COUNT;
     channel_index = (uint8_t)(event_source % DSPIC33_DMA_COUNT);
     channel_bit = dspic33_device_internal_dma_channel_bit(channel_index);
+    if (dspic33_device_internal_platform_pmd_disabled(
+            cpu, (uint8_t)(PLATFORM_PMD_DMA_BASE + channel_index / 4u))) {
+        return;
+    }
     is_forced = (event_value & DMA_EVENT_FORCE) != 0u;
     event_generation =
         (uint16_t)((event_value >> DMA_EVENT_GENERATION_SHIFT) & DMA_EVENT_GENERATION_MASK);

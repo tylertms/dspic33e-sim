@@ -117,6 +117,25 @@ void dspic33_oscillator_test_reference_clock_pin_cases(TestState* state, Dspic33
            !dspic33_reference_clock_pin(source, 63u, 0u, &edges) &&
                !dspic33_reference_clock_pin(source, 65u, 0u, NULL),
            "REFCLKO observation rejects invalid outputs");
+
+    dspic33_write_word(source, 0x0766u, 0x0008u);
+    expect(state, dspic33_reference_clock_pin(source, 65u, 0x123456u, &edges),
+           "REFOMD disable retains one-cycle output window");
+    expect(state, dspic33_device_advance(source, 1u), "advance REFOMD disable boundary");
+    dspic33_write_word(source, REFERENCE_CLOCK_CONTROL, 0u);
+    expect(state,
+           !dspic33_reference_clock_pin(source, 65u, 0x123456u, &edges) &&
+               dspic33_read_word(source, REFERENCE_CLOCK_CONTROL) == 0u,
+           "REFOMD disables output and register access");
+    dspic33_write_word(source, 0x0766u, 0u);
+    expect(state, !dspic33_reference_clock_pin(source, 65u, 0x123456u, &edges),
+           "REFOMD enable retains one-cycle disabled window");
+    expect(state, dspic33_device_advance(source, 1u), "advance REFOMD enable boundary");
+    expect(state,
+           dspic33_reference_clock_pin(source, 65u, 0x123456u, &edges) &&
+               dspic33_read_word(source, REFERENCE_CLOCK_CONTROL) ==
+                   (REFERENCE_CLOCK_ENABLE | REFERENCE_CLOCK_SLEEP | REFERENCE_CLOCK_SOURCE),
+           "REFOMD enable restores preserved reference clock state");
 }
 
 void dspic33_oscillator_test_main_pll_configuration_cases(TestState* state, Dspic33* source,
