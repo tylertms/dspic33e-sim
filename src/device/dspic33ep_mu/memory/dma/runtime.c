@@ -683,6 +683,41 @@ static uint16_t dma_read_memory(const Dspic33* cpu, uint32_t memory_address,
                       ((uint16_t)dma_read_memory_byte(cpu, memory_address + 1u) << 8u));
 }
 
+static uint16_t dma_read_previous_value(const Dspic33* cpu, uint16_t address,
+                                        uint8_t transfer_width, uint16_t value) {
+    uint8_t offset;
+
+    for (offset = 0u; offset < transfer_width; offset++) {
+        uint16_t current_address = (uint16_t)(address + offset);
+        if (dma_cpu_wrote_byte(cpu, current_address)) {
+            uint8_t source_shift =
+                (uint8_t)((current_address - cpu->io.cpu_write_address) * 8u);
+            uint8_t destination_shift = (uint8_t)(offset * 8u);
+            value = (uint16_t)((value & ~((uint16_t)0xffu << destination_shift)) |
+                               (((cpu->io.cpu_write_previous >> source_shift) & 0xffu)
+                                << destination_shift));
+        }
+    }
+    return value;
+}
+
+static bool dma_can_pad_read_overridden(const Dspic33* cpu, uint16_t address) {
+    uint8_t channel;
+
+    for (channel = 0u; channel < DSPIC33_CAN_COUNT; channel++) {
+        uint16_t channel_base = dspic33_device_can_bases[channel];
+        if (address != channel_base + 0x40u) {
+            continue;
+        }
+        if ((dspic33_device_internal_raw_word(cpu, channel_base) & CAN_WINDOW) != 0u ||
+            ((cpu->io.can_rx_busy & (uint8_t)(1u << channel)) != 0u &&
+             cpu->io.can_rx_word[channel] != 0u)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void dma_write_memory(Dspic33* cpu, uint32_t memory_address, uint8_t transfer_width,
                              uint16_t transfer_value) {
     if (!dma_cpu_wrote_byte(cpu, memory_address)) {
@@ -827,6 +862,15 @@ static void dma_complete_block(Dspic33* cpu, uint8_t channel_index, uint16_t dma
     cpu->io.dma_address[channel_index] = dma_start_address(cpu, channel_index);
 }
 
+static void dma_clear_forced_request(Dspic33* cpu, uint16_t channel_base,
+                                     uint16_t channel_bit) {
+    cpu->io.dma_forced_pending &= (uint16_t)~channel_bit;
+    dspic33_device_internal_raw_write_word(
+        cpu, (uint16_t)(channel_base + 2u),
+        (uint16_t)(dspic33_device_internal_raw_word(cpu, (uint16_t)(channel_base + 2u)) &
+                   ~DMA_REQ_FORCE));
+}
+
 static void complete_dma_transfer(Dspic33* cpu, uint8_t channel_index, uint32_t event_value) {
     const uint16_t channel_base = dspic33_device_internal_dma_channel_base(channel_index);
     const uint16_t channel_bit = dspic33_device_internal_dma_channel_bit(channel_index);
@@ -857,11 +901,7 @@ static void complete_dma_transfer(Dspic33* cpu, uint8_t channel_index, uint32_t 
     }
     cpu->io.dma_active &= (uint16_t)~channel_bit;
     if (is_forced) {
-        cpu->io.dma_forced_pending &= (uint16_t)~channel_bit;
-        dspic33_device_internal_raw_write_word(
-            cpu, (uint16_t)(channel_base + 2u),
-            (uint16_t)(dspic33_device_internal_raw_word(cpu, (uint16_t)(channel_base + 2u)) &
-                       ~DMA_REQ_FORCE));
+        dma_clear_forced_request(cpu, channel_base, channel_bit);
     }
 }
 
@@ -902,10 +942,11 @@ void dspic33_device_internal_run_dma(Dspic33* cpu, uint16_t event_source, uint32
     if (cpu->io.dma_active != 0u) {
         if (!dspic33_schedule(cpu, DSPIC33_EVENT_DMA, event_source, event_value, 1u)) {
             if (is_forced) {
-                cpu->io.dma_forced_pending &= (uint16_t)~channel_bit;
+                dma_clear_forced_request(cpu, channel_base, channel_bit);
             } else {
                 cpu->io.dma_peripheral_pending &= (uint16_t)~channel_bit;
             }
+            cpu->io.dma_arbiter_waiting &= (uint16_t)~channel_bit;
         }
         return;
     }
@@ -913,30 +954,41 @@ void dspic33_device_internal_run_dma(Dspic33* cpu, uint16_t event_source, uint32
     if ((dma_control & DMA_CON_CHEN) == 0u ||
         (dspic33_device_internal_raw_word(cpu, DMA_PWC) & channel_bit) != 0u) {
         if (is_forced) {
-            cpu->io.dma_forced_pending &= (uint16_t)~channel_bit;
-            dspic33_device_internal_raw_write_word(
-                cpu, (uint16_t)(channel_base + 2u),
-                (uint16_t)(dspic33_device_internal_raw_word(cpu, (uint16_t)(channel_base + 2u)) &
-                           ~DMA_REQ_FORCE));
+            dma_clear_forced_request(cpu, channel_base, channel_bit);
         } else {
             cpu->io.dma_peripheral_pending &= (uint16_t)~channel_bit;
-            cpu->io.dma_arbiter_waiting &= (uint16_t)~channel_bit;
+        }
+        cpu->io.dma_arbiter_waiting &= (uint16_t)~channel_bit;
+        return;
+    }
+    if (cpu->io.dma_arbiter_waiting != 0u &&
+        (cpu->io.dma_arbiter_waiting & channel_bit) == 0u) {
+        if (!dspic33_schedule(cpu, DSPIC33_EVENT_DMA, event_source, event_value, 1u)) {
+            if (is_forced) {
+                dma_clear_forced_request(cpu, channel_base, channel_bit);
+            } else {
+                cpu->io.dma_peripheral_pending &= (uint16_t)~channel_bit;
+            }
         }
         return;
     }
-    if (!is_forced && dma_cpu_bus_busy(cpu) &&
+    if (dma_cpu_bus_busy(cpu) &&
         (dspic33_device_internal_raw_word(cpu, 0x0058u) & 0x0020u) == 0u &&
         !dma_target_is_dual_port_ram(cpu, channel_index, (uint16_t)event_value)) {
         cpu->io.dma_arbiter_waiting |= channel_bit;
         if (!dspic33_schedule(cpu, DSPIC33_EVENT_DMA, event_source, event_value, 1u)) {
-            cpu->io.dma_peripheral_pending &= (uint16_t)~channel_bit;
+            if (is_forced) {
+                dma_clear_forced_request(cpu, channel_base, channel_bit);
+            } else {
+                cpu->io.dma_peripheral_pending &= (uint16_t)~channel_bit;
+            }
             cpu->io.dma_arbiter_waiting &= (uint16_t)~channel_bit;
         }
         return;
     }
+    cpu->io.dma_arbiter_waiting &= (uint16_t)~channel_bit;
     if (!is_forced) {
         cpu->io.dma_peripheral_pending &= (uint16_t)~channel_bit;
-        cpu->io.dma_arbiter_waiting &= (uint16_t)~channel_bit;
     }
     peripheral_address = dspic33_device_internal_raw_word(cpu, (uint16_t)(channel_base + 0x0cu));
     transfer_width = (dma_control & DMA_CON_SIZE_BYTE) != 0u ? 1u : 2u;
@@ -944,11 +996,7 @@ void dspic33_device_internal_run_dma(Dspic33* cpu, uint16_t event_source, uint32
     if (!dma_memory_address_valid(cpu, memory_address, transfer_width)) {
         dspic33_raise_dma_address_trap(cpu);
         if (is_forced) {
-            cpu->io.dma_forced_pending &= (uint16_t)~channel_bit;
-            dspic33_device_internal_raw_write_word(
-                cpu, (uint16_t)(channel_base + 2u),
-                (uint16_t)(dspic33_device_internal_raw_word(cpu, (uint16_t)(channel_base + 2u)) &
-                           ~DMA_REQ_FORCE));
+            dma_clear_forced_request(cpu, channel_base, channel_bit);
         }
         return;
     }
@@ -972,9 +1020,14 @@ void dspic33_device_internal_run_dma(Dspic33* cpu, uint16_t event_source, uint32
     } else {
         transfer_value = 0u;
         if (dma_pad_readable(peripheral_address)) {
+            bool read_overridden = dma_can_pad_read_overridden(cpu, peripheral_address);
             uart_errors = transfer_width == 2u ? uart_dma_error_bits(cpu, peripheral_address) : 0u;
             transfer_value = transfer_width == 1u ? dspic33_read_byte(cpu, peripheral_address)
                                                   : dspic33_read_word(cpu, peripheral_address);
+            if (!read_overridden) {
+                transfer_value = dma_read_previous_value(cpu, peripheral_address, transfer_width,
+                                                          transfer_value);
+            }
             transfer_value |= uart_errors;
         }
         dma_write_memory(cpu, memory_address, transfer_width, transfer_value);
@@ -997,11 +1050,7 @@ void dspic33_device_internal_run_dma(Dspic33* cpu, uint16_t event_source, uint32
                           event_value, 1u)) {
         cpu->io.dma_active &= (uint16_t)~channel_bit;
         if (is_forced) {
-            cpu->io.dma_forced_pending &= (uint16_t)~channel_bit;
-            dspic33_device_internal_raw_write_word(
-                cpu, (uint16_t)(channel_base + 2u),
-                (uint16_t)(dspic33_device_internal_raw_word(cpu, (uint16_t)(channel_base + 2u)) &
-                           ~DMA_REQ_FORCE));
+            dma_clear_forced_request(cpu, channel_base, channel_bit);
         }
         cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }

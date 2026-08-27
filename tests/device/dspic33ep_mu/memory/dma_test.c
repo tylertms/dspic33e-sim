@@ -30,6 +30,7 @@ static const uint8_t dma_irqs[DSPIC33_DMA_COUNT] = {4u,   14u,  24u,  36u,  46u,
 static uint16_t channel_base(uint8_t channel) { return (uint16_t)(0x0b00u + channel * 0x10u); }
 
 void dspic33_dma_test_boundary_cases(TestState* state, Dspic33* cpu);
+void dspic33_device_internal_raw_write_word(Dspic33* cpu, uint16_t address, uint16_t value);
 void dspic33_device_internal_run_dma(Dspic33* cpu, uint16_t source, uint32_t event_value);
 
 static uint16_t stored_word(const Dspic33* cpu, uint16_t address) {
@@ -137,6 +138,35 @@ static void device_dual_port_ram_cases(TestState* state) {
                stored_word(cpu, DMA_TEST_WRITE_PAD) == 0x5aa5u &&
                    (cpu->io.dma_arbiter_waiting & 1u) == 0u && cpu->io.dma_active == 1u,
                "profile DMA RAM bypasses CPU bus arbitration");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, 0x2000u, 0x1357u);
+        configure_channel(cpu, 0u, 0x2001u, 0xe2u, 0x2000u, 0u, DMA_TEST_WRITE_PAD, 0u);
+        cpu->io.cpu_bus_cycle = cpu->cycles + 1u;
+        dspic33_write_word(cpu, 0x0b02u, (uint16_t)(DMA_FORCE | 0xe2u));
+        expect(state,
+               dspic33_device_advance(cpu, 1u) &&
+                   stored_word(cpu, DMA_TEST_WRITE_PAD) == 0u &&
+                   (cpu->io.dma_arbiter_waiting & 1u) != 0u &&
+                   (cpu->io.dma_forced_pending & 1u) != 0u,
+               "forced ordinary RAM waits for the CPU bus master");
+        cpu->io.cpu_bus_cycle = UINT64_MAX;
+        expect(state,
+               dspic33_device_advance(cpu, 1u) &&
+                   stored_word(cpu, DMA_TEST_WRITE_PAD) == 0x1357u &&
+                   (cpu->io.dma_arbiter_waiting & 1u) == 0u,
+               "forced ordinary RAM starts after CPU bus release");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, dma_ram_base, 0x2468u);
+        configure_channel(cpu, 0u, 0x2001u, 0xe3u, dma_ram_base, 0u, DMA_TEST_WRITE_PAD, 0u);
+        cpu->io.cpu_bus_cycle = cpu->cycles + 1u;
+        dspic33_write_word(cpu, 0x0b02u, (uint16_t)(DMA_FORCE | 0xe3u));
+        expect(state,
+               dspic33_device_advance(cpu, 1u) &&
+                   stored_word(cpu, DMA_TEST_WRITE_PAD) == 0x2468u &&
+                   (cpu->io.dma_arbiter_waiting & 1u) == 0u && cpu->io.dma_active == 1u,
+               "forced dual-port RAM bypasses CPU bus arbitration");
         dspic33_destroy(cpu);
     }
 }
@@ -515,23 +545,50 @@ static void force_and_collision_cases(TestState* state, Dspic33* cpu) {
         configure_channel(cpu, channel, 0x2000u, source, memory, 0u, pad, 3u);
         dspic33_write_word(cpu, (uint16_t)(base + 2u), (uint16_t)(DMA_FORCE | source));
         expect(state, dspic33_dma_request(cpu, source, 0u, 1u),
-               "queue peripheral after FORCE matrix");
+               "queue peripheral against pending FORCE matrix");
         expect(state, (dspic33_read_word(cpu, 0x0bf2u) & bit) != 0u,
-               "FORCE before peripheral collision matrix");
-        expect(state, dspic33_device_advance(cpu, 1u), "FORCE before peripheral start matrix");
+               "pending FORCE collision matrix");
+        expect(state,
+               (cpu->io.dma_forced_pending & bit) == 0u &&
+                   (cpu->io.dma_peripheral_pending & bit) != 0u &&
+                   (dspic33_read_word(cpu, (uint16_t)(base + 2u)) & DMA_FORCE) == 0u,
+               "pending FORCE is discarded while peripheral remains queued matrix");
+        expect(state, dspic33_device_advance(cpu, 1u), "pending FORCE collision advance matrix");
         expect(state,
                stored_word(cpu, pad) == first && cpu->io.dma_index[channel] == 0u &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 2u)) & DMA_FORCE) != 0u,
-               "FORCE executes before peripheral matrix");
-        expect(state, dspic33_device_advance(cpu, 1u), "FORCE before peripheral deferred matrix");
-        expect(state,
-               stored_word(cpu, pad) == second && cpu->io.dma_index[channel] == 1u &&
-                   (dspic33_read_word(cpu, (uint16_t)(base + 2u)) & DMA_FORCE) == 0u,
-               "peripheral executes after FORCE matrix");
+                   (cpu->io.dma_active & bit) != 0u,
+               "peripheral replaces pending FORCE matrix");
         expect(state, (dspic33_read_word(cpu, 0x08c0u) & 0x0020u) != 0u,
-               "FORCE before peripheral trap matrix");
+               "pending FORCE collision trap matrix");
+        expect(state,
+               dspic33_device_advance(cpu, 2u) && stored_word(cpu, pad) == first &&
+                   cpu->io.dma_index[channel] == 1u,
+               "discarded pending FORCE cannot transfer matrix");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_write_word(cpu, memory, first);
+        dspic33_write_word(cpu, (uint16_t)(memory + 2u), second);
+        configure_channel(cpu, channel, 0x2000u, source, memory, 0u, pad, 3u);
+        dspic33_write_word(cpu, (uint16_t)(base + 2u), (uint16_t)(DMA_FORCE | source));
+        expect(state, dspic33_device_advance(cpu, 1u), "start active FORCE matrix");
+        expect(state,
+               stored_word(cpu, pad) == first && (cpu->io.dma_active & bit) != 0u &&
+                   (cpu->io.dma_forced_pending & bit) != 0u,
+               "FORCE active before peripheral collision matrix");
+        expect(state,
+               dspic33_dma_request(cpu, source, 0u, 0u) &&
+                   dspic33_device_advance(cpu, 0u) &&
+                   (cpu->io.dma_forced_pending & bit) != 0u &&
+                   (cpu->io.dma_peripheral_pending & bit) != 0u,
+               "active FORCE and colliding peripheral both remain pending matrix");
+        expect(state,
+               dspic33_device_advance(cpu, 1u) && stored_word(cpu, pad) == second &&
+                   cpu->io.dma_index[channel] == 1u &&
+                   (cpu->io.dma_forced_pending & bit) == 0u &&
+                   (cpu->io.dma_active & bit) != 0u,
+               "active FORCE completes before pending peripheral matrix");
         expect(state, dspic33_device_advance(cpu, 1u) && cpu->io.dma_index[channel] == 2u,
-               "peripheral collision completion matrix");
+               "active FORCE collision peripheral completion matrix");
 
         dspic33_reset(cpu, 0u);
         dspic33_write_word(cpu, memory, first);
@@ -675,6 +732,61 @@ static void memory_collision_cases(TestState* state, Dspic33* cpu) {
            "CPU write wins concurrent DMA memory write");
     expect(state, dspic33_read_word(cpu, 0x0bf0u) == 0u,
            "memory collision does not set peripheral status");
+}
+
+static void peripheral_read_collision_cases(TestState* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BIDIRECTIONAL_PAD, 0x1357u);
+    configure_channel(cpu, 0u, 0x0001u, 0xc6u, 0x3480u, 0u,
+                      DMA_TEST_BIDIRECTIONAL_PAD, 0u);
+    expect(state, dspic33_dma_request(cpu, 0xc6u, 0u, 1u),
+           "queue concurrent DMA peripheral read");
+    dspic33_write_word(cpu, DMA_TEST_BIDIRECTIONAL_PAD, 0x2468u);
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && dspic33_read_word(cpu, 0x3480u) == 0x1357u &&
+               stored_word(cpu, DMA_TEST_BIDIRECTIONAL_PAD) == 0x2468u,
+           "DMA reads pre-write peripheral value");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x0220u, 0x8002u);
+    expect(state,
+           dspic33_uart_receive(cpu, 0u, 0x5au, 0u) && dspic33_device_advance(cpu, 0u) &&
+               cpu->io.uart_rx_fifo[0].count == 1u,
+           "queue UART word for DMA side-effect read");
+    configure_channel(cpu, 0u, 0x0001u, 0xc7u, 0x3480u, 0u, 0x0226u, 0u);
+    expect(state,
+           request(cpu, 0xc7u, 0u) && dspic33_read_word(cpu, 0x3480u) == 0x005au &&
+               cpu->io.uart_rx_fifo[0].count == 0u,
+           "DMA peripheral old-value handling preserves read side effects");
+}
+
+static void arbiter_owner_cases(TestState* state, Dspic33* cpu) {
+    uint16_t dma_ram_base = dspic33_device_profile(cpu)->dma_ram_base;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, 0x3600u, 0x1111u);
+    dspic33_write_word(cpu, dma_ram_base, 0x2222u);
+    configure_channel(cpu, 1u, 0x2001u, 0xc8u, dma_ram_base, 0u,
+                      DMA_TEST_ALT_WRITE_PAD, 0u);
+    configure_channel(cpu, 0u, 0x2001u, 0xc8u, 0x3600u, 0u, DMA_TEST_WRITE_PAD, 0u);
+    cpu->io.cpu_bus_cycle = cpu->cycles;
+    expect(state,
+           dspic33_dma_request(cpu, 0xc8u, 0u, 0u) && dspic33_device_advance(cpu, 0u) &&
+               stored_word(cpu, DMA_TEST_WRITE_PAD) == 0u &&
+               dspic33_read_word(cpu, DMA_TEST_ALT_WRITE_PAD) == 0u &&
+               cpu->io.dma_arbiter_waiting == 1u,
+           "first shared-RAM waiter retains DMA controller ownership");
+    cpu->io.cpu_bus_cycle = UINT64_MAX;
+    expect(state,
+           dspic33_device_advance(cpu, 1u) &&
+               stored_word(cpu, DMA_TEST_WRITE_PAD) == 0x1111u &&
+               dspic33_read_word(cpu, DMA_TEST_ALT_WRITE_PAD) == 0u && cpu->io.dma_active == 1u,
+           "waiting DMA owner starts before later dual-port request");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) &&
+               dspic33_read_word(cpu, DMA_TEST_ALT_WRITE_PAD) == 0x2222u &&
+               cpu->io.dma_active == 2u,
+           "later DMA channel starts after waiting owner completes");
 }
 
 static void stale_request_cases(TestState* state, Dspic33* cpu) {
@@ -945,6 +1057,8 @@ int main(void) {
         channel_matrix_cases(&state, &cpu);
         peripheral_collision_cases(&state, &cpu);
         memory_collision_cases(&state, &cpu);
+        peripheral_read_collision_cases(&state, &cpu);
+        arbiter_owner_cases(&state, &cpu);
         stale_request_cases(&state, &cpu);
         dspic33_dma_test_boundary_cases(&state, &cpu);
         can_receive_arbiter_erratum_cases(&state, &cpu);

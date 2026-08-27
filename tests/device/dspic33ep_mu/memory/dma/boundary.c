@@ -3,7 +3,12 @@
 #include "dspic33.h"
 #include "test.h"
 
-enum { DMA_TEST_BASE = 0x0b00u, DMA_TEST_CONTROL_ENABLE = 0x8000u, DMA_TEST_FORCE = 0x00010000u };
+enum {
+    DMA_TEST_BASE = 0x0b00u,
+    DMA_TEST_CONTROL_ENABLE = 0x8000u,
+    DMA_TEST_REQUEST_FORCE = 0x8000u,
+    DMA_TEST_FORCE = 0x00010000u
+};
 
 void dspic33_device_internal_raw_write_word(Dspic33* cpu, uint16_t address, uint16_t value);
 void dspic33_device_internal_run_dma(Dspic33* cpu, uint16_t source, uint32_t event_value);
@@ -37,12 +42,50 @@ static void active_channel_failure_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     cpu->io.dma_active = 2u;
     cpu->io.dma_forced_pending = 1u;
+    dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 2u, DMA_TEST_REQUEST_FORCE);
     fill_event_queue(state, cpu);
     test_reject_reallocation(true);
     dspic33_device_internal_run_dma(cpu, 0u, DMA_TEST_FORCE);
     test_reject_reallocation(false);
-    expect(state, (cpu->io.dma_forced_pending & 1u) == 0u,
+    expect(state,
+           (cpu->io.dma_forced_pending & 1u) == 0u &&
+               (dspic33_read_word(cpu, DMA_TEST_BASE + 2u) & DMA_TEST_REQUEST_FORCE) == 0u,
            "blocked forced DMA clears failed pending request");
+}
+
+static void forced_arbitration_failure_cases(TestState* state, Dspic33* cpu) {
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE, DMA_TEST_CONTROL_ENABLE);
+    dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 2u, DMA_TEST_REQUEST_FORCE);
+    cpu->io.dma_address[0] = 0x4000u;
+    cpu->io.cpu_bus_cycle = cpu->cycles;
+    cpu->io.dma_forced_pending = 1u;
+    fill_event_queue(state, cpu);
+    test_reject_reallocation(true);
+    dspic33_device_internal_run_dma(cpu, 0u, DMA_TEST_FORCE);
+    test_reject_reallocation(false);
+    expect(state,
+           (cpu->io.dma_forced_pending & 1u) == 0u &&
+               (cpu->io.dma_arbiter_waiting & 1u) == 0u &&
+               (dspic33_read_word(cpu, DMA_TEST_BASE + 2u) & DMA_TEST_REQUEST_FORCE) == 0u,
+           "forced CPU-bus wait allocation failure clears FORCE state");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 0x10u,
+                                           DMA_TEST_CONTROL_ENABLE);
+    dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 0x12u,
+                                           DMA_TEST_REQUEST_FORCE);
+    cpu->io.dma_address[1] = 0x4000u;
+    cpu->io.dma_forced_pending = 2u;
+    cpu->io.dma_arbiter_waiting = 1u;
+    fill_event_queue(state, cpu);
+    test_reject_reallocation(true);
+    dspic33_device_internal_run_dma(cpu, 1u, DMA_TEST_FORCE);
+    test_reject_reallocation(false);
+    expect(state,
+           (cpu->io.dma_forced_pending & 2u) == 0u && cpu->io.dma_arbiter_waiting == 1u &&
+               (dspic33_read_word(cpu, DMA_TEST_BASE + 0x12u) & DMA_TEST_REQUEST_FORCE) == 0u,
+           "forced waiting-owner allocation failure clears FORCE state");
 }
 
 static void completion_failure_cases(TestState* state, Dspic33* cpu) {
@@ -51,6 +94,7 @@ static void completion_failure_cases(TestState* state, Dspic33* cpu) {
     dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 4u, 0x4000u);
     dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 6u, 0u);
     dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 0x0cu, 0x0290u);
+    dspic33_device_internal_raw_write_word(cpu, DMA_TEST_BASE + 2u, DMA_TEST_REQUEST_FORCE);
     cpu->io.dma_address[0] = 0x4000u;
     cpu->io.dma_forced_pending = 1u;
     fill_event_queue(state, cpu);
@@ -59,7 +103,8 @@ static void completion_failure_cases(TestState* state, Dspic33* cpu) {
     test_reject_reallocation(false);
     expect(state,
            cpu->stop_reason == DSPIC33_EVENT_QUEUE_ERROR && cpu->io.dma_active == 0u &&
-               (cpu->io.dma_forced_pending & 1u) == 0u,
+               (cpu->io.dma_forced_pending & 1u) == 0u &&
+               (dspic33_read_word(cpu, DMA_TEST_BASE + 2u) & DMA_TEST_REQUEST_FORCE) == 0u,
            "DMA completion allocation failure clears active forced transfer");
 
     dspic33_reset(cpu, 0u);
@@ -217,6 +262,7 @@ void dspic33_dma_test_boundary_cases(TestState* state, Dspic33* cpu) {
     pad_collision_cases(state, cpu);
 #ifdef DSPIC33_TEST_ALLOCATION_FAILURE
     active_channel_failure_cases(state, cpu);
+    forced_arbitration_failure_cases(state, cpu);
     completion_failure_cases(state, cpu);
 #endif
 }

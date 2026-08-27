@@ -362,6 +362,16 @@ bool dspic33_dma_request(Dspic33* cpu, uint8_t request_source, uint16_t peripher
         }
         if ((cpu->io.dma_forced_pending & channel_bit) != 0u) {
             dspic33_device_internal_dma_request_collision(cpu, channel_index);
+            if ((cpu->io.dma_active & channel_bit) == 0u) {
+                cpu->io.dma_forced_pending &= (uint16_t)~channel_bit;
+                cpu->io.dma_arbiter_waiting &= (uint16_t)~channel_bit;
+                dspic33_device_internal_raw_write_word(
+                    cpu, (uint16_t)(channel_base + 2u),
+                    (uint16_t)(dspic33_device_internal_raw_word(
+                                   cpu, (uint16_t)(channel_base + 2u)) &
+                               ~DMA_REQ_FORCE));
+                dspic33_device_internal_dma_advance_generation(cpu, channel_index);
+            }
         }
         if (!dspic33_device_internal_schedule_dma_channel(cpu, channel_index, peripheral_offset,
                                                           false, event_delay)) {

@@ -311,6 +311,7 @@ void dspic33_can_test_register_access_cases(TestState* state, Dspic33* cpu) {
         bool error_counters_preserved;
         bool transfer_started;
         bool dma_words_match;
+        uint16_t filter_window_word;
 
         dspic33_reset(cpu, 0u);
         dspic33_can_test_write_memory_word(cpu, (uint16_t)(can_base + 0x0eu), 0x5aa5u);
@@ -333,6 +334,22 @@ void dspic33_can_test_register_access_cases(TestState* state, Dspic33* cpu) {
         dspic33_write_word(cpu, can_base, (uint16_t)(dspic33_read_word(cpu, can_base) | 0x00a0u));
         expect(state, (dspic33_read_word(cpu, can_base) & 0x07e0u) == 0x0240u,
                "operating mode rejects direct writes");
+
+        dspic33_reset(cpu, 0u);
+        dspic33_can_test_configure_filter(cpu, channel_index, 0u, 0x321u, false, 0x7ffu, true,
+                                          0u, 0u);
+        dspic33_can_test_set_mode(cpu, channel_index, 0u);
+        dspic33_can_test_select_window(cpu, channel_index, true);
+        filter_window_word = dspic33_read_word(cpu, receive_data_address);
+        configure_dma(cpu, channel_index, 0x0001u, receive_requests[channel_index], memory_address,
+                      receive_data_address);
+        dspic33_write_word(cpu, (uint16_t)(dma_channel_base(channel_index) + 2u),
+                           (uint16_t)(0x8000u | receive_requests[channel_index]));
+        dspic33_write_word(cpu, receive_data_address, 0xa55au);
+        expect(state,
+               dspic33_device_advance(cpu, 1u) &&
+                   dspic33_can_test_memory_word(cpu, memory_address) == filter_window_word,
+               "filter window overrides CPU backing for DMA");
 
         dspic33_reset(cpu, 0u);
         dspic33_can_test_select_window(cpu, channel_index, false);
@@ -368,10 +385,15 @@ void dspic33_can_test_register_access_cases(TestState* state, Dspic33* cpu) {
                    dspic33_read_word(cpu, receive_data_address) == received_words[0] &&
                    dspic33_can_test_memory_word(cpu, memory_address) == received_words[0],
                "receive stream overrides CPU backing for DMA");
-        dspic33_write_word(cpu, receive_data_address, 0xc55cu);
+        dspic33_write_word(cpu, receive_data_address, received_words[1]);
         expect(state, dspic33_read_word(cpu, receive_data_address) == received_words[0],
                "receive stream survives concurrent CPU write");
-        expect(state, dspic33_device_advance(cpu, 32u), "receive stream completion advance");
+        expect(state,
+               dspic33_device_advance(cpu, 1u) &&
+                   dspic33_can_test_memory_word(cpu, memory_address + 2u) == received_words[1],
+               "receive stream overrides equal CPU backing for DMA");
+        dspic33_write_word(cpu, receive_data_address, 0xc55cu);
+        expect(state, dspic33_device_advance(cpu, 31u), "receive stream completion advance");
         dma_words_match = true;
         for (uint8_t word_index = 0u; word_index < 8u; word_index++) {
             dma_words_match = dma_words_match &&
