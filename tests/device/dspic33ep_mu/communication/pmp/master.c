@@ -139,7 +139,7 @@ void dspic33_pmp_test_lifecycle_cases(TestState* state, Dspic33* cpu) {
 void dspic33_pmp_test_legacy_slave_cases(TestState* state, Dspic33* cpu) {
     Dspic33PmpTransfer transfer;
     dspic33_reset(cpu, 0u);
-    dspic33_pmp_test_configure_pmp_slave(cpu, 0u, 0u);
+    dspic33_pmp_test_configure_pmp_slave(cpu, 0u, PMP_INTERRUPT_EACH);
     expect(state, dspic33_read_word(cpu, PMP_STATUS) == 0x008fu, "legacy slave begins empty");
     expect(state, dspic33_pmp_slave_write(cpu, 3u, 0x5au, 2u), "schedule legacy slave write");
     expect(state, dspic33_device_advance(cpu, 1u) && dspic33_read_byte(cpu, PMP_DATA) == 0u,
@@ -183,6 +183,16 @@ void dspic33_pmp_test_legacy_slave_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, PMP_STATUS, 0u);
     expect(state, dspic33_read_word(cpu, PMP_STATUS) == 0x000fu,
            "software clears legacy output underflow");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_pmp_test_configure_pmp_slave(cpu, 0u, 0u);
+    dspic33_write_byte(cpu, PMP_ADDRESS, 0x88u);
+    expect(state,
+           dspic33_pmp_slave_write(cpu, 0u, 0x99u, 0u) &&
+               dspic33_pmp_slave_read(cpu, 0u, 0u) && dspic33_device_advance(cpu, 0u) &&
+               dspic33_pmp_transmit(cpu, &transfer) &&
+               (dspic33_read_word(cpu, 0x0804u) & PMP_INTERRUPT_FLAG) == 0u,
+           "legacy IRQM zero suppresses read and write interrupts");
 
     dspic33_reset(cpu, 0u);
     dspic33_pmp_test_configure_pmp_slave(cpu, 0u, 0u);
@@ -446,7 +456,7 @@ void dspic33_pmp_test_slave_power_lifecycle_cases(TestState* state, Dspic33* cpu
         return;
     }
     dspic33_reset(cpu, 0u);
-    dspic33_pmp_test_configure_pmp_slave(cpu, PMP_STOP_IDLE, 0u);
+    dspic33_pmp_test_configure_pmp_slave(cpu, PMP_STOP_IDLE, PMP_INTERRUPT_EACH);
     dspic33_write_word(cpu, 0x0824u, PMP_INTERRUPT_ENABLE);
     dspic33_write_word(
         cpu, priority_address,
@@ -536,8 +546,10 @@ void dspic33_pmp_test_slave_mode_matrix_cases(TestState* state, Dspic33* cpu) {
                    cpu->data[PMP_DATA] == (uint8_t)(0x20u + index) &&
                    (dspic33_read_word(cpu, PMP_STATUS) & PMP_INPUT_FULL) != 0u,
                "legacy slave admits every IRQM encoding");
-        expect(state, (dspic33_read_word(cpu, 0x0804u) & PMP_INTERRUPT_FLAG) != 0u,
-               "legacy slave interrupts independently of IRQM");
+        expect(state,
+               ((dspic33_read_word(cpu, 0x0804u) & PMP_INTERRUPT_FLAG) != 0u) ==
+                   (requests[index] == PMP_INTERRUPT_EACH),
+               "legacy slave IRQM selects interrupt generation");
 
         dspic33_reset(cpu, 0u);
         dspic33_pmp_test_configure_pmp_slave(cpu, 0u,
@@ -578,8 +590,8 @@ void dspic33_pmp_test_slave_mode_matrix_cases(TestState* state, Dspic33* cpu) {
            dspic33_pmp_slave_write(cpu, 0u, 0x2fu, 0u) && dspic33_device_advance(cpu, 0u) &&
                cpu->data[PMP_DATA] == 0x2fu,
            "legacy slave applies deterministic reserved IRQM policy");
-    expect(state, (dspic33_read_word(cpu, 0x0804u) & PMP_INTERRUPT_FLAG) != 0u,
-           "legacy reserved IRQM policy retains unconditional interrupt");
+    expect(state, (dspic33_read_word(cpu, 0x0804u) & PMP_INTERRUPT_FLAG) == 0u,
+           "legacy reserved IRQM policy raises no interrupt");
     dspic33_reset(cpu, 0u);
     dspic33_pmp_test_configure_pmp_slave(cpu, 0u,
                                          (uint16_t)(PMP_BUFFERED_SLAVE | PMP_INTERRUPT_RESERVED));

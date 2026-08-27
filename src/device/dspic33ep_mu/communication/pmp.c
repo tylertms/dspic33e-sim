@@ -275,8 +275,8 @@ static void pmp_slave_interrupt(Dspic33* cpu, uint8_t buffer_index) {
     uint16_t mode_word = dspic33_device_internal_raw_word(cpu, PMP_MODE);
     uint16_t interrupt_mode = mode_word & PMP_INTERRUPT_MODE_MASK;
 
-    if (!pmp_buffered_slave(cpu) || interrupt_mode == PMP_INTERRUPT_EACH ||
-        (interrupt_mode == PMP_INTERRUPT_LAST && buffer_index == 3u)) {
+    if (interrupt_mode == PMP_INTERRUPT_EACH ||
+        (interrupt_mode == PMP_INTERRUPT_LAST && pmp_buffered_slave(cpu) && buffer_index == 3u)) {
         dspic33_raise_interrupt(cpu, PMP_IRQ);
     }
 }
