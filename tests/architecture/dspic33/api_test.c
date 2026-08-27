@@ -147,9 +147,9 @@ static void test_coverage(TestState* state) {
     expect(state, result.unique_branch_outcomes == 6u, "coverage counts unique branch outcomes");
     expect(state, result.fully_covered_branch_sites == 3u,
            "coverage counts branches with both outcomes");
-    expect(state, dspic33_coverage_executed(coverage, 0x200u),
+    expect(state, (dspic33_coverage_flags(coverage, 0x200u) & DSPIC33_COVERAGE_EXECUTED) != 0u,
            "coverage exposes the first instruction");
-    expect(state, dspic33_coverage_executed(coverage, 0x202u),
+    expect(state, (dspic33_coverage_flags(coverage, 0x202u) & DSPIC33_COVERAGE_EXECUTED) != 0u,
            "coverage exposes the second instruction");
     expect(state,
            dspic33_coverage_flags(coverage, 0x204u) ==
@@ -157,12 +157,13 @@ static void test_coverage(TestState* state) {
                 DSPIC33_COVERAGE_BRANCH_NOT_TAKEN),
            "coverage exposes branch outcomes");
     dspic33_coverage_clear(coverage);
-    dspic33_coverage_record(coverage, 0x208u, 0u);
+    dspic33_reset(cpu, 0x208u);
+    dspic33_step(cpu);
     result = dspic33_coverage_result(coverage);
     expect(state, result.instructions == 1u, "coverage clear resets counters");
     expect(state, result.outside_range == 1u, "coverage counts instructions outside its range");
     expect(state, result.unique_instructions == 0u, "outside instructions are not unique slots");
-    expect(state, !dspic33_coverage_executed(coverage, 0x200u), "coverage clear resets slots");
+    expect(state, dspic33_coverage_flags(coverage, 0x200u) == 0u, "coverage clear resets slots");
     dspic33_set_coverage(cpu, NULL);
     dspic33_coverage_destroy(coverage);
     dspic33_destroy(cpu);
@@ -171,7 +172,6 @@ static void test_coverage(TestState* state) {
     expect(state, dspic33_coverage_create(UINT32_MAX - 1u, 4u) == NULL,
            "coverage rejects overflowing ranges");
     dspic33_coverage_clear(NULL);
-    dspic33_coverage_record(NULL, 0u, 0u);
     dspic33_coverage_destroy(NULL);
 }
 
@@ -305,17 +305,12 @@ static void test_memory_guards(TestState* state) {
            "configuration load rejects an odd address");
     expect(state, !dspic33_load_configuration_word(cpu, UINT32_MAX, 0u),
            "configuration load rejects a wrapping address");
-    expect(state,
-           !dspic33_load_configuration_word(
-               cpu, DSPIC33_CONFIGURATION_BASE + DSPIC33_CONFIGURATION_SIZE, 0u),
+    expect(state, !dspic33_load_configuration_word(cpu, 0xf80014u, 0u),
            "configuration load rejects an address above range");
     expect(state,
-           dspic33_load_configuration_word(
-               cpu, DSPIC33_CONFIGURATION_BASE + DSPIC33_CONFIGURATION_SIZE - 2u, 0x1234u) &&
-               dspic33_read_configuration_byte(cpu, DSPIC33_CONFIGURATION_BASE +
-                                                        DSPIC33_CONFIGURATION_SIZE - 2u) == 0x34u &&
-               dspic33_read_configuration_byte(cpu, DSPIC33_CONFIGURATION_BASE +
-                                                        DSPIC33_CONFIGURATION_SIZE - 1u) == 0x12u,
+           dspic33_load_configuration_word(cpu, 0xf80012u, 0x1234u) &&
+               dspic33_read_configuration_byte(cpu, 0xf80012u) == 0x34u &&
+               dspic33_read_configuration_byte(cpu, 0xf80013u) == 0x12u,
            "configuration load accepts the final aligned word");
     for (size_t index = 0u;
          index < sizeof(null_program_addresses) / sizeof(null_program_addresses[0]); index++) {

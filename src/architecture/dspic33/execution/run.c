@@ -190,7 +190,7 @@ Dspic33StopReason dspic33_step(Dspic33* cpu) {
         cpu->trace(cpu->trace_context, instruction_pc, opcode);
     }
     if (cpu->coverage != NULL) {
-        dspic33_coverage_record(cpu->coverage, instruction_pc, opcode);
+        dspic33_coverage_record(cpu->coverage, instruction_pc);
     }
     if (opcode == 0x064000u) {
         uint64_t return_cycles;

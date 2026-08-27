@@ -118,6 +118,7 @@ struct Dspic33 {
     Dspic33StopReason stop_reason;
 };
 
+void dspic33_coverage_record(Dspic33Coverage* coverage, uint32_t address);
 void dspic33_coverage_record_branch(Dspic33Coverage* coverage, uint32_t address, bool taken);
 
 bool dspic33_initialize(Dspic33* cpu);

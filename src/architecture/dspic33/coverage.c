@@ -6,10 +6,8 @@
 struct Dspic33Coverage {
     uint32_t address;
     size_t size;
-    size_t slot_count;
     uint64_t instructions;
     uint64_t outside_range;
-    uint64_t conditional_branches;
     uint64_t branches_taken;
     uint64_t branches_not_taken;
     size_t unique_instructions;
@@ -19,20 +17,12 @@ struct Dspic33Coverage {
     uint8_t slots[];
 };
 
-static uint8_t* coverage_slot(Dspic33Coverage* coverage, uint32_t address) {
-    if (coverage == NULL || (address & 1u) != 0u || address < coverage->address ||
+static size_t coverage_slot(const Dspic33Coverage* coverage, uint32_t address) {
+    if ((address & 1u) != 0u || address < coverage->address ||
         (size_t)(address - coverage->address) >= coverage->size) {
-        return NULL;
+        return SIZE_MAX;
     }
-    return &coverage->slots[(address - coverage->address) / 2u];
-}
-
-static const uint8_t* const_coverage_slot(const Dspic33Coverage* coverage, uint32_t address) {
-    if (coverage == NULL || (address & 1u) != 0u || address < coverage->address ||
-        (size_t)(address - coverage->address) >= coverage->size) {
-        return NULL;
-    }
-    return &coverage->slots[(address - coverage->address) / 2u];
+    return (address - coverage->address) / 2u;
 }
 
 Dspic33Coverage* dspic33_coverage_create(uint32_t address, size_t size) {
@@ -48,7 +38,6 @@ Dspic33Coverage* dspic33_coverage_create(uint32_t address, size_t size) {
     if (coverage != NULL) {
         coverage->address = address;
         coverage->size = size;
-        coverage->slot_count = slot_count;
     }
     return coverage;
 }
@@ -61,54 +50,44 @@ void dspic33_coverage_clear(Dspic33Coverage* coverage) {
     }
     const uint32_t address = coverage->address;
     const size_t size = coverage->size;
-    const size_t slot_count = coverage->slot_count;
-    memset(coverage, 0, sizeof(*coverage) + slot_count);
+    memset(coverage, 0, sizeof(*coverage) + size / 2u);
     coverage->address = address;
     coverage->size = size;
-    coverage->slot_count = slot_count;
 }
 
-void dspic33_coverage_record(void* context, uint32_t address, uint32_t opcode) {
-    Dspic33Coverage* coverage = context;
-    if (coverage == NULL) {
-        return;
-    }
-    uint8_t* slot = coverage_slot(coverage, address);
-    if (slot == NULL) {
+void dspic33_coverage_record(Dspic33Coverage* coverage, uint32_t address) {
+    const size_t slot = coverage_slot(coverage, address);
+    if (slot == SIZE_MAX) {
         coverage->outside_range++;
-    } else if ((*slot & DSPIC33_COVERAGE_EXECUTED) == 0u) {
-        *slot |= DSPIC33_COVERAGE_EXECUTED;
+    } else if ((coverage->slots[slot] & DSPIC33_COVERAGE_EXECUTED) == 0u) {
+        coverage->slots[slot] |= DSPIC33_COVERAGE_EXECUTED;
         coverage->unique_instructions++;
     }
     coverage->instructions++;
-    (void)opcode;
 }
 
 void dspic33_coverage_record_branch(Dspic33Coverage* coverage, uint32_t address, bool taken) {
-    uint8_t* slot = coverage_slot(coverage, address);
-    if (slot == NULL) {
+    const size_t slot = coverage_slot(coverage, address);
+    if (slot == SIZE_MAX) {
         return;
     }
     const uint8_t outcome =
         taken ? DSPIC33_COVERAGE_BRANCH_TAKEN : DSPIC33_COVERAGE_BRANCH_NOT_TAKEN;
     const uint8_t opposite =
         taken ? DSPIC33_COVERAGE_BRANCH_NOT_TAKEN : DSPIC33_COVERAGE_BRANCH_TAKEN;
-    if ((*slot & (DSPIC33_COVERAGE_BRANCH_TAKEN | DSPIC33_COVERAGE_BRANCH_NOT_TAKEN)) == 0u) {
+    if ((coverage->slots[slot] &
+         (DSPIC33_COVERAGE_BRANCH_TAKEN | DSPIC33_COVERAGE_BRANCH_NOT_TAKEN)) == 0u) {
         coverage->unique_branch_sites++;
     }
-    if ((*slot & outcome) == 0u) {
-        *slot |= outcome;
+    if ((coverage->slots[slot] & outcome) == 0u) {
+        coverage->slots[slot] |= outcome;
         coverage->unique_branch_outcomes++;
-        if ((*slot & opposite) != 0u) {
+        if ((coverage->slots[slot] & opposite) != 0u) {
             coverage->fully_covered_branch_sites++;
         }
     }
-    coverage->conditional_branches++;
-    if (taken) {
-        coverage->branches_taken++;
-    } else {
-        coverage->branches_not_taken++;
-    }
+    coverage->branches_taken += taken;
+    coverage->branches_not_taken += !taken;
 }
 
 Dspic33CoverageResult dspic33_coverage_result(const Dspic33Coverage* coverage) {
@@ -118,7 +97,7 @@ Dspic33CoverageResult dspic33_coverage_result(const Dspic33Coverage* coverage) {
     return (Dspic33CoverageResult){
         coverage->instructions,
         coverage->outside_range,
-        coverage->conditional_branches,
+        coverage->branches_taken + coverage->branches_not_taken,
         coverage->branches_taken,
         coverage->branches_not_taken,
         coverage->unique_instructions,
@@ -128,12 +107,10 @@ Dspic33CoverageResult dspic33_coverage_result(const Dspic33Coverage* coverage) {
     };
 }
 
-bool dspic33_coverage_executed(const Dspic33Coverage* coverage, uint32_t address) {
-    const uint8_t* slot = const_coverage_slot(coverage, address);
-    return slot != NULL && (*slot & DSPIC33_COVERAGE_EXECUTED) != 0u;
-}
-
 uint8_t dspic33_coverage_flags(const Dspic33Coverage* coverage, uint32_t address) {
-    const uint8_t* slot = const_coverage_slot(coverage, address);
-    return slot == NULL ? 0u : *slot;
+    if (coverage == NULL) {
+        return 0u;
+    }
+    const size_t slot = coverage_slot(coverage, address);
+    return slot == SIZE_MAX ? 0u : coverage->slots[slot];
 }

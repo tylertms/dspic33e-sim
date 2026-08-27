@@ -24,7 +24,7 @@ typedef void (*Dspic33Trace)(void* context, uint32_t address, uint32_t opcode);
 #define DSPIC33_WRITE_LATCH_LIMIT 0xfa0100u
 #define DSPIC33_WRITE_LATCH_WORDS ((DSPIC33_WRITE_LATCH_LIMIT - DSPIC33_WRITE_LATCH_BASE) / 2u)
 #define DSPIC33_CONFIGURATION_BASE 0xf80000u
-#define DSPIC33_CONFIGURATION_SIZE 0x20u
+#define DSPIC33_CONFIGURATION_SIZE 0x14u
 #define DSPIC33_IRQ_COUNT 143u
 #define DSPIC33_IRQ_GROUP_COUNT ((DSPIC33_IRQ_COUNT + 15u) / 16u)
 #define DSPIC33_UART_COUNT 4u
@@ -811,9 +811,7 @@ typedef enum {
 Dspic33Coverage* dspic33_coverage_create(uint32_t address, size_t size);
 void dspic33_coverage_destroy(Dspic33Coverage* coverage);
 void dspic33_coverage_clear(Dspic33Coverage* coverage);
-void dspic33_coverage_record(void* context, uint32_t address, uint32_t opcode);
 Dspic33CoverageResult dspic33_coverage_result(const Dspic33Coverage* coverage);
-bool dspic33_coverage_executed(const Dspic33Coverage* coverage, uint32_t address);
 uint8_t dspic33_coverage_flags(const Dspic33Coverage* coverage, uint32_t address);
 
 typedef enum { DSPIC33_POWER_ACTIVE, DSPIC33_POWER_SLEEP, DSPIC33_POWER_IDLE } Dspic33PowerState;
