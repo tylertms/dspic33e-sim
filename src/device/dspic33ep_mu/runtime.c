@@ -40,6 +40,18 @@ static bool auxiliary_pll_input_available(const Dspic33* cpu, uint16_t control) 
     return input != 4u;
 }
 
+bool dspic33_device_internal_auxiliary_usb_clock_available(const Dspic33* cpu) {
+    uint16_t control = dspic33_device_internal_raw_word(cpu, AUXILIARY_CLOCK_CONTROL);
+    uint8_t input = dspic33_device_internal_auxiliary_pll_input(control);
+    if (!auxiliary_pll_input_available(cpu, control)) {
+        return false;
+    }
+    if ((control & AUXILIARY_PLL_ENABLE) != 0u) {
+        return (control & AUXILIARY_PLL_LOCK) != 0u;
+    }
+    return input == 7u || (input == 2u && (cpu->configuration[8u] & 0x03u) == 0u);
+}
+
 bool dspic33_device_internal_auxiliary_pll_reconfiguration(uint16_t previous, uint16_t control) {
     return ((previous ^ control) & (AUXILIARY_PLL_ENABLE | AUXILIARY_PLL_PRESCALER)) != 0u ||
            dspic33_device_internal_auxiliary_pll_input(previous) !=
@@ -58,6 +70,7 @@ static void complete_auxiliary_pll(Dspic33* cpu, uint32_t generation) {
         auxiliary_pll_input_available(cpu, control)) {
         dspic33_device_internal_raw_write_word(cpu, AUXILIARY_CLOCK_CONTROL,
                                                (uint16_t)(control | AUXILIARY_PLL_LOCK));
+        dspic33_device_internal_usb_update_power_state(cpu);
     }
 }
 
@@ -66,6 +79,7 @@ void dspic33_device_internal_reconfigure_auxiliary_pll(Dspic33* cpu) {
                                   ~AUXILIARY_PLL_LOCK);
     cpu->io.auxiliary_pll_generation++;
     dspic33_device_internal_raw_write_word(cpu, AUXILIARY_CLOCK_CONTROL, control);
+    dspic33_device_internal_usb_update_power_state(cpu);
     if ((control & AUXILIARY_PLL_ENABLE) != 0u && auxiliary_pll_input_available(cpu, control) &&
         !dspic33_schedule(cpu, DSPIC33_EVENT_AUX_PLL, 0u, cpu->io.auxiliary_pll_generation,
                           AUXILIARY_PLL_LOCK_DELAY)) {

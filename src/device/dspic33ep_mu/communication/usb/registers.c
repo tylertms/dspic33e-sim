@@ -16,6 +16,7 @@ static void usb_start_host_token(Dspic33* cpu) {
     packet.pid = (uint8_t)((token_control >> 4u) & 0x0fu);
     if (cpu->io.usb_pmd_disabled ||
         (dspic33_device_internal_raw_word(cpu, USB_PWRC) & USB_POWER) == 0u ||
+        !dspic33_device_internal_usb_clock_available(cpu) ||
         (dspic33_device_internal_raw_word(cpu, USB_CON) & USB_HOST_ENABLE) == 0u ||
         (dspic33_device_internal_raw_word(cpu, USB_CON) & USB_TOKEN_BUSY) != 0u ||
         (packet.pid != DSPIC33_USB_PID_OUT && packet.pid != DSPIC33_USB_PID_IN &&
@@ -51,6 +52,7 @@ static void usb_start_host_token(Dspic33* cpu) {
     }
     cpu->io.usb_host_pid = packet.pid;
     cpu->io.usb_host_endpoint = packet.endpoint;
+    cpu->io.usb_host_token = packet;
     cpu->io.usb_host_pending = true;
     dspic33_device_internal_raw_write_word(
         cpu, USB_CON, (uint16_t)(dspic33_device_internal_raw_word(cpu, USB_CON) | USB_TOKEN_BUSY));
@@ -122,6 +124,7 @@ void dspic33_device_internal_update_usb_register(Dspic33* cpu, uint16_t address,
             dspic33_device_internal_usb_schedule_bus_event(cpu, DSPIC33_USB_BUS_SOF, UINT16_MAX,
                                                            USB_FRAME_CYCLES, false);
         }
+        dspic33_device_internal_usb_update_power_state(cpu);
         return;
     }
     if (address == USB_TOK) {

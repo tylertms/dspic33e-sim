@@ -16,6 +16,7 @@ bool dspic33_device_internal_adc_module_address(uint16_t address, uint8_t module
 bool dspic33_device_internal_adc_pmd_disabled(const Dspic33* cpu, uint8_t module);
 bool dspic33_device_internal_adc_register_write_mask(uint16_t address, uint16_t* writable);
 bool dspic33_device_internal_auxiliary_clock_configuration_locked(const Dspic33* cpu);
+bool dspic33_device_internal_auxiliary_usb_clock_available(const Dspic33* cpu);
 bool dspic33_device_internal_auxiliary_pll_reconfiguration(uint16_t previous, uint16_t control);
 bool dspic33_device_internal_byte_queue_pop(Dspic33ByteQueue* queue, uint8_t* output_byte);
 bool dspic33_device_internal_byte_queue_push(Dspic33ByteQueue* queue, uint8_t byte_value);
@@ -370,6 +371,7 @@ void dspic33_device_internal_update_usb_register(Dspic33* cpu, uint16_t address,
                                                  uint16_t requested);
 void dspic33_device_internal_usb_pop_transaction_status(Dspic33* cpu);
 void dspic33_device_internal_usb_refresh_activity_pending(Dspic33* cpu);
+bool dspic33_device_internal_usb_clock_available(const Dspic33* cpu);
 void dspic33_device_internal_usb_refresh_interrupt(Dspic33* cpu);
 void dspic33_device_internal_usb_refresh_transaction_status(Dspic33* cpu);
 void dspic33_device_internal_usb_reset_ping_pong(Dspic33* cpu);

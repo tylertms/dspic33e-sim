@@ -176,6 +176,8 @@ static void host_response_guard_cases(TestState* state, Dspic33* cpu) {
     expect(state, !cpu->io.usb_pending[0].active, "USB ignores a host response without a token");
 
     dspic33_reset(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, AUXILIARY_CLOCK_CONTROL,
+                                           AUXILIARY_CLOCK_BYPASS);
     dspic33_device_internal_raw_write_word(cpu, CON, 0x0008u);
     dspic33_device_internal_raw_write_word(cpu, BDTP2, 0x0010u);
     cpu->io.usb_host_pending = true;
@@ -251,6 +253,8 @@ static void scheduler_boundary_cases(TestState* state, Dspic33* cpu) {
     expect(state, !cpu->events.items[0].paused, "USB pause ignores unrelated events");
 
     dspic33_reset(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, AUXILIARY_CLOCK_CONTROL,
+                                           AUXILIARY_CLOCK_BYPASS);
     expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_USB, 0u, 0u, 1u),
            "schedule USB resume overflow case");
     cpu->io.usb_pending[0].active = true;

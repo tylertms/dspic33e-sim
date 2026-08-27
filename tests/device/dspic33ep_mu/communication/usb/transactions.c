@@ -5,6 +5,7 @@ static void host_cases(TestState* state, Dspic33* cpu) {
     uint8_t input[4] = {0x11u, 0x22u, 0x33u, 0x44u};
     uint8_t output[3] = {0xa1u, 0xb2u, 0xc3u};
     dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, AUXILIARY_CLOCK_CONTROL, AUXILIARY_CLOCK_BYPASS);
     dspic33_write_word(cpu, PWRC, 1u);
     dspic33_write_word(cpu, BDTP1, 0x0060u);
     dspic33_write_word(cpu, CON, 0x0008u);
@@ -63,8 +64,22 @@ static void host_cases(TestState* state, Dspic33* cpu) {
            "USB host NAK schedule");
     expect(state,
            dspic33_usb_test_memory_word(cpu, dspic33_usb_test_descriptor_address(0u, 0u, 0u)) ==
-               0x0028u,
-           "USB host NAK status");
+                   0x0088u &&
+               cpu->io.usb_next_bank[0][0] == 0u && cpu->io.usb_host_pending &&
+               (dspic33_read_word(cpu, CON) & 0x0020u) != 0u &&
+               dspic33_usb_transmit(cpu, &packet) && packet.pid == DSPIC33_USB_PID_IN,
+           "USB host NAK automatic retry");
+    dspic33_write_word(cpu, EP0, 0x0040u);
+    expect(state,
+           dspic33_usb_host_response(cpu, DSPIC33_USB_HANDSHAKE_NAK, NULL, 0u, false, 0u) &&
+               dspic33_device_advance(cpu, 0u),
+           "USB host disabled retry NAK schedule");
+    expect(state,
+           dspic33_usb_test_memory_word(cpu, dspic33_usb_test_descriptor_address(0u, 0u, 0u)) ==
+                   0x0028u &&
+               cpu->io.usb_next_bank[0][0] == 1u && !cpu->io.usb_host_pending &&
+               (dspic33_read_word(cpu, CON) & 0x0020u) == 0u,
+           "USB host disabled retry NAK completion");
     dspic33_usb_test_clear_transaction(cpu);
     dspic33_usb_test_write_descriptor(cpu, 0u, 0u, 1u, 0x0088u, 4u, BUFFER);
     dspic33_write_word(cpu, TOK, 0x0090u);
@@ -77,6 +92,7 @@ static void host_cases(TestState* state, Dspic33* cpu) {
                0x0038u,
            "USB host STALL status");
     dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, AUXILIARY_CLOCK_CONTROL, AUXILIARY_CLOCK_BYPASS);
     dspic33_write_word(cpu, PWRC, 1u);
     dspic33_write_word(cpu, CON, 9u);
     expect(state, dspic33_device_advance(cpu, 59999u) && dspic33_read_word(cpu, FRML) == 0u,
@@ -88,6 +104,99 @@ static void host_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, IR, 4u);
     expect(state, dspic33_device_advance(cpu, 60000u) && dspic33_read_word(cpu, FRML) == 2u,
            "USB host recurring SOF");
+}
+
+static void host_overflow_cases(TestState* state, Dspic33* cpu) {
+    Dspic33UsbPacket packet;
+    uint8_t input[4] = {0x11u, 0x22u, 0x33u, 0x44u};
+
+    dspic33_usb_test_configure_host(cpu);
+    dspic33_write_word(cpu, EIE, 0x0020u);
+    dspic33_usb_test_write_descriptor(cpu, 0u, 0u, 0u, 0x0088u, 2u, BUFFER);
+    dspic33_write_word(cpu, TOK, 0x0090u);
+    expect(state, dspic33_usb_transmit(cpu, &packet), "USB oversized host IN token");
+    expect(state,
+           dspic33_usb_host_response(cpu, DSPIC33_USB_HANDSHAKE_ACK, input, sizeof(input), false,
+                                     0u) &&
+               dspic33_device_advance(cpu, 0u),
+           "USB oversized host IN response schedule");
+    expect(state,
+           cpu->data[BUFFER] == input[0] && cpu->data[BUFFER + 1u] == input[1] &&
+               (dspic33_read_word(cpu, EIR) & 0x0020u) != 0u &&
+               (dspic33_read_word(cpu, IR) & 0x0002u) != 0u,
+           "USB oversized host IN sets DMA error");
+}
+
+static void clock_cases(TestState* state, Dspic33* cpu) {
+    Dspic33UsbPacket packet;
+    uint8_t data = 0x5au;
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, PWRC, 1u);
+    dspic33_write_word(cpu, BDTP1, 0x0060u);
+    dspic33_write_word(cpu, EP0 + 2u, 0x001du);
+    dspic33_write_word(cpu, CON, 1u);
+    dspic33_usb_test_write_descriptor(cpu, 1u, 0u, 0u, 0x0088u, 1u, BUFFER);
+    expect(state,
+           dspic33_usb_receive(cpu, 1u, &data, 1u, 0u) && dspic33_device_advance(cpu, 0u) &&
+               dspic33_usb_transmit(cpu, &packet) &&
+               packet.handshake == DSPIC33_USB_HANDSHAKE_TIMEOUT &&
+               cpu->data[BUFFER] == 0u,
+           "USB SIE requires auxiliary clock input");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, PWRC, 1u);
+    dspic33_write_word(cpu, BDTP1, 0x0060u);
+    dspic33_write_word(cpu, CON, 0x0008u);
+    dspic33_usb_test_write_descriptor(cpu, 0u, 0u, 0u, 0x0088u, 0u, BUFFER);
+    dspic33_write_word(cpu, TOK, 0x0090u);
+    expect(state, !dspic33_usb_transmit(cpu, &packet) && !cpu->io.usb_host_pending,
+           "USB host token requires auxiliary clock input");
+    dspic33_write_word(cpu, AUXILIARY_CLOCK_CONTROL, AUXILIARY_CLOCK_FRC_BYPASS);
+    dspic33_write_word(cpu, TOK, 0x0090u);
+    expect(state, !dspic33_usb_transmit(cpu, &packet) && !cpu->io.usb_host_pending,
+           "USB host token rejects non-48 MHz FRC bypass");
+    dspic33_write_word(cpu, AUXILIARY_CLOCK_CONTROL, AUXILIARY_CLOCK_BYPASS);
+    dspic33_write_word(cpu, TOK, 0x0090u);
+    expect(state, dspic33_usb_transmit(cpu, &packet) && cpu->io.usb_host_pending,
+           "USB host token accepts auxiliary clock bypass");
+
+    expect(state,
+           dspic33_load_configuration_word(cpu, OSCILLATOR_CONFIGURATION, OSCILLATOR_PRIMARY_EC),
+           "USB primary EC configuration");
+    dspic33_usb_test_configure_host(cpu);
+    dspic33_write_word(cpu, AUXILIARY_CLOCK_CONTROL, AUXILIARY_CLOCK_PRIMARY_BYPASS);
+    dspic33_usb_test_write_descriptor(cpu, 0u, 0u, 0u, 0x0088u, 0u, BUFFER);
+    dspic33_write_word(cpu, TOK, 0x0090u);
+    expect(state, dspic33_usb_transmit(cpu, &packet) && cpu->io.usb_host_pending,
+           "USB host token accepts primary EC bypass");
+
+    dspic33_usb_test_configure_host(cpu);
+    dspic33_write_word(cpu, CON, 9u);
+    dspic33_write_word(cpu, AUXILIARY_CLOCK_CONTROL, 0u);
+    expect(state,
+           cpu->events.count == 1u && cpu->events.items[0].paused &&
+               dspic33_device_advance(cpu, USB_FRAME_CYCLES) && dspic33_read_word(cpu, FRML) == 0u,
+           "USB SOF pauses without auxiliary clock input");
+    dspic33_write_word(cpu, AUXILIARY_CLOCK_CONTROL, AUXILIARY_CLOCK_BYPASS);
+    expect(state,
+           dspic33_device_advance(cpu, USB_FRAME_CYCLES) && dspic33_read_word(cpu, FRML) == 1u,
+           "USB SOF resumes with auxiliary clock bypass");
+
+    dspic33_usb_test_configure_host(cpu);
+    dspic33_write_word(cpu, AUXILIARY_CLOCK_CONTROL, 0x9800u);
+    dspic33_write_word(cpu, CON, 9u);
+    expect(state,
+           cpu->events.count == 2u && cpu->events.items[1].paused &&
+               dspic33_device_advance(cpu, 31u) && dspic33_read_word(cpu, FRML) == 0u,
+           "USB SOF waits for auxiliary PLL lock");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) &&
+               (dspic33_read_word(cpu, AUXILIARY_CLOCK_CONTROL) & 0x4000u) != 0u,
+           "USB auxiliary PLL locks");
+    expect(state,
+           dspic33_device_advance(cpu, USB_FRAME_CYCLES) && dspic33_read_word(cpu, FRML) == 1u,
+           "USB SOF starts after auxiliary PLL lock");
 }
 
 static void pmd_cases(TestState* state, Dspic33* cpu) {
@@ -367,6 +476,8 @@ int main(void) {
     dspic33_usb_test_sleep_guard_cases(&state, &cpu);
     dspic33_usb_test_host_interrupt_cases(&state, &cpu);
     host_cases(&state, &cpu);
+    host_overflow_cases(&state, &cpu);
+    clock_cases(&state, &cpu);
     pmd_cases(&state, &cpu);
     power_cases(&state, &cpu);
     copy_and_reset_cases(&state, &cpu);

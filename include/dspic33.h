@@ -741,6 +741,7 @@ typedef struct {
     Dspic33Dci dci;
     Dspic33UsbPending usb_pending[DSPIC33_USB_PENDING_COUNT];
     Dspic33UsbQueue usb_tx;
+    Dspic33UsbPacket usb_host_token;
     uint8_t usb_next_bank[DSPIC33_USB_ENDPOINT_COUNT][2];
     uint8_t usb_status[DSPIC33_USB_STATUS_FIFO_SIZE];
     uint8_t usb_status_head;

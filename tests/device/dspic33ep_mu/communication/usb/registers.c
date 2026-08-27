@@ -58,6 +58,7 @@ void dspic33_usb_test_write_descriptor(Dspic33* cpu, uint8_t endpoint, uint8_t d
 void dspic33_usb_test_configure_device(Dspic33* cpu) {
     uint8_t endpoint;
     dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, AUXILIARY_CLOCK_CONTROL, AUXILIARY_CLOCK_BYPASS);
     dspic33_write_word(cpu, PWRC, 1u);
     dspic33_write_word(cpu, BDTP1, 0x0060u);
     for (endpoint = 0u; endpoint < DSPIC33_USB_ENDPOINT_COUNT; endpoint++) {
@@ -69,6 +70,7 @@ void dspic33_usb_test_configure_device(Dspic33* cpu) {
 
 void dspic33_usb_test_configure_host(Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, AUXILIARY_CLOCK_CONTROL, AUXILIARY_CLOCK_BYPASS);
     dspic33_write_word(cpu, PWRC, 1u);
     dspic33_write_word(cpu, BDTP1, 0x0060u);
     dspic33_write_word(cpu, CON, 0x0008u);
@@ -493,6 +495,7 @@ void dspic33_usb_test_bus_access_error_cases(TestState* state, Dspic33* cpu) {
            "USB out-of-range OUT buffer access");
 
     dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, AUXILIARY_CLOCK_CONTROL, AUXILIARY_CLOCK_BYPASS);
     dspic33_write_word(cpu, PWRC, 1u);
     dspic33_write_word(cpu, BDTP1, 0x0060u);
     dspic33_write_word(cpu, CON, 0x0008u);
@@ -504,6 +507,7 @@ void dspic33_usb_test_bus_access_error_cases(TestState* state, Dspic33* cpu) {
            "USB host out-of-range OUT buffer access");
 
     dspic33_reset(cpu, 0u);
+    dspic33_write_word(cpu, AUXILIARY_CLOCK_CONTROL, AUXILIARY_CLOCK_BYPASS);
     dspic33_write_word(cpu, PWRC, 1u);
     dspic33_write_word(cpu, BDTP1, 0x0060u);
     dspic33_write_word(cpu, CON, 0x0008u);
@@ -791,6 +795,7 @@ void dspic33_usb_test_host_interrupt_cases(TestState* state, Dspic33* cpu) {
 
     dspic33_usb_test_configure_host(cpu);
     dspic33_write_word(cpu, IE, 0x0080u);
+    dspic33_write_word(cpu, EP0, 0x0040u);
     dspic33_usb_test_enable_usb_interrupt(cpu);
     dspic33_usb_test_write_descriptor(cpu, 0u, 0u, 0u, 0x0088u, 1u, BUFFER);
     dspic33_write_word(cpu, TOK, 0x0090u);
