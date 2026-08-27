@@ -32,7 +32,7 @@ static void qei_write_counter(Dspic33* cpu, uint8_t channel, uint16_t counter_lo
 }
 
 static uint64_t qei_divider(uint16_t control_word) {
-    static const uint16_t divider_values[8] = {1u, 2u, 4u, 8u, 16u, 32u, 64u, 128u};
+    static const uint16_t divider_values[8] = {1u, 2u, 4u, 8u, 16u, 32u, 64u, 256u};
 
     return divider_values[(control_word & QEI_CONTROL_DIVIDER_MASK) >> QEI_CONTROL_DIVIDER_SHIFT];
 }

@@ -196,7 +196,7 @@ void dspic33_qei_test_quadrature_transition_cases(TestState* state, Dspic33* cpu
 }
 
 void dspic33_qei_test_divider_polarity_output_cases(TestState* state, Dspic33* cpu) {
-    static const uint16_t counter_divisors[8] = {1u, 2u, 4u, 8u, 16u, 32u, 64u, 128u};
+    static const uint16_t counter_divisors[8] = {1u, 2u, 4u, 8u, 16u, 32u, 64u, 256u};
     static const uint16_t filter_divisors[8] = {1u, 2u, 4u, 8u, 16u, 32u, 64u, 256u};
     static const int32_t positions[3] = {1, 3, 6};
     uint8_t channel;
@@ -417,13 +417,13 @@ void dspic33_qei_test_timer_filter_power_cases(TestState* state, Dspic33* cpu) {
         dspic33_qei_test_set_open_comparison_window(cpu, base);
         dspic33_write_word(cpu, base, QEI_ENABLE | (7u << QEI_DIVIDER_SHIFT) | QEI_MODE_TIMER);
         expect(state,
-               dspic33_device_advance(cpu, 127u) &&
+               dspic33_device_advance(cpu, 255u) &&
                    dspic33_qei_test_read_counter(cpu, (uint16_t)(base + 6u)) == 0u,
-               "QEI prescaler 111 waits 128 clocks");
+               "QEI prescaler 111 waits 256 clocks");
         expect(state,
                dspic33_device_advance(cpu, 1u) &&
                    dspic33_qei_test_read_counter(cpu, (uint16_t)(base + 6u)) == 1u,
-               "QEI prescaler 111 clocks at 1 to 128");
+               "QEI prescaler 111 clocks at 1 to 256");
 
         dspic33_qei_test_reset_qei(cpu);
         dspic33_qei_test_set_open_comparison_window(cpu, base);
