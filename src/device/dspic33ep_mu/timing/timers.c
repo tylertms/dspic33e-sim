@@ -52,9 +52,6 @@ bool dspic33_device_internal_timer_power_enabled(const Dspic33* cpu, uint8_t tim
 bool dspic33_device_internal_timer_pmd_disabled(const Dspic33* cpu, uint8_t timer_index) {
     uint16_t timer_mask = (uint16_t)(1u << timer_index);
 
-    if (timer_index >= 5u) {
-        return false;
-    }
     if (dspic33_device_internal_timer_is_paired_high(cpu, timer_index)) {
         timer_mask |= (uint16_t)(1u << (timer_index - 1u));
     } else if (dspic33_device_internal_timer_pair_enabled(cpu, timer_index)) {

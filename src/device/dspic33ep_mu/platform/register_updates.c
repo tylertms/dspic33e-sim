@@ -174,14 +174,26 @@ void dspic33_device_internal_run_timer_pmd(Dspic33* cpu, uint16_t timer, uint32_
 void dspic33_device_internal_update_timer_pmd(Dspic33* cpu, uint16_t address, uint16_t previous) {
     uint16_t current;
     uint16_t changed;
+    uint16_t first_mask;
+    uint8_t first_timer;
+    uint8_t timer_count;
     uint8_t timer;
-    if (address != 0x0760u) {
+
+    if (address == 0x0760u) {
+        first_mask = 0x0800u;
+        first_timer = 0u;
+        timer_count = 5u;
+    } else if (address == 0x0764u) {
+        first_mask = 0x1000u;
+        first_timer = 5u;
+        timer_count = 4u;
+    } else {
         return;
     }
     current = dspic33_device_internal_raw_word(cpu, address);
-    changed = (uint16_t)((previous ^ current) & 0xf800u);
-    for (timer = 0u; timer < 5u; timer++) {
-        uint16_t register_mask = (uint16_t)(0x0800u << timer);
+    changed = (uint16_t)(previous ^ current);
+    for (timer = first_timer; timer < first_timer + timer_count; timer++) {
+        uint16_t register_mask = (uint16_t)(first_mask << (timer - first_timer));
         if ((changed & register_mask) == 0u) {
             continue;
         }
@@ -193,8 +205,8 @@ void dspic33_device_internal_update_timer_pmd(Dspic33* cpu, uint16_t address, ui
                               dspic33_device_instruction_cycles(cpu, 1u))) {
             uint8_t invalidate;
             dspic33_device_internal_raw_write_word(cpu, address, previous);
-            for (invalidate = 0u; invalidate < 5u; invalidate++) {
-                if ((changed & (uint16_t)(0x0800u << invalidate)) != 0u) {
+            for (invalidate = first_timer; invalidate < first_timer + timer_count; invalidate++) {
+                if ((changed & (uint16_t)(first_mask << (invalidate - first_timer))) != 0u) {
                     cpu->io.timer_pmd_generation[invalidate]++;
                 }
             }

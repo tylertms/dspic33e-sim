@@ -609,11 +609,13 @@ static void power_mode_cases(TestState* state, Dspic33* cpu) {
 
 static void pmd_cases(TestState* state, Dspic33* cpu) {
     uint8_t timer;
-    for (timer = 0u; timer < 5u; timer++) {
-        uint16_t pmd_mask = (uint16_t)(0x0800u << timer);
+    for (timer = 0u; timer < DSPIC33_TIMER_COUNT; timer++) {
+        uint16_t pmd_address = timer < 5u ? 0x0760u : 0x0764u;
+        uint16_t pmd_mask = timer < 5u ? (uint16_t)(0x0800u << timer)
+                                       : (uint16_t)(0x1000u << (timer - 5u));
         dspic33_reset(cpu, 0u);
         configure_16_bit(cpu, timer, 0u, 100u, 0u);
-        dspic33_write_word(cpu, 0x0760u, pmd_mask);
+        dspic33_write_word(cpu, pmd_address, pmd_mask);
         expect(state, cpu->io.timer_pmd_disabled == 0u,
                "timer PMD request waits one instruction cycle");
         expect(state, dspic33_device_advance(cpu, 1u), "advance timer PMD disable boundary");
@@ -630,7 +632,7 @@ static void pmd_cases(TestState* state, Dspic33* cpu) {
                stored_word(cpu, timer_registers[timer]) == 1u &&
                    stored_word(cpu, timer_periods[timer]) == 100u,
                "timer PMD blocks writes and holds counter");
-        dspic33_write_word(cpu, 0x0760u, 0u);
+        dspic33_write_word(cpu, pmd_address, 0u);
         expect(state, dspic33_device_advance(cpu, 1u), "advance timer PMD enable boundary");
         expect(state,
                cpu->io.timer_pmd_disabled == 0u &&

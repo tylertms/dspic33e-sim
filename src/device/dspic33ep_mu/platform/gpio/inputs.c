@@ -466,7 +466,7 @@ uint8_t dspic33_device_read_byte(Dspic33* cpu, uint16_t address, uint8_t value) 
         dspic33_device_internal_platform_pmd_disabled(cpu, PLATFORM_PMD_REFERENCE_CLOCK)) {
         return 0u;
     }
-    for (timer = 0u; timer < 5u; timer++) {
+    for (timer = 0u; timer < DSPIC33_TIMER_COUNT; timer++) {
         if (dspic33_device_internal_timer_pmd_disabled(cpu, timer) &&
             (base == dspic33_device_timer_controls[timer] ||
              base == dspic33_device_timer_registers[timer] ||

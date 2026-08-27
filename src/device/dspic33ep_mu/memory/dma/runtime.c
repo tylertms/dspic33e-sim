@@ -115,7 +115,7 @@ static bool event_source_valid(const Dspic33* cpu, Dspic33EventType type, uint16
     case DSPIC33_EVENT_TIMER_INTERRUPT:
         return event_source < DSPIC33_TIMER_COUNT;
     case DSPIC33_EVENT_TIMER_PMD:
-        return event_source < 5u;
+        return event_source < DSPIC33_TIMER_COUNT;
     case DSPIC33_EVENT_PLATFORM_PMD:
         return event_source < PLATFORM_PMD_COUNT;
     case DSPIC33_EVENT_PWM_FAULT:

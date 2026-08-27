@@ -154,7 +154,7 @@ static void scheduled_source_boundary_cases(TestState* state, Dspic33* cpu) {
     };
     uint16_t limits[] = {
         DSPIC33_TIMER_COUNT,
-        5u,
+        DSPIC33_TIMER_COUNT,
         DSPIC33_PWM_INPUT_COUNT,
         DSPIC33_PWM_INPUT_COUNT,
         dspic33_device_profile(cpu)->pwm_generator_count,
