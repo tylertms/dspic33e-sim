@@ -12,8 +12,11 @@ enum {
     ELF_SEGMENT_LOAD = 1,
     ELF_SECTION_PROGBITS = 1,
     ELF_SECTION_SYMTAB = 2,
+    ELF_SECTION_STRTAB = 3,
     ELF_EXECUTABLE = 2,
     ELF_MACHINE_DSPIC = 118,
+    ELF_VERSION_CURRENT = 1,
+    ELF_SECTION_UNDEFINED = 0,
     ELF_FLAG_EXECUTE = 4,
     ELF_FLAG_PROGRAM = 0x40000000,
     ELF_FLAG_PSV = 0x10000000
@@ -62,7 +65,8 @@ static bool header_valid(const ElfImage* image, char* error, size_t error_size) 
         set_error(error, error_size, "image is not ELF");
         return false;
     }
-    if (bytes[4] != 1u || bytes[5] != 1u) {
+    if (bytes[4] != 1u || bytes[5] != 1u || bytes[6] != ELF_VERSION_CURRENT ||
+        read_u32(bytes + 20u) != ELF_VERSION_CURRENT || read_u16(bytes + 40u) != ELF_HEADER_SIZE) {
         set_error(error, error_size, "image is not little-endian ELF32");
         return false;
     }
@@ -298,16 +302,18 @@ bool elf_image_symbol(const ElfImage* image, const char* name, uint32_t* address
             continue;
         }
         string_table = read_section(image, table_offset, (uint16_t)symbol_table.linked_section);
-        if (!range_valid(image->size, string_table.file_offset, string_table.byte_size)) {
+        if (string_table.type != ELF_SECTION_STRTAB ||
+            !range_valid(image->size, string_table.file_offset, string_table.byte_size)) {
             continue;
         }
         for (uint32_t byte_offset = 0u; byte_offset < symbol_table.byte_size;
              byte_offset += ELF_SYMBOL_SIZE) {
             const uint8_t* symbol_entry = image->bytes + symbol_table.file_offset + byte_offset;
             uint32_t string_offset = read_u32(symbol_entry);
+            uint16_t symbol_section = read_u16(symbol_entry + 14u);
             const char* symbol_name;
             size_t string_bytes_remaining;
-            if (string_offset >= string_table.byte_size) {
+            if (symbol_section == ELF_SECTION_UNDEFINED || string_offset >= string_table.byte_size) {
                 continue;
             }
             symbol_name = (const char*)image->bytes + string_table.file_offset + string_offset;

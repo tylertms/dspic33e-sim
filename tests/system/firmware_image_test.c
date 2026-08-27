@@ -42,11 +42,14 @@ static void initialize_elf_image(uint8_t* image) {
     image[3] = 'F';
     image[4] = 1u;
     image[5] = 1u;
+    image[6] = 1u;
     write_u16_le(image, 16u, 2u);
     write_u16_le(image, 18u, 118u);
+    write_u32_le(image, 20u, 1u);
     write_u32_le(image, 24u, 0x100u);
     write_u32_le(image, 28u, PROGRAM_TABLE_OFFSET);
     write_u32_le(image, 32u, PROGRAM_SECTION_TABLE_OFFSET);
+    write_u16_le(image, 40u, ELF_HEADER_SIZE);
     write_u16_le(image, 42u, ELF_PROGRAM_SIZE);
     write_u16_le(image, 44u, 1u);
     write_u16_le(image, 46u, ELF_SECTION_SIZE);
@@ -78,9 +81,12 @@ static void initialize_symbol_image(uint8_t* image) {
     image[3] = 'F';
     image[4] = 1u;
     image[5] = 1u;
+    image[6] = 1u;
     write_u16_le(image, 16u, 2u);
     write_u16_le(image, 18u, 118u);
+    write_u32_le(image, 20u, 1u);
     write_u32_le(image, 32u, ELF_HEADER_SIZE);
+    write_u16_le(image, 40u, ELF_HEADER_SIZE);
     write_u16_le(image, 46u, ELF_SECTION_SIZE);
     write_u16_le(image, 48u, 3u);
 
@@ -92,10 +98,12 @@ static void initialize_symbol_image(uint8_t* image) {
     write_u32_le(image, section + 36u, 16u);
 
     section += ELF_SECTION_SIZE;
+    write_u32_le(image, section + 4u, 3u);
     write_u32_le(image, section + 16u, STRING_OFFSET);
     write_u32_le(image, section + 20u, 7u);
     write_u32_le(image, SYMBOL_OFFSET, 1u);
     write_u32_le(image, SYMBOL_OFFSET + 4u, 0x1234u);
+    write_u16_le(image, SYMBOL_OFFSET + 14u, 0xfff1u);
     memcpy(image + STRING_OFFSET, "\0_test", 7u);
 }
 
@@ -196,6 +204,18 @@ static void test_elf(TestState* state, Dspic33* cpu) {
     expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
            "ELF64 image is rejected");
     initialize_elf_image(image);
+    image[6] = 0u;
+    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
+           "invalid ELF identification version is rejected");
+    initialize_elf_image(image);
+    write_u32_le(image, 20u, 0u);
+    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
+           "invalid ELF header version is rejected");
+    initialize_elf_image(image);
+    write_u16_le(image, 40u, ELF_HEADER_SIZE - 1u);
+    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
+           "invalid ELF header size is rejected");
+    initialize_elf_image(image);
     write_u16_le(image, 42u, ELF_PROGRAM_SIZE - 1u);
     expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
            "short program header is rejected");
@@ -247,6 +267,14 @@ static void test_symbol(TestState* state) {
            "!dspic33_elf_symbol_data(image, sizeof(image), missing, &symbol_address)");
     expect(state, !dspic33_elf_symbol_data(image, sizeof(image), NULL, &symbol_address),
            "!dspic33_elf_symbol_data(image, sizeof(image), NULL, &symbol_address)");
+    initialize_symbol_image(image);
+    write_u16_le(image, SYMBOL_OFFSET + 14u, 0u);
+    expect(state, !dspic33_elf_symbol_data(image, sizeof(image), "test", &symbol_address),
+           "undefined ELF symbol is rejected");
+    initialize_symbol_image(image);
+    write_u32_le(image, ELF_HEADER_SIZE + 2u * ELF_SECTION_SIZE + 4u, 1u);
+    expect(state, !dspic33_elf_symbol_data(image, sizeof(image), "test", &symbol_address),
+           "symbol table requires a linked string table");
     uint8_t malformed[MALFORMED_SYMBOL_IMAGE_SIZE] = {0};
     initialize_symbol_image(malformed);
     write_u32_le(malformed, ELF_HEADER_SIZE + ELF_SECTION_SIZE + 20u, 17u);

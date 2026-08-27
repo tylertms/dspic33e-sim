@@ -75,9 +75,12 @@ void dspic33_nvm_test_auxiliary_loader_cases(TestState* state, Dspic33* cpu) {
     elf_bytes[3] = 'F';
     elf_bytes[4] = 1u;
     elf_bytes[5] = 1u;
+    elf_bytes[6] = 1u;
     write_u16(elf_bytes, 16u, 2u);
     write_u16(elf_bytes, 18u, 118u);
+    write_u32(elf_bytes, 20u, 1u);
     write_u32(elf_bytes, 32u, 52u);
+    write_u16(elf_bytes, 40u, 52u);
     write_u16(elf_bytes, 46u, 40u);
     write_u16(elf_bytes, 48u, 2u);
     write_u32(elf_bytes, 96u, 1u);
