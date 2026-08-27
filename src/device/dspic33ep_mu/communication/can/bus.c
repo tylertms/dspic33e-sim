@@ -171,14 +171,18 @@ static void can_mode_transition(Dspic33* cpu, uint8_t channel_index, uint32_t ev
         requested_mode == dspic33_device_internal_can_mode(cpu, channel_index)) {
         return;
     }
-    if (!dspic33_device_internal_can_power_enabled(cpu, channel_index) ||
-        (cpu->io.can_rx_pin_high & channel_bit) == 0u ||
-        ((cpu->io.can_tx_busy | cpu->io.can_rx_busy | cpu->io.can_rx_serial_active |
-          cpu->io.can_tx_error_active | cpu->io.can_rx_error_active | cpu->io.can_rx_ack) &
-         channel_bit) != 0u) {
-        cpu->io.can_mode_generation[channel_index]++;
-        if (!dspic33_device_internal_can_schedule_mode_transition(cpu, channel_index,
-                                                                  requested_mode)) {
+    bool recessive = (cpu->io.can_rx_physical_active & channel_bit) == 0u ||
+                     (cpu->io.can_rx_pin_high & channel_bit) != 0u;
+    bool idle = dspic33_device_internal_can_power_enabled(cpu, channel_index) && recessive &&
+                ((cpu->io.can_tx_busy | cpu->io.can_rx_busy | cpu->io.can_rx_serial_active |
+                  cpu->io.can_tx_error_active | cpu->io.can_rx_error_active | cpu->io.can_rx_ack) &
+                 channel_bit) == 0u;
+
+    cpu->io.can_mode_recessive_bits[channel_index] =
+        idle ? (uint8_t)(cpu->io.can_mode_recessive_bits[channel_index] + 1u) : 0u;
+    if (cpu->io.can_mode_recessive_bits[channel_index] < 11u) {
+        if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, event_value,
+                              dspic33_device_internal_can_bit_cycles(cpu, channel_index))) {
             cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
         }
         return;
@@ -201,6 +205,44 @@ static void can_mode_transition(Dspic33* cpu, uint8_t channel_index, uint32_t ev
                               0u)) {
             cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
         }
+    }
+}
+
+static void can_bus_off_sample(Dspic33* cpu, uint8_t channel_index) {
+    const uint8_t channel_bit = (uint8_t)(1u << channel_index);
+    const uint16_t status_address = (uint16_t)(dspic33_device_can_bases[channel_index] + 0x0au);
+    uint16_t status_word = dspic33_device_internal_raw_word(cpu, status_address);
+
+    if ((status_word & CAN_BUS_OFF) == 0u) {
+        return;
+    }
+    bool recessive = (cpu->io.can_rx_physical_active & channel_bit) == 0u ||
+                     (cpu->io.can_rx_pin_high & channel_bit) != 0u;
+    if (recessive) {
+        cpu->io.can_bus_off_recessive_bits[channel_index]++;
+        if (cpu->io.can_bus_off_recessive_bits[channel_index] == 11u) {
+            cpu->io.can_bus_off_recessive_bits[channel_index] = 0u;
+            cpu->io.can_bus_off_recessive_sequences[channel_index]++;
+        }
+    } else {
+        cpu->io.can_bus_off_recessive_bits[channel_index] = 0u;
+    }
+    if (cpu->io.can_bus_off_recessive_sequences[channel_index] == 128u) {
+        cpu->io.can_bus_off_recessive_sequences[channel_index] = 0u;
+        dspic33_device_internal_raw_write_word(
+            cpu, (uint16_t)(dspic33_device_can_bases[channel_index] + 0x0eu), 0u);
+        dspic33_device_internal_raw_write_word(cpu, status_address,
+                                               (uint16_t)(status_word & ~CAN_BUS_OFF));
+        dspic33_device_internal_can_refresh_error_status(cpu, channel_index);
+        if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_TRANSMIT_START,
+                              0u)) {
+            cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+        }
+        return;
+    }
+    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_BUS_OFF_SAMPLE,
+                          dspic33_device_internal_can_bit_cycles(cpu, channel_index))) {
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
     }
 }
 
@@ -308,6 +350,13 @@ static void can_receive_start(Dspic33* cpu, uint8_t channel_index) {
 }
 
 static void can_receive_success_start(Dspic33* cpu, uint8_t channel_index) {
+    Dspic33CanFrame frame;
+
+    if (!dspic33_device_internal_can_pending_pop(&cpu->io.can_rx_pending[channel_index], &frame) ||
+        !dspic33_device_internal_can_queue_push(&cpu->io.can_rx[channel_index], &frame)) {
+        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+        return;
+    }
     dspic33_device_internal_can_receive_success(cpu, channel_index);
     can_receive_start(cpu, channel_index);
 }
@@ -583,12 +632,17 @@ void dspic33_device_internal_can_error_event(Dspic33* cpu, uint8_t channel_index
     const uint16_t counter_address = (uint16_t)(dspic33_device_can_bases[channel_index] + 0x0eu);
     uint16_t error_counters = dspic33_device_internal_raw_word(cpu, counter_address);
     const uint16_t error_increment = (uint16_t)(event_value >> CAN_EVENT_ERROR_COUNT_SHIFT);
+    bool entered_bus_off = false;
 
     if ((event_value & CAN_EVENT_TRANSMIT_ERROR) != 0u) {
         uint16_t transmit_error_count = (uint16_t)(error_counters >> 8u);
         const uint32_t transmit_total = (uint32_t)transmit_error_count + error_increment;
 
         if (transmit_total > 0xffu) {
+            entered_bus_off =
+                (dspic33_device_internal_raw_word(
+                     cpu, (uint16_t)(dspic33_device_can_bases[channel_index] + 0x0au)) &
+                 CAN_BUS_OFF) == 0u;
             dspic33_device_internal_raw_write_word(
                 cpu, (uint16_t)(dspic33_device_can_bases[channel_index] + 0x0au),
                 (uint16_t)(dspic33_device_internal_raw_word(
@@ -608,6 +662,14 @@ void dspic33_device_internal_can_error_event(Dspic33* cpu, uint8_t channel_index
     }
     dspic33_device_internal_raw_write_word(cpu, counter_address, error_counters);
     dspic33_device_internal_can_refresh_error_status(cpu, channel_index);
+    if (entered_bus_off) {
+        cpu->io.can_bus_off_recessive_bits[channel_index] = 0u;
+        cpu->io.can_bus_off_recessive_sequences[channel_index] = 0u;
+        if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel_index, CAN_EVENT_BUS_OFF_SAMPLE,
+                              dspic33_device_internal_can_bit_cycles(cpu, channel_index))) {
+            cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
+        }
+    }
 }
 
 void dspic33_device_internal_can_invalid_event(Dspic33* cpu, uint8_t channel_index) {
@@ -725,6 +787,9 @@ void dspic33_device_internal_run_can(Dspic33* cpu, uint8_t channel_index, uint32
 
     case CAN_EVENT_RECEIVE_SUCCESS:
         can_receive_success_start(cpu, channel_index);
+        break;
+    case CAN_EVENT_BUS_OFF_SAMPLE:
+        can_bus_off_sample(cpu, channel_index);
         break;
     case CAN_EVENT_ERROR:
         dspic33_device_internal_can_error_event(cpu, channel_index, event_value);

@@ -121,15 +121,15 @@ void dspic33_can_test_mode_transition_cases(TestState* state, Dspic33* cpu) {
     dspic33_write_word(cpu, 0x06d4u, 64u);
     dspic33_can_test_request_mode(cpu, 0u, 0u);
     expect(state,
-           dspic33_device_advance(cpu, mode_transition_cycles - 1u) &&
+           dspic33_device_advance(cpu, mode_transition_cycles - 4u) &&
                dspic33_can_input_pin(cpu, 64u, false, 0u) && dspic33_device_advance(cpu, 0u) &&
-               dspic33_can_input_pin(cpu, 64u, true, 0u) && dspic33_device_advance(cpu, 0u) &&
-               dspic33_device_advance(cpu, 1u) &&
+               dspic33_device_advance(cpu, 4u) && dspic33_can_input_pin(cpu, 64u, true, 0u) &&
+               dspic33_device_advance(cpu, 0u) &&
+               dspic33_device_advance(cpu, mode_transition_cycles - 4u) &&
                (dspic33_read_word(cpu, 0x0400u) & 0x00e0u) == 0x0080u,
            "dominant CAN input restarts the mode idle boundary");
     expect(state,
-           dspic33_device_advance(cpu, mode_transition_cycles - 1u) &&
-               (dspic33_read_word(cpu, 0x0400u) & 0x00e0u) == 0u,
+           dspic33_device_advance(cpu, 4u) && (dspic33_read_word(cpu, 0x0400u) & 0x00e0u) == 0u,
            "CAN mode transition completes after the restarted idle boundary");
 
     dspic33_can_test_request_mode(cpu, 0u, 3u);

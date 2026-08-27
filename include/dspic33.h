@@ -459,6 +459,13 @@ typedef struct {
     uint8_t count;
 } Dspic33CanQueue;
 
+typedef struct {
+    Dspic33CanFrame frames[64];
+    uint64_t cycles[64];
+    uint64_t sequences[64];
+    uint8_t count;
+} Dspic33CanPendingQueue;
+
 typedef enum {
     DSPIC33_USB_PID_OUT = 0x01u,
     DSPIC33_USB_PID_SOF = 0x05u,
@@ -569,6 +576,7 @@ typedef struct {
     uint8_t i2c_slave_pin_bits[DSPIC33_I2C_COUNT];
     uint8_t i2c_slave_pin_shift[DSPIC33_I2C_COUNT];
     Dspic33CanQueue can_rx[DSPIC33_CAN_COUNT];
+    Dspic33CanPendingQueue can_rx_pending[DSPIC33_CAN_COUNT];
     Dspic33CanQueue can_tx[DSPIC33_CAN_COUNT];
     uint16_t can_filter_window[DSPIC33_CAN_COUNT][48];
     uint16_t can_rx_words[DSPIC33_CAN_COUNT][8];
@@ -601,7 +609,9 @@ typedef struct {
     uint64_t can_rx_error_start_cycle[DSPIC33_CAN_COUNT];
     uint64_t can_overload_start_cycle[DSPIC33_CAN_COUNT];
     uint16_t can_bus_off_recessive_bits[DSPIC33_CAN_COUNT];
+    uint16_t can_bus_off_recessive_sequences[DSPIC33_CAN_COUNT];
     uint16_t can_mode_generation[DSPIC33_CAN_COUNT];
+    uint8_t can_mode_recessive_bits[DSPIC33_CAN_COUNT];
     uint16_t can_resync_count[DSPIC33_CAN_COUNT];
     uint16_t can_intermission_generation[DSPIC33_CAN_COUNT];
     int64_t can_tx_phase_adjustment[DSPIC33_CAN_COUNT];

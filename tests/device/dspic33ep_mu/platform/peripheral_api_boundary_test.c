@@ -72,7 +72,7 @@ static void conversion_and_pwm_cases(TestState* state, Dspic33* cpu) {
 static void can_cases(TestState* state, Dspic33* cpu) {
     Dspic33CanFrame frame;
     memset(&frame, 0, sizeof(frame));
-    expect(state, !dspic33_can_receive(cpu, 0u, NULL, 0u) && cpu->io.can_rx[0].count == 0u,
+    expect(state, !dspic33_can_receive(cpu, 0u, NULL, 0u) && cpu->io.can_rx_pending[0].count == 0u,
            "CAN receive rejects a null frame without changing its queue");
     frame.length = 9u;
     expect(state, !dspic33_can_receive(cpu, 0u, &frame, 0u),
@@ -86,9 +86,9 @@ static void can_cases(TestState* state, Dspic33* cpu) {
     expect(state, !dspic33_can_receive(cpu, 0u, &frame, 0u),
            "CAN receive rejects an oversized extended identifier");
     frame.identifier = 0u;
-    cpu->io.can_rx[0].count = 64u;
+    cpu->io.can_rx_pending[0].count = 64u;
     expect(state, !dspic33_can_receive(cpu, 0u, &frame, 0u), "CAN receive rejects a full queue");
-    cpu->io.can_rx[0].count = 0u;
+    cpu->io.can_rx_pending[0].count = 0u;
     expect(state,
            !dspic33_can_receive(cpu, DSPIC33_CAN_COUNT, &frame, 0u) &&
                !dspic33_can_receive(cpu, 0u, &frame, UINT64_MAX) &&

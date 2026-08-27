@@ -385,26 +385,56 @@ static void warm_reset_external_payload_cases(TestState* state, Dspic33* cpu) {
                dspic33_i2c_respond(cpu, 0u, 0x56u, true, 11u),
            "schedule external payload queues");
     expect(state,
-           cpu->io.can_rx[0].count == 1u && active_usb_pending_count(cpu) == 1u &&
+           cpu->io.can_rx_pending[0].count == 1u && active_usb_pending_count(cpu) == 1u &&
                cpu->io.pmp.input.count == 1u && cpu->io.i2c_response[0].count == 1u,
            "external payload queues populated");
     expect(state, external_event_count(cpu) == 2u, "external payload events classified");
     dspic33_mclr_reset(cpu);
     expect(state,
-           cpu->io.can_rx[0].count == 1u && active_usb_pending_count(cpu) == 1u &&
+           cpu->io.can_rx_pending[0].count == 1u && active_usb_pending_count(cpu) == 1u &&
                cpu->io.pmp.input.count == 1u && cpu->io.i2c_response[0].count == 1u,
            "warm reset retains external payload queues");
     expect(state, cpu->events.count == 2u && external_event_count(cpu) == 2u,
            "warm reset retains external payload events");
     dspic33_reset(cpu, 0u);
     expect(state,
-           cpu->events.count == 0u && cpu->io.can_rx[0].count == 0u &&
+           cpu->events.count == 0u && cpu->io.can_rx_pending[0].count == 0u &&
                active_usb_pending_count(cpu) == 0u && cpu->io.pmp.input.count == 0u &&
                cpu->io.i2c_response[0].count == 0u,
            "explicit processor reset clears external environment queue");
     cpu->device_cycles = UINT64_MAX;
-    expect(state, !dspic33_can_receive(cpu, 0u, &frame, 1u) && cpu->io.can_rx[0].count == 0u,
+    expect(state,
+           !dspic33_can_receive(cpu, 0u, &frame, 1u) && cpu->io.can_rx_pending[0].count == 0u,
            "failed external CAN scheduling rolls back payload queue");
+
+    dspic33_reset(cpu, 0u);
+    Dspic33CanFrame later = frame;
+    Dspic33CanFrame earlier = frame;
+    Dspic33CanFrame equal = frame;
+    later.identifier = 0x111u;
+    earlier.identifier = 0x222u;
+    equal.identifier = 0x333u;
+    expect(state,
+           dspic33_can_receive(cpu, 0u, &later, 10u) &&
+               dspic33_can_receive(cpu, 0u, &earlier, 1u) &&
+               dspic33_can_receive(cpu, 0u, &equal, 1u),
+           "schedule reordered external CAN payloads");
+    expect(state,
+           cpu->io.can_rx_pending[0].frames[0].identifier == earlier.identifier &&
+               cpu->io.can_rx_pending[0].frames[1].identifier == equal.identifier &&
+               cpu->io.can_rx_pending[0].frames[2].identifier == later.identifier,
+           "external CAN payloads follow deadline and sequence order");
+    dspic33_mclr_reset(cpu);
+    expect(state,
+           cpu->io.can_rx_pending[0].count == 3u &&
+               cpu->io.can_rx_pending[0].frames[0].identifier == earlier.identifier &&
+               cpu->io.can_rx_pending[0].frames[1].identifier == equal.identifier &&
+               cpu->io.can_rx_pending[0].frames[2].identifier == later.identifier,
+           "warm reset preserves external CAN payload coupling");
+    expect(state,
+           dspic33_device_advance(cpu, 1u) && cpu->io.can_rx_pending[0].count == 1u &&
+               cpu->io.can_rx_pending[0].frames[0].identifier == later.identifier,
+           "equal-deadline CAN events consume their coupled payloads in sequence order");
 }
 
 int main(void) {

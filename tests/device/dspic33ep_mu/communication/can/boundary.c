@@ -32,7 +32,8 @@ enum {
     CAN_TEST_EVENT_TRANSMIT_SAMPLE_FIRST,
     CAN_TEST_EVENT_TRANSMIT_SAMPLE_SECOND,
     CAN_TEST_EVENT_INTERMISSION_FINISH,
-    CAN_TEST_EVENT_OVERLOAD_FINISH
+    CAN_TEST_EVENT_OVERLOAD_FINISH,
+    CAN_TEST_EVENT_BUS_OFF_SAMPLE
 };
 
 void dspic33_device_internal_run_can(Dspic33* cpu, uint8_t channel, uint32_t value);
@@ -77,7 +78,7 @@ static void allocation_failure_cases(TestState* state, Dspic33* cpu) {
     uint32_t failure_count = 0u;
 
     for (uint32_t event_code = CAN_TEST_EVENT_RECEIVE_START;
-         event_code <= CAN_TEST_EVENT_OVERLOAD_FINISH; event_code++) {
+         event_code <= CAN_TEST_EVENT_BUS_OFF_SAMPLE; event_code++) {
         dspic33_reset(cpu, 0u);
         dspic33_can_test_set_mode(cpu, 0u, 0u);
         fill_event_queue(state, cpu);
@@ -107,7 +108,7 @@ static void allocation_failure_cases(TestState* state, Dspic33* cpu) {
         fingerprint = mix(fingerprint, cpu->io.can_tx_on_bus);
         fingerprint = mix(fingerprint, (uint32_t)cpu->events.count);
     }
-    expect(state, failure_count == 15u && fingerprint == UINT64_C(1351361066272320567),
+    expect(state, failure_count == 16u && fingerprint == UINT64_C(14609097720209776569),
            "CAN allocation failure census matches");
 
     dspic33_reset(cpu, 0u);
@@ -209,6 +210,14 @@ static void controller_boundary_cases(TestState* state, Dspic33* cpu) {
     dspic33_device_internal_can_update_vector(cpu, 0u);
     expect(state, (dspic33_read_word(cpu, vector_address) & 0xffu) == 0x41u,
            "CAN error interrupt selects the error vector");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_device_internal_raw_write_word(cpu, status_address, CAN_INTERRUPT_ERROR);
+    dspic33_write_word(cpu, enable_address, CAN_INTERRUPT_ERROR);
+    expect(state,
+           (dspic33_read_word(cpu, vector_address) & 0xffu) == 0x41u &&
+               dspic33_can_test_interrupt_flag(cpu, event_irqs[0]),
+           "enabling a pending CAN source refreshes its vector and interrupt");
 
     dspic33_reset(cpu, 0u);
     dspic33_device_internal_raw_write_word(cpu, status_address, 0x0004u);
@@ -335,6 +344,12 @@ static void independent_serial_vector_cases(TestState* state, Dspic33* cpu) {
     static const char dominant_srr_vector[] =
         "000100100011010001000101011001110000011100010010001101000101011010111101000101011111"
         "11111111";
+    static const char recessive_r1_vector[] =
+        "000100100011111000011010001010110010001100010010001101000101011011110100000110001111"
+        "111111111";
+    static const char recessive_r0_vector[] =
+        "000100100011111000011010001010110001001100010010001101000101011000100100100011111111"
+        "11111111";
     const Dspic33CanFrame standard = {
         0x123u, {0x11u, 0x22u, 0x33u, 0x44u, 0x55u, 0x66u, 0x77u, 0x88u}, 9u, false, false};
     const Dspic33CanFrame extended = {
@@ -380,11 +395,32 @@ static void independent_serial_vector_cases(TestState* state, Dspic33* cpu) {
     load_serial_vector(cpu, dominant_srr_vector);
     expect(state,
            dspic33_device_internal_can_decode_serial(cpu, 0u, &decoded, &tail) ==
-                   CAN_TEST_SERIAL_VALID &&
-               tail == 79u && decoded.identifier == 0x048c4567u && decoded.extended &&
-               !decoded.remote && decoded.length == 3u && decoded.data[0] == 0x12u &&
-               decoded.data[1] == 0x34u && decoded.data[2] == 0x56u,
-           "extended CAN vector with dominant SRR decodes");
+               CAN_TEST_SERIAL_INVALID,
+           "extended CAN vector with dominant SRR is a form error");
+
+    dspic33_reset(cpu, 0u);
+    dspic33_can_test_set_mode(cpu, 0u, 0u);
+    load_serial_vector(cpu, dominant_srr_vector);
+    cpu->io.can_rx_serial_count[0]--;
+    cpu->io.can_rx_serial_active = 1u;
+    cpu->io.can_rx_pin_high =
+        dominant_srr_vector[sizeof(dominant_srr_vector) - 2u] == '1' ? 1u : 0u;
+    dspic33_device_internal_run_can(cpu, 0u, CAN_TEST_EVENT_RECEIVE_SAMPLE);
+    expect(state,
+           cpu->io.can_rx[0].count == 0u && cpu->io.can_rx_busy == 0u && cpu->io.can_rx_ack == 0u &&
+               (dspic33_read_word(cpu, 0x040au) & 0x0080u) != 0u,
+           "dominant SRR form error suppresses receive DMA and acknowledgement");
+
+    const char* reserved_vectors[] = {recessive_r1_vector, recessive_r0_vector};
+    for (size_t index = 0u; index < sizeof(reserved_vectors) / sizeof(reserved_vectors[0]);
+         index++) {
+        dspic33_reset(cpu, 0u);
+        load_serial_vector(cpu, reserved_vectors[index]);
+        expect(state,
+               dspic33_device_internal_can_decode_serial(cpu, 0u, &decoded, &tail) ==
+                   CAN_TEST_SERIAL_INVALID,
+               "extended CAN reserved-bit form error is rejected");
+    }
 
     const uint16_t invalid_indices[] = {5u, 13u, 14u, 110u, 122u, 124u, 125u};
     for (size_t index = 0u; index < sizeof(invalid_indices) / sizeof(invalid_indices[0]); index++) {

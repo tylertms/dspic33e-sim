@@ -152,6 +152,10 @@ void dspic33_device_internal_update_can_register(Dspic33* cpu, uint16_t address,
             dspic33_device_internal_can_update_vector(cpu, channel);
             return;
         }
+        if (register_offset == 0x0cu) {
+            dspic33_device_internal_can_update_vector(cpu, channel);
+            return;
+        }
         if (filter_window && register_offset >= 0x20u) {
             uint16_t prior = dspic33_device_internal_can_filter_word(cpu, channel, register_offset);
             if (dspic33_device_internal_can_mode(cpu, channel) == CAN_MODE_CONFIGURATION &&

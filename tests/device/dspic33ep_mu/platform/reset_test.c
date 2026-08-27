@@ -194,10 +194,12 @@ static void external_queue_reset_cases(TestState* state, Dspic33* cpu) {
            "warm reset preserves external I2C responses");
 
     dspic33_reset(cpu, 0u);
-    cpu->io.can_rx[0].count = 1u;
-    cpu->io.can_rx[0].frames[0].identifier = 0x123u;
+    cpu->io.can_rx_pending[0].count = 1u;
+    cpu->io.can_rx_pending[0].frames[0].identifier = 0x123u;
     dspic33_mclr_reset(cpu);
-    expect(state, cpu->io.can_rx[0].count == 1u && cpu->io.can_rx[0].frames[0].identifier == 0x123u,
+    expect(state,
+           cpu->io.can_rx_pending[0].count == 1u &&
+               cpu->io.can_rx_pending[0].frames[0].identifier == 0x123u,
            "warm reset preserves external CAN frames");
 
     dspic33_reset(cpu, 0u);

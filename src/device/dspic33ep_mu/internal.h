@@ -24,6 +24,11 @@ bool dspic33_device_internal_can_power_enabled(const Dspic33* cpu, uint8_t chann
 bool dspic33_device_internal_can_queue_pop(Dspic33CanQueue* queue, Dspic33CanFrame* output_frame);
 bool dspic33_device_internal_can_queue_push(Dspic33CanQueue* queue,
                                             const Dspic33CanFrame* input_frame);
+bool dspic33_device_internal_can_pending_pop(Dspic33CanPendingQueue* queue,
+                                             Dspic33CanFrame* output_frame);
+bool dspic33_device_internal_can_pending_push(Dspic33CanPendingQueue* queue,
+                                              const Dspic33CanFrame* input_frame, uint64_t cycle,
+                                              uint64_t sequence);
 bool dspic33_device_internal_can_register_write_mask(const Dspic33* cpu, uint16_t address,
                                                      uint16_t* writable);
 bool dspic33_device_internal_can_schedule_mode_transition(Dspic33* cpu, uint8_t channel,
@@ -189,7 +194,6 @@ void dspic33_device_internal_advance_pwm(Dspic33* cpu, uint64_t cycles);
 void dspic33_device_internal_advance_qei(Dspic33* cpu, uint64_t cycles);
 void dspic33_device_internal_apply_physical_pin_level(Dspic33* cpu, uint8_t pin, bool high);
 void dspic33_device_internal_can_invalid_event(Dspic33* cpu, uint8_t channel);
-void dspic33_device_internal_can_queue_discard_last(Dspic33CanQueue* queue);
 void dspic33_device_internal_can_raise_event(Dspic33* cpu, uint8_t channel, uint16_t flag,
                                              uint8_t buffer, uint8_t filter);
 void dspic33_device_internal_can_refresh_error_status(Dspic33* cpu, uint8_t channel);

@@ -25,7 +25,7 @@ static void apply_master_clear_sfr_reset(Dspic33* cpu, const uint8_t* previous) 
 typedef struct {
     Dspic33PmpResponseQueue pmp;
     Dspic33I2cResponseQueue i2c[DSPIC33_I2C_COUNT];
-    Dspic33CanQueue can[DSPIC33_CAN_COUNT];
+    Dspic33CanPendingQueue can[DSPIC33_CAN_COUNT];
     Dspic33UsbPending usb[DSPIC33_USB_PENDING_COUNT];
 } Dspic33ExternalQueues;
 
@@ -41,7 +41,7 @@ static bool external_queues_pending(const Dspic33* cpu) {
         }
     }
     for (queue_index = 0u; queue_index < DSPIC33_CAN_COUNT; queue_index++) {
-        if (cpu->io.can_rx[queue_index].count != 0u) {
+        if (cpu->io.can_rx_pending[queue_index].count != 0u) {
             return true;
         }
     }
@@ -68,7 +68,7 @@ static bool capture_external_queues(const Dspic33* cpu, Dspic33ExternalQueues** 
     }
     (*queues)->pmp = cpu->io.pmp.input;
     memcpy((*queues)->i2c, cpu->io.i2c_response, sizeof((*queues)->i2c));
-    memcpy((*queues)->can, cpu->io.can_rx, sizeof((*queues)->can));
+    memcpy((*queues)->can, cpu->io.can_rx_pending, sizeof((*queues)->can));
     for (event_index = 0u; event_index < cpu->events.count; event_index++) {
         const Dspic33Event* event = &cpu->events.items[event_index];
         if (event->external && event->type == DSPIC33_EVENT_USB &&
@@ -96,7 +96,7 @@ static void restore_external_queues(Dspic33* cpu, const Dspic33ExternalQueues* q
     }
     cpu->io.pmp.input = queues->pmp;
     memcpy(cpu->io.i2c_response, queues->i2c, sizeof(queues->i2c));
-    memcpy(cpu->io.can_rx, queues->can, sizeof(queues->can));
+    memcpy(cpu->io.can_rx_pending, queues->can, sizeof(queues->can));
     memcpy(cpu->io.usb_pending, queues->usb, sizeof(queues->usb));
 }
 

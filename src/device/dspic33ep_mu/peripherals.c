@@ -278,20 +278,22 @@ bool dspic33_pwm_output(const Dspic33* cpu, uint8_t generator, bool high) {
 
 bool dspic33_can_receive(Dspic33* cpu, uint8_t channel, const Dspic33CanFrame* frame,
                          uint64_t delay) {
-    Dspic33CanQueue* queue;
+    Dspic33CanPendingQueue* queue;
+    uint64_t sequence;
     if (frame == NULL || channel >= DSPIC33_CAN_COUNT || frame->length > 8u ||
         (!frame->extended ? frame->identifier > 0x7ffu : frame->identifier > 0x1fffffffu)) {
         return false;
     }
-    queue = &cpu->io.can_rx[channel];
-    if (!dspic33_device_internal_can_queue_push(queue, frame)) {
+    queue = &cpu->io.can_rx_pending[channel];
+    if (queue->count == 64u) {
         return false;
     }
+    sequence = cpu->events.sequence;
     if (dspic33_schedule_external(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_RECEIVE_SUCCESS,
                                   delay)) {
-        return true;
+        return dspic33_device_internal_can_pending_push(queue, frame, cpu->device_cycles + delay,
+                                                        sequence);
     }
-    dspic33_device_internal_can_queue_discard_last(queue);
     return false;
 }
 

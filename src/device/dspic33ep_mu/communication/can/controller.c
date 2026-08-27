@@ -574,6 +574,12 @@ Dspic33CanSerialResult dspic33_device_internal_can_decode_serial(const Dspic33* 
             is_extended = raw_bits[13];
         }
 
+        if ((!is_extended && raw_bit_count >= 15u && raw_bits[14]) ||
+            (is_extended && raw_bit_count >= 35u &&
+             (!raw_bits[12] || raw_bits[33] || raw_bits[34]))) {
+            return CAN_SERIAL_INVALID;
+        }
+
         if (!is_extended && raw_bit_count >= 19u) {
             is_remote = raw_bits[12];
             data_length = (uint8_t)can_serial_value(raw_bits, 15u, 4u);
@@ -692,8 +698,9 @@ bool dspic33_device_internal_can_schedule_mode_transition(Dspic33* cpu, uint8_t 
     uint32_t mode_transition_event =
         CAN_EVENT_MODE_TRANSITION | ((uint32_t)mode << CAN_EVENT_MODE_SHIFT) |
         ((uint32_t)cpu->io.can_mode_generation[channel] << CAN_EVENT_MODE_GENERATION_SHIFT);
+    cpu->io.can_mode_recessive_bits[channel] = 0u;
     return dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, mode_transition_event,
-                            11u * dspic33_device_internal_can_bit_cycles(cpu, channel));
+                            dspic33_device_internal_can_bit_cycles(cpu, channel));
 }
 
 void dspic33_device_internal_can_remove_transmit_events(Dspic33* cpu, uint8_t channel);
@@ -919,31 +926,9 @@ void dspic33_device_internal_can_receive_success(Dspic33* cpu, uint8_t channel) 
     dspic33_device_internal_can_refresh_error_status(cpu, channel);
 }
 
-static bool can_bus_off_input(Dspic33* cpu, uint8_t channel, bool input_is_high) {
+static bool can_bus_off_input(const Dspic33* cpu, uint8_t channel) {
     uint16_t status_address = (uint16_t)(dspic33_device_can_bases[channel] + 0x0au);
-    uint16_t status_word = dspic33_device_internal_raw_word(cpu, status_address);
-
-    if ((status_word & CAN_BUS_OFF) == 0u) {
-        return false;
-    }
-    if (input_is_high) {
-        cpu->io.can_bus_off_recessive_bits[channel]++;
-    } else {
-        cpu->io.can_bus_off_recessive_bits[channel] = 0u;
-    }
-    if (cpu->io.can_bus_off_recessive_bits[channel] < 128u * 11u) {
-        return true;
-    }
-    cpu->io.can_bus_off_recessive_bits[channel] = 0u;
-    dspic33_device_internal_raw_write_word(
-        cpu, (uint16_t)(dspic33_device_can_bases[channel] + 0x0eu), 0u);
-    dspic33_device_internal_raw_write_word(cpu, status_address,
-                                           (uint16_t)(status_word & ~CAN_BUS_OFF));
-    dspic33_device_internal_can_refresh_error_status(cpu, channel);
-    if (!dspic33_schedule(cpu, DSPIC33_EVENT_CAN, channel, CAN_EVENT_TRANSMIT_START, 0u)) {
-        cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
-    }
-    return true;
+    return (dspic33_device_internal_raw_word(cpu, status_address) & CAN_BUS_OFF) != 0u;
 }
 
 bool dspic33_device_internal_can_schedule_intermission(Dspic33* cpu, uint8_t channel) {
@@ -1018,18 +1003,7 @@ static void can_receive_pin_level(Dspic33* cpu, uint8_t pin, bool input_is_high)
         } else {
             cpu->io.can_rx_pin_high &= (uint8_t)~channel_mask;
         }
-        uint8_t requested_mode =
-            (uint8_t)((dspic33_device_internal_raw_word(cpu, dspic33_device_can_bases[channel]) &
-                       CAN_MODE_MASK) >>
-                      CAN_MODE_SHIFT);
-        if (!input_is_high && requested_mode != dspic33_device_internal_can_mode(cpu, channel)) {
-            cpu->io.can_mode_generation[channel]++;
-            if (!dspic33_device_internal_can_schedule_mode_transition(cpu, channel,
-                                                                      requested_mode)) {
-                cpu->stop_reason = DSPIC33_EVENT_QUEUE_ERROR;
-            }
-        }
-        if (can_bus_off_input(cpu, channel, input_is_high)) {
+        if (can_bus_off_input(cpu, channel)) {
             continue;
         }
         if (was_high && !input_is_high && (cpu->io.can_intermission_active & channel_mask) != 0u) {

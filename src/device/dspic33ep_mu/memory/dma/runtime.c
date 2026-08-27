@@ -35,10 +35,39 @@ bool dspic33_device_internal_can_queue_pop(Dspic33CanQueue* queue, Dspic33CanFra
     return true;
 }
 
-void dspic33_device_internal_can_queue_discard_last(Dspic33CanQueue* queue) {
-    if (queue->count != 0u) {
-        queue->count--;
+bool dspic33_device_internal_can_pending_push(Dspic33CanPendingQueue* queue,
+                                              const Dspic33CanFrame* input_frame, uint64_t cycle,
+                                              uint64_t sequence) {
+    if (queue->count == 64u) {
+        return false;
     }
+    uint8_t index = queue->count;
+    while (index != 0u &&
+           (cycle < queue->cycles[index - 1u] ||
+            (cycle == queue->cycles[index - 1u] && sequence < queue->sequences[index - 1u]))) {
+        queue->frames[index] = queue->frames[index - 1u];
+        queue->cycles[index] = queue->cycles[index - 1u];
+        queue->sequences[index] = queue->sequences[index - 1u];
+        index--;
+    }
+    queue->frames[index] = *input_frame;
+    queue->cycles[index] = cycle;
+    queue->sequences[index] = sequence;
+    queue->count++;
+    return true;
+}
+
+bool dspic33_device_internal_can_pending_pop(Dspic33CanPendingQueue* queue,
+                                             Dspic33CanFrame* output_frame) {
+    if (queue->count == 0u) {
+        return false;
+    }
+    *output_frame = queue->frames[0];
+    queue->count--;
+    memmove(queue->frames, queue->frames + 1u, queue->count * sizeof(queue->frames[0]));
+    memmove(queue->cycles, queue->cycles + 1u, queue->count * sizeof(queue->cycles[0]));
+    memmove(queue->sequences, queue->sequences + 1u, queue->count * sizeof(queue->sequences[0]));
+    return true;
 }
 
 static bool event_less(const Dspic33Event* left, const Dspic33Event* right) {

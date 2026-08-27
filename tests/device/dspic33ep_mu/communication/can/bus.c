@@ -542,15 +542,6 @@ void dspic33_can_test_receive_error_cases(TestState* state, Dspic33* cpu) {
            "error-passive CAN receiver flag remains recessive");
 }
 
-static bool drive_can_recessive_bits(Dspic33* cpu, uint8_t pin_number, uint16_t bit_count) {
-    for (uint16_t bit_index = 0u; bit_index < bit_count; bit_index++) {
-        if (!dspic33_can_input_pin(cpu, pin_number, true, 0u) || !dspic33_device_advance(cpu, 4u)) {
-            return false;
-        }
-    }
-    return true;
-}
-
 void dspic33_can_test_bus_off_recovery_cases(TestState* state, Dspic33* cpu) {
     for (uint8_t channel_index = 0u; channel_index < DSPIC33_CAN_COUNT; channel_index++) {
         const uint16_t can_base = bases[channel_index];
@@ -590,18 +581,23 @@ void dspic33_can_test_bus_off_recovery_cases(TestState* state, Dspic33* cpu) {
                    cpu->io.can_tx_error_active == 0u && cpu->io.can_tx_retry_wait == 0u,
                "bus-off CAN controller releases the bus and suppresses retry");
         expect(state,
-               drive_can_recessive_bits(cpu, 65u, 10u) &&
+               dspic33_can_input_pin(cpu, 65u, true, 0u) && dspic33_device_advance(cpu, 40u) &&
                    dspic33_can_input_pin(cpu, 65u, false, 0u) && dspic33_device_advance(cpu, 4u) &&
-                   drive_can_recessive_bits(cpu, 65u, 1407u) &&
+                   dspic33_can_input_pin(cpu, 65u, true, 0u) &&
+                   dspic33_device_advance(cpu, 1407u * 4u) &&
                    (dspic33_read_word(cpu, (uint16_t)(can_base + 0x0au)) & 0x2000u) != 0u &&
-                   cpu->io.can_bus_off_recessive_bits[channel_index] == 1407u,
+                   cpu->io.can_bus_off_recessive_sequences[channel_index] == 127u &&
+                   cpu->io.can_bus_off_recessive_bits[channel_index] == 10u,
                "dominant CAN bit resets the bus-off recovery sequence");
-        expect(state,
-               drive_can_recessive_bits(cpu, 65u, 1u) && dspic33_device_advance(cpu, 4u) &&
-                   (dspic33_read_word(cpu, (uint16_t)(can_base + 0x0au)) & 0x3f00u) == 0u &&
-                   dspic33_read_word(cpu, (uint16_t)(can_base + 0x0eu)) == 0u &&
-                   (cpu->io.can_tx_on_bus & (uint8_t)(1u << channel_index)) != 0u,
-               "CAN recovers after 128 occurrences of 11 recessive bits");
+        expect(state, dspic33_device_advance(cpu, 4u), "CAN advances through bus-off recovery");
+        expect(state, (dspic33_read_word(cpu, (uint16_t)(can_base + 0x0au)) & 0x3f00u) == 0u,
+               "CAN clears bus-off after 128 occurrences of 11 recessive bits");
+        expect(state, dspic33_read_word(cpu, (uint16_t)(can_base + 0x0eu)) == 0u,
+               "CAN bus-off recovery clears error counters");
+        expect(state, dspic33_device_advance(cpu, 8u),
+               "CAN dispatches resumed transmission after bus-off recovery");
+        expect(state, (cpu->io.can_tx_on_bus & (uint8_t)(1u << channel_index)) != 0u,
+               "CAN bus-off recovery resumes pending transmission");
         dspic33_write_word(cpu, (uint16_t)(can_base + 0x30u), 0x0093u);
     }
 }
