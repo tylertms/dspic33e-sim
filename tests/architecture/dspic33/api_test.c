@@ -9,6 +9,22 @@ typedef struct {
     uint32_t count;
 } TraceCapture;
 
+enum {
+    OPCODE_POWER_SAVE_SLEEP = 0xfe4000u,
+    OPCODE_POWER_SAVE_IDLE = 0xfe4001u,
+    OPCODE_NOP = 0x000000u,
+    TIMER1_VECTOR = 0x001au,
+    UART1_RECEIVE_VECTOR = 0x002au,
+    INTERRUPT_ENABLE_0 = 0x0820u,
+    INTERRUPT_PRIORITY_0 = 0x0840u,
+    INTERRUPT_PRIORITY_2 = 0x0844u,
+    INTERRUPT_CONTROL_2 = 0x08c2u,
+    TIMER1_COUNTER = 0x0100u,
+    TIMER1_PERIOD = 0x0102u,
+    TIMER1_CONTROL = 0x0104u,
+    UART1_MODE = 0x0220u
+};
+
 static void capture_trace(void* context, uint32_t address, uint32_t opcode) {
     TraceCapture* capture = context;
     capture->address = address;
@@ -219,6 +235,57 @@ static void test_execution_boundaries(TestState* state) {
     dspic33_destroy(cpu);
 }
 
+static void test_power_save_time_advance(TestState* state) {
+    Dspic33* cpu = dspic33_create();
+    expect(state, cpu != NULL, "power-save cpu is created");
+    if (cpu == NULL) {
+        return;
+    }
+
+    expect(state, dspic33_load_program_word(cpu, 0u, OPCODE_POWER_SAVE_IDLE),
+           "idle instruction is loaded");
+    expect(state, dspic33_load_program_word(cpu, TIMER1_VECTOR, 0x000300u),
+           "Timer1 vector is loaded");
+    expect(state, dspic33_load_program_word(cpu, 0x0300u, OPCODE_NOP),
+           "Timer1 handler is loaded");
+    dspic33_reset(cpu, 0u);
+    dspic33_set_working_register(cpu, 15u, 0x5000u);
+    dspic33_write_word(cpu, TIMER1_COUNTER, 0u);
+    dspic33_write_word(cpu, TIMER1_PERIOD, 1u);
+    dspic33_write_word(cpu, INTERRUPT_ENABLE_0, 0x0008u);
+    dspic33_write_word(cpu, INTERRUPT_PRIORITY_0, 0x1000u);
+    dspic33_write_word(cpu, INTERRUPT_CONTROL_2, 0x8000u);
+    dspic33_write_word(cpu, TIMER1_CONTROL, 0x8000u);
+    expect(state, dspic33_step(cpu) == DSPIC33_IDLING, "PWRSAV enters Idle mode");
+    expect(state, dspic33_device_advance(cpu, 1u), "public API advances Idle device time");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->power_state == DSPIC33_POWER_ACTIVE &&
+               dspic33_get_last_interrupt(cpu) == 3u,
+           "Timer1 wakes the CPU from Idle");
+
+    expect(state, dspic33_load_program_word(cpu, 0u, OPCODE_POWER_SAVE_SLEEP),
+           "sleep instruction is loaded");
+    expect(state, dspic33_load_program_word(cpu, UART1_RECEIVE_VECTOR, 0x000400u),
+           "UART1 receive vector is loaded");
+    expect(state, dspic33_load_program_word(cpu, 0x0400u, OPCODE_NOP),
+           "UART1 handler is loaded");
+    dspic33_reset(cpu, 0u);
+    dspic33_set_working_register(cpu, 15u, 0x5000u);
+    dspic33_write_word(cpu, UART1_MODE, 0x8080u);
+    dspic33_write_word(cpu, INTERRUPT_ENABLE_0, 0x0800u);
+    dspic33_write_word(cpu, INTERRUPT_PRIORITY_2, 0x1000u);
+    dspic33_write_word(cpu, INTERRUPT_CONTROL_2, 0x8000u);
+    expect(state, dspic33_step(cpu) == DSPIC33_SLEEPING, "PWRSAV enters Sleep mode");
+    expect(state, dspic33_uart_receive(cpu, 0u, 0x33u, 0u), "UART wake input is queued");
+    expect(state, dspic33_device_advance(cpu, 0u), "public API processes due wake input");
+    expect(state,
+           dspic33_step(cpu) == DSPIC33_RUNNING && cpu->power_state == DSPIC33_POWER_ACTIVE &&
+               dspic33_get_last_interrupt(cpu) == 11u,
+           "UART1 wakes the CPU from Sleep");
+
+    dspic33_destroy(cpu);
+}
+
 static void test_host_operations(TestState* state) {
     Dspic33* cpu = dspic33_create();
     expect(state, cpu != NULL, "cpu != NULL");
@@ -407,6 +474,7 @@ int main(void) {
     test_trace(&state);
     test_coverage(&state);
     test_execution_boundaries(&state);
+    test_power_save_time_advance(&state);
     test_host_operations(&state);
     test_null_getters(&state);
     test_memory_guards(&state);

@@ -871,6 +871,7 @@ bool dspic33_copy(Dspic33* destination, const Dspic33* source);
 void dspic33_reset(Dspic33* cpu, uint32_t entry);
 void dspic33_mclr_reset(Dspic33* cpu);
 void dspic33_brown_out_reset(Dspic33* cpu);
+bool dspic33_device_advance(Dspic33* cpu, uint64_t cycles);
 void dspic33_watchdog_advance_lprc(Dspic33* cpu, uint64_t ticks);
 bool dspic33_load_program_word(Dspic33* cpu, uint32_t address, uint32_t word);
 bool dspic33_program_range_implemented(uint32_t address, uint32_t size);
