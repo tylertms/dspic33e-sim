@@ -320,8 +320,7 @@ static void update_rtcc_window(Dspic33* cpu, uint16_t address, bool is_alarm) {
                  : cpu->io.rtcc.calendar[window_index];
     const uint16_t window_value = rtcc_window_write_value(cpu, address, previous_value);
 
-    if (is_alarm ||
-        (dspic33_device_internal_raw_word(cpu, RTCC_CONTROL) & RTCC_WRITE_ENABLE) != 0u) {
+    if ((dspic33_device_internal_raw_word(cpu, RTCC_CONTROL) & RTCC_WRITE_ENABLE) != 0u) {
         if (is_alarm && window_index < 3u) {
             cpu->io.rtcc.alarm[window_index] = window_value & rtcc_alarm_masks[window_index];
         } else {

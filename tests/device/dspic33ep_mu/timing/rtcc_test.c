@@ -264,6 +264,7 @@ static void pointer_write_cases(TestState* state, Dspic33* cpu) {
                "RTCVAL word write decrements RTCPTR");
 
         dspic33_reset(cpu, 0u);
+        expect(state, authorize_calendar_write(cpu), "authorize ALRMVAL word write");
         cpu->data[RTCC_ALARM_CONTROL + 1u] = pointer;
         dspic33_write_word(cpu, RTCC_ALARM_VALUE, UINT16_MAX);
         expect(state,
@@ -281,6 +282,11 @@ static void pointer_write_cases(TestState* state, Dspic33* cpu) {
     expect(state, cpu->io.rtcc.calendar[0] == 0x1234u, "RTCVAL write requires RTCWREN");
 
     dspic33_reset(cpu, 0u);
+    cpu->io.rtcc.alarm[0] = 0x1234u;
+    dspic33_write_word(cpu, RTCC_ALARM_VALUE, 0x5678u);
+    expect(state, cpu->io.rtcc.alarm[0] == 0x1234u, "ALRMVAL write requires RTCWREN");
+
+    dspic33_reset(cpu, 0u);
     expect(state, authorize_calendar_write(cpu), "authorize split RTCVAL write");
     cpu->io.rtcc.calendar[2] = 0x0102u;
     dspic33_write_word(cpu, RTCC_CONTROL, RTCC_WRITE_ENABLE | 0x0200u);
@@ -296,6 +302,7 @@ static void pointer_write_cases(TestState* state, Dspic33* cpu) {
            "RTCVAL high-byte write decrements pointer");
 
     dspic33_reset(cpu, 0u);
+    expect(state, authorize_calendar_write(cpu), "authorize split ALRMVAL write");
     cpu->io.rtcc.alarm[2] = 0x0102u;
     dspic33_write_word(cpu, RTCC_ALARM_CONTROL, 0x0200u);
     dspic33_write_byte(cpu, RTCC_ALARM_VALUE, 0x15u);
@@ -316,8 +323,8 @@ static void transfer_context_cases(TestState* state, Dspic33* cpu) {
         uint16_t control_address = alarm != 0u ? RTCC_ALARM_CONTROL : RTCC_CONTROL;
         uint16_t* slot;
         dspic33_reset(cpu, 0u);
+        expect(state, authorize_calendar_write(cpu), "authorize transfer-context RTCC write");
         if (alarm == 0u) {
-            expect(state, authorize_calendar_write(cpu), "authorize transfer-context RTCVAL write");
             dspic33_write_word(cpu, RTCC_CONTROL, RTCC_WRITE_ENABLE | 0x0200u);
             slot = &cpu->io.rtcc.calendar[2];
         } else {
