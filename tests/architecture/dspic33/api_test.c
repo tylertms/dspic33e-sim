@@ -191,6 +191,15 @@ static void test_null_getters(TestState* state) {
 
 static void test_memory_guards(TestState* state) {
     Dspic33* cpu = dspic33_create();
+    static const uint32_t null_program_addresses[] = {
+        0u,
+        0x2000u,
+        DSPIC33_AUXILIARY_PROGRAM_BASE,
+        DSPIC33_CONFIGURATION_BASE + 4u,
+        0xff0000u,
+        DSPIC33_PERSISTENT_PROGRAM_BASE,
+        DSPIC33_WRITE_LATCH_BASE,
+    };
     expect(state, cpu != NULL, "cpu != NULL");
     Dspic33epMuDevice device = DSPIC33EP_MU_DEVICE_COUNT;
     expect(state, dspic33_create_for_device(DSPIC33EP_MU_DEVICE_COUNT) == NULL,
@@ -213,12 +222,29 @@ static void test_memory_guards(TestState* state) {
            "!dspic33_data_range_valid(UINT32_MAX, 2u)");
     expect(state, !dspic33_device_data_range_implemented(NULL, 0u, 2u),
            "!dspic33_device_data_range_implemented(NULL, 0u, 2u)");
+    expect(state, !dspic33_load_configuration_word(NULL, DSPIC33_CONFIGURATION_BASE, 0u),
+           "configuration load rejects a null processor");
+    expect(state, !dspic33_load_configuration_word(cpu, DSPIC33_CONFIGURATION_BASE + 1u, 0u),
+           "configuration load rejects an odd address");
+    expect(state, !dspic33_load_configuration_word(cpu, UINT32_MAX, 0u),
+           "configuration load rejects a wrapping address");
     expect(state,
            !dspic33_load_configuration_word(
-               cpu, DSPIC33_CONFIGURATION_BASE + DSPIC33_CONFIGURATION_SIZE - 1u, 0u),
-           "!dspic33_load_configuration_word(cpu, configuration limit - 1u, 0u)");
-    expect(state, dspic33_read_program_word(NULL, 0u) == 0xffffffu,
-           "dspic33_read_program_word(NULL, 0u) == 0xffffffu");
+               cpu, DSPIC33_CONFIGURATION_BASE + DSPIC33_CONFIGURATION_SIZE, 0u),
+           "configuration load rejects an address above range");
+    expect(state,
+           dspic33_load_configuration_word(
+               cpu, DSPIC33_CONFIGURATION_BASE + DSPIC33_CONFIGURATION_SIZE - 2u, 0x1234u) &&
+               dspic33_read_configuration_byte(cpu, DSPIC33_CONFIGURATION_BASE +
+                                                        DSPIC33_CONFIGURATION_SIZE - 2u) == 0x34u &&
+               dspic33_read_configuration_byte(cpu, DSPIC33_CONFIGURATION_BASE +
+                                                        DSPIC33_CONFIGURATION_SIZE - 1u) == 0x12u,
+           "configuration load accepts the final aligned word");
+    for (size_t index = 0u;
+         index < sizeof(null_program_addresses) / sizeof(null_program_addresses[0]); index++) {
+        expect(state, dspic33_read_program_word(NULL, null_program_addresses[index]) == 0xffffffu,
+               "null program reads return the erased word");
+    }
     expect(state, dspic33_read_program_byte(NULL, 0u) == 0xffu,
            "dspic33_read_program_byte(NULL, 0u) == 0xffu");
     expect(state, !dspic33_seed_data(NULL, 0u, NULL, 0u), "!dspic33_seed_data(NULL, 0u, NULL, 0u)");

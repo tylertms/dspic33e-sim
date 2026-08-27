@@ -504,11 +504,13 @@ void dspic33_complete_nvm(Dspic33* cpu) {
 
 bool dspic33_load_configuration_word(Dspic33* cpu, uint32_t address, uint32_t word) {
     uint32_t offset;
-    if (address < DSPIC33_CONFIGURATION_BASE ||
-        address + 1u >= DSPIC33_CONFIGURATION_BASE + DSPIC33_CONFIGURATION_SIZE) {
+    if (cpu == NULL || address < DSPIC33_CONFIGURATION_BASE || (address & 1u) != 0u) {
         return false;
     }
     offset = address - DSPIC33_CONFIGURATION_BASE;
+    if (offset > DSPIC33_CONFIGURATION_SIZE - 2u) {
+        return false;
+    }
     cpu->configuration[offset] = (uint8_t)word;
     cpu->configuration[offset + 1u] = (uint8_t)(word >> 8u);
     return true;

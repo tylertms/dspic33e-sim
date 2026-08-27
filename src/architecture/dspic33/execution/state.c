@@ -442,6 +442,9 @@ bool dspic33_internal_configuration_register_index(uint32_t address, uint8_t* in
 
 uint32_t dspic33_read_program_word(const Dspic33* cpu, uint32_t address) {
     uint8_t configuration_index;
+    if (cpu == NULL) {
+        return 0x00ffffffu;
+    }
     if (persistent_program_physical_address(address)) {
         return cpu->persistent_program[persistent_program_index(address)] & 0x00ffffffu;
     }
