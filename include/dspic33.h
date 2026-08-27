@@ -48,6 +48,7 @@ typedef void (*Dspic33Trace)(void* context, uint32_t address, uint32_t opcode);
 #define DSPIC33_USB_PACKET_SIZE 1023u
 #define DSPIC33_USB_PACKET_QUEUE_SIZE 64u
 #define DSPIC33_USB_PENDING_COUNT 64u
+#define DSPIC33_USB_STATUS_FIFO_SIZE 16u
 #define DSPIC33_PMP_QUEUE_SIZE 8192u
 #define DSPIC33_INPUT_CAPTURE_COUNT 16u
 #define DSPIC33_INPUT_CAPTURE_FIFO_SIZE 4u
@@ -729,7 +730,7 @@ typedef struct {
     Dspic33UsbPending usb_pending[DSPIC33_USB_PENDING_COUNT];
     Dspic33UsbQueue usb_tx;
     uint8_t usb_next_bank[DSPIC33_USB_ENDPOINT_COUNT][2];
-    uint8_t usb_status[4];
+    uint8_t usb_status[DSPIC33_USB_STATUS_FIFO_SIZE];
     uint8_t usb_status_head;
     uint8_t usb_status_count;
     uint8_t usb_last_endpoint;

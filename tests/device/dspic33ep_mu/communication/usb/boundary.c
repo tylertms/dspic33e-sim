@@ -41,6 +41,104 @@ static void queue_and_memory_cases(TestState* state, Dspic33* cpu) {
            "USB host token reports a full transmit queue");
 }
 
+static void set_bdt_base(Dspic33* cpu, uint32_t address) {
+    dspic33_write_word(cpu, BDTP1, (uint16_t)((address >> 8u) & 0x00feu));
+    dspic33_write_word(cpu, BDTP2, (uint16_t)(address >> 16u));
+    dspic33_write_word(cpu, BDTP3, (uint16_t)(address >> 24u));
+}
+
+static void profile_memory_cases(TestState* state) {
+    for (Dspic33epMuDevice device = DSPIC33EP_MU_DEVICE_256MU806;
+         device < DSPIC33EP_MU_DEVICE_COUNT; device++) {
+        Dspic33* cpu = dspic33_create_for_device(device);
+        Dspic33UsbPacket response;
+        uint16_t words[4];
+        uint8_t data = 0x5au;
+        expect(state, cpu != NULL, "create profile USB processor");
+        if (cpu == NULL) {
+            continue;
+        }
+        uint32_t data_limit = dspic33_device_profile(cpu)->data_limit;
+        uint8_t read_data;
+
+        cpu->data[0x1000u] = data;
+        cpu->data[data_limit - 1u] = data;
+        expect(state,
+               !dspic33_device_internal_usb_read_memory(cpu, 0x0fffu, &read_data, 1u, true) &&
+                   dspic33_device_internal_usb_read_memory(cpu, 0x1000u, &read_data, 1u, true) &&
+                   read_data == data,
+               "USB payload accepts device RAM lower boundary");
+        expect(
+            state,
+            dspic33_device_internal_usb_read_memory(cpu, data_limit - 1u, &read_data, 1u, true) &&
+                read_data == data &&
+                !dspic33_device_internal_usb_read_memory(cpu, data_limit, &read_data, 1u, true),
+            "USB payload honors device RAM upper boundary");
+
+        dspic33_usb_test_configure_device(cpu);
+        set_bdt_base(cpu, 0u);
+        expect(state, !dspic33_device_internal_usb_descriptor(cpu, 0u, 0u, 0u, words),
+               "USB rejects descriptor below device RAM");
+        expect(state,
+               dspic33_usb_request(cpu, 1u, 0u) && dspic33_device_advance(cpu, 0u) &&
+                   dspic33_usb_transmit(cpu, &response) &&
+                   response.handshake == DSPIC33_USB_HANDSHAKE_ERROR &&
+                   (dspic33_read_word(cpu, EIR) & 0x0040u) != 0u,
+               "USB descriptor below device RAM raises bus access error");
+
+        dspic33_usb_test_configure_device(cpu);
+        set_bdt_base(cpu, data_limit - 0x200u);
+        expect(state, dspic33_device_internal_usb_descriptor(cpu, 15u, 1u, 1u, words),
+               "USB accepts final implemented descriptor");
+        set_bdt_base(cpu, data_limit);
+        expect(state, !dspic33_device_internal_usb_descriptor(cpu, 0u, 0u, 0u, words),
+               "USB rejects descriptor beyond device RAM");
+        expect(state,
+               dspic33_usb_request(cpu, 1u, 0u) && dspic33_device_advance(cpu, 0u) &&
+                   dspic33_usb_transmit(cpu, &response) &&
+                   response.handshake == DSPIC33_USB_HANDSHAKE_ERROR &&
+                   (dspic33_read_word(cpu, EIR) & 0x0040u) != 0u,
+               "USB descriptor beyond device RAM raises bus access error");
+
+        dspic33_usb_test_configure_device(cpu);
+        dspic33_usb_test_write_descriptor(cpu, 1u, 1u, 0u, 0x0088u, 1u, 0x0fffu);
+        expect(state,
+               dspic33_usb_request(cpu, 1u, 0u) && dspic33_device_advance(cpu, 0u) &&
+                   dspic33_usb_transmit(cpu, &response) &&
+                   response.handshake == DSPIC33_USB_HANDSHAKE_ERROR &&
+                   (dspic33_read_word(cpu, EIR) & 0x0040u) != 0u,
+               "USB IN below device RAM raises bus access error");
+
+        dspic33_usb_test_configure_device(cpu);
+        dspic33_usb_test_write_descriptor(cpu, 1u, 1u, 0u, 0x0088u, 1u, data_limit);
+        expect(state,
+               dspic33_usb_request(cpu, 1u, 0u) && dspic33_device_advance(cpu, 0u) &&
+                   dspic33_usb_transmit(cpu, &response) &&
+                   response.handshake == DSPIC33_USB_HANDSHAKE_ERROR &&
+                   (dspic33_read_word(cpu, EIR) & 0x0040u) != 0u,
+               "USB IN beyond device RAM raises bus access error");
+
+        dspic33_usb_test_configure_device(cpu);
+        dspic33_usb_test_write_descriptor(cpu, 1u, 0u, 0u, 0x0088u, 1u, 0x0fffu);
+        expect(state,
+               dspic33_usb_receive(cpu, 1u, &data, 1u, 0u) && dspic33_device_advance(cpu, 0u) &&
+                   dspic33_usb_transmit(cpu, &response) &&
+                   response.handshake == DSPIC33_USB_HANDSHAKE_ERROR &&
+                   (dspic33_read_word(cpu, EIR) & 0x0040u) != 0u,
+               "USB OUT below device RAM raises bus access error");
+
+        dspic33_usb_test_configure_device(cpu);
+        dspic33_usb_test_write_descriptor(cpu, 1u, 0u, 0u, 0x0088u, 1u, data_limit);
+        expect(state,
+               dspic33_usb_receive(cpu, 1u, &data, 1u, 0u) && dspic33_device_advance(cpu, 0u) &&
+                   dspic33_usb_transmit(cpu, &response) &&
+                   response.handshake == DSPIC33_USB_HANDSHAKE_ERROR &&
+                   (dspic33_read_word(cpu, EIR) & 0x0040u) != 0u,
+               "USB OUT beyond device RAM raises bus access error");
+        dspic33_destroy(cpu);
+    }
+}
+
 static void reset_event_cases(TestState* state, Dspic33* cpu) {
     dspic33_reset(cpu, 0u);
     expect(state, dspic33_schedule(cpu, DSPIC33_EVENT_INTERRUPT, 0u, 0u, 1u),
@@ -182,6 +280,7 @@ static void scheduler_boundary_cases(TestState* state, Dspic33* cpu) {
 
 void dspic33_usb_test_runtime_boundary_cases(TestState* state, Dspic33* cpu) {
     queue_and_memory_cases(state, cpu);
+    profile_memory_cases(state);
     reset_event_cases(state, cpu);
     full_status_cases(state, cpu);
     host_response_guard_cases(state, cpu);

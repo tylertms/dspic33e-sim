@@ -322,14 +322,17 @@ void dspic33_usb_test_status_fifo_cases(TestState* state, Dspic33* cpu) {
     Dspic33UsbPacket response;
     uint8_t endpoint;
     dspic33_usb_test_configure_device(cpu);
-    for (endpoint = 0u; endpoint < 4u; endpoint++) {
+    for (endpoint = 0u; endpoint < DSPIC33_USB_STATUS_FIFO_SIZE; endpoint++) {
         dspic33_usb_test_write_descriptor(cpu, endpoint, 1u, 0u, 0x0088u, 0u, BUFFER);
         expect(state, dspic33_usb_request(cpu, endpoint, endpoint), "USB status FIFO schedule");
     }
-    expect(state, dspic33_device_advance(cpu, 4u), "USB status FIFO advance");
-    expect(state, cpu->io.usb_status_count == 4u && dspic33_read_word(cpu, STAT) == 8u,
+    expect(state, dspic33_device_advance(cpu, DSPIC33_USB_STATUS_FIFO_SIZE),
+           "USB status FIFO advance");
+    expect(state,
+           cpu->io.usb_status_count == DSPIC33_USB_STATUS_FIFO_SIZE &&
+               dspic33_read_word(cpu, STAT) == 8u,
            "USB status FIFO fills");
-    for (endpoint = 0u; endpoint < 4u; endpoint++) {
+    for (endpoint = 0u; endpoint < DSPIC33_USB_STATUS_FIFO_SIZE; endpoint++) {
         expect(state, dspic33_read_word(cpu, STAT) == (uint16_t)((endpoint << 4u) | 8u),
                "USB status FIFO order");
         dspic33_usb_test_clear_transaction(cpu);
@@ -343,7 +346,7 @@ void dspic33_usb_test_boundary_and_order_cases(TestState* state, Dspic33* cpu) {
     uint8_t data[DSPIC33_USB_PACKET_SIZE];
     Dspic33UsbPacket packet;
     uint16_t index;
-    uint32_t buffer = DSPIC33_DATA_SIZE - DSPIC33_USB_PACKET_SIZE;
+    uint32_t buffer = dspic33_device_profile(cpu)->data_limit - DSPIC33_USB_PACKET_SIZE;
     for (index = 0u; index < sizeof(data); index++) {
         data[index] = (uint8_t)(index * 37u + 11u);
     }

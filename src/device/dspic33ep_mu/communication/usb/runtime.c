@@ -34,8 +34,12 @@ static uint32_t usb_descriptor_address(const Dspic33* cpu, uint8_t endpoint, uin
     return usb_bdt_base(cpu) + descriptor_index * 8u;
 }
 
+static bool usb_memory_range_valid(const Dspic33* cpu, uint32_t address, uint32_t size) {
+    return address >= 0x1000u && dspic33_device_data_range_implemented(cpu, address, size);
+}
+
 static bool usb_memory_word(const Dspic33* cpu, uint32_t address, uint16_t* value) {
-    if (!dspic33_data_range_valid(address, 2u)) {
+    if (!usb_memory_range_valid(cpu, address, 2u)) {
         return false;
     }
     *value = (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[address + 1u] << 8u));
@@ -236,7 +240,7 @@ bool dspic33_device_internal_usb_read_memory(const Dspic33* cpu, uint32_t addres
                                              uint16_t size, bool increment) {
     for (uint16_t byte_index = 0u; byte_index < size; byte_index++) {
         uint32_t current_address = address + (increment ? byte_index : 0u);
-        if (!dspic33_data_range_valid(current_address, 1u)) {
+        if (!usb_memory_range_valid(cpu, current_address, 1u)) {
             return false;
         }
         data[byte_index] = cpu->data[current_address];
@@ -248,7 +252,7 @@ static bool usb_write_memory(Dspic33* cpu, uint32_t address, const uint8_t* data
                              bool increment) {
     for (uint16_t byte_index = 0u; byte_index < size; byte_index++) {
         uint32_t current_address = address + (increment ? byte_index : 0u);
-        if (!dspic33_data_range_valid(current_address, 1u)) {
+        if (!usb_memory_range_valid(cpu, current_address, 1u)) {
             return false;
         }
         cpu->data[current_address] = data[byte_index];
