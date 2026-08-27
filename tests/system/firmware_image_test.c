@@ -288,6 +288,60 @@ static void test_elf(TestState* state, Dspic33* cpu) {
            "wrapping ELF program address is rejected");
 }
 
+static void test_sectionless_elf(TestState* state) {
+    uint8_t image[IMAGE_SIZE];
+    uint32_t entry_address = UINT32_MAX;
+    Dspic33* cpu = dspic33_create();
+    expect(state, cpu != NULL, "create CPU for sectionless ELF");
+
+    initialize_elf_image(image);
+    write_u32_le(image, 32u, 0u);
+    write_u16_le(image, 46u, 0u);
+    write_u16_le(image, 48u, 0u);
+    expect(state, dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
+           "sectionless ELF loads from program segments");
+    expect(state, entry_address == 0x100u && dspic33_read_program_word(cpu, 0x100u) == 0x00123456u,
+           "sectionless ELF loads its entry program word");
+
+    dspic33_load_program_word(cpu, 0x100u, 0x00ffffffu);
+    initialize_elf_image(image);
+    write_u32_le(image, 32u, 0u);
+    write_u16_le(image, 48u, 0u);
+    expect(state, dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
+           "sectionless ELF accepts a retained section entry size");
+    expect(state, dspic33_read_program_word(cpu, 0x100u) == 0x00123456u,
+           "sectionless ELF with retained entry size loads its program word");
+
+    dspic33_load_program_word(cpu, 0x100u, 0x00ffffffu);
+    initialize_elf_image(image);
+    write_u32_le(image, 32u, 0u);
+    write_u16_le(image, 46u, 0u);
+    write_u16_le(image, 48u, 0u);
+    write_u32_le(image, PROGRAM_TABLE_OFFSET + 24u, 6u);
+    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
+           "sectionless ELF does not treat writable data as program content");
+    expect(state, dspic33_read_program_word(cpu, 0x100u) == 0x00ffffffu,
+           "sectionless ELF leaves writable data out of program memory");
+
+    initialize_elf_image(image);
+    write_u32_le(image, 32u, 0u);
+    write_u16_le(image, 46u, 0u);
+    write_u16_le(image, 48u, 0u);
+    write_u32_le(image, PROGRAM_TABLE_OFFSET + 20u, 0u);
+    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
+           "sectionless ELF rejects a segment whose file image exceeds memory");
+
+    initialize_elf_image(image);
+    write_u32_le(image, 32u, 0u);
+    write_u16_le(image, 46u, 0u);
+    write_u16_le(image, 48u, 0u);
+    write_u32_le(image, PROGRAM_TABLE_OFFSET + 16u, 3u);
+    expect(state, !dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
+           "sectionless ELF rejects a partial program word");
+
+    dspic33_destroy(cpu);
+}
+
 static void test_symbol(TestState* state) {
     uint8_t image[SYMBOL_IMAGE_SIZE];
     initialize_symbol_image(image);
@@ -325,6 +379,7 @@ int main(void) {
     expect(&state, cpu != NULL, "cpu != NULL");
     test_binary(&state, cpu);
     test_elf(&state, cpu);
+    test_sectionless_elf(&state);
     test_symbol(&state);
     test_file_loading(&state, cpu);
     dspic33_destroy(cpu);

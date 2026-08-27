@@ -21,6 +21,7 @@ enum {
     ELF_SECTION_UNDEFINED = 0,
     ELF_FLAG_ALLOC = 2,
     ELF_FLAG_EXECUTE = 4,
+    ELF_SEGMENT_WRITE = 2,
     ELF_FLAG_NOLOAD = 0x00800000,
     ELF_FLAG_PSV = 0x10000000,
     ELF_FLAG_ABSOLUTE = 0x40000000
@@ -41,6 +42,8 @@ typedef struct {
     uint32_t file_offset;
     uint32_t physical_address;
     uint32_t file_size;
+    uint32_t memory_size;
+    uint32_t flags;
 } ElfSegment;
 
 static uint16_t read_u16(const uint8_t* bytes) {
@@ -90,6 +93,10 @@ static bool section_table(const ElfImage* image, uint32_t* table_offset, uint16_
     *table_offset = read_u32(image->bytes + 32u);
     section_entry_size = read_u16(image->bytes + 46u);
     *section_count = read_u16(image->bytes + 48u);
+    if (*table_offset == 0u && *section_count == 0u &&
+        read_u16(image->bytes + 50u) == ELF_SECTION_UNDEFINED) {
+        return true;
+    }
     if (section_entry_size != ELF_SECTION_SIZE ||
         !range_valid(image->size, *table_offset, (uint32_t)*section_count * section_entry_size)) {
         set_error(error, error_size, "ELF section table is invalid");
@@ -140,7 +147,67 @@ static ElfSegment read_segment(const ElfImage* image, uint32_t table_offset,
     segment.file_offset = read_u32(segment_bytes + 4u);
     segment.physical_address = read_u32(segment_bytes + 12u);
     segment.file_size = read_u32(segment_bytes + 16u);
+    segment.memory_size = read_u32(segment_bytes + 20u);
+    segment.flags = read_u32(segment_bytes + 24u);
     return segment;
+}
+
+static bool load_program_bytes(const ElfImage* image, Dspic33* cpu, uint32_t file_offset,
+                               uint32_t byte_size, uint32_t load_address, char* error,
+                               size_t error_size, const char* invalid_message) {
+    if ((byte_size & 3u) != 0u || !range_valid(image->size, file_offset, byte_size)) {
+        set_error(error, error_size, invalid_message);
+        return false;
+    }
+    for (uint32_t byte_offset = 0u; byte_offset < byte_size; byte_offset += 4u) {
+        const uint32_t address_offset = byte_offset / 2u;
+        if (address_offset > UINT32_MAX - load_address) {
+            set_error(error, error_size, "ELF program address is invalid");
+            return false;
+        }
+        const uint32_t program_address = load_address + address_offset;
+        const uint32_t program_word = read_u32(image->bytes + file_offset + byte_offset);
+        if (program_address >= DSPIC33_CONFIGURATION_BASE &&
+            program_address < DSPIC33_CONFIGURATION_BASE + DSPIC33_CONFIGURATION_SIZE) {
+            if (!dspic33_load_configuration_word(cpu, program_address, program_word)) {
+                set_error(error, error_size, "ELF configuration exceeds device memory");
+                return false;
+            }
+        } else if (!dspic33_device_program_range_implemented(cpu, program_address, 2u)) {
+            if ((program_word & 0x00ffffffu) != 0x00ffffffu) {
+                set_error(error, error_size, "ELF program exceeds device memory");
+                return false;
+            }
+        } else if (!dspic33_load_program_word(cpu, program_address, program_word)) {
+            set_error(error, error_size, "ELF program exceeds device memory");
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool load_program_segments(const ElfImage* image, Dspic33* cpu,
+                                  uint32_t program_table_offset, uint16_t segment_count,
+                                  char* error, size_t error_size) {
+    bool loaded = false;
+    for (uint16_t segment_index = 0u; segment_index < segment_count; segment_index++) {
+        const ElfSegment segment = read_segment(image, program_table_offset, segment_index);
+        if (segment.type != ELF_SEGMENT_LOAD || segment.file_size == 0u ||
+            (segment.flags & ELF_SEGMENT_WRITE) != 0u) {
+            continue;
+        }
+        if (segment.file_size > segment.memory_size ||
+            !load_program_bytes(image, cpu, segment.file_offset, segment.file_size,
+                                segment.physical_address, error, error_size,
+                                "ELF program segment is invalid")) {
+            return false;
+        }
+        loaded = true;
+    }
+    if (!loaded) {
+        set_error(error, error_size, "ELF has no loadable program content");
+    }
+    return loaded;
 }
 
 static bool section_load_address(const ElfImage* image, const ElfSection* section,
@@ -237,19 +304,17 @@ bool elf_image_load_program(const ElfImage* image, Dspic33* cpu, char* error, si
         !program_table(image, &program_table_offset, &segment_count, error, error_size)) {
         return false;
     }
+    if (section_count == 0u) {
+        return load_program_segments(image, cpu, program_table_offset, segment_count, error,
+                                     error_size);
+    }
     for (uint16_t section_index = 0u; section_index < section_count; section_index++) {
         ElfSection program_section = read_section(image, table_offset, section_index);
         if (program_section.type != ELF_SECTION_PROGBITS ||
             (program_section.flags & ELF_FLAG_ALLOC) == 0u ||
             (program_section.flags & ELF_FLAG_NOLOAD) != 0u ||
-            (program_section.flags &
-             (ELF_FLAG_EXECUTE | ELF_FLAG_PSV | ELF_FLAG_ABSOLUTE)) == 0u) {
+            (program_section.flags & (ELF_FLAG_EXECUTE | ELF_FLAG_PSV | ELF_FLAG_ABSOLUTE)) == 0u) {
             continue;
-        }
-        if ((program_section.byte_size & 3u) != 0u ||
-            !range_valid(image->size, program_section.file_offset, program_section.byte_size)) {
-            set_error(error, error_size, "ELF program section is invalid");
-            return false;
         }
         uint32_t load_address;
         if (!section_load_address(image, &program_section, program_table_offset, segment_count,
@@ -257,31 +322,10 @@ bool elf_image_load_program(const ElfImage* image, Dspic33* cpu, char* error, si
             set_error(error, error_size, "ELF program section is not loadable");
             return false;
         }
-        for (uint32_t byte_offset = 0u; byte_offset < program_section.byte_size;
-             byte_offset += 4u) {
-            const uint32_t address_offset = byte_offset / 2u;
-            if (address_offset > UINT32_MAX - load_address) {
-                set_error(error, error_size, "ELF program address is invalid");
-                return false;
-            }
-            uint32_t program_address = load_address + address_offset;
-            uint32_t program_word =
-                read_u32(image->bytes + program_section.file_offset + byte_offset);
-            if (program_address >= DSPIC33_CONFIGURATION_BASE &&
-                program_address < DSPIC33_CONFIGURATION_BASE + DSPIC33_CONFIGURATION_SIZE) {
-                if (!dspic33_load_configuration_word(cpu, program_address, program_word)) {
-                    set_error(error, error_size, "ELF configuration exceeds device memory");
-                    return false;
-                }
-            } else if (!dspic33_device_program_range_implemented(cpu, program_address, 2u)) {
-                if ((program_word & 0x00ffffffu) != 0x00ffffffu) {
-                    set_error(error, error_size, "ELF program exceeds device memory");
-                    return false;
-                }
-            } else if (!dspic33_load_program_word(cpu, program_address, program_word)) {
-                set_error(error, error_size, "ELF program exceeds device memory");
-                return false;
-            }
+        if (!load_program_bytes(image, cpu, program_section.file_offset, program_section.byte_size,
+                                load_address, error, error_size,
+                                "ELF program section is invalid")) {
+            return false;
         }
     }
     return true;
