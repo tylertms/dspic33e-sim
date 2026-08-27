@@ -73,6 +73,8 @@ typedef struct {
     const char* name;
     uint32_t program_limit;
     uint32_t data_limit;
+    uint16_t y_data_base;
+    uint16_t dma_ram_base;
     uint32_t device_id;
     uint16_t pin_count;
     uint16_t io_pin_count;

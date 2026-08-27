@@ -30,6 +30,7 @@ static const uint8_t dma_irqs[DSPIC33_DMA_COUNT] = {4u,   14u,  24u,  36u,  46u,
 static uint16_t channel_base(uint8_t channel) { return (uint16_t)(0x0b00u + channel * 0x10u); }
 
 void dspic33_dma_test_boundary_cases(TestState* state, Dspic33* cpu);
+void dspic33_device_internal_run_dma(Dspic33* cpu, uint16_t source, uint32_t event_value);
 
 static uint16_t stored_word(const Dspic33* cpu, uint16_t address) {
     return (uint16_t)(cpu->data[address] | ((uint16_t)cpu->data[address + 1u] << 8u));
@@ -113,6 +114,29 @@ static void device_memory_address_cases(TestState* state) {
                            "request DMA word beyond SRAM", "DMA word beyond SRAM traps");
         expect_dma_address(state, cpu, 0x2001u, 0x1001u, false,
                            "request unaligned DMA word", "unaligned DMA word traps");
+        dspic33_destroy(cpu);
+    }
+}
+
+static void device_dual_port_ram_cases(TestState* state) {
+    for (Dspic33epMuDevice device = DSPIC33EP_MU_DEVICE_256MU806;
+         device < DSPIC33EP_MU_DEVICE_COUNT; device++) {
+        Dspic33* cpu = dspic33_create_for_device(device);
+        expect(state, cpu != NULL, "create profile DMA arbitration processor");
+        if (cpu == NULL) {
+            continue;
+        }
+        const uint16_t dma_ram_base = dspic33_device_profile(cpu)->dma_ram_base;
+        dspic33_write_word(cpu, dma_ram_base, 0x5aa5u);
+        configure_channel(cpu, 0u, 0x2001u, 0xe1u, dma_ram_base, 0u, DMA_TEST_WRITE_PAD, 0u);
+        cpu->io.cpu_bus_cycle = cpu->cycles;
+        cpu->io.dma_peripheral_pending = 1u;
+        dspic33_device_internal_run_dma(cpu, 0u,
+                                        (uint32_t)cpu->io.dma_generation[0] << 17u);
+        expect(state,
+               stored_word(cpu, DMA_TEST_WRITE_PAD) == 0x5aa5u &&
+                   (cpu->io.dma_arbiter_waiting & 1u) == 0u && cpu->io.dma_active == 1u,
+               "profile DMA RAM bypasses CPU bus arbitration");
         dspic33_destroy(cpu);
     }
 }
@@ -934,6 +958,7 @@ int main(void) {
             }
         }
         device_memory_address_cases(&state);
+        device_dual_port_ram_cases(&state);
         dspic33_release(&cpu);
     }
     return test_finish(&state);

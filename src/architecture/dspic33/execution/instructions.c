@@ -567,8 +567,9 @@ static bool dsp_x_address_valid(const Dspic33* cpu, uint16_t address, uint16_t p
     return page == 1u && address <= 0x8ffeu;
 }
 
-static bool dsp_y_address_valid(uint16_t address) {
-    return address >= 0x9000u && address <= 0xdffeu;
+static bool dsp_y_address_valid(const Dspic33* cpu, uint16_t address) {
+    const Dspic33epMuProfile* profile = dspic33_device_profile(cpu);
+    return profile != NULL && address >= profile->y_data_base && address < profile->data_limit;
 }
 
 static bool resolve_dsp_x_prefetch(const Dspic33* cpu, uint8_t operation,
@@ -620,10 +621,10 @@ static bool resolve_dsp_y_prefetch(const Dspic33* cpu, uint8_t operation,
         cpu, base_register, (int32_t)cpu->w[base_register] + delta, delta, true);
     outcome->base_register = base_register;
     outcome->present = true;
-    outcome->access_valid = dsp_y_address_valid(address);
+    outcome->access_valid = dsp_y_address_valid(cpu, address);
     outcome->updates_register = operation != 12u;
     outcome->update_valid =
-        !outcome->updates_register || dsp_y_address_valid(outcome->updated_register);
+        !outcome->updates_register || dsp_y_address_valid(cpu, outcome->updated_register);
     return true;
 }
 

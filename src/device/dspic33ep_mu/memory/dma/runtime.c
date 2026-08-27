@@ -986,13 +986,15 @@ bool dspic33_device_internal_schedule_dma_channel(Dspic33* cpu, uint8_t channel_
 
 static bool dma_target_is_dual_port_ram(const Dspic33* cpu, uint8_t channel_index,
                                         uint16_t peripheral_offset) {
+    const Dspic33epMuProfile* profile = dspic33_device_profile(cpu);
     const uint16_t dma_control = dspic33_device_internal_raw_word(
         cpu, dspic33_device_internal_dma_channel_base(channel_index));
     const uint8_t transfer_width = (dma_control & DMA_CON_SIZE_BYTE) != 0u ? 1u : 2u;
     const uint32_t memory_address =
         dma_transfer_address(cpu, channel_index, dma_control, peripheral_offset);
 
-    return memory_address >= 0xd000u && memory_address + transfer_width <= 0xe000u;
+    return profile != NULL && memory_address >= profile->dma_ram_base &&
+           dspic33_device_data_range_implemented(cpu, memory_address, transfer_width);
 }
 
 void dspic33_device_internal_dma_request_collision(Dspic33* cpu, uint8_t channel_index) {

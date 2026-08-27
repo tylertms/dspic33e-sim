@@ -472,6 +472,30 @@ static void dsp_prefetch_destination_collision_cases(TestState* state, Dspic33* 
            "MOVSAC prefetch collision preserves accumulators and control state");
 }
 
+static void dsp_profile_y_prefetch_cases(TestState* state) {
+    Dspic33 cpu;
+    bool initialized = dspic33_initialize_for_device(&cpu, DSPIC33EP_MU_DEVICE_256MU806);
+    expect(state, initialized, "initialize 256MU DSP processor");
+    if (!initialized) {
+        return;
+    }
+    reset_processor_test(&cpu, 0u);
+    load_instruction(state, &cpu, 0u, OPCODE_DSP_X_W8_INCREMENT_Y_W10_DECREMENT);
+    dspic33_set_working_register(&cpu, 4u, 3u);
+    dspic33_set_working_register(&cpu, 5u, 4u);
+    dspic33_set_working_register(&cpu, 8u, 0x4000u);
+    dspic33_set_working_register(&cpu, 10u, 0x5002u);
+    dspic33_write_word(&cpu, 0x4000u, 0x1357u);
+    dspic33_write_word(&cpu, 0x5002u, 0x2468u);
+    cpu.corcon = 0x0021u;
+    expect(state,
+           dspic33_step(&cpu) == DSPIC33_RUNNING && cpu.w[4] == 0x1357u &&
+               cpu.w[5] == 0x2468u && cpu.w[8] == 0x4002u && cpu.w[10] == 0x5000u &&
+               cpu.trap_count == 0u,
+           "256MU DSP prefetch uses profile Y memory");
+    dspic33_release(&cpu);
+}
+
 int main(void) {
     TestState state = {0u, 0u, 0u};
     Dspic33 cpu;
@@ -499,6 +523,7 @@ int main(void) {
         invalid_dsp_encoding_cases(&state, &cpu);
         valid_dsp_register_pair_cases(&state, &cpu);
         dsp_prefetch_destination_collision_cases(&state, &cpu);
+        dsp_profile_y_prefetch_cases(&state);
         dspic33_release(&cpu);
     }
     return test_finish(&state);

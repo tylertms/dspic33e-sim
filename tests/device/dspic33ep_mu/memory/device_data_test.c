@@ -12,6 +12,8 @@ typedef struct {
     const char* name;
     uint32_t program_limit;
     uint32_t data_limit;
+    uint16_t y_data_base;
+    uint16_t dma_ram_base;
     uint32_t device_id;
     uint16_t pin_count;
     uint16_t io_pin_count;
@@ -33,20 +35,20 @@ static const uint16_t gpio_masks_814[DSPIC33_GPIO_PORT_COUNT] = {
     0xc6ffu, 0xffffu, 0xf01eu, 0xffffu, 0x03ffu, 0x313fu, 0xf3cfu, 0xffffu, 0xffffu, 0xf803u};
 
 static const ExpectedProfile expected_profiles[] = {
-    {DSPIC33EP_MU_DEVICE_256MU806, "dsPIC33EP256MU806", 0x2ac00u, 0x8000u, 0x18614000u, 64u, 51u,
-     4u, 24u, gpio_masks_806, 935u, 77u, 48u, UINT64_C(0xe5286ef2ae44471e),
+    {DSPIC33EP_MU_DEVICE_256MU806, "dsPIC33EP256MU806", 0x2ac00u, 0x8000u, 0x5000u, 0x7000u,
+     0x18614000u, 64u, 51u, 4u, 24u, gpio_masks_806, 935u, 77u, 48u, UINT64_C(0xe5286ef2ae44471e),
      UINT64_C(0xd305ae808264e876)},
-    {DSPIC33EP_MU_DEVICE_256MU810, "dsPIC33EP256MU810", 0x2ac00u, 0x8000u, 0x18624000u, 100u, 83u,
-     6u, 32u, gpio_masks_810, 977u, 77u, 49u, UINT64_C(0xa0bac28c616ad517),
+    {DSPIC33EP_MU_DEVICE_256MU810, "dsPIC33EP256MU810", 0x2ac00u, 0x8000u, 0x5000u, 0x7000u,
+     0x18624000u, 100u, 83u, 6u, 32u, gpio_masks_810, 977u, 77u, 49u, UINT64_C(0xa0bac28c616ad517),
      UINT64_C(0xbf0a068cbb5ee5a6)},
-    {DSPIC33EP_MU_DEVICE_256MU814, "dsPIC33EP256MU814", 0x2ac00u, 0x8000u, 0x18634000u, 144u, 122u,
-     7u, 32u, gpio_masks_814, 1014u, 80u, 52u, UINT64_C(0xbc4bc14d6f2cea50),
+    {DSPIC33EP_MU_DEVICE_256MU814, "dsPIC33EP256MU814", 0x2ac00u, 0x8000u, 0x5000u, 0x7000u,
+     0x18634000u, 144u, 122u, 7u, 32u, gpio_masks_814, 1014u, 80u, 52u, UINT64_C(0xbc4bc14d6f2cea50),
      UINT64_C(0xcf445290ea30727b)},
-    {DSPIC33EP_MU_DEVICE_512MU810, "dsPIC33EP512MU810", 0x55800u, 0xe000u, 0x18724000u, 100u, 83u,
-     6u, 32u, gpio_masks_810, 977u, 77u, 49u, UINT64_C(0xa0bac28c616ad517),
+    {DSPIC33EP_MU_DEVICE_512MU810, "dsPIC33EP512MU810", 0x55800u, 0xe000u, 0x9000u, 0xd000u,
+     0x18724000u, 100u, 83u, 6u, 32u, gpio_masks_810, 977u, 77u, 49u, UINT64_C(0xa0bac28c616ad517),
      UINT64_C(0xbf0a068cbb5ee5a6)},
-    {DSPIC33EP_MU_DEVICE_512MU814, "dsPIC33EP512MU814", 0x55800u, 0xe000u, 0x18734000u, 144u, 122u,
-     7u, 32u, gpio_masks_814, 1014u, 80u, 52u, UINT64_C(0xbc4bc14d6f2cea50),
+    {DSPIC33EP_MU_DEVICE_512MU814, "dsPIC33EP512MU814", 0x55800u, 0xe000u, 0x9000u, 0xd000u,
+     0x18734000u, 144u, 122u, 7u, 32u, gpio_masks_814, 1014u, 80u, 52u, UINT64_C(0xbc4bc14d6f2cea50),
      UINT64_C(0xcf445290ea30727b)},
 };
 
@@ -191,6 +193,8 @@ static void test_profile(TestState* state, const ExpectedProfile* expected) {
     expect(state, strcmp(profile->name, expected->name) == 0, "profile name");
     expect(state, profile->program_limit == expected->program_limit, "profile program limit");
     expect(state, profile->data_limit == expected->data_limit, "profile data limit");
+    expect(state, profile->y_data_base == expected->y_data_base, "profile Y data base");
+    expect(state, profile->dma_ram_base == expected->dma_ram_base, "profile DMA RAM base");
     expect(state, profile->device_id == expected->device_id, "profile device ID");
     expect(state, profile->pin_count == expected->pin_count, "profile package pins");
     expect(state, profile->io_pin_count == expected->io_pin_count, "profile I/O pins");
