@@ -309,6 +309,11 @@ static void test_profile(TestState* state, const ExpectedProfile* expected) {
            "profile last PWM generator accepts input");
     expect(state, !dspic33_pwm_dead_time(cpu, expected->pwm_generator_count, false, 0u),
            "profile first absent PWM generator rejects input");
+    dspic33_reset(cpu, 0u);
+    expect(state,
+           dspic33_read_word(cpu, 0x0872u) ==
+               (expected->pwm_generator_count == DSPIC33_PWM_MAX_COUNT ? 0x0004u : 0u),
+           "profile PWM7 interrupt priority reset");
     dspic33_destroy(cpu);
 }
 

@@ -170,6 +170,9 @@ void dspic33_device_reset(Dspic33* cpu) {
         dspic33_device_internal_raw_write_word(cpu, dspic33_device_reset_values[index].address,
                                                dspic33_device_reset_values[index].value);
     }
+    if (dspic33_device_internal_pwm_generator_count(cpu) == DSPIC33_PWM_MAX_COUNT) {
+        dspic33_device_internal_raw_write_word(cpu, 0x0872u, 0x0004u);
+    }
     dspic33_i2c_reset(cpu);
     dspic33_device_internal_usb_reset_registers(cpu);
     dspic33_device_internal_raw_write_word(cpu, USB_PWRC, 0u);
