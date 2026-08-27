@@ -146,7 +146,7 @@ static bool nvm_target_valid(const Dspic33* cpu, uint16_t nvm_control, uint32_t 
                                                         DSPIC33_WRITE_LATCH_WORDS * 2u);
     case 3u:
         target_address &= 0x00fff800u;
-        return dspic33_device_program_range_implemented(cpu, target_address, 0x800u);
+        return dspic33_device_program_range_implemented(cpu, target_address, 2u);
     case 0x0au:
     case 0x0du:
         return true;

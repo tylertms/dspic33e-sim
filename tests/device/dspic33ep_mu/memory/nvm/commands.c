@@ -1,6 +1,8 @@
 #include "device/dspic33ep_mu/memory/nvm/internal.h"
 
 void dspic33_nvm_test_erase_operation_cases(TestState* state, Dspic33* cpu) {
+    Dspic33* partial_page_cpu;
+
     dspic33_reset(cpu, 0u);
     dspic33_load_program_word(cpu, 0x27feu, 0x00010203u);
     dspic33_load_program_word(cpu, 0x2800u, 0u);
@@ -19,6 +21,25 @@ void dspic33_nvm_test_erase_operation_cases(TestState* state, Dspic33* cpu) {
            "page preceding word unchanged");
     expect(state, dspic33_nvm_test_program_word(cpu, 0x3000u) == 0x00040506u,
            "page following word unchanged");
+
+    partial_page_cpu = dspic33_create_for_device(DSPIC33EP_MU_DEVICE_256MU806);
+    expect(state, partial_page_cpu != NULL, "create partial-page Flash device");
+    if (partial_page_cpu != NULL) {
+        dspic33_load_program_word(partial_page_cpu, 0x2a7feu, 0x00010203u);
+        dspic33_load_program_word(partial_page_cpu, 0x2a800u, 0u);
+        dspic33_load_program_word(partial_page_cpu, 0x2abfeu, 0u);
+        expect(state, dspic33_nvm_test_start_operation(partial_page_cpu, 3u, 0x2abfeu),
+               "final partial page erase starts");
+        expect(state, dspic33_nvm_test_finish_operation(partial_page_cpu),
+               "final partial page erase completes");
+        expect(state,
+               dspic33_nvm_test_program_word(partial_page_cpu, 0x2a800u) == 0x00ffffffu &&
+                   dspic33_nvm_test_program_word(partial_page_cpu, 0x2abfeu) == 0x00ffffffu,
+               "final partial page erases implemented words");
+        expect(state, dspic33_nvm_test_program_word(partial_page_cpu, 0x2a7feu) == 0x00010203u,
+               "final partial page preserves preceding word");
+        dspic33_destroy(partial_page_cpu);
+    }
 }
 
 static void write_u16(uint8_t* bytes, uint32_t offset, uint16_t value) {
