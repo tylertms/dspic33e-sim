@@ -412,6 +412,27 @@ test(
   suite: ['runner', 'system'],
 )
 test(
+  'dspic33ep_mu_firmware_runner_fail_address_test',
+  dspic33ep_mu_firmware_runner,
+  args: [
+    runner_image,
+    '--reset-address',
+    '0',
+    '--program-word',
+    '0',
+    '0x2005a0',
+    '--program-word',
+    '2',
+    '0xfe4000',
+    '--fail-address',
+    '2',
+    '--max-instructions',
+    '10',
+  ],
+  expected_fail: true,
+  suite: ['runner', 'system'],
+)
+test(
   'dspic33ep_mu_firmware_runner_negative_limit_test',
   dspic33ep_mu_firmware_runner,
   args: [

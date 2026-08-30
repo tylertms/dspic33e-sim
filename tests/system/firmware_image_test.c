@@ -258,6 +258,15 @@ static void test_elf(TestState* state, Dspic33* cpu) {
     expect(state, dspic33_read_program_word(cpu, 0x200u) == 0x00ffffffu,
            "allocated noload ELF program section is ignored");
 
+    expect(state, dspic33_load_program_word(cpu, 0x100u, 0x00ffffffu),
+           "clear loaded program word");
+    initialize_elf_image(image);
+    write_u32_le(image, PROGRAM_TABLE_OFFSET + 24u, 7u);
+    expect(state, dspic33_load_elf_data(cpu, image, sizeof(image), &entry_address),
+           "writable executable ELF segment loads");
+    expect(state, dspic33_read_program_word(cpu, 0x100u) == 0x00123456u,
+           "writable executable ELF segment contains program code");
+
     initialize_elf_image(image);
     write_u32_le(image, PROGRAM_TABLE_OFFSET + 16u, 8u);
     write_u32_le(image, PROGRAM_TABLE_OFFSET + 20u, 8u);

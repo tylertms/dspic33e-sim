@@ -18,6 +18,7 @@ enum {
     ELF_MACHINE_DSPIC = 118,
     ELF_VERSION_CURRENT = 1,
     ELF_SECTION_UNDEFINED = 0,
+    ELF_SEGMENT_EXECUTE = 1,
     ELF_SEGMENT_WRITE = 2
 };
 
@@ -187,7 +188,7 @@ static bool load_program_segments(const ElfImage* image, Dspic33* cpu,
     for (uint16_t segment_index = 0u; segment_index < segment_count; segment_index++) {
         const ElfSegment segment = read_segment(image, program_table_offset, segment_index);
         if (segment.type != ELF_SEGMENT_LOAD || segment.file_size == 0u ||
-            (segment.flags & ELF_SEGMENT_WRITE) != 0u) {
+            (segment.flags & (ELF_SEGMENT_EXECUTE | ELF_SEGMENT_WRITE)) == ELF_SEGMENT_WRITE) {
             continue;
         }
         if (segment.file_size > segment.memory_size ||

@@ -7,7 +7,7 @@
 #include "dspic33.h"
 #include "dspic33_firmware_image.h"
 
-enum { PROGRAM_WORD_LIMIT = 8 };
+enum { LOCATION_LIMIT = 8, PROGRAM_WORD_LIMIT = 8 };
 
 typedef struct {
     uint32_t address;
@@ -18,10 +18,12 @@ typedef struct {
     const char* image_path;
     const char* reset_location;
     const char* stop_location;
+    const char* fail_locations[LOCATION_LIMIT];
     Dspic33epMuDevice device;
     Dspic33RunLimits limits;
     ProgramWord program_words[PROGRAM_WORD_LIMIT];
     uint8_t program_word_count;
+    uint8_t fail_location_count;
     bool coverage;
 } Arguments;
 
@@ -58,6 +60,12 @@ static bool parse_arguments(int argc, char** argv, Arguments* arguments) {
         } else if (strcmp(argv[argument_index], "--stop-address") == 0 &&
                    argument_index + 1 < argc) {
             arguments->stop_location = argv[++argument_index];
+        } else if (strcmp(argv[argument_index], "--fail-address") == 0 &&
+                   argument_index + 1 < argc) {
+            if (arguments->fail_location_count == LOCATION_LIMIT) {
+                return false;
+            }
+            arguments->fail_locations[arguments->fail_location_count++] = argv[++argument_index];
         } else if (strcmp(argv[argument_index], "--max-instructions") == 0 &&
                    argument_index + 1 < argc) {
             if (!parse_u64(argv[++argument_index], UINT64_MAX, &numeric_value)) {
@@ -97,7 +105,8 @@ static void print_usage(const char* program) {
     fprintf(stderr,
             "usage: %s IMAGE --reset-address ADDRESS "
             "[--device DEVICE] [--max-instructions COUNT] [--max-cycles COUNT] "
-            "[--stop-address ADDRESS] [--program-word ADDRESS VALUE] [--coverage]\n",
+            "[--stop-address ADDRESS] [--fail-address ADDRESS] "
+            "[--program-word ADDRESS VALUE] [--coverage]\n",
             program);
 }
 
@@ -112,7 +121,8 @@ static bool resolve_location(const FirmwareImage* image, const char* text, uint3
 }
 
 static Dspic33Result run(Dspic33* cpu, Dspic33RunLimits limits, uint32_t stop_address,
-                         bool stop_enabled) {
+                         bool stop_enabled, const uint32_t* fail_addresses,
+                         uint8_t fail_address_count, bool* failed_address_reached) {
     if (!stop_enabled) {
         return dspic33_run_with_limits(cpu, limits);
     }
@@ -122,6 +132,13 @@ static Dspic33Result run(Dspic33* cpu, Dspic33RunLimits limits, uint32_t stop_ad
                             dspic33_get_program_counter(cpu),
                             dspic33_read_program_word(cpu, dspic33_get_program_counter(cpu))};
     while (result.stop == DSPIC33_RUNNING) {
+        for (uint8_t index = 0u; index < fail_address_count; index++) {
+            if (result.pc == fail_addresses[index]) {
+                result.stop = DSPIC33_STOPPED;
+                *failed_address_reached = true;
+                return result;
+            }
+        }
         if (result.pc == stop_address) {
             result.stop = DSPIC33_STOPPED;
             return result;
@@ -188,6 +205,16 @@ int main(int argc, char** argv) {
         firmware_image_close(&image);
         return EXIT_FAILURE;
     }
+    uint32_t fail_addresses[LOCATION_LIMIT] = {0};
+    for (uint8_t index = 0u; index < arguments.fail_location_count; index++) {
+        if (!resolve_location(&image, arguments.fail_locations[index], &fail_addresses[index],
+                              error, sizeof(error))) {
+            fprintf(stderr, "invalid fail address: %s\n", error);
+            dspic33_destroy(cpu);
+            firmware_image_close(&image);
+            return EXIT_FAILURE;
+        }
+    }
     Dspic33Coverage* coverage = NULL;
     if (arguments.coverage) {
         coverage = firmware_image_create_coverage(&image, error, sizeof(error));
@@ -200,7 +227,10 @@ int main(int argc, char** argv) {
         dspic33_set_coverage(cpu, coverage);
     }
     dspic33_reset(cpu, entry);
-    const Dspic33Result result = run(cpu, arguments.limits, stop_address, stop_enabled);
+    bool failed_address_reached = false;
+    const Dspic33Result result =
+        run(cpu, arguments.limits, stop_address, stop_enabled, fail_addresses,
+            arguments.fail_location_count, &failed_address_reached);
     const uint64_t trap_count = dspic33_get_trap_count(cpu);
     printf("stop=%u pc=0x%08" PRIx32 " opcode=0x%08" PRIx32 " instructions=%" PRIu64
            " cycles=%" PRIu64 " entry=0x%08" PRIx32 " fault=0x%08" PRIx32 " traps=%" PRIu64 "\n",
@@ -221,5 +251,6 @@ int main(int argc, char** argv) {
     }
     dspic33_destroy(cpu);
     firmware_image_close(&image);
-    return failed(result.stop) || trap_count != 0u ? EXIT_FAILURE : EXIT_SUCCESS;
+    return failed_address_reached || failed(result.stop) || trap_count != 0u ? EXIT_FAILURE
+                                                                             : EXIT_SUCCESS;
 }
