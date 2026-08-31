@@ -388,6 +388,42 @@ test(
   suite: ['runner', 'system'],
 )
 test(
+  'dspic33ep_mu_firmware_runner_unexpected_instruction_limit_test',
+  dspic33ep_mu_firmware_runner,
+  args: [
+    runner_image,
+    '--reset-address',
+    '0',
+    '--device',
+    'dsPIC33EP256MU806',
+    '--program-word',
+    '0',
+    '0x2005a0',
+    '--max-instructions',
+    '1',
+  ],
+  expected_fail: true,
+  suite: ['runner', 'system'],
+)
+test(
+  'dspic33ep_mu_firmware_runner_expected_instruction_limit_test',
+  dspic33ep_mu_firmware_runner,
+  args: [
+    runner_image,
+    '--reset-address',
+    '0',
+    '--device',
+    'dsPIC33EP256MU806',
+    '--program-word',
+    '0',
+    '0x2005a0',
+    '--max-instructions',
+    '1',
+    '--expect-instruction-limit',
+  ],
+  suite: ['runner', 'system'],
+)
+test(
   'dspic33ep_mu_firmware_runner_trap_test',
   dspic33ep_mu_firmware_runner,
   args: [

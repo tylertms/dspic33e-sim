@@ -25,6 +25,7 @@ typedef struct {
     uint8_t program_word_count;
     uint8_t fail_location_count;
     bool coverage;
+    bool expect_instruction_limit;
 } Arguments;
 
 static bool parse_u64(const char* input_text, uint64_t maximum, uint64_t* numeric_value) {
@@ -94,6 +95,8 @@ static bool parse_arguments(int argc, char** argv, Arguments* arguments) {
             arguments->program_word_count++;
         } else if (strcmp(argv[argument_index], "--coverage") == 0) {
             arguments->coverage = true;
+        } else if (strcmp(argv[argument_index], "--expect-instruction-limit") == 0) {
+            arguments->expect_instruction_limit = true;
         } else {
             return false;
         }
@@ -106,7 +109,7 @@ static void print_usage(const char* program) {
             "usage: %s IMAGE --reset-address ADDRESS "
             "[--device DEVICE] [--max-instructions COUNT] [--max-cycles COUNT] "
             "[--stop-address ADDRESS] [--fail-address ADDRESS] "
-            "[--program-word ADDRESS VALUE] [--coverage]\n",
+            "[--program-word ADDRESS VALUE] [--coverage] [--expect-instruction-limit]\n",
             program);
 }
 
@@ -251,6 +254,10 @@ int main(int argc, char** argv) {
     }
     dspic33_destroy(cpu);
     firmware_image_close(&image);
-    return failed_address_reached || failed(result.stop) || trap_count != 0u ? EXIT_FAILURE
-                                                                             : EXIT_SUCCESS;
+    const bool instruction_limit_mismatch =
+        (result.stop == DSPIC33_INSTRUCTION_LIMIT) != arguments.expect_instruction_limit;
+    return failed_address_reached || failed(result.stop) || instruction_limit_mismatch ||
+                   trap_count != 0u
+               ? EXIT_FAILURE
+               : EXIT_SUCCESS;
 }
